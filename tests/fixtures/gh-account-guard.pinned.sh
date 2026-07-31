@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PINNED FROM: lukasrepublic/agentic-handbook @ ac923eadbd8a8c476d2f0f0bf125a10b642cf63e
+# PINNED FROM: lukasrepublic/agentic-handbook @ 1c30008b89309c9a26870e89dac8d2feaf3bd8e5
 #   path   : .claude/hooks/gh-account-guard.sh (the SHIPPED workspace-template guard variant)
 #   pinned : 2026-07-28, by feat-foundry-upstream-submit-identity (issue #21 item b)
 #   why    : agreement is proven against a byte copy of the REAL shipped guard, driven over its
