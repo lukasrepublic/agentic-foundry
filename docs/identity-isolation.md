@@ -44,7 +44,7 @@ yourself, below.
    your copy against this plugin's byte-pinned in-tree copy of the workspace-template guard,
    `tests/fixtures/gh-account-guard.pinned.sh` (a test fixture, not enforcement — it is not wired
    into this plugin's own `hooks/hooks.json`; its own header names the exact upstream commit it
-   was pinned from, `ac923eadbd8a8c476d2f0f0bf125a10b642cf63e`, so the comparison is a provenance
+   was pinned from, `1c30008b89309c9a26870e89dac8d2feaf3bd8e5`, so the comparison is a provenance
    statement, not just a sanity check).
 
    The pinned fixture carries an added provenance header the upstream guard itself does not have — a whole-file diff is never empty; it differs by that header, so compare only below the provenance header. Derive the offset from the PINNED fixture itself (the trusted side), anchored on its own header text — never from your own guard copy's length: a prefix-truncated or otherwise shortened copy would slide the two sides into false alignment and read as clean instead of drifted (a `bash` recipe; it uses process substitution, and both paths are quoted since an unquoted path would word-split on an embedded space):
