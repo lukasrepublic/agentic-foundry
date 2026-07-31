@@ -1,0 +1,75 @@
+# .github/workflows/foundry-project-sync.yml — event-driven GitHub Projects living-view
+# re-projection (ER #112, PTR — feat-foundry-project-tracking-lifecycle-reprojection).
+#
+# ============================================================================================
+# COPY-IN TEMPLATE. This file ships in the agentic-foundry PLUGIN repo as a template only; it
+# is NOT an always-active workflow in the plugin repo's own CI (this repo has no
+# .claude/foundry-project.json github_projects block, so it never fires here in practice).
+# Install it into YOUR OWN product repo:
+#
+#   cp <plugin>/.github/workflows/foundry-project-sync.yml \
+#      <your-product-repo>/.github/workflows/foundry-project-sync.yml
+#
+# then set `github_projects.enabled: true` in your repo's .claude/foundry-project.json and add
+# a repository secret named after `github_projects.auth_env` (default FOUNDRY_PROJECTS_TOKEN)
+# NOTE: actions/checkout v5 requires a Node 24 runner (fine on ubuntu-latest; self-hosted
+# adopters copying this template should check their runner version).
+# holding a project-scoped GitHub App installation token (see
+# docs/github-projects-projection.md for the full least-privilege rationale + the
+# rest of this install step).
+# ============================================================================================
+#
+# Trigger surface — the standard living-view signals (reconcile-on-event, GitOps-controller
+# pattern): a specs/** change (push or PR) re-derives the affected atom(s) from file-truth, and
+# PR/issue lifecycle events re-derive Status per the PTM mapping table (open/ready PR -> In
+# Progress · In Review; PR merged to the default branch -> Done). Every run below simply
+# invokes PTC's `sync`; when `github_projects.enabled` is absent/false, PTM's own INACTIVE gate
+# makes the run a declared no-op (zero GitHub calls) — no separate `if:` gate is needed here.
+name: Foundry Project Sync (living-view re-projection)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'specs/**'
+  pull_request:
+    types: [opened, ready_for_review, closed]
+    paths:
+      - 'specs/**'
+  issues:
+    types: [opened, edited, closed, reopened]
+
+permissions:
+  # Minimal built-in GITHUB_TOKEN permission (checkout only). The actual GitHub Projects /
+  # Issues writes PTC performs use the SEPARATE `auth_env`-named secret (a project-scoped
+  # GitHub App token) — never this workflow's built-in token (see the App-scope doc).
+  contents: read
+
+jobs:
+  reproject:
+    name: Re-project atoms (foundry-project-sync.py sync)
+    # Same-repo guard (models ci.yml's release-acceptance guard): the sync step runs
+    # PR-head repo code with a privileged token — never grant that to a fork head.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Re-project the living view (foundry-project-sync.py sync)
+        env:
+          # The credential's ONLY channel: a project-scoped GitHub App token held in this
+          # repo secret, named after `github_projects.auth_env` (default shown here). PTC
+          # reads it from the environment only — it is never logged, echoed, or written to
+          # config (see docs/github-projects-projection.md).
+          FOUNDRY_PROJECTS_TOKEN: ${{ secrets.FOUNDRY_PROJECTS_TOKEN }}
+        run: |
+          python scripts/foundry-project-sync.py

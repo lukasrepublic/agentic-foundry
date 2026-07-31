@@ -1,0 +1,24 @@
+__pycache__/
+*.pyc
+
+# .foundry/ runtime-partition rationale retained after the default-deny block below subsumed the
+# per-file rules that used to encode it (scripts/foundry-apply-runtime-gitignore.sh; AC-RGLS-5):
+# - .foundry/authz-ledger.jsonl (AC-ELM-4 / ER #211 housekeeping): the delegable-authorization-
+#   envelope's real, append-only runtime authorization ledger (A7) must never be accidentally
+#   committed to a code repo.
+# - .foundry/per-worker-env/: worker env allocation records carry full argv captures that may
+#   embed flag-passed secrets.
+
+# FOUNDRY-RUNTIME-GITIGNORE-BEGIN (managed by scripts/foundry-apply-runtime-gitignore.sh -- do not edit by hand)
+# .foundry/ runtime partitions are ignored by default; the designed-tracked set is re-included.
+/.foundry/*
+!/.foundry/README.md
+!/.foundry/build-provenance.yaml
+!/.foundry/stack-profile.lock
+# FOUNDRY-RUNTIME-GITIGNORE-END (re-run the applier to converge; do not edit by hand)
+
+# Local deviation from the shipped default (AC-RGLS-7): build-provenance.yaml co-carry snapshots
+# written here are regenerable and declared in no contract's allowed_paths; committing them lands
+# unattributed files (ER #167). This pattern is re-emitted after the managed block below because
+# git resolves the LAST matching pattern, so it must win over the block's re-include.
+.foundry/build-provenance.yaml

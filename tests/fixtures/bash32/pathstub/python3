@@ -1,0 +1,45 @@
+#!/bin/sh
+# tests/fixtures/bash32/pathstub/python3 — the RECOVERY STUB (feat-foundry-bash32-parse-guard,
+# Terminology). Committed, executable, placed FIRST on PATH inside the bash-3.2 container (which
+# carries no python3 of its own) so a hook's payload reader can recover a command and execution
+# therefore advances PAST the admit-on-no-recoverable-command exit into the malformed region —
+# the whole point: without this, both PreToolUse hooks exit 0 early under bash 3.2 and the
+# defective merge base looks healthy (spec Residuals / Clarifications).
+#
+# Two invocation shapes the shipped hooks use:
+#   python3 -c '<script>'  — the JSON payload-recovery step, and (on the exec guard's LIVE path)
+#                             the config-seam-resolution / three-line-base64-decode steps too.
+#                             Reads stdin to EOF (never hangs — the hook's own `cat` already
+#                             drained the real stdin by the time any of these run) and, ONLY when
+#                             that stdin is one of the two fixed-shape fixture payloads below,
+#                             prints that payload's `tool_input.command` value; prints NOTHING for
+#                             anything else — an empty seam/base64 read resolves empty, so the
+#                             exec guard's downstream decode stays INERT (no wrapper resolved).
+#   python3 -               — the evaluator invocation (`python3 - <<'PY' ... PY`). Consumes
+#                             stdin (the heredoc body) to EOF, prints NOTHING, and exits
+#                             non-zero. It COMPUTES NO VERDICT and fabricates none — a hook driven
+#                             with it can only reach its OWN documented fail-inert (no wrapper) or
+#                             fail-closed (command recovered, evaluator produced nothing) boundary,
+#                             never a synthetic ALLOW/BLOCK.
+set -u
+
+stdin_text="$(cat 2>/dev/null || true)"
+
+if [ "${1:-}" = "-c" ]; then
+  case "$stdin_text" in
+    *'"command": "aws s3 ls"'*)
+      printf '%s\n' "aws s3 ls"
+      ;;
+    *'"command": "git push --force origin main"'*)
+      printf '%s\n' "git push --force origin main"
+      ;;
+    *)
+      : # no match: nothing recovered (an empty seam/base64 read also lands here => empty => INERT)
+      ;;
+  esac
+  exit 0
+fi
+
+# The evaluator invocation (`python3 -`), or anything else this stub does not recognize:
+# compute no verdict, fabricate none.
+exit 1

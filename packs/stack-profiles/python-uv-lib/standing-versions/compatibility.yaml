@@ -1,0 +1,45 @@
+# python-uv-lib — standing-versions platform-anchored compatibility + skew
+# (feat-foundry-python-stack-profile, atom GP-2).
+#
+# Platform-anchored to the pinned CPython interpreter MINOR (standing-versions/manifest.yaml's
+# `python_interpreter` row: `python_version_file: "3.13"`), matching the shipped
+# `aws-eks-karpenter` pack's convention of anchoring compatibility on the one platform version
+# every other pin is checked against, rather than expressing skew per-component in isolation.
+# Research pass 2026-07-28, source-verified from vendor documentation; full trail in
+# docs/research/2026-07-28-python-stack-profile.md.
+pins_valid_as_of: "2026-07-28"
+
+python_minor: "3.13"   # the platform anchor — matches manifest.yaml's python_interpreter pin
+
+skew:
+  # requires-python <-> the pinned interpreter — the manifest's `python_requires` row is a FLOOR
+  # (>=3.11); the pinned interpreter line (3.13) must satisfy it (AC-PSP-14's numeric check).
+  - component: python_requires
+    anchor: python_minor
+    policy: "python_requires_floor_minor <= python_minor"
+    note: "the pyproject.toml requires-python floor (>=3.11) must not exceed the pinned .python-version line (3.13)"
+
+  # ruff format + ruff check must run under the SAME ruff release — a split version between the
+  # two invocations (format vs check) is not how this profile's dev-dependency group resolves
+  # (both slots run the ONE locked `ruff` entry), but the anchor is stated so a future edit that
+  # tried to split them would visibly contradict this row.
+  - component: ruff
+    anchor: python_minor
+    policy: "ruff_wheel_supports(python_minor)"
+    note: "the pinned ruff release must publish a wheel for the anchored CPython minor (3.13)"
+
+  # mypy must support the anchored interpreter minor as both its OWN runtime and its type-checking
+  # target (mypy is pure-Python and runs under `uv run`, so its own runtime requirement and the
+  # checked code's interpreter are the same anchor here).
+  - component: mypy
+    anchor: python_minor
+    policy: "mypy_supports_python_target(python_minor)"
+    note: "the pinned mypy release must support 3.13 as both its runtime and its --python-version target"
+
+  # pytest-cov's coverage measurement must support the anchored interpreter minor's bytecode/trace
+  # internals (coverage.py, pytest-cov's dependency, tracks new CPython minors closely but not
+  # instantly).
+  - component: pytest-cov
+    anchor: python_minor
+    policy: "pytest_cov_supports_python(python_minor)"
+    note: "the pinned pytest-cov (and its coverage.py dependency) must support the anchored CPython minor (3.13)"

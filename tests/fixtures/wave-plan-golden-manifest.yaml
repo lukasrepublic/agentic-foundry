@@ -1,0 +1,26 @@
+# tests/fixtures/wave-plan-golden-manifest.yaml — the 3-atom golden fixture for
+# tests/test_wave_plan.py + the `--check` CLI verification command in the Phase-4 charter.
+# Demonstrates BOTH wave-planning rules in one small manifest:
+#   - `widget-a` shares NO `depends_on` edge with `core`, but its declared `paths` OVERLAP
+#     core's (`src/shared/utils.py` is under `src/shared/**`) -> forced into a LATER wave.
+#   - `widget-b` `depends_on: [widget-a]` -> forced strictly after widget-a's wave.
+id: golden
+description: 3-atom golden fixture — path-overlap wave split + dependency ordering.
+state: backlog
+atoms:
+  - id: core
+    spec_ref: specs/features/foundry/example/core/feat-core.md
+    contract_ref: specs/features/foundry/example/core/acceptance-contract.yaml
+    depends_on: []
+    paths: ["src/shared/**"]
+  - id: widget-a
+    spec_ref: specs/features/foundry/example/widget-a/feat-widget-a.md
+    contract_ref: specs/features/foundry/example/widget-a/acceptance-contract.yaml
+    depends_on: []
+    paths: ["src/shared/utils.py"]
+  - id: widget-b
+    spec_ref: specs/features/foundry/example/widget-b/feat-widget-b.md
+    contract_ref: specs/features/foundry/example/widget-b/acceptance-contract.yaml
+    depends_on: ["widget-a"]
+    paths: ["src/widget-b/**"]
+    journeys: ["jt-widget-b"]

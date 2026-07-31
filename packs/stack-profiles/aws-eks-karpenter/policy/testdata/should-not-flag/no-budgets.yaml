@@ -1,0 +1,17 @@
+# should-NOT-flag — a documented-SAFE budget pattern (AC-KPP-6, preserving the AC-KDB-2 guarantee).
+#
+# No budgets at all — outside the uncapped-PERCENTAGE rule's scope entirely.
+# NOTE: this fixture DOES trip the karpenter_unbounded_disruption hard deny (consolidation + no
+# budgets). That is correct and expected; the AC-KPP-6 assertion here is scoped to ZERO
+# karpenter_uncapped_percentage_budget entries, NOT to an empty result.
+#
+# EXPECTED through the SHIPPED invocation: ZERO karpenter_uncapped_percentage_budget entries.
+# (This is a NON-flagging guarantee — note that a dead pack satisfies it perfectly, which is exactly
+# why AC-KPP-4/-5's live POSITIVE controls exist alongside it. Never trust these fixtures alone.)
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: nobudgets
+spec:
+  disruption:
+    consolidationPolicy: WhenEmpty

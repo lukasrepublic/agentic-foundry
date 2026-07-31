@@ -1,0 +1,84 @@
+# python-uv-lib — a plain Python library stack profile (feat-foundry-python-stack-profile, atom
+# GP-2). The NON-runnable half of the Python profile pair: the same `uv`-driven format/lint/
+# typecheck/build battery and pytest test recipe as its `python-uv-service` sibling, but NO
+# `app_exercise_binding` — a library has nothing to boot. `profile_kind: library` is declared here
+# EXPLICITLY: it is an operator-authored CLAIM (never inferred, never a default — an absent
+# `profile_kind` keeps the legacy `app` semantics byte-identical) that atoms built under this
+# profile have no runtime surface to boot. Locking this pack makes `/foundry:certify-local`
+# terminate in its pre-dispatch REFUSED class ("no boot recipe") by design — see conventions.md's
+# "Profile-kind claim" section for what that means operator-facing, and the spec's Residuals for the
+# recorded open gap (a library REFUSE is indistinguishable from a mislocked service atom's REFUSE).
+# Faithful mid-2026 tooling per the spec's "Prior art / industry grounding" — see the sibling
+# python-uv-service pack's header for the shared tooling rationale. Operator-curated content;
+# validates against schema/stack-profile.schema.json via the shipped loader.
+profile_kind: library
+id: python-uv-lib
+version: 0.1.0
+requires_core: ">=0.1"
+
+matches:
+  languages:
+    - python
+  frameworks: []
+  package_managers:
+    - uv
+
+architecture:
+  layers:
+    - domain
+    - api
+  allowed_dependencies:
+    - from: api
+      to:
+        - domain
+    - from: domain
+      to: []
+  conventions_doc: conventions.md
+
+implementation_skills:
+  - skills/implement-python-uv-lib.md
+
+static_validation:
+  format: "uv run --locked ruff format --check ."
+  lint: "uv run --locked ruff check ."
+  typecheck: "uv run --locked mypy src"
+  build: "uv build"
+
+test_recipe:
+  unit: "uv run --locked pytest tests/unit --cov=src --cov-report=term-missing --cov-fail-under=80"
+  integration: "uv run --locked pytest tests/integration"
+  e2e: "uv run --locked pytest tests/e2e"
+  coverage_gate: 80
+
+security_checklist: >-
+  No secrets in code (config + secrets from the environment, even in a library's own test/example
+  fixtures); pin + lock every dependency (`uv.lock`, `uv sync --locked` in CI) and every dev-tool
+  version in this profile's pin catalogue; never install an unpinned transitive pytest plugin
+  (locked dev-dependencies only — see conventions.md's determinism-hazards note); a library's public
+  `api` surface (its exported symbols) is the trust boundary its consumers see — validate inputs at
+  that boundary rather than trusting a caller's internal invariants.
+
+performance_checklist: >-
+  Keep the library's import-time cost low (no heavy work at module import, lazy-import optional
+  extras); avoid accidental O(n^2) hot paths in the public `api` surface; use `uv`'s locked, cached
+  resolution (never an ambient/ad-hoc install) so CI and local dev resolve the identical, fast
+  environment; benchmark any surface a consumer is likely to call in a hot loop.
+
+observability: >-
+  A library has no runtime surface of its own to instrument (see the profile-kind claim below) —
+  observability here means making the library's OWN behavior legible to a consumer: structured,
+  leveled logging (never print), typed exceptions a caller can distinguish and handle, and clear
+  docstrings on any function whose failure mode a caller must plan for.
+
+documentation: >-
+  README with local setup (`uv sync --locked`) + how a consumer adds this library as a dependency;
+  the public `api` surface documented per exported symbol (docstrings + type hints, no bare `Any`);
+  an architecture decision record (ADR) for the layering / dependency-direction choices; a
+  CHANGELOG entry per released version (this pack's own `version:` is the profile's, not the
+  library's — see the profile-version-immutability ledger).
+
+standing-versions:
+  manifest:
+    path: standing-versions/manifest.yaml
+  compatibility:
+    path: standing-versions/compatibility.yaml

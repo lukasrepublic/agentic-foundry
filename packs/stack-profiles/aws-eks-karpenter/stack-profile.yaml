@@ -1,0 +1,156 @@
+# aws-eks-karpenter — the FIRST `profile_kind: infra` stack profile (feat-foundry-aws-eks-karpenter-profile).
+# An AWS EKS + Karpenter stack delivered via OpenTofu + ArgoCD GitOps. This pack is operator-curated CONTENT:
+# it fills the shipped `infra_binding` schema + loader (schema/stack-profile.schema.json,
+# scripts/foundry-stack-profile.py) with the concrete plan/apply/verify/policy command strings + the Karpenter
+# blast-radius tiers, editing NEITHER the schema NOR the loader (exactly as node-web is a pure content atom).
+# The command strings are DATA: they are read by the id-plan/id-impact/id-verify/id-apply consumers and executed
+# later only through the CTX command-policy guard — NEVER by this pack. The read-only slots (plan/verify/policy)
+# are pinned to CTX-read-only verbs (the loader's read-role allowlist); `apply` is the mutation slot, posture-gated
+# downstream. The app-shaped blocks (static_validation/test_recipe/app_exercise_binding) are OMITTED — permitted
+# for profile_kind:infra (the schema's draft-07-safe conditional drops them from `required` and requires
+# infra_binding instead). Faithful 2024-25 tooling: OpenTofu (`tofu`), a local `kustomize build`/`helm
+# template` RENDER (no cluster), `conftest`/OPA over rendered manifests. v2 (ADR C3): the pre-merge
+# structured plan/diff is LOCAL + deterministic + NO-cluster (`tofu plan` + an optional local render); the
+# GitOps change-evidence is the git-diff of the committed manifests vs the merge-base (consumed by
+# parse_gitops_changes), NOT `argocd app diff` — which emits unified TEXT (not JSON) and reaches LIVE
+# cluster state (the phantom structured `argocd app diff -o json` does not exist). `argocd app diff` is
+# forbidden as a structured pre-merge source in EVERY read slot (plan/verify/policy). Post-merge ArgoCD
+# realization (`argocd app get -o json`, Synced ∧ Healthy) is a separate v2b concern, not specced here.
+profile_kind: infra
+id: aws-eks-karpenter
+version: 0.5.2
+requires_core: ">=0.2"
+
+matches:
+  languages:
+    - hcl
+  frameworks:
+    - opentofu
+    - terraform
+    - karpenter
+    - argocd
+  package_managers:
+    - tofu
+
+architecture:
+  layers:
+    - network        # VPC, subnets, security groups, NAT — the foundational network fabric.
+    - cluster        # the EKS control plane + IAM/IRSA + the cluster add-ons.
+    - capacity       # Karpenter NodePool/EC2NodeClass + any managed node groups (the node-provisioning layer).
+    - platform       # cluster-wide platform services (ArgoCD itself, ingress, cert-manager, observability).
+    - workloads      # the application workloads ArgoCD reconciles from the GitOps manifests.
+  allowed_dependencies:
+    - from: workloads
+      to:
+        - platform
+        - capacity
+    - from: platform
+      to:
+        - cluster
+    - from: capacity
+      to:
+        - cluster
+    - from: cluster
+      to:
+        - network
+    - from: network
+      to: []
+  conventions_doc: conventions.md
+
+implementation_skills:
+  - skills/implement-aws-eks-karpenter.md
+
+security_checklist: >-
+  No long-lived AWS keys — node + controller identity via IRSA / EKS Pod Identity, least-privilege IAM per
+  role; secrets from a secret manager (External Secrets / SSM), never in HCL or committed manifests; restrict
+  the EKS API endpoint (private + CIDR allow-list) and enable audit logging; pin + checksum every OpenTofu
+  provider + module and every container image (digest, not floating tag); gate the rendered manifests + the
+  plan through the policy-as-code (conftest/OPA) slot before apply; scope Karpenter's node IAM role to the
+  minimum and forbid privileged pods on the provisioned nodes.
+
+performance_checklist: >-
+  Right-size Karpenter NodePools (instance-type families + capacity-type spread) and let consolidation reclaim
+  underused nodes; set realistic resource requests so bin-packing is accurate; cap NodePool `limits` to bound
+  spend + blast radius; prefer Spot for fault-tolerant workloads with an on-demand fallback; tune
+  `consolidationPolicy`/`consolidateAfter` to balance churn against cost; keep AMIs current but roll them
+  through a disruption budget so drift-driven replacement does not stampede.
+
+observability: >-
+  Scrape Karpenter's controller metrics (provisioning latency, disruption events, NodePool utilization) and
+  EKS control-plane + node metrics; alert on stuck provisioning, repeated node terminations, and ArgoCD
+  out-of-sync / degraded apps; structured controller logs shipped centrally; an ArgoCD application-health
+  dashboard as the GitOps source-of-truth; trace a delivery from merged commit → ArgoCD sync → node ready.
+
+documentation: >-
+  A per-layer README (network/cluster/capacity/platform/workloads) and an ADR for the Karpenter NodePool
+  topology + capacity-type strategy; the OpenTofu module interfaces (inputs/outputs) documented; a runbook for
+  the HIGH blast-radius changes (AMI roll, NodePool removal, capacity-type flip) including the disruption-budget
+  + canary procedure; the ArgoCD App-of-Apps layout + which paths are GitOps-managed; the break-glass / rollback
+  path for a bad apply.
+
+infra_binding:
+  # plan — the READ-ONLY, LOCAL + deterministic, NO-cluster plan/diff over the CANDIDATE (v2, ADR C3).
+  # `tofu plan` computes the IaC delta for the tofu plane; the local `helm template` RENDER materializes the
+  # GitOps manifests so the pre-merge structured diff is the git-diff of the COMMITTED (rendered) manifests
+  # vs the merge-base (consumed by parse_gitops_changes), NOT `argocd app diff` (unified TEXT, live cluster
+  # state — forbidden as a structured pre-merge source). Both leading verbs (`tofu plan`, `helm template`)
+  # are read-role-allowlisted; neither reaches a cluster.
+  plan: "tofu plan -detailed-exitcode && helm template gitops/ > rendered/manifests.yaml"
+  # apply — the MUTATION slot (posture-gated downstream by the CTX runtime guard). tofu apply realizes the
+  # EKS/Karpenter infra itself; the k8s WORKLOADS realize via GitOps (merge → ArgoCD reconciles), NOT direct
+  # kubectl apply — see conventions.md §GitOps realization.
+  apply: "tofu apply -auto-approve"
+  # verify — the READ-ONLY post-apply re-check (v2): `tofu plan` must come back EMPTY (-detailed-exitcode
+  # == 0 ⇒ no drift). Post-merge ArgoCD realization (Synced ∧ Healthy via `argocd app get -o json`) is a
+  # SEPARATE v2b concern — NOT smuggled into this read slot (no `argocd app diff`/`get` here). Read-role verb.
+  verify: "tofu plan -detailed-exitcode"
+  # policy — the READ-ONLY policy-as-code GATE (v2, ADR C2; FF-4): COMPOUNDED schema-validation + Rego.
+  # FIRST `kubeconform` validates the RENDERED Kubernetes manifests against the upstream JSON schemas for a
+  # FULLY-PINNED kubernetes version (`-kubernetes-version 1.35.0`, never `1.35` — a design-partner P0 caught a
+  # manifest bug exactly because schema validation was missing from the gate); THEN `conftest test -o json`
+  # evaluates the profile's Rego policy pack over the same manifests. Both are read-only (kubeconform is pure
+  # OFFLINE schema validation — no cluster/cloud contact, no write mode; `conftest test` is a read-role verb),
+  # so the compounded command leads with the read-role-allowlisted `kubeconform` verb. The `-o json` on
+  # conftest is the parse_policy_findings structured contract; <rendered-manifests> is the driver-supplied
+  # render output (the `plan` slot's rendered/manifests.yaml), not a fixed path. References the pack, never
+  # `argocd app diff`.
+  policy: "kubeconform -kubernetes-version 1.35.0 -strict -summary <rendered-manifests> && conftest test -o json --policy packs/stack-profiles/aws-eks-karpenter/policy <rendered-manifests>"
+  # gitops_paths — the ArgoCD-managed manifest globs id-apply's classify_gitops re-derives against to pick the
+  # EXECUTE / GENERATE / VERIFY-ONLY branch for a change.
+  gitops_paths:
+    - "gitops/apps/**"
+    - "gitops/platform/**"
+    - "clusters/*/applications/**"
+  # blast_radius — MACHINE-EVALUABLE {tier, action, resource_type, attr?} rules (design §6 Karpenter tiering).
+  # id-impact matches a plan action to a tier; HIGH escalates to extra approval + a disruption-budget/canary
+  # rollout. ≥1 HIGH is REQUIRED (enforced by the loader). LOW = no node churn; MEDIUM = bounded churn;
+  # HIGH = mass node replacement.
+  blast_radius:
+    # LOW — no node churn.
+    - {tier: LOW, action: update, resource_type: karpenter_nodepool, attr: limits}
+    - {tier: LOW, action: update, resource_type: karpenter_nodepool, attr: labels}
+    - {tier: LOW, action: update, resource_type: karpenter_nodepool, attr: annotations}
+    - {tier: LOW, action: create, resource_type: karpenter_nodepool}        # ADD a mutually-exclusive NodePool.
+    # MEDIUM — bounded, rolling churn.
+    - {tier: MEDIUM, action: update, resource_type: karpenter_nodepool, attr: requirements}
+    - {tier: MEDIUM, action: update, resource_type: karpenter_nodepool, attr: consolidationPolicy}
+    - {tier: MEDIUM, action: update, resource_type: karpenter_nodepool, attr: consolidateAfter}
+    # HIGH — mass node replacement / drift-driven roll (≥1 HIGH required).
+    - {tier: HIGH, action: replace, resource_type: aws_eks_node_group}
+    - {tier: HIGH, action: update, resource_type: karpenter_nodepool, attr: amiSelectorTerms}   # Karpenter Drift.
+    - {tier: HIGH, action: update, resource_type: karpenter_ec2nodeclass, attr: amiSelectorTerms}
+    - {tier: HIGH, action: update, resource_type: karpenter_nodepool, attr: expireAfter}
+    - {tier: HIGH, action: update, resource_type: karpenter_nodepool, attr: terminationGracePeriod}
+    - {tier: HIGH, action: update, resource_type: karpenter_nodepool, attr: capacityType}
+    - {tier: HIGH, action: delete, resource_type: karpenter_nodepool}       # NodePool removal → mass replacement.
+
+# standing-versions — the standing-versions/ DATA artifact set (feat-foundry-standing-versions-matrix,
+# atom ID-SV-1, AC-SVM-5). Declares the pin BOM (manifest.yaml) + platform-anchored compatibility file
+# (compatibility.yaml) as a typed, recognized part of this infra profile's contract. Structural declaration
+# only — the schema types this shape; the on-disk existence of the two named files is asserted by the
+# profile-version-immutability check's certified-content computation (AC-SVM-4), not by this block itself.
+standing-versions:
+  manifest:
+    path: standing-versions/manifest.yaml
+  compatibility:
+    path: standing-versions/compatibility.yaml

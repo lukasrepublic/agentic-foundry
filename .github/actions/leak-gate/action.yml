@@ -1,0 +1,82 @@
+name: "leak-gate"
+description: >-
+  Fail-closed proprietary-name + structural-leak-marker scan over the caller's checked-out tree.
+  The term list is NOT shipped in this repository (feat-foundry-denylist-out-of-tree): the caller
+  supplies it as the `denylist` input, sourced from a repository secret. Matched by the bundled
+  leak_scan.py module. Same-repo callers reference this action by relative path; cross-repo callers
+  reference it pinned to a 40-char commit SHA.
+inputs:
+  denylist:
+    description: >-
+      Denylist CONTENT (one term per line; blank lines and full-line # comments ignored). Supply from
+      a repository secret. Empty is valid ONLY on a fork PR, where Actions secrets structurally do not
+      resolve; on any other event an empty value is treated as a misconfigured secret and REFUSES.
+    required: false
+    default: ""
+  is-fork-pr:
+    description: >-
+      Whether this run is a pull_request from a fork. MUST come from the event payload
+      (github.event.pull_request.head.repo.fork) -- never inferred from `denylist` being empty. Keying
+      the degrade on emptiness alone would silently downgrade every push to markers-only the moment
+      the secret is deleted or renamed, while still reporting success.
+    required: false
+    default: "false"
+runs:
+  using: "composite"
+  steps:
+    - name: Scan the checked-out tree (fail-closed)
+      shell: bash
+      env:
+        FOUNDRY_DENYLIST: ${{ inputs.denylist }}
+        FOUNDRY_IS_FORK_PR: ${{ inputs.is-fork-pr }}
+      run: |
+        set -euo pipefail
+
+        summary() { printf '%s\n' "$1"; printf '%s\n' "$1" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"; }
+
+        if [ -z "${FOUNDRY_DENYLIST}" ]; then
+          # R1: `is-fork-pr` is CALLER-ASSERTED, so the action verifies the one thing it can check
+          # itself — the event really is a pull_request. Without this, a future workflow that wires
+          # `is-fork-pr: true` (or an expression that turns truthy on push after a refactor) would
+          # skip the term scan on every push to `main` and still exit 0, which is the same silent
+          # downgrade the input's own contract exists to prevent, one layer up.
+          if [ "${FOUNDRY_IS_FORK_PR}" = "true" ] && [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            # AC-DOT-5 DEGRADED. Structural markers need no secret, so they still run; the term scan
+            # is reported as NOT RUN, never as clean.
+            summary "**leak-gate: DEGRADED** — fork PR, no secret access; term scan NOT RUN (structural markers only). The full scan runs on merge to \`main\`."
+            python3 "$GITHUB_ACTION_PATH/leak_scan.py" \
+              --root "${{ github.workspace }}" --markers-only
+            exit $?
+          fi
+          # Not a fork PR => the secret is unset or misconfigured. This is the fail-open guard.
+          summary "**leak-gate: REFUSED** — the denylist input is empty and this is not a fork pull_request (event=${GITHUB_EVENT_NAME:-unknown}). The repository secret is unset or misconfigured. This is NOT a degrade and is NOT a pass."
+          exit 1
+        fi
+
+        # Materialize OUTSIDE github.workspace so the file can never be scanned, cached, or uploaded
+        # as an artifact (AC-DOT-4). RUNNER_TEMP is outside the checkout by definition.
+        denylist_file="$(mktemp "${RUNNER_TEMP:-/tmp}/foundry-denylist.XXXXXX")"
+        cleanup() { rm -f "${denylist_file}"; }
+        trap cleanup EXIT
+
+        printf '%s\n' "${FOUNDRY_DENYLIST}" > "${denylist_file}"
+
+        # Register each term for log masking BEFORE the scan runs -- ::add-mask:: only affects output
+        # emitted after it. This is the SECOND layer: leak_scan.py already never emits a term
+        # (AC-DOT-2). Masking covers output paths we did not anticipate, and is known to be imperfect
+        # (actions/runner#475), which is exactly why it is not the only control.
+        # R3: strip surrounding whitespace EXACTLY as load_denylist does (`line.strip()`). Masking
+        # registers a literal, so `  Term  ` and `Term` are different strings: a secret pasted with a
+        # stray trailing space (invisible in the GitHub UI) would register a mask that never fires
+        # for that term, silently disabling layer 2 with no signal anywhere.
+        while IFS= read -r term; do
+          term="${term#"${term%%[![:space:]]*}"}"   # strip leading
+          term="${term%"${term##*[![:space:]]}"}"   # strip trailing
+          [ -z "${term}" ] && continue
+          case "${term}" in \#*) continue ;; esac
+          printf '::add-mask::%s\n' "${term}"
+        done < "${denylist_file}"
+
+        python3 "$GITHUB_ACTION_PATH/leak_scan.py" \
+          --root "${{ github.workspace }}" \
+          --denylist "${denylist_file}"

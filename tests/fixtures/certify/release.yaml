@@ -1,0 +1,19 @@
+# tests/fixtures/certify/release.yaml — the certify-local fixture proof's release manifest
+# (tests/test_certify_fixture.py). Two atoms, each declaring ONE journey tag that maps 1:1 onto a
+# test title in the sibling `certify.spec.js` — the "FULL tagged journey suite" this fixture
+# proves end-to-end. `spec_ref`/`contract_ref` point at the minimal sibling stub files (this
+# fixture never authorizes/merges the atoms — certify-local only reads `journeys`/`target_repo`).
+id: certify-fixture
+description: certify-local fixture proof (2 journeys, static-site app).
+state: active
+atoms:
+  - id: fix-a
+    spec_ref: specs/fix-a.md
+    contract_ref: specs/fix-a.yaml
+    depends_on: []
+    journeys: ["FIX-1"]
+  - id: fix-b
+    spec_ref: specs/fix-b.md
+    contract_ref: specs/fix-b.yaml
+    depends_on: []
+    journeys: ["FIX-2"]

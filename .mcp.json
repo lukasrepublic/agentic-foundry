@@ -1,0 +1,11 @@
+{
+  "//": "Foundry MCP servers (endpoint trust: stdio = loopback by construction, no network surface; allowlisted/enumerated here, not auto-discovered). Merges with the consuming repo's .mcp.json.",
+  "mcpServers": {
+    "foundry-graph": {
+      "command": "python3",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/foundry-graph-mcp.py"],
+      "//env": "a recorded design decision: pin the graph path so the subprocess never falls through to a phantom cwd/.foundry/graph.json. Claude Code expands ${CLAUDE_PROJECT_DIR} in a plugin-provided .mcp.json env value at config-parse time (and also sets CLAUDE_PROJECT_DIR in the spawned server env), so this resolves to the consuming workspace's absolute graph path.",
+      "env": { "FOUNDRY_GRAPH_JSON": "${CLAUDE_PROJECT_DIR}/.foundry/graph.json" }
+    }
+  }
+}

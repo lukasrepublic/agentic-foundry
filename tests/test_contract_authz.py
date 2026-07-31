@@ -1,0 +1,357 @@
+"""tests/test_contract_authz.py — converted from scripts/foundry_checks/{acceptance-contract-
+intended, allowed-paths-grounding, contract-schema-gate-slots, contract-surface-scope,
+freeze-floor-ac-extraction, system-grounding-floor, intake-schema-grounding,
+grounding-conformance-backfill, system-state-snapshot}.py.
+
+Ports the real behavioral assertions those nine drop-in selftests drove against the front-
+authorization core: `scripts/foundry_contract.py` (the acceptance-contract validator + the
+reality-grounding error functions), `scripts/foundry_authz.py` (`_spec_ac_ids`, the spec-side AC
+extraction the freeze floor bijects against), `scripts/foundry_intake_grounding.py` (the
+authoring-time prevent-aid), `scripts/foundry_grounding_conformance.py` (the corpus backfill
+classifier), and `scripts/foundry_system_snapshot.py` (the reality-grounding foundation
+primitive). CLI/doctor scaffolding is dropped; the computed fixtures/assertions are kept.
+"""
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+
+import pytest
+import yaml
+
+from conftest import REPO_ROOT, load_module
+
+contract = load_module("scripts/foundry_contract.py", "foundry_contract")
+authz = load_module("scripts/foundry_authz.py", "foundry_authz")
+intake_grounding = load_module("scripts/foundry_intake_grounding.py", "foundry_intake_grounding")
+grounding_conformance = load_module("scripts/foundry_grounding_conformance.py", "foundry_grounding_conformance")
+system_snapshot = load_module("scripts/foundry_system_snapshot.py", "foundry_system_snapshot")
+
+
+def _golden():
+    return {
+        "spec_ref": "foundry/test/fixtures/golden-spec.md",
+        "spec_sha256": "deadbeef" * 8,
+        "scope": {
+            "allowed_paths": ["apps/api/src/routes/search/**", "apps/web/app/search/**"],
+            "denied_paths": ["apps/**/auth/**"],
+        },
+        "checkpoints": [
+            {"ac_id": "AC-API-1", "surface": "api:/v1/search",
+             "locator": "POST /v1/search {q:'sedan under 20k'}",
+             "expect": {"op": "count_gte", "value": 1, "baseline": "pre-change"}},
+            {"ac_id": "AC-UI-1", "surface": "ui:/search", "locator": "[data-testid=result-card]",
+             "expect": {"op": "count_gte", "value": 1, "baseline": "none"}},
+        ],
+    }
+
+
+def _golden_bytes():
+    return yaml.safe_dump(_golden()).encode("utf-8")
+
+
+# =================================================== acceptance-contract-intended (schema) ==== #
+
+class TestValidateContractBytes:
+    def test_golden_contract_validates(self):
+        ok, errors, warnings = contract.validate_contract_bytes(_golden_bytes())
+        assert ok is True, errors
+
+    def test_missing_required_field_rejected(self):
+        doc = _golden()
+        del doc["spec_ref"]
+        ok, errors, _ = contract.validate_contract_bytes(yaml.safe_dump(doc).encode("utf-8"))
+        assert ok is False and errors
+
+    def test_bidirectional_bijection_floor_with_spec_ac_ids(self):
+        # the contract declares AC-API-1/AC-UI-1; feeding a MISMATCHED spec AC-ID set should
+        # surface a bijection error rather than silently pass.
+        ok, errors, warnings = contract.validate_contract_bytes(
+            _golden_bytes(), spec_ac_ids=["AC-API-1", "AC-UI-1", "AC-EXTRA-9"])
+        assert ok is False
+        assert any("AC-EXTRA-9" in e for e in errors)
+
+    def test_bijection_holds_when_ac_ids_match(self):
+        ok, errors, _ = contract.validate_contract_bytes(
+            _golden_bytes(), spec_ac_ids=["AC-API-1", "AC-UI-1"])
+        assert ok is True, errors
+
+
+# ==================================================== contract-schema-gate-slots (additive) ==== #
+
+class TestOptionalGateSlots:
+    @pytest.mark.parametrize("slot,value", [
+        ("preconditions", [{"id": "pre-1", "kind": "spec-authorized"}]),
+        ("build_gates", [{"id": "bg-1", "check": "npm test"}]),
+        ("post_apply_checks", [{"id": "pac-1", "check": "curl -f /healthz", "on_failure": "rollback"}]),
+        ("mandatory_review", [{"review": "security"}]),
+    ])
+    def test_optional_slot_admitted_when_well_formed(self, slot, value):
+        doc = _golden()
+        doc[slot] = value
+        ok, errors, _ = contract.validate_contract_bytes(yaml.safe_dump(doc).encode("utf-8"))
+        assert ok is True, (slot, errors)
+
+    def test_unknown_toplevel_key_rejected_additive_properties_false(self):
+        doc = _golden()
+        doc["totally_unknown_key"] = "x"
+        ok, errors, _ = contract.validate_contract_bytes(yaml.safe_dump(doc).encode("utf-8"))
+        assert ok is False
+
+
+# ======================================================== contract-surface-scope (ER #77) ==== #
+
+class TestSurfaceScopeErrors:
+    def test_none_repo_root_is_existence_unknowable_skip(self):
+        assert contract.surface_scope_errors(_golden(), None) == []
+
+    def test_new_path_outside_scope_is_an_error(self, tmp_path):
+        doc = _golden()
+        doc["checkpoints"].append({
+            "ac_id": "AC-NEW-1", "surface": "file:apps/other/new-file.ts",
+            "locator": "exists", "expect": {"op": "count_gte", "value": 1, "baseline": "none"}})
+        errors = contract.surface_scope_errors(doc, str(tmp_path))
+        assert any("OUTSIDE scope.allowed_paths" in e for e in errors)
+
+    def test_new_path_inside_scope_is_clean(self, tmp_path):
+        doc = _golden()
+        doc["checkpoints"].append({
+            "ac_id": "AC-NEW-2", "surface": "file:apps/api/src/routes/search/new.ts",
+            "locator": "exists", "expect": {"op": "count_gte", "value": 1, "baseline": "none"}})
+        errors = contract.surface_scope_errors(doc, str(tmp_path))
+        assert errors == []
+
+    def test_preexisting_file_never_flagged(self, tmp_path):
+        os.makedirs(tmp_path / "apps" / "other")
+        (tmp_path / "apps" / "other" / "existing.ts").write_text("x", encoding="utf-8")
+        doc = _golden()
+        doc["checkpoints"].append({
+            "ac_id": "AC-EXIST-1", "surface": "file:apps/other/existing.ts",
+            "locator": "exists", "expect": {"op": "count_gte", "value": 1, "baseline": "pre-change"}})
+        errors = contract.surface_scope_errors(doc, str(tmp_path))
+        assert errors == []
+
+
+# ======================================================= allowed-paths-grounding (#179) ==== #
+
+class TestAllowedPathsGroundingErrors:
+    def test_none_repo_root_is_skip(self):
+        assert contract.allowed_paths_grounding_errors(_golden(), None) == []
+
+    def test_zero_match_glob_is_an_error(self, tmp_path):
+        doc = _golden()
+        doc["scope"]["allowed_paths"] = ["apps/nowhere/does-not-exist/**"]
+        errors = contract.allowed_paths_grounding_errors(doc, str(tmp_path))
+        assert len(errors) == 1 and "matches ZERO paths" in errors[0]
+
+    def test_literal_existing_path_admitted(self, tmp_path):
+        os.makedirs(tmp_path / "apps" / "api" / "src")
+        doc = _golden()
+        doc["scope"]["allowed_paths"] = ["apps/api/src"]
+        errors = contract.allowed_paths_grounding_errors(doc, str(tmp_path))
+        assert errors == []
+
+    def test_declared_new_checkpoint_tolerance(self, tmp_path):
+        # a zero-match allowed_paths entry is TOLERATED when named by the atom's own
+        # path-shaped checkpoint surface (AC-APG-3).
+        doc = _golden()
+        doc["scope"]["allowed_paths"] = ["apps/brand-new/thing.ts"]
+        doc["checkpoints"].append({
+            "ac_id": "AC-NEW-3", "surface": "file:apps/brand-new/thing.ts",
+            "locator": "exists", "expect": {"op": "count_gte", "value": 1, "baseline": "none"}})
+        errors = contract.allowed_paths_grounding_errors(doc, str(tmp_path))
+        assert errors == []
+
+
+# ================================================== system-grounding-floor (Atom C, #121) ==== #
+
+def _snapshot(*, configured=True, entities=None, modules=None):
+    return {"grounding_configured": configured, "entities": entities or {},
+            "modules": modules or []}
+
+
+class TestSystemGroundingErrors:
+    def test_unconfigured_snapshot_is_inert_noop(self):
+        assert contract.system_grounding_errors({"system_grounding": {"artifacts": []}},
+                                                  _snapshot(configured=False)) == []
+        assert contract.system_grounding_errors({"system_grounding": {"artifacts": []}}, None) == []
+
+    def test_no_block_declared_is_error_when_configured(self):
+        errors = contract.system_grounding_errors({}, _snapshot(configured=True))
+        assert errors  # AC-SGC-5: configured but nothing declared -> error.
+
+    def test_exists_classification_matches_live_entity(self):
+        data = {"system_grounding": {"artifacts": [
+            {"kind": "table", "identifier": "users", "classification": "exists"}]}}
+        snap = _snapshot(entities={"users": {"columns": ["id"]}})
+        assert contract.system_grounding_errors(data, snap) == []
+
+    def test_exists_classification_absent_from_live_snapshot_is_error(self):
+        data = {"system_grounding": {"artifacts": [
+            {"kind": "table", "identifier": "ghosts", "classification": "exists"}]}}
+        snap = _snapshot(entities={"users": {"columns": ["id"]}})
+        errors = contract.system_grounding_errors(data, snap)
+        assert errors
+
+    def test_net_new_classification_already_live_is_error(self):
+        data = {"system_grounding": {"artifacts": [
+            {"kind": "table", "identifier": "users", "classification": "net-new"}]}}
+        snap = _snapshot(entities={"users": {"columns": ["id"]}})
+        errors = contract.system_grounding_errors(data, snap)
+        assert errors and "already live" in errors[0]
+
+    def test_net_new_classification_genuinely_absent_is_clean(self):
+        data = {"system_grounding": {"artifacts": [
+            {"kind": "table", "identifier": "brand_new_table", "classification": "net-new"}]}}
+        snap = _snapshot(entities={"users": {"columns": ["id"]}})
+        assert contract.system_grounding_errors(data, snap) == []
+
+    def test_structural_errors_precede_consistency(self):
+        # a malformed artifact (missing required key) is a structural error, caught by
+        # _system_grounding_structural_errors, called unconditionally.
+        errors = contract._system_grounding_structural_errors(
+            {"system_grounding": {"artifacts": [{"kind": "table"}]}})
+        assert errors
+
+
+# ===================================================== freeze-floor-ac-extraction (#142) ==== #
+
+_SPEC_WELL_FORMED = """# feat-test
+
+<!-- normative -->
+- **AC-T-1**: does a thing.
+- **AC-T-2**: does another (realizes AC-T-1 context).
+<!-- /normative -->
+
+## Changelog
+mentions AC-T-99 here but does not define it.
+"""
+
+
+class TestSpecAcIds:
+    def test_definition_scoped_extraction(self, tmp_path):
+        p = tmp_path / "spec.md"
+        p.write_text(_SPEC_WELL_FORMED, encoding="utf-8")
+        ids = authz._spec_ac_ids(str(p))
+        assert ids == ["AC-T-1", "AC-T-2"]
+
+    def test_mentions_are_a_superset_not_fed_into_definitions(self, tmp_path):
+        p = tmp_path / "spec.md"
+        p.write_text(_SPEC_WELL_FORMED, encoding="utf-8")
+        mentions = authz._spec_mention_ac_ids(str(p))
+        defs = authz._spec_ac_ids(str(p))
+        assert "AC-T-99" in mentions
+        assert "AC-T-99" not in defs
+
+    def test_malformed_fences_fall_back_to_whole_body_minus_changelog(self, tmp_path):
+        broken = "<!-- normative -->\n- **AC-B-1**: unterminated fence.\n"
+        p = tmp_path / "spec.md"
+        p.write_text(broken, encoding="utf-8")
+        assert authz._fences_balanced(open(p, "rb").read()) is False
+        ids = authz._spec_ac_ids(str(p))
+        assert ids == ["AC-B-1"]  # extraction still finds the definition via the fallback region.
+
+    def test_ordered_list_form_is_not_recognized(self, tmp_path):
+        p = tmp_path / "spec.md"
+        p.write_text("<!-- normative -->\n1. **AC-N-1**: not a bullet.\n<!-- /normative -->\n",
+                     encoding="utf-8")
+        assert authz._spec_ac_ids(str(p)) == []
+
+
+def test_acceptance_contract_validate_selftest_subprocess():
+    """The contract validator is the SOLE remaining front-authorization freeze-floor proof
+    (per CHANGELOG v0.24.0). Exercise its own real --selftest directly rather than
+    reimplementing its internals."""
+    script = os.path.join(REPO_ROOT, "scripts", "foundry-acceptance-contract-validate.py")
+    proc = subprocess.run([sys.executable, script, "--selftest"], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+# ==================================================== intake-schema-grounding (Atom D) ==== #
+
+class TestIntakeSchemaDefects:
+    def test_noop_when_no_grounding_configured(self, tmp_path):
+        os.makedirs(tmp_path / ".claude", exist_ok=True)
+        defects = intake_grounding.intake_schema_defects(
+            [{"kind": "table", "classification": "net-new", "identifier": "users"}],
+            project_dir=str(tmp_path))
+        assert defects == []  # no grounding source configured -> inert no-op.
+
+    def test_malformed_declared_artifact_surfaced(self, tmp_path):
+        defects = intake_grounding.intake_schema_defects(
+            [{"kind": "not-a-real-kind", "classification": "net-new", "identifier": "x"}],
+            project_dir=str(tmp_path))
+        assert any("malformed declared artifact" in d for d in defects)
+
+    def test_empty_declared_artifacts_is_a_clean_noop(self, tmp_path):
+        assert intake_grounding.intake_schema_defects([], project_dir=str(tmp_path)) == []
+
+
+# ================================================ grounding-conformance-backfill (Atom G) ==== #
+
+class TestClassifyAtom:
+    def test_unconfigured_is_grounded_unconditionally(self):
+        c, errors = grounding_conformance._classify_atom(
+            {"system_grounding": {"artifacts": [{"kind": "bogus"}]}}, _snapshot(configured=False))
+        assert c == grounding_conformance.GROUNDED and errors == []
+
+    def test_no_block_is_ungrounded(self):
+        c, errors = grounding_conformance._classify_atom({}, _snapshot(configured=True))
+        assert c == grounding_conformance.UNGROUNDED and errors == []
+
+    def test_structurally_malformed_block_is_stale(self):
+        data = {"system_grounding": {"artifacts": [{"kind": "table"}]}}  # missing identifier
+        c, errors = grounding_conformance._classify_atom(data, _snapshot(configured=True))
+        assert c == grounding_conformance.STALE and errors
+
+    def test_wellformed_consistent_block_is_grounded(self):
+        data = {"system_grounding": {"artifacts": [
+            {"kind": "table", "identifier": "users", "classification": "exists"}]}}
+        snap = _snapshot(configured=True, entities={"users": {"columns": ["id"]}})
+        c, errors = grounding_conformance._classify_atom(data, snap)
+        assert c == grounding_conformance.GROUNDED and errors == []
+
+    def test_wellformed_inconsistent_block_is_stale(self):
+        data = {"system_grounding": {"artifacts": [
+            {"kind": "table", "identifier": "ghosts", "classification": "exists"}]}}
+        snap = _snapshot(configured=True, entities={"users": {"columns": ["id"]}})
+        c, errors = grounding_conformance._classify_atom(data, snap)
+        assert c == grounding_conformance.STALE and errors
+
+
+class TestValidateSnapshot:
+    def test_valid_snapshot_ok(self):
+        grounding_conformance._validate_snapshot(_snapshot())  # must not raise.
+
+    def test_missing_key_raises(self):
+        with pytest.raises(grounding_conformance.GroundingConformanceError):
+            grounding_conformance._validate_snapshot({"entities": {}, "modules": []})
+
+    def test_non_dict_raises(self):
+        with pytest.raises(grounding_conformance.GroundingConformanceError):
+            grounding_conformance._validate_snapshot("not-a-dict")
+
+
+# ======================================================= system-state-snapshot (Atom A) ==== #
+
+class TestBuildSystemSnapshot:
+    def test_no_project_config_is_inert_noop(self, tmp_path):
+        snap = system_snapshot.build_system_snapshot(project_dir=str(tmp_path))
+        assert snap["grounding_configured"] is False
+        assert snap["schema_grounded"] is False and snap["module_grounded"] is False
+        assert snap["entities"] == {} and snap["modules"] == []
+        assert "signature" in snap
+
+    def test_broken_schema_source_raises_grounding_source_error(self, tmp_path):
+        import json
+        os.makedirs(tmp_path / ".claude", exist_ok=True)
+        with open(tmp_path / ".claude" / "foundry-project.json", "w", encoding="utf-8") as f:
+            json.dump({"grounding": {"schema_source": {"kind": "not-a-real-reader", "path": "x"}}}, f)
+        with pytest.raises(system_snapshot.GroundingSourceError):
+            system_snapshot.build_system_snapshot(project_dir=str(tmp_path))
+
+    def test_signature_is_deterministic(self, tmp_path):
+        s1 = system_snapshot.build_system_snapshot(project_dir=str(tmp_path))
+        s2 = system_snapshot.build_system_snapshot(project_dir=str(tmp_path))
+        assert s1["signature"] == s2["signature"]

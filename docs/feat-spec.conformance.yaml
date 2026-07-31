@@ -1,0 +1,23 @@
+# Conformance spec for an atomic feature spec (feat-*.md) — the industry-grounded template shape
+# (the foundry context kit context/feat-spec-template.md; grounded in industry spec-shape research).
+# ADVISORY producer-side / reviewer check — NOT a hard freeze-floor (proportionate ceremony).
+# Run:  foundry-content-conformance.py --check <spec>.md --spec docs/feat-spec.conformance.yaml [--emit-tokens]
+# Emits per-rule `conformance:<spec>.md:<id>: PASS` for each rule that COMPUTES PASS.
+schema_version: 1
+rules:
+  # Required-core sections (present anywhere in the document; heading match is trimmed).
+  - id: prior-art-present
+    type: section_present
+    heading: "## Prior art / industry grounding"
+    ci: true
+  - id: out-of-scope-present
+    type: section_present
+    heading: "## Out of scope / non-goals"
+    ci: true
+  # The Requirement/Invariant tagging convention should appear (EARS shape). NOTE: the delimited,
+  # hashable `<!-- normative -->` region is NOT checked here — it is an HTML comment (not an ATX
+  # heading, and not word-boundary-matchable by attribution_present), and the freeze-floor
+  # (foundry_contract.spec_normative_bytes) already REQUIRES + hashes it. Advisory scope = sections.
+  - id: requirement-invariant-tagging
+    type: attribution_present
+    pattern: "Invariant"

@@ -1,0 +1,23 @@
+# deploy-targets — ADOPTER-CONFIG for /foundry:deploy-status step-0 identity cross-check.
+#
+# Copy to your adopter workspace as `.foundry/deploy-targets.yaml` and fill concrete values.
+# The plugin ships ONLY this shape + the loader/classifier; no product or repo specifics ship
+# in the plugin. Each target maps the EXPECTED merged-commit identity to WHERE its deployed
+# identity is read, so the checker can surface STALE/NOT-ROLLED when the merged commit never
+# rolled (e.g. a workflow_run-gated build that silently skipped on an upstream CI false-red).
+#
+# The checker is OBSERVE-ONLY: it reads + compares + reports. It does not run deploys. The
+# read-adapter that populates expected_sha / gitops_image_tag / ci_status per target is
+# adopter-side (your `gh`/`argocd`/`kubectl` read commands or CI plumbing).
+
+targets:
+  - name: <app-name>                       # logical app/service name (your label)
+    target_repo: <owner/repo>              # repo whose `main` HEAD is the EXPECTED identity
+    expected_ref: main                     # the ref whose HEAD SHA should be deployed
+    gitops_image_tag_path: <infra-repo-path># where the deployed image.tag is read (gitops manifest)
+    ci_workflow: <ci-workflow-name>        # the workflow_run-gating upstream CI (drives the skip detection)
+
+    # Populated by your read-adapter at check time (left null in the static config):
+    expected_sha: null                     # target_repo@expected_ref HEAD (or build-provenance SHA)
+    gitops_image_tag: null                 # the identity actually deployed
+    ci_status: null                        # upstream CI run status for expected_sha: "success" | other

@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.dev/schemas/audit-ledger-row.schema.json",
+  "title": "Foundry audit-ledger v2 row (feat-foundry-audit-ledger-taxonomy, AC-ALT-1..3)",
+  "description": "One JSONL row in .foundry/audit-ledger.jsonl, written exactly once per §8 audit-engine run at the write boundary (scripts/foundry_audit_ledger.py record_audit_v2). A FLAT verdict enum plus an orthogonal kill_reason field present IF AND ONLY IF verdict='killed' (the CI/SARIF pattern — never a delimited sub-string inside the enum member). v1 (legacy) rows are a DIFFERENT, narrower shape (spec_ref/spec_sha256/rounds/operator/verdict='plateau' only, no schema_version) and are NOT validated against this schema — this schema governs v2 rows only (AC-ALT-4 additive migration).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "ts", "run_id", "tier", "rounds", "findings",
+               "spec_ref", "spec_sha256", "operator", "verdict"],
+  "properties": {
+    "schema_version": {
+      "const": 2,
+      "description": "Discriminates a v2 row from a v1 (legacy, bare-string-verdict) row so readers can dispatch shape deterministically."
+    },
+    "ts": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$",
+      "description": "ISO-8601 UTC timestamp of the write (AC-ALT-2)."
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique identifier for this engine run. The write boundary enforces uniqueness on this field (AC-ALT-3) — a second write bearing an already-recorded run_id is refused. Best-effort env-derived correlation to the session id when present (residual)."
+    },
+    "tier": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The audit-engine model tier/alias this run executed under (e.g. opus|sonnet|haiku|fable — see scripts/foundry-audit-prepare.py ALLOWED_MODEL_ALIASES). Which tier a run reaches is out of this atom's scope; only that every row records the one it ran under."
+    },
+    "rounds": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of §8 audit rounds this run executed. May be 0 for a terminus that never ran a round (e.g. dedupe-skip, refused)."
+    },
+    "findings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["new", "resolved", "open"],
+      "properties": {
+        "new": {"type": "integer", "minimum": 0},
+        "resolved": {"type": "integer", "minimum": 0},
+        "open": {"type": "integer", "minimum": 0}
+      },
+      "description": "Findings counts by disposition for this run (AC-ALT-2)."
+    },
+    "spec_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Repo-relative path to the audited spec (human audit trail)."
+    },
+    "spec_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 of the spec's normative-region content the row is bound to (the content-addressed key /foundry:authorize looks up)."
+    },
+    "operator": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Operator id resolved against .claude/foundry-operators.json, or 'agent:<identity>' when unresolvable (AC-ALT-2 — never silently coerced to a registered alias)."
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["converged", "plateau-clean", "plateau-security", "needs-reground",
+               "needs-operator", "killed", "dedupe-skip", "refused"],
+      "description": "The FLAT discriminating terminus enum (AC-ALT-1). The bare legacy string 'plateau' is NOT a member — v1 rows using it are a different (exempt) shape entirely."
+    },
+    "kill_reason": {
+      "type": "string",
+      "enum": ["watchdog", "limit", "error"],
+      "description": "Present IF AND ONLY IF verdict='killed' (AC-ALT-1). An orthogonal typed field, never a parameterized enum member string."
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"verdict": {"const": "killed"}}, "required": ["verdict"]},
+      "then": {"required": ["kill_reason"]},
+      "else": {"not": {"required": ["kill_reason"]}}
+    }
+  ]
+}

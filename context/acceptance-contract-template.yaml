@@ -1,0 +1,22 @@
+# Acceptance contract — sibling of the spec. The factory's /foundry:authorize freezes +
+# signs this; certification (/foundry:certify-local) exercises its journeys against the
+# running release, and the merge floor (your branch protection + CI) gates the merge. Copy + fill.
+spec_ref: specs/features/<product>/<domain>/<capability>/feat-<...>.md
+spec_sha256: "0000000000000000000000000000000000000000000000000000000000000000"  # /foundry:authorize fills this (spec normative-region hash)
+scope:
+  allowed_paths:          # globset — the candidate diff for this atom MUST be a subset
+    - "src/<area>/**"
+  denied_paths:           # globset — must be disjoint from the diff
+    - "src/**/auth/**"
+checkpoints:
+  # Every AC-ID in the spec's normative region MUST have exactly one checkpoint (bidirectional
+  # coverage). An AC tagged Invariant (always-true) still binds a verifiable checkpoint — it has no
+  # triggered scenario, but its property is asserted here the same way a Requirement's is.
+  - ac_id: AC-<TOKEN>-1   # the spec AC-ID this checkpoint covers (bidirectional coverage required)
+    surface: "api:/<endpoint>"   # api:/… | ui:/<route> | cli:<cmd> | test:<suite> | tofu-plan | fixture:<x>
+    locator: "<the concrete target the certification journey must exercise>"
+    expect:
+      op: count_gte       # non-empty | count_gte | equals | matches — a POSITIVE lower bound
+      value: 1            # count_gte:1 (never :0); equals:<literal>; matches:<non-vacuous regex>
+      baseline: pre-change   # pre-change = attributable (RED on base, GREEN on candidate); >=1 checkpoint MUST be pre-change
+# /foundry:authorize appends the signed `authorized:` trailer below a sentinel (excluded from contract_sha256).

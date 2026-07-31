@@ -1,0 +1,54 @@
+# aws-eks-karpenter — standing-versions platform-anchored compatibility + skew (feat-foundry-standing-
+# versions-matrix, atom ID-SV-1, AC-SVM-2).
+#
+# Platform-anchored (industry consensus, per the research trail §A "Kubernetes version-skew policy" —
+# https://kubernetes.io/releases/version-skew-policy/): compatibility is expressed relative to the
+# control-plane MINOR, not per-component in isolation. `kubernetes_minor` below matches the ratified target
+# this profile validates rendered manifests against (docs/standing-versions.lock.yaml
+# stack_profiles.aws-eks-karpenter.k8s_validation_target: "1.35.0"; kubeconform is invoked
+# `-kubernetes-version 1.35.0` in stack-profile.yaml's `infra_binding.policy` slot).
+#
+# SCOPE (ID-SV-1 boundary — see the spec's normative region): this file proves existence + the
+# `kubernetes_minor` + non-empty `skew` structural tokens + parseability + byte-immutability (AC-SVM-4)
+# ONLY. It does NOT wire any derivation that resolves a `skew` row's component reference against
+# manifest.yaml, checks the `kubernetes_minor` anchor is a well-formed/consistent MAJOR.MINOR, or evaluates
+# whether a declared skew actually satisfies the real K8s version-skew policy arithmetic — that full
+# semantic validation is ID-SV-2/later (the generalized `standing-versions.rego` pin-shape pack). No fresh
+# version research was performed authoring this file; the rows below restate the already-published,
+# well-known K8s version-skew policy + this profile's own AMI-family anchor, not a new researched claim.
+pins_valid_as_of: "2026-07-23"   # AC-SVM-3
+
+kubernetes_minor: "1.35"   # the platform anchor — matches the ratified k8s_validation_target (1.35.0)
+
+skew:
+  # kube-apiserver <-> kubelet — official K8s version-skew policy (kubelet may be UP TO 3 minor versions
+  # older than kube-apiserver as of Kubernetes >=1.28; never newer). Karpenter-provisioned nodes run the
+  # AMI's bundled kubelet, so this bounds how stale a Karpenter EC2NodeClass AMI may drift before the
+  # skew floor is violated.
+  - component: kubelet
+    anchor: kube-apiserver
+    policy: "kubelet_minor >= (kube-apiserver_minor - 3) and kubelet_minor <= kube-apiserver_minor"
+    note: "official K8s version-skew policy (>=1.28); bounds Karpenter AMI/node staleness vs the 1.35 control plane"
+
+  # kube-apiserver <-> kubectl — official K8s version-skew policy (kubectl within one minor, either
+  # direction, of kube-apiserver).
+  - component: kubectl
+    anchor: kube-apiserver
+    policy: "abs(kubectl_minor - kube-apiserver_minor) <= 1"
+    note: "official K8s version-skew policy — the CLI operators/CI use against this cluster"
+
+  # kubeconform's manifest-schema validation target MUST track the same platform anchor this profile
+  # validates rendered manifests against (stack-profile.yaml infra_binding.policy: `kubeconform
+  # -kubernetes-version 1.35.0`) — a mismatched target would validate against the wrong upstream schema set.
+  - component: kubeconform_validation_target
+    anchor: kubernetes_minor
+    policy: "kubeconform_validation_target == kubernetes_minor + '.0'"
+    note: "kubeconform -kubernetes-version must equal the kubernetes_minor anchor's patch-0 form (1.35.0)"
+
+  # the Karpenter-managed node AMI family (EC2NodeClass amiFamily: AL2023) must build/publish a kubelet
+  # compatible with the anchored control-plane minor — the manifest.yaml `ami` pins (alias + ssmParameter
+  # forms) name the concrete pinned subject; this row is the compatibility CLAIM the AMI pin must satisfy.
+  - component: karpenter_ec2nodeclass_ami
+    anchor: kubernetes_minor
+    policy: "ami_kubelet_minor == kubernetes_minor"
+    note: "the pinned AL2023 EKS-optimized AMI (manifest.yaml) must bundle a kubelet matching the 1.35 anchor"

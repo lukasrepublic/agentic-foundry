@@ -1,0 +1,92 @@
+# python-uv-service — a Python ASGI web-service stack profile (feat-foundry-python-stack-profile,
+# atom GP-2). The RUNNABLE half of the Python profile pair: `uv`-driven format/lint/typecheck/build,
+# a pytest test recipe with its own coverage floor, and a `uvicorn` boot recipe + `/healthz` liveness
+# surface — the certification target. `profile_kind: app` is declared explicitly (not left to the
+# absent-kind default) so the pack's kind reads the same way on the page as its sibling library pack's
+# explicit `library` claim. Faithful mid-2026 tooling per the spec's "Prior art / industry grounding":
+# `pyproject.toml` + `src/` layout, `uv` for env/deps/interpreter, `ruff format --check` + `ruff check`
+# for static validation, `mypy` for typecheck, `pytest`/`pytest-cov` for tests. Operator-curated
+# content; validates against schema/stack-profile.schema.json via the shipped loader.
+profile_kind: app
+id: python-uv-service
+version: 0.1.0
+requires_core: ">=0.1"
+
+matches:
+  languages:
+    - python
+  frameworks:
+    - fastapi
+    - starlette
+  package_managers:
+    - uv
+
+architecture:
+  layers:
+    - domain
+    - data
+    - api
+  allowed_dependencies:
+    - from: api
+      to:
+        - data
+        - domain
+    - from: data
+      to:
+        - domain
+    - from: domain
+      to: []
+  conventions_doc: conventions.md
+
+implementation_skills:
+  - skills/implement-python-uv-service.md
+
+static_validation:
+  format: "uv run --locked ruff format --check ."
+  lint: "uv run --locked ruff check ."
+  typecheck: "uv run --locked mypy src"
+  build: "uv build"
+
+test_recipe:
+  unit: "uv run --locked pytest tests/unit --cov=src --cov-report=term-missing --cov-fail-under=80"
+  integration: "uv run --locked pytest tests/integration"
+  e2e: "uv run --locked pytest tests/e2e"
+  coverage_gate: 80
+
+security_checklist: >-
+  No secrets in code (config + secrets from the environment); validate + sanitize every request
+  body at the ASGI edge (pydantic/framework request models); pin + lock every dependency
+  (`uv.lock`, `uv sync --locked` in CI) and every dev-tool version in this profile's pin catalogue;
+  enforce authn/authz on every non-public api route; set secure HTTP headers and a CORS allow-list
+  on the api boundary; never install an unpinned transitive pytest plugin (locked dev-dependencies
+  only — see conventions.md's determinism-hazards note).
+
+performance_checklist: >-
+  Avoid N+1 queries in the data layer (batch/joins); paginate list endpoints; enable HTTP
+  compression + caching headers on api responses; keep the ASGI app's startup/import path lean for
+  a fast cold start; use `uv`'s locked, cached resolution (never an ambient/ad-hoc install) so CI
+  and local dev boot the identical, fast environment.
+
+observability: >-
+  Structured JSON logging with request-id correlation; RED metrics (rate/errors/duration) per api
+  route; the `/healthz` liveness endpoint this profile's `app_exercise_binding` exercises, plus a
+  readiness endpoint for dependency checks; client + server error reporting; trace context
+  propagated across the api -> data boundary.
+
+documentation: >-
+  README with local setup (`uv sync --locked`, `uv run uvicorn app.main:app`) + the boot command;
+  per-layer module docs; OpenAPI/JSON-schema for api routes (FastAPI/Starlette generate this from
+  the typed request/response models); an architecture decision record (ADR) for layering and the
+  dependency-direction choices; inline docstrings on exported domain types.
+
+app_exercise_binding:
+  boot: "uv run --locked uvicorn app.main:app --host 127.0.0.1 --port 8000"
+  surfaces:
+    - kind: api
+      exercise: "GET the ASGI health endpoint at http://127.0.0.1:8000/healthz and assert a 200 JSON {status:ok}."
+
+standing-versions:
+  manifest:
+    path: standing-versions/manifest.yaml
+  compatibility:
+    path: standing-versions/compatibility.yaml

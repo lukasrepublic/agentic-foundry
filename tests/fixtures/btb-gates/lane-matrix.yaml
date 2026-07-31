@@ -1,0 +1,59 @@
+# tests/fixtures/btb-gates/lane-matrix.yaml
+# AC-SCW-10: the INDEPENDENT expectation table tests/test_btb_gates.py drives the REAL
+# `spec-link` job step body (lifted verbatim from .github/workflows/btb-gates.yml and run under
+# `bash`, with `gh` stubbed on PATH) against. Authored SEPARATELY from the workflow — this file
+# does NOT grep the workflow for its own emitted strings, and the test does NOT re-implement the
+# lane-selection logic in Python. Five rows (spec's own enumeration): a `Spec:` trailer body, a
+# `Lane: light` body, a `lane:light` label, a docs-only changed-file list, and a code diff
+# carrying no lane signal.
+rows:
+  - name: spec-trailer
+    pr_body: |
+      Implements the widened absence sweep.
+
+      Spec: specs/features/foundry/governance/subtraction-contract-widening/feat-foundry-subtraction-contract-widening.md
+    labels: []
+    files:
+      - "tests/test_subtraction_absence.py"
+    expect_exit_zero: true
+    expect_summary_contains: "spec-link: PASS — factory lane"
+
+  - name: lane-light-body
+    pr_body: |
+      Lane: light
+
+      Docs-only charter-authorized tweak, no factory spec.
+    labels: []
+    files:
+      - "docs/some-note.md"
+    expect_exit_zero: true
+    expect_summary_contains: "spec-link: PASS (not applicable) — light lane"
+
+  - name: lane-light-label
+    pr_body: |
+      Small charter-authorized fix, labelled instead of trailer-tagged.
+    labels:
+      - "lane:light"
+    files:
+      - "scripts/foundry_dispatch_lint.py"
+    expect_exit_zero: true
+    expect_summary_contains: "spec-link: PASS (not applicable) — light lane"
+
+  - name: docs-only
+    pr_body: |
+      Typo fix, no lane signal, but every changed file is documentation-shaped.
+    labels: []
+    files:
+      - "README.md"
+      - "CHANGELOG.md"
+    expect_exit_zero: true
+    expect_summary_contains: "spec-link: PASS (not applicable) — docs-only diff"
+
+  - name: code-no-signal
+    pr_body: |
+      A code change with no Spec: trailer, no Lane: light body, and no lane:light label.
+    labels: []
+    files:
+      - "scripts/foundry_reconcile.py"
+    expect_exit_zero: false
+    expect_summary_contains: "spec-link: FAIL"

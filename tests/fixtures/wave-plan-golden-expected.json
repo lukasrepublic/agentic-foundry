@@ -1,0 +1,50 @@
+{
+  "atoms": {
+    "core": {
+      "contract_ref": "specs/features/foundry/example/core/acceptance-contract.yaml",
+      "depends_on": [],
+      "journeys": [],
+      "paths": [
+        "src/shared/**"
+      ],
+      "spec_ref": "specs/features/foundry/example/core/feat-core.md",
+      "wave": 0
+    },
+    "widget-a": {
+      "contract_ref": "specs/features/foundry/example/widget-a/acceptance-contract.yaml",
+      "depends_on": [],
+      "journeys": [],
+      "paths": [
+        "src/shared/utils.py"
+      ],
+      "spec_ref": "specs/features/foundry/example/widget-a/feat-widget-a.md",
+      "wave": 1
+    },
+    "widget-b": {
+      "contract_ref": "specs/features/foundry/example/widget-b/acceptance-contract.yaml",
+      "depends_on": [
+        "widget-a"
+      ],
+      "journeys": [
+        "jt-widget-b"
+      ],
+      "paths": [
+        "src/widget-b/**"
+      ],
+      "spec_ref": "specs/features/foundry/example/widget-b/feat-widget-b.md",
+      "wave": 2
+    }
+  },
+  "release_id": "golden",
+  "waves": [
+    [
+      "core"
+    ],
+    [
+      "widget-a"
+    ],
+    [
+      "widget-b"
+    ]
+  ]
+}

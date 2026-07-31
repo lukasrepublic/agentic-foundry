@@ -1,0 +1,33 @@
+{
+  "name": "foundry",
+  "displayName": "Agentic Foundry",
+  "version": "1.0.0",
+  "description": "Governed, spec-driven delivery for agent-built software: spec \u2192 operator authorization \u2192 governed build \u2192 an honestly-tiered merge floor \u2192 certification against the running app \u2192 human sign-off.",
+  "author": {
+    "name": "Lukas Sliwka",
+    "url": "https://github.com/lukasrepublic/agentic-foundry"
+  },
+  "homepage": "https://github.com/lukasrepublic/agentic-foundry",
+  "repository": "https://github.com/lukasrepublic/agentic-foundry",
+  "license": "MIT",
+  "keywords": [
+    "governance",
+    "spec-driven",
+    "agentic",
+    "sdlc",
+    "delivery",
+    "acceptance-contracts",
+    "claude-code"
+  ],
+  "skills": "./skills/",
+  "agents": [
+    "./agents/pr-reviewer.md",
+    "./agents/security-reviewer.md",
+    "./agents/app-engineer.md",
+    "./agents/infra-engineer.md",
+    "./agents/framework-engineer.md",
+    "./agents/qa-engineer.md",
+    "./agents/spec-author.md",
+    "./agents/spec-reviewer.md"
+  ]
+}

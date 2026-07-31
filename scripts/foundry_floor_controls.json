@@ -1,0 +1,33 @@
+{
+  "$comment": "Floor-control registry \u2014 the machine-readable names an acceptance contract's governance basis may cite (schema/acceptance-contract.schema.json requires the cited control to be present here). Rewritten in the GP-1 truth pass: entries state what actually enforces each floor TODAY; retired mechanisms are recorded as retired, not live.",
+  "controls": {
+    "front_authorization": {
+      "status": "live",
+      "enforced_by": "operator authorization (/foundry:authorize freeze) + the factory flow; git history is the ledger"
+    },
+    "merge_floor": {
+      "status": "live",
+      "enforced_by": "the adopter's branch protection + CI checks (Tier A) or always-reporting checks + hooks/foundry-git-discipline.sh (Tier B, labeled advisory) \u2014 see docs/merge-floor.md"
+    },
+    "security_review": {
+      "status": "live",
+      "enforced_by": ".github/workflows/btb-gates.yml security-path routing + the security-reviewer agent pass"
+    },
+    "proprietary_name_leak_gate": {
+      "status": "live",
+      "enforced_by": ".github/actions/leak-gate (ci.yml job)"
+    },
+    "typed_contracts_git_discipline": {
+      "status": "live",
+      "enforced_by": "schema-validated acceptance contracts + hooks/foundry-git-discipline.sh (no force-push, PR-then-merge)"
+    },
+    "live_seam_merge_gate": {
+      "status": "retired",
+      "note": "the bespoke fail-closed merge gate (scripts/foundry_merge_gate.py) was deleted in v0.24.0; kept here so contracts citing it resolve to an honest record"
+    },
+    "admission_gate": {
+      "status": "retired",
+      "note": "scripts/foundry_admission.py was deleted in v0.24.0"
+    }
+  }
+}

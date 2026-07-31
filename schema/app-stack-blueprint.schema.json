@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/lukasrepublic/agentic-foundry/schema/app-stack-blueprint.schema.json",
+  "title": "Foundry App-Stack Blueprint frontmatter",
+  "description": "The frontmatter contract for a granular, profile-scoped PATTERN BLUEPRINT (feat-foundry-app-stack-blueprint). A blueprint is a markdown file with standard ---fenced YAML frontmatter at packs/stack-profiles/<id>/blueprints/<bp-id>/SKILL.md; its body is the generic HOW, parametrized at load-time from the active profile's declarative slots via {{ profile.<dotted-path> }}. Operator-curated machinery (trusted-operator); this schema is a mechanical fail-closed mistake-catcher, not adversary-defense. additionalProperties:false — an unknown frontmatter key is a clear error.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "covers", "parametrizes_from"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "Stable blueprint id (a [a-z0-9-] slug). MUST equal the <bp-id> directory name (enforced by the loader's containment check)."
+    },
+    "covers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1},
+      "description": "The concerns this blueprint addresses (>=1, e.g. [\"unit-testing\"]). Declarative discovery metadata for the deferred blueprint-aware consumer; NOT load-bearing for render/guard here."
+    },
+    "parametrizes_from": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9_]+(\\.[a-zA-Z0-9_]+)*$",
+        "description": "A dotted profile-slot ref WITHOUT a `profile.` prefix (e.g. `test_recipe.unit`). The match key against the body's `{{ profile.<dotted-path> }}` placeholders is the dotted path."
+      },
+      "description": "The profile slots this blueprint binds (MAY be empty). Each entry's resolved scalar value is substituted for the matching `{{ profile.<dotted-path> }}` placeholder; a declared ref absent from the profile, or one never referenced by the body, is a fail-closed render error."
+    }
+  }
+}

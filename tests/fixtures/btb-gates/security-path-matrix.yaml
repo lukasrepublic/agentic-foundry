@@ -1,0 +1,121 @@
+# tests/fixtures/btb-gates/security-path-matrix.yaml
+# AC-SCW-12/-13: the INDEPENDENT expectation table tests/test_btb_gates.py drives the REAL
+# `security-path` job step body (lifted verbatim from .github/workflows/btb-gates.yml and run
+# under `bash`, with `gh` stubbed on PATH) against. The alternation itself is NEVER copied into
+# the test — only these example paths and their expected verdicts are.
+#
+# `rows` — the frozen 6-row matrix named in the sibling acceptance-contract.yaml preamble PLUS
+# (tier-a-ruleset-as-code, AC-TARC-15) 6 more rows: 2 FLAGGED positive rows proving the widened
+# `^rulesets/`/`^scripts/foundry_tier_preflight` arms match this atom's own two new surfaces, and
+# 4 CLEAN anchor-correctness negative-control rows proving those anchors don't over-match a
+# neighbour. Every row omits the `security-reviewed` label, so a FLAGGED row's real verdict is a
+# step failure (exit != 0, "security-path: FAIL") and a CLEAN row's real verdict is a pass
+# ("security-path: PASS (not applicable)").
+rows:
+  - name: flagged-skill-file
+    files:
+      - "skills/foundry-scw-demo/SKILL.md"
+    labels: []
+    expect_flagged: true
+    expect_exit_zero: false
+    expect_summary_contains: "security-path: FAIL"
+
+  - name: flagged-agent-file
+    files:
+      - "agents/foundry-scw-demo.md"
+    labels: []
+    expect_flagged: true
+    expect_exit_zero: false
+    expect_summary_contains: "security-path: FAIL"
+
+  - name: clean-myskills-neighbour
+    files:
+      - "myskills/x/SKILL.md"
+    labels: []
+    expect_flagged: false
+    expect_exit_zero: true
+    expect_summary_contains: "security-path: PASS (not applicable)"
+
+  - name: clean-skillset-neighbour
+    files:
+      - "skillset/notes.md"
+    labels: []
+    expect_flagged: false
+    expect_exit_zero: true
+    expect_summary_contains: "security-path: PASS (not applicable)"
+
+  - name: clean-docs-agents-guide-neighbour
+    files:
+      - "docs/agents-guide.md"
+    labels: []
+    expect_flagged: false
+    expect_exit_zero: true
+    expect_summary_contains: "security-path: PASS (not applicable)"
+
+  - name: clean-docs-agents-dir-neighbour
+    files:
+      - "docs/agents/overview.md"
+    labels: []
+    expect_flagged: false
+    expect_exit_zero: true
+    expect_summary_contains: "security-path: PASS (not applicable)"
+
+  - name: flagged-ruleset-template
+    files:
+      - "rulesets/tier-a-merge-floor.json"
+    labels: []
+    expect_flagged: true
+    expect_exit_zero: false
+    expect_summary_contains: "security-path: FAIL"
+
+  - name: flagged-tier-preflight-cli
+    files:
+      - "scripts/foundry_tier_preflight.py"
+    labels: []
+    expect_flagged: true
+    expect_exit_zero: false
+    expect_summary_contains: "security-path: FAIL"
+
+  - name: clean-docs-rulesets-notes-neighbour
+    files:
+      - "docs/rulesets/notes.md"
+    labels: []
+    expect_flagged: false
+    expect_exit_zero: true
+    expect_summary_contains: "security-path: PASS (not applicable)"
+
+  - name: clean-rulesets-recipes-neighbour
+    files:
+      - "rulesets-recipes/branch.json"
+    labels: []
+    expect_flagged: false
+    expect_exit_zero: true
+    expect_summary_contains: "security-path: PASS (not applicable)"
+
+  - name: clean-foundry-tier-neighbour
+    files:
+      - "scripts/foundry_tier.py"
+    labels: []
+    expect_flagged: false
+    expect_exit_zero: true
+    expect_summary_contains: "security-path: PASS (not applicable)"
+
+  - name: clean-my-foundry-tier-preflight-neighbour
+    files:
+      - "scripts/my_foundry_tier_preflight.py"
+    labels: []
+    expect_flagged: false
+    expect_exit_zero: true
+    expect_summary_contains: "security-path: PASS (not applicable)"
+
+# `widen_only_probe_paths` — AC-SCW-13 (widen-only invariant): real example paths that the
+# PRE-widening alternation already flagged (auth/secret substring, `^hooks/`, `^\.github/`,
+# a supply-chain manifest name), captured from the shipped step body BEFORE this atom's edit
+# (grounded 2026-07-28, GP-2 build). Each is driven against the CURRENT (post-widening) step
+# body and MUST remain flagged — an OR-append-only widening can only grow the matched set.
+widen_only_probe_paths:
+  - "hooks/foundry-env-reap.sh"
+  - ".github/workflows/ci.yml"
+  - "scripts/foundry_authz.py"
+  - "requirements.txt"
+  - "some/secret-store.py"

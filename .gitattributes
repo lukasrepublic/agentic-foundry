@@ -1,0 +1,14 @@
+# Provenance-marker hygiene (feat-foundry-provenance-marker-hygiene, ER #180).
+#
+# The build-provenance marker is tracked-yet-gitignored (see .gitignore) — committed on a feature
+# branch, but never re-created from a clean checkout. Without this line, `git merge origin/main` on
+# a feature branch auto-merges the marker to main's version WITHOUT flagging a conflict, silently
+# replacing the branch's own `spec_ref` / `contract_sha256` with the previously-merged atom's marker
+# — the merge gate then validates the WRONG contract (CHECK-1/1b/4/7 all key off it). `merge=ours`
+# selects git's built-in `ours` merge driver for this path, so a merge KEEPS the current branch's
+# version instead of auto-merging the other side (gitattributes(5), "Defining a custom merge
+# driver" — the built-in `ours` driver; no `.gitattributes` custom-driver definition needed for the
+# built-in name, but the driver still must be enabled via `git config merge.ours.driver true` in
+# whatever repo/clone runs the merge — this is a per-clone git config, not a versioned file, so
+# operators and the drop-in check's --selftest must set it explicitly).
+.foundry/build-provenance.yaml merge=ours

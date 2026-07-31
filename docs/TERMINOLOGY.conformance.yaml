@@ -1,0 +1,34 @@
+# Conformance spec for docs/TERMINOLOGY.md — the doc-atom live-seam (feat-foundry-terminology-standard).
+# Run:  foundry-content-conformance.py --check docs/TERMINOLOGY.md --spec docs/TERMINOLOGY.conformance.yaml --emit-tokens
+# Emits per-rule `conformance:TERMINOLOGY.md:<id>: PASS` for each rule that COMPUTES PASS.
+schema_version: 1
+rules:
+  - id: lexicon-present
+    type: section_present
+    heading: "## 2. The lexicon"
+  - id: grammar-present
+    type: section_present
+    heading: "## 3. The trigger grammar"
+  - id: examples-present
+    type: section_present
+    heading: "## 4. Example prompts per machinery type"
+  - id: naming-present
+    type: section_present
+    heading: "## 5. Library naming standard"
+  - id: playbook-convention-present
+    type: section_present
+    heading: "## 6. The playbook authoring convention"
+  - id: sections-ordered
+    type: section_order
+    headings:
+      - "## 2. The lexicon"
+      - "## 3. The trigger grammar"
+      - "## 4. Example prompts per machinery type"
+      - "## 5. Library naming standard"
+      - "## 6. The playbook authoring convention"
+  - id: playbook-term-defined
+    type: attribution_present
+    pattern: "playbook"
+  - id: verb-object-grammar
+    type: attribution_present
+    pattern: "verb-object"

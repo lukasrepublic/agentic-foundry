@@ -1,0 +1,58 @@
+# python-uv-service — standing-versions pin BOM (feat-foundry-python-stack-profile, atom GP-2).
+#
+# The flat, non-empty bill-of-materials for this profile's version-bearing subjects: every subject
+# resolved to exactly ONE exact pin, each entry carrying a `kind` + that kind's exact-pin shape
+# field. Research pass 2026-07-28, source-verified from vendor documentation and vendor release
+# pages; full trail with access dates and version evidence in
+# docs/research/2026-07-28-python-stack-profile.md (see the spec's "Prior art / industry
+# grounding"). Same seven rows as the sibling python-uv-lib pack's manifest — the pin catalogue is
+# duplicated across the two packs (a recorded residual; the artifact convention is pack-relative,
+# so there is no shared location without inventing one).
+#
+# NO `uvicorn` ROW (deliberate, per the spec's Clarifications): `uvicorn` is a RUNTIME LIBRARY
+# dependency (a range in `pyproject.toml`, frozen exactly by the committed `uv.lock`, enforced by
+# `uv sync --locked`) — the lockfile IS its pin. Only the TOOLCHAIN, whose version changes a
+# verdict, is pinned in this catalogue.
+pins_valid_as_of: "2026-07-28"
+
+pins:
+  # ── python_interpreter — consumed as the committed `.python-version` file (`uv python install`
+  #    honours it in CI; `uv` fetches/manages this interpreter itself, never the ambient system
+  #    Python). A MINOR-line pin (`python_version_file` matches ^[0-9]+\.[0-9]+$) — the manager
+  #    resolves the current patch of that line. ─────────────────────────────────────────────────
+  - kind: python_interpreter
+    subject: cpython
+    python_version_file: "3.13"
+
+  # ── python_requires — consumed as `pyproject.toml`'s `requires-python` metadata. This is the
+  #    ONE row that is a FLOOR by design (`^>=[0-9]+\.[0-9]+$`), not an installed-artifact exact
+  #    pin: it is resolver-consumed library metadata, kept deliberately separate from the exact
+  #    interpreter pin above (two artifacts, two jobs — conflating them is the classic way dev and
+  #    CI drift onto different minors). ─────────────────────────────────────────────────────────
+  - kind: python_requires
+    subject: project-metadata
+    requires_python: ">=3.11"
+
+  # ── pypi_package (uv) — `uv` is NEVER installed as a project dependency (never `pip install
+  #    uv==`); its pin is consumed as the CI setup action's `version:` input (or the standalone
+  #    installer), which is why this row records the PyPI release it names rather than a
+  #    `pip install` step. ──────────────────────────────────────────────────────────────────────
+  - kind: pypi_package
+    subject: uv
+    version: "0.11.33"
+
+  # ── pypi_package (ruff, mypy, pytest, pytest-cov) — dev-dependency-group entries resolved by
+  #    `uv sync --locked` (the lockfile is what makes these pins structurally binding, not just
+  #    advisory — a stale lock errors rather than silently updating). ────────────────────────────
+  - kind: pypi_package
+    subject: ruff
+    version: "0.16.0"
+  - kind: pypi_package
+    subject: mypy
+    version: "2.3.0"
+  - kind: pypi_package
+    subject: pytest
+    version: "9.1.1"
+  - kind: pypi_package
+    subject: pytest-cov
+    version: "7.1.0"

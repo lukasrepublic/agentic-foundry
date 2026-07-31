@@ -1,0 +1,6 @@
+# Dev/test-only dependencies for the pytest suite.
+# Pinned to the current stable exact release (standing-versions discipline, CLAUDE.md).
+pytest==9.1.1
+# Runtime deps of the scripts under test — pinned per standing-versions (research 2026-07-27)
+pyyaml==6.0.2
+jsonschema==4.25.0

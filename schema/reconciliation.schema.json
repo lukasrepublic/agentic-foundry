@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.dev/schema/reconciliation.schema.json",
+  "title": "Foundry reconciliation manifest (.foundry/reconciliation.yaml)",
+  "description": "Atom F (#122, feat-foundry-merge-reconcile-fast-path). A build MAY carry this manifest to declare an EXPLICIT rename-map for the merge-gate's mechanical-reconcile fast-path (never inferred). The gate PROVES the declared map against the frozen system_grounding block + the HEAD live snapshot (scripts/foundry_reconcile.py's 5-clause predicate); a manifest failing THIS schema BLOCKs the merge (fail-closed, AC-MRF-1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reconciliation"],
+  "properties": {
+    "reconciliation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["renames", "provenance"],
+      "description": "The declared rename-map + its human-readable justification.",
+      "properties": {
+        "renames": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Each entry is an EXPLICIT old_identifier -> new_identifier rename the build asserts is a pure mechanical rename of a system_grounding identifier. The gate proves — never infers — the map (Alembic/Django declared-rename discipline).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "old_identifier", "new_identifier"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["table", "column", "fk", "module", "queue", "event", "resource"],
+                "description": "MUST equal both the old identifier's actual kind in the frozen system_grounding block and the new identifier's actual kind in the head snapshot (predicate clause 3)."
+              },
+              "old_identifier": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The identifier as declared in the frozen system_grounding block. Must have disappeared from the head snapshot (predicate clause 1)."
+              },
+              "new_identifier": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The identifier as it now appears in the head snapshot. Must be absent from the frozen system_grounding block (predicate clause 2)."
+              }
+            }
+          }
+        },
+        "provenance": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The migration/reason for the rename (e.g. a migration file name or a one-line justification). Recorded verbatim in the reconcile banner + the durable record (AC-MRF-5)."
+        }
+      }
+    }
+  }
+}

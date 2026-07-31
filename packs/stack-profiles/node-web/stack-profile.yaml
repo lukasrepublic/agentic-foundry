@@ -1,0 +1,84 @@
+# node-web — the FIRST real Foundry stack profile (UL-0012/D4, FACTORY-EVOLUTION-PLAN Phase 2).
+# A Node/TypeScript web stack: Fastify API + Next.js/Vite web, npm/pnpm, Vitest/Playwright.
+# Reverse-engineered from a real production-style stack — faithful commands, not invented.
+# Operator-curated content; validates against schema/stack-profile.schema.json via the shipped loader.
+id: node-web
+version: 0.3.1
+requires_core: ">=0.1"
+
+matches:
+  languages:
+    - typescript
+    - javascript
+  frameworks:
+    - fastify
+    - next.js
+    - vite
+  package_managers:
+    - npm
+    - pnpm
+
+architecture:
+  layers:
+    - domain
+    - data
+    - api
+    - web
+  allowed_dependencies:
+    - from: web
+      to:
+        - api
+    - from: api
+      to:
+        - data
+        - domain
+    - from: data
+      to:
+        - domain
+    - from: domain
+      to: []
+  conventions_doc: conventions.md
+
+implementation_skills:
+  - skills/implement-node-web.md
+
+static_validation:
+  format: "npx prettier --check ."
+  lint: "npx eslint . --max-warnings=0"
+  typecheck: "npx tsc --noEmit"
+  build: "npm run build"
+
+test_recipe:
+  unit: "npx vitest run"
+  integration: "npx vitest run --dir tests/integration"
+  e2e: "npx playwright test"
+  coverage_gate: 80
+
+security_checklist: >-
+  No secrets in code (config + secrets from the environment); validate + sanitize all request
+  bodies at the Fastify edge; pin + audit dependencies (npm audit --production); enforce
+  authn/authz on every non-public api route; set secure HTTP headers (helmet) and CORS allow-list
+  on the web/api boundary.
+
+performance_checklist: >-
+  Avoid N+1 queries in the data layer (batch/joins); paginate list endpoints; enable HTTP
+  compression + caching headers on api responses; code-split + lazy-load heavy web routes; budget
+  the Next.js/Vite bundle size and keep server cold-start fast.
+
+observability: >-
+  Structured JSON logging with request-id correlation (pino); RED metrics (rate/errors/duration)
+  per api route; health + readiness endpoints; client + server error reporting; trace context
+  propagated web -> api -> data.
+
+documentation: >-
+  README with local setup + the boot command; per-layer module docs; OpenAPI/JSON-schema for api
+  routes; an architecture decision record (ADR) for layering/dependency choices; inline TSDoc on
+  exported domain types.
+
+app_exercise_binding:
+  boot: "npm run dev"
+  surfaces:
+    - kind: ui
+      exercise: "GET the Next.js home page at http://localhost:3000/ and assert a 200 with the rendered app shell."
+    - kind: api
+      exercise: "GET the Fastify health endpoint at http://localhost:3001/healthz and assert a 200 JSON {status:ok}."

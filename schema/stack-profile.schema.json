@@ -1,0 +1,214 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/lukasrepublic/agentic-foundry/schema/stack-profile.schema.json",
+  "title": "Foundry Stack Profile",
+  "description": "The declarative, versioned bundle of stack-specific knowledge the generic factory loads once intake establishes the active stack (FACTORY-EVOLUTION-PLAN Phase 2 / §1). Operator-curated machinery (trusted-operator); this schema is a mechanical mistake-catcher, not adversary-defense.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id", "version", "requires_core", "matches", "architecture",
+    "implementation_skills",
+    "security_checklist", "performance_checklist", "observability",
+    "documentation"
+  ],
+  "allOf": [
+    {
+      "comment": "Draft-07-safe conditional (AC-SPIB-1): the if/then toggles ONLY the `required` array. Properties are declared ONCE at top level under the single `additionalProperties:false` above — NEVER re-declared or re-closed in a branch (avoids the draft-07 fail-open/unsatisfiable footgun).",
+      "if": {
+        "properties": {"profile_kind": {"const": "infra"}},
+        "required": ["profile_kind"]
+      },
+      "then": {
+        "required": ["infra_binding"]
+      },
+      "else": {
+        "required": ["static_validation", "test_recipe"]
+      }
+    },
+    {
+      "comment": "AC-PSP-2/3 (feat-foundry-python-stack-profile): the additive `library` kind — a SECOND allOf member, toggling ONLY `required`, exactly the precedent above. `app_exercise_binding` is required only in the `else` of an `infra`-or-`library` test, so `infra` and `library` both drop it from required (infra already had no boot recipe; library is the new no-runtime-surface claim) while an absent or `app` kind is unchanged (ANDed with the member above, still requiring static_validation+test_recipe+app_exercise_binding for app/absent).",
+      "if": {
+        "properties": {"profile_kind": {"enum": ["infra", "library"]}},
+        "required": ["profile_kind"]
+      },
+      "else": {
+        "required": ["app_exercise_binding"]
+      }
+    }
+  ],
+  "properties": {
+    "profile_kind": {
+      "type": "string",
+      "enum": ["app", "infra", "library"],
+      "description": "OPTIONAL discriminator (AC-SPIB-1; extended AC-PSP-2/3 with `library`). Absent ⇒ app (existing profiles, incl. node-web, validate byte-identically). `app` ⇒ the app-shaped static_validation/test_recipe/app_exercise_binding are required; `infra` ⇒ those drop from required and `infra_binding` joins required; `library` ⇒ static_validation+test_recipe stay required but app_exercise_binding drops (an explicit, operator-authored claim of no runtime surface to boot — never inferred). The closed enum {app,infra,library} fails closed on any other value."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$",
+      "description": "Stable profile id (a [a-z0-9-] slug)."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "The pack's OWN semver, independent of the core."
+    },
+    "requires_core": {
+      "type": "string",
+      "pattern": "^>=[0-9]+\\.[0-9]+(\\.[0-9]+)?(,<[0-9]+\\.[0-9]+(\\.[0-9]+)?)?$",
+      "description": "Core-compatibility range: lower-bound-only '>=X.Y[.Z]' (non-speculative, admits any core >= lower — preferred) OR two-bound '>=X.Y[.Z],<X.Y[.Z]' (cap ONLY on a demonstrated incompatibility). Byte-equivalent to foundry-stack-profile.py _parse_range. Enforced at load (D4 guardrail 2)."
+    },
+    "matches": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["languages", "frameworks", "package_managers"],
+      "properties": {
+        "languages": {"type": "array", "items": {"type": "string"}},
+        "frameworks": {"type": "array", "items": {"type": "string"}},
+        "package_managers": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "architecture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["layers", "allowed_dependencies", "conventions_doc"],
+      "properties": {
+        "layers": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        "allowed_dependencies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["from", "to"],
+            "properties": {"from": {"type": "string"}, "to": {"type": "array", "items": {"type": "string"}}}
+          }
+        },
+        "conventions_doc": {"type": "string", "minLength": 1}
+      }
+    },
+    "implementation_skills": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "minItems": 1,
+      "description": "Pointers to skill files the generic worker loads (relative to the profile dir)."
+    },
+    "static_validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "lint", "typecheck", "build"],
+      "properties": {
+        "format": {"type": "string", "minLength": 1},
+        "lint": {"type": "string", "minLength": 1},
+        "typecheck": {"type": "string", "minLength": 1},
+        "build": {"type": "string", "minLength": 1}
+      }
+    },
+    "test_recipe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit", "integration", "e2e", "coverage_gate"],
+      "properties": {
+        "unit": {"type": "string", "minLength": 1},
+        "integration": {"type": "string", "minLength": 1},
+        "e2e": {"type": "string", "minLength": 1},
+        "coverage_gate": {"type": "number", "minimum": 0, "maximum": 100}
+      }
+    },
+    "security_checklist": {"type": "string", "minLength": 1},
+    "performance_checklist": {"type": "string", "minLength": 1},
+    "observability": {"type": "string", "minLength": 1},
+    "documentation": {"type": "string", "minLength": 1},
+    "app_exercise_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["boot", "surfaces"],
+      "properties": {
+        "boot": {"type": "string", "minLength": 1, "description": "The live-seam boot command for this stack (the generic analog of `make dev`)."},
+        "surfaces": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "exercise"],
+            "properties": {
+              "kind": {"type": "string", "enum": ["ui", "api", "cli", "pipeline", "binary"]},
+              "exercise": {"type": "string", "minLength": 1}
+            }
+          }
+        }
+      }
+    },
+    "infra_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "AC-SPIB-2: the IaC lifecycle binding for `profile_kind: infra`. plan/verify/policy are the READ-ONLY slots, apply the MUTATION slot (the read-role guard is enforced by the loader's stack-profile-infra-binding check, not by JSON Schema). Declarative data — the schema neither runs nor (beyond shape) trusts the commands.",
+      "required": ["plan", "apply", "verify", "policy", "gitops_paths", "blast_radius"],
+      "properties": {
+        "plan": {"type": "string", "minLength": 1, "description": "READ-ONLY plan command string (e.g. `tofu plan`)."},
+        "apply": {"type": "string", "minLength": 1, "description": "The MUTATION command string (e.g. `tofu apply`) — posture-gated by the CTX runtime guard."},
+        "verify": {"type": "string", "minLength": 1, "description": "READ-ONLY post-state verify command string (e.g. `kubectl get … --dry-run=server` / `argocd app get`)."},
+        "policy": {"type": "string", "minLength": 1, "description": "READ-ONLY policy-as-code command string (e.g. `conftest test` / `helm template … | conftest`)."},
+        "gitops_paths": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "description": "Path globs naming the ArgoCD-managed manifest paths id-apply's classify_gitops re-derives against. May be empty for a non-GitOps target."
+        },
+        "gitops_enabled": {
+          "type": "boolean",
+          "description": "AC-GOP-1 (ER #89): OPTIONAL explicit GitOps capability toggle. false => GitOps is N/A by DECLARATION for this target (a directly-applied cluster / Helm-only pipeline) — gitops_paths must be EMPTY (a contradiction fails closed at the loader) and the id-* steps drive only the applicable slots. true => GitOps is load-bearing — gitops_paths must be NON-EMPTY (a declared-but-pathless GitOps profile fails closed; no silent skip). ABSENT => the legacy semantics, byte-unchanged."
+        },
+        "work_dirs": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "AC-IDMULTI-1 (FF-3 / ER #57): OPTIONAL per-ROLE working-dir map for the two-CWD command split. The id-* driver runs a slot command's `tofu` part with CWD = work_dirs.infra and its render part (`helm template`/`kustomize build`) with CWD = work_dirs.gitops. RELATIVE paths confined under the active code repo's root — the loader REJECTS an absolute path, a `..` segment, or a resolved escape (containment precedent). ABSENT ⇒ single-dir: every part runs in the one existing CWD (back-compat; existing profiles validate byte-identically).",
+          "properties": {
+            "infra": {"type": "string", "minLength": 1, "description": "Repo-relative dir the `tofu` (plan/validate/output/fmt) part runs in (e.g. `terraform/envs/staging`)."},
+            "gitops": {"type": "string", "minLength": 1, "description": "Repo-relative dir the render part (`helm template`/`kustomize build`) runs in (e.g. `gitops`)."}
+          }
+        },
+        "blast_radius": {
+          "type": "array",
+          "minItems": 1,
+          "description": "MACHINE-EVALUABLE blast-radius tier rules (not free-text). Each rule lets id-impact mechanically match a plan action to a tier. MUST contain ≥1 HIGH rule (enforced by the loader check).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["tier", "action", "resource_type"],
+            "properties": {
+              "tier": {"type": "string", "enum": ["LOW", "MEDIUM", "HIGH"]},
+              "action": {"type": "string", "enum": ["create", "update", "replace", "delete"]},
+              "resource_type": {"type": "string", "minLength": 1},
+              "attr": {"type": "string", "minLength": 1, "description": "Optional attribute qualifier (e.g. an attribute whose change drives the tier)."}
+            }
+          }
+        }
+      }
+    },
+    "standing-versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifest", "compatibility"],
+      "description": "AC-SVM-5 (feat-foundry-standing-versions-matrix, ID-SV-1): the profile's standing-versions/ DATA artifact set (the flat pin BOM + the platform-anchored compatibility file), admitted + typed as a recognized member of an infra profile's contract. OPTIONAL at the schema layer (not added to the profile_kind:infra `then.required` — a synthetic/minimal infra fixture elsewhere in the doctor's own selftest corpus that predates this atom must keep validating unchanged; widening `required` there is an out-of-scope blast this atom does not take). STRUCTURAL TYPING WHEN PRESENT: a profile is schema-INVALID when a DECLARED `standing-versions` member is the wrong JSON type, or a required member key (`manifest.path` / `compatibility.path`) is missing; a profile declaring every required member present and of the schema-declared type validates. For THIS atom's shipped profile (aws-eks-karpenter), the block's actual presence — and the on-disk existence of manifest.yaml/compatibility.yaml — is asserted fail-closed by the AC-SVM-4 certified-content (immutability) step, not by this schema alone: a JSON Schema over the profile DOCUMENT cannot itself require separate on-disk files to exist, and a declared-but-file-missing block is rejected there (scripts/foundry-stack-profile.py `_standing_versions_sha256_of`). Whether each individual pin inside the artifacts is well-formed (pin-shape validation) is a different, deferred concern (ID-SV-2).",
+      "properties": {
+        "manifest": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path"],
+          "description": "The flat pin BOM member (AC-SVM-1) — standing-versions/manifest.yaml.",
+          "properties": {
+            "path": {"type": "string", "minLength": 1, "description": "Profile-dir-relative path to the pin BOM (e.g. standing-versions/manifest.yaml)."}
+          }
+        },
+        "compatibility": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path"],
+          "description": "The platform-anchored compatibility + skew member (AC-SVM-2) — standing-versions/compatibility.yaml.",
+          "properties": {
+            "path": {"type": "string", "minLength": 1, "description": "Profile-dir-relative path to the compatibility file (e.g. standing-versions/compatibility.yaml)."}
+          }
+        }
+      }
+    }
+  }
+}

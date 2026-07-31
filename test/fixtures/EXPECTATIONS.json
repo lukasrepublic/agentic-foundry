@@ -1,0 +1,15 @@
+{
+  "//": "Golden-artifact-fail-closed selftest manifest for foundry-acceptance-contract-validate --selftest. Each must-fail fixture asserts the SPECIFIC freeze floor it violates (a fixture that fails for the wrong reason is itself a defect).",
+  "cases": [
+    {"contract": "golden-valid.yaml",        "spec": "golden-spec.md", "expect_ok": true},
+    {"contract": "empty-checkpoints.yaml",    "expect_ok": false, "expect_error_substr": "NON-EMPTY"},
+    {"contract": "vacuous-count.yaml",        "expect_ok": false, "expect_error_substr": "count_gte must be >=1"},
+    {"contract": "vacuous-matches.yaml",      "expect_ok": false, "expect_error_substr": "vacuous/always-true"},
+    {"contract": "no-baseline.yaml",          "expect_ok": false, "expect_error_substr": "change-attributable"},
+    {"contract": "empty-allowed-paths.yaml",  "expect_ok": false, "expect_error_substr": "allowed_paths must be a non-empty"},
+    {"contract": "overbroad-scope.yaml",      "expect_ok": false, "expect_error_substr": "unbounded whole-repo glob"},
+    {"contract": "orphan-checkpoint.yaml",    "spec": "golden-spec.md", "expect_ok": false, "expect_error_substr": "not in spec"},
+    {"contract": "uncovered-ac.yaml",         "spec": "golden-spec.md", "expect_ok": false, "expect_error_substr": "no checkpoint"},
+    {"contract": "sentinel-injection.yaml",   "expect_ok": false, "expect_error_substr": "integrity"}
+  ]
+}

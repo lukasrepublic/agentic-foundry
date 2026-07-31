@@ -1,0 +1,6 @@
+spec_ref: foundry/test/fixtures/golden-spec.md
+spec_sha256: deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+scope:
+  allowed_paths:
+    - "apps/api/src/routes/search/**"
+checkpoints: []

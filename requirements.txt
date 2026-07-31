@@ -1,0 +1,10 @@
+# Agentic Foundry — Python dependencies for the gate scripts (the same set CI installs).
+# Install with:  pip install -r requirements.txt
+#
+# pyyaml      — acceptance-contract / provenance / wiring YAML parsing (every gate path).
+# jsonschema  — powers acceptance-contract JSON-Schema validation in
+#               scripts/foundry-acceptance-contract-validate.py (via scripts/foundry_contract.py)
+#               and its tests. Optional at import time: absence degrades to a hand-rolled
+#               structural fallback (with a visible warning) rather than failing silently.
+pyyaml
+jsonschema

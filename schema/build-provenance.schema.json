@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.dev/schema/build-provenance.schema.json",
+  "title": "Foundry .foundry/build-provenance.yaml",
+  "description": "The committed per-atom build-provenance marker (a tree-covered file, not PR-body text). Pins the adopter workspace commit each implemented atom was authorized against (cross-repo content-addressed precedence) and carries a LIST of per-atom authorizations (multi-atom PRs recorded per-subject, in-toto/SLSA style). The bespoke emitter and merge-gate revalidator that originally produced/consumed this file were retired in the v0.24.0 subtraction; today it is an adopter-written convention that foundry-deploy-status.py reads as a deploy-identity source.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["foundry_version", "merge_autonomy_mode", "built_at", "authorizations"],
+  "properties": {
+    "foundry_version": {"type": "string", "minLength": 1, "description": "Plugin version that built this (plugin.json)."},
+    "model_pin": {"type": ["string", "null"], "description": "Model id that implemented (incident forensics + model-pin-regression diffing)."},
+    "prompt_hash": {"type": ["string", "null"], "description": "Hash of the implementing prompt, if captured. Best-effort v1."},
+    "merge_autonomy_mode": {"type": "string", "enum": ["regular", "lean"], "description": "Single per PR (the whole PR merges under one mode). Cross-checked by the gate vs the actual merge actor/path."},
+    "built_at": {"type": "string", "minLength": 1, "description": "ISO-8601 UTC. Corroborating-only (§22.6c); the binding ordering proof is the content-addressed pin."},
+    "authorizations": {
+      "type": "array",
+      "minItems": 1,
+      "description": "One entry per authorized atom implemented in this PR.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["spec_ref", "foundry_authorized_against", "spec_sha256", "contract_sha256", "auth_seq"],
+        "properties": {
+          "spec_ref": {"type": "string", "minLength": 1, "description": "Repo-relative spec path (adopter)."},
+          "foundry_authorized_against": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.-]+@[0-9a-f]{7,40}$",
+            "description": "<repo>@<sha> the atom was authorized against — the commit whose tree carries the frozen authorized: block (precedence by construction; the retired gate used to re-fetch and assert this mechanically, reviewers check it today)."
+          },
+          "spec_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "contract_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "auth_seq": {"type": "integer", "minimum": 1},
+          "supersedes": {"type": ["string", "null"], "description": "Prior contract_sha256 this auth superseded, or null."}
+        }
+      }
+    }
+  }
+}

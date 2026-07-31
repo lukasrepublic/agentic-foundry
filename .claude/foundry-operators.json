@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "//": "EXAMPLE operator registry — replace op_example with your real operator id(s) (see /foundry:init). COMMITTED so the merge gate can resolve operator_id at the pinned commit. Any operator_id in an acceptance-contract.yaml authorized: block MUST be a key here or authorization fails closed.",
+  "operators": {
+    "op_example": {
+      "name": "Example Operator",
+      "github": "your-github-handle",
+      "added_at": "2026-01-01"
+    }
+  }
+}

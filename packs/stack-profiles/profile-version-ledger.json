@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "_comment": "Immutable version->content record for shipped stack-profile packs (feat-foundry-profile-version-immutability, v0.13.1; extended feat-foundry-standing-versions-matrix, atom ID-SV-1, AC-SVM-4). Each profile id maps version -> {sha256, blueprints_sha256, standing_versions_sha256}, computed exactly as scripts/foundry-stack-profile.py's resolve_lock/relock compute them (content_sha256 over stack-profile.yaml; _blueprints_sha256_of over the blueprints/ subtree, null when absent; _standing_versions_sha256_of over the standing-versions/{manifest.yaml,compatibility.yaml} pair, null/absent when the profile document does not declare a `standing-versions` block -- e.g. the non-infra node-web profile is never driven RED by this field). INVARIANT (registry-immutability, npm/crates.io/Terraform): a profile's (version) maps to FIXED content; changing a profile's bytes REQUIRES a new version + a new entry here. Enforced fail-closed by scripts/foundry_checks/profile-version-immutability.py at /foundry:doctor time AND (transitively, since release-acceptance runs the candidate doctor) at release-cut. This ledger is the published record: it is APPEND/BUMP-only under review, never re-pinned to silence a mismatch. Introduced in v0.13.1; entries begin at the then-current shipped versions (no fabricated history for the pre-ledger 0.4.0 drift). aws-eks-karpenter 0.5.1->0.5.2: ID-SV-1 adds the standing-versions/ pin BOM + compatibility artifacts and declares them in stack-profile.yaml (schema-typed, AC-SVM-5) -- a real content change, hence the bump + this new registered entry (content_sha256 differs from 0.5.1 because stack-profile.yaml itself now carries the `standing-versions` block; blueprints_sha256 is unchanged because blueprints/ was not touched).",
+  "profiles": {
+    "aws-eks-karpenter": {
+      "0.5.0": {
+        "sha256": "761bf0c5af2ceaab55ac882b69371c605cf477fd874e2f521cb6ba69c3b360f8",
+        "blueprints_sha256": "34683c97b1472bfc15fc61e782bdd306f10e9403709ef1f19f796bd6afa425de"
+      },
+      "0.5.1": {
+        "sha256": "af0387312a2353dcefe2ba148f6073c17eb70e3a0f3888da92b35da131b5cfc9",
+        "blueprints_sha256": "34683c97b1472bfc15fc61e782bdd306f10e9403709ef1f19f796bd6afa425de"
+      },
+      "0.5.2": {
+        "sha256": "a265b7cf1ab5b061ed250d00ac1c896a884a49f0ae65994121ba2c0a895c5f23",
+        "blueprints_sha256": "34683c97b1472bfc15fc61e782bdd306f10e9403709ef1f19f796bd6afa425de",
+        "standing_versions_sha256": "059925c208951cd20974cc5b15a48325e8b0828e646930b09769ae385232fe9c"
+      }
+    },
+    "node-web": {
+      "0.3.0": {
+        "sha256": "839f33af5f2361142130536c54a042031321b07c59d16d0274ec7ca75bc29f1f",
+        "blueprints_sha256": "848520c8e0395924dbe2a2265b6dce159b14bdb72c417efce4ecc3742b9ed8b1"
+      },
+      "0.3.1": {
+        "sha256": "7c896e2044112c70b6568180b3ffe13b8c168af80547b8c31375621fad917b54",
+        "blueprints_sha256": "848520c8e0395924dbe2a2265b6dce159b14bdb72c417efce4ecc3742b9ed8b1"
+      }
+    },
+    "python-uv-lib": {
+      "0.1.0": {
+        "sha256": "77e8da7f21911cfafbf6032620a411c2a907100a32b46f8a02745b0474f8694d",
+        "blueprints_sha256": null,
+        "standing_versions_sha256": "497eb46644389d228e1204dbdd966895a62dedc291e920692205b07f358c0159"
+      }
+    },
+    "python-uv-service": {
+      "0.1.0": {
+        "sha256": "f183a0bf9495eb74ab1c1e0dc458ed05130697d552646507a43075e97c3d7834",
+        "blueprints_sha256": null,
+        "standing_versions_sha256": "82fc06e50e78ba64b0afd61f168e5453e3532e5b50ce8978df137eebbea7c3df"
+      }
+    }
+  }
+}

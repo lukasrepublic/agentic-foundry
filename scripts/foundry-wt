@@ -1,0 +1,207 @@
+#!/usr/bin/env bash
+# foundry-wt — generalized worktree wrapper for multi-repo (workspace <-> product-clone)
+# dispatch (UL-0022). The generalization of a design-partner's .claude/hooks/wt: resolves a
+# repo KEY to its on-disk path via the adopter's .claude/foundry-project.json repos{} inventory
+# (NO hardcoded repo names), creates/attaches a worktree OF the named product repo, and tears it
+# down repo-aware. Consumed by the WorktreeCreate hook (foundry-worktree-create.sh) and the
+# post-merge cleanup (foundry-work-isolation.sh).
+#
+#   foundry-wt resolve <key>                       # print the repo's abs on-disk path (confined)
+#   foundry-wt claim   <key> <task> --as=<agent>   # create-or-attach worktree; print its path
+#   foundry-wt rm      <key> <task> --as=<agent>   # repo-aware teardown (never force)
+#   foundry-wt bind-check <manifest_target_repo> <contract.yaml>   # AC-5 deterministic bind
+#   foundry-wt --selftest
+#
+# Worktree layout (single source, shared with foundry-work-isolation.sh teardown):
+#   <workspace>/.worktrees/<key>/<agent>/<task>   (branch = <agent>/<task>)
+# The worktree DIR lives under the workspace (co-located, gitignored) but is a LINKED worktree of
+# the PRODUCT repo's git — so all git ops target `git -C <product-path>`, not the workspace.
+#
+# target_repo is an EXPLICIT, inventory-validated, authorized KEY — never a path-prefix guess.
+# Resolution is CONFINED to the workspace root (rejects absolute / ../ / symlink-out escapes).
+set -uo pipefail
+
+# --- workspace root (CLAUDE_PROJECT_DIR, else git-common-dir parent, else show-toplevel/pwd) ---
+_ws_root() {
+  if [ -n "${CLAUDE_PROJECT_DIR:-}" ]; then (cd "$CLAUDE_PROJECT_DIR" 2>/dev/null && pwd -P) && return 0; fi
+  local cd
+  cd="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+  if [ -n "$cd" ]; then
+    case "$cd" in /*) : ;; *) cd="$(pwd)/$cd" ;; esac
+    (cd "$(dirname "$cd")" 2>/dev/null && pwd -P) && return 0
+  fi
+  git rev-parse --show-toplevel 2>/dev/null || pwd -P
+}
+
+WS="$(_ws_root)"
+INV="$WS/.claude/foundry-project.json"
+
+_err() { printf 'foundry-wt: %s\n' "$*" >&2; }
+
+# resolve <key> -> abs path (stdout); exit 3 unknown/missing, 4 confinement breach
+_resolve() {
+  local key="$1"
+  if [ "$key" = "workspace" ]; then printf '%s' "$WS"; return 0; fi
+  if [ ! -f "$INV" ]; then _err "inventory not found: $INV"; return 3; fi
+  local rel
+  rel="$(python3 - "$key" "$INV" <<'PY' 2>/dev/null
+import json,sys
+key,inv=sys.argv[1],sys.argv[2]
+try:
+    d=json.load(open(inv))
+except Exception:
+    sys.exit(3)
+r=(d.get("repos") or {}).get(key) or {}
+p=r.get("path")
+if not p:
+    sys.exit(3)
+print(p)
+PY
+)" || { _err "unknown repo key '$key' (absent from $INV repos{})"; return 3; }
+  [ -n "$rel" ] || { _err "unknown repo key '$key' (absent from $INV repos{})"; return 3; }
+  local abs; case "$rel" in /*) abs="$rel" ;; *) abs="$WS/$rel" ;; esac
+  local canon wscanon
+  canon="$(cd "$abs" 2>/dev/null && pwd -P)" || { _err "repo '$key' path does not exist: $abs"; return 3; }
+  wscanon="$(cd "$WS" 2>/dev/null && pwd -P)" || { _err "workspace root unresolved: $WS"; return 3; }
+  case "$canon/" in
+    "$wscanon"/*) : ;;
+    *) _err "repo '$key' path '$canon' escapes workspace root '$wscanon' (confinement)"; return 4 ;;
+  esac
+  printf '%s' "$canon"
+}
+
+# Slug an agent label to a valid git-refname/path segment (ER #90): a plugin-namespaced
+# subagent_type (e.g. foundry:app-engineer) carries a `:` that is illegal in a git refname,
+# which makes `worktree add -b` fail rc=5 and the WorktreeCreate redirect fall through to an
+# UN-isolated worker. Map every char outside [A-Za-z0-9._-] to `-` and strip leading dashes;
+# a label already within the class is returned unchanged (identity — no valid dispatch shifts).
+_safe_agent() { printf '%s' "$1" | LC_ALL=C sed -e 's/[^A-Za-z0-9._-]/-/g' -e 's/^-*//'; }
+
+_branch_of() { printf '%s/%s' "$(_safe_agent "$2")" "$1"; }  # _branch_of <task> <agent> -> <safe-agent>/<task>
+
+cmd_resolve() { local p; p="$(_resolve "$1")" || return $?; printf '%s\n' "$p"; }
+
+cmd_claim() {  # <key> <task> <agent>
+  local key="$1" task="$2" agent; agent="$(_safe_agent "$3")"   # ER #90: slug the label before it becomes a path/ref
+  local product; product="$(_resolve "$key")" || return $?
+  local branch="$agent/$task"
+  local wt="$WS/.worktrees/$key/$agent/$task"
+  if git -C "$wt" rev-parse --is-inside-work-tree >/dev/null 2>&1; then printf '%s\n' "$wt"; return 0; fi
+  mkdir -p "$(dirname "$wt")"
+  if git -C "$product" show-ref --verify --quiet "refs/heads/$branch"; then
+    git -C "$product" worktree add "$wt" "$branch" >/dev/null 2>&1 || { _err "worktree attach failed ($key/$branch)"; return 5; }
+  else
+    git -C "$product" worktree add -b "$branch" "$wt" >/dev/null 2>&1 || { _err "worktree create failed ($key/$branch)"; return 5; }
+  fi
+  printf '%s\n' "$wt"
+}
+
+cmd_rm() {  # <key> <task> <agent> — NEVER force (refuses dirty / unpushed)
+  local key="$1" task="$2" agent; agent="$(_safe_agent "$3")"   # ER #90: same slug as claim, so teardown round-trips
+  local product; product="$(_resolve "$key")" || return $?
+  local branch="$agent/$task"
+  local wt="$WS/.worktrees/$key/$agent/$task"
+  if [ -d "$wt" ]; then
+    if [ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then _err "refusing to remove DIRTY worktree $wt"; return 6; fi
+    git -C "$product" worktree remove "$wt" 2>/dev/null || { _err "worktree remove refused (uncommitted/locked) $wt"; return 6; }
+  fi
+  git -C "$product" branch -d "$branch" 2>/dev/null || true   # -d (not -D): refuses UNMERGED branches
+  git -C "$product" worktree prune 2>/dev/null || true
+  return 0
+}
+
+cmd_bind_check() {  # <manifest_target_repo> <contract.yaml> — AC-5 deterministic bind
+  local mtr="$1" contract="$2"
+  local ctr
+  ctr="$(python3 - "$contract" <<'PY' 2>/dev/null
+import sys,yaml
+try:
+    d=yaml.safe_load(open(sys.argv[1])) or {}
+except Exception:
+    sys.exit(2)
+print((d.get("target_repo") or "").strip())
+PY
+)" || { _err "cannot read contract $contract"; return 2; }
+  if [ -z "$ctr" ]; then _err "contract $contract declares no target_repo (product dispatch requires one)"; return 2; fi
+  if [ "$mtr" != "$ctr" ]; then _err "manifest target_repo '$mtr' != authorized contract target_repo '$ctr'"; return 2; fi
+  return 0
+}
+
+# --------------------------------------------------------------------------- selftest
+_selftest() {
+  local tmp ok=1
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' RETURN
+  local ws="$tmp/ws"; mkdir -p "$ws/.claude"
+  # a product repo as a subdir of the workspace (the gitignored-clone model)
+  git -C "$ws" init -q 2>/dev/null || { git init -q "$ws"; }
+  mkdir -p "$ws/app"; ( cd "$ws/app" && git init -q && git commit -q --allow-empty -m init 2>/dev/null )
+  # a sibling repo OUTSIDE the workspace (to prove confinement fires)
+  mkdir -p "$tmp/outside"; ( cd "$tmp/outside" && git init -q )
+  cat > "$ws/.claude/foundry-project.json" <<JSON
+{ "schema_version": 1, "project": { "workspace_repo": "ws" },
+  "repos": { "app": { "path": "app" }, "escaper": { "path": "../outside" } } }
+JSON
+
+  # ---- AC-MRDISPATCH-1: resolution + confinement ----
+  local r1=1
+  local app_path; app_path="$(CLAUDE_PROJECT_DIR="$ws" "$0" resolve app 2>/dev/null)" || app_path=""
+  local ws_path;  ws_path="$(CLAUDE_PROJECT_DIR="$ws" "$0" resolve workspace 2>/dev/null)" || ws_path=""
+  CLAUDE_PROJECT_DIR="$ws" "$0" resolve bogus >/dev/null 2>&1; local unknown_rc=$?
+  CLAUDE_PROJECT_DIR="$ws" "$0" resolve escaper >/dev/null 2>&1; local escape_rc=$?
+  local wsP; wsP="$(cd "$ws" && pwd -P)"
+  [ "$app_path" = "$wsP/app" ] || { _err "selftest AC-1: app resolved to '$app_path' (want $wsP/app)"; r1=0; }
+  [ "$ws_path" = "$wsP" ]      || { _err "selftest AC-1: workspace resolved to '$ws_path' (want $wsP)"; r1=0; }
+  [ "$unknown_rc" -eq 3 ]      || { _err "selftest AC-1: unknown key rc=$unknown_rc (want 3 fail-closed)"; r1=0; }
+  [ "$escape_rc" -eq 4 ]       || { _err "selftest AC-1: confinement rc=$escape_rc (want 4 fail-closed)"; r1=0; }
+  if [ "$r1" -eq 1 ]; then echo "AC-MRDISPATCH-1 repo-key-resolution-confined: PASS"; else echo "AC-MRDISPATCH-1 repo-key-resolution-confined: FAIL"; ok=0; fi
+
+  # ---- AC-MRDISPATCH-5: manifest==contract bind-check ----
+  local r5=1
+  local c_match="$tmp/c_match.yaml" c_other="$tmp/c_other.yaml" c_none="$tmp/c_none.yaml"
+  printf 'spec_ref: x\ntarget_repo: app\n' > "$c_match"
+  printf 'spec_ref: x\ntarget_repo: infra\n' > "$c_other"
+  printf 'spec_ref: x\n' > "$c_none"
+  "$0" bind-check app "$c_match"  >/dev/null 2>&1; local b_match=$?
+  "$0" bind-check app "$c_other"  >/dev/null 2>&1; local b_other=$?
+  "$0" bind-check app "$c_none"   >/dev/null 2>&1; local b_none=$?
+  [ "$b_match" -eq 0 ] || { _err "selftest AC-5: matching bind rc=$b_match (want 0)"; r5=0; }
+  [ "$b_other" -ne 0 ] || { _err "selftest AC-5: mismatched bind passed (want fail-closed)"; r5=0; }
+  [ "$b_none"  -ne 0 ] || { _err "selftest AC-5: missing-target_repo bind passed (want fail-closed)"; r5=0; }
+  if [ "$r5" -eq 1 ]; then echo "AC-MRDISPATCH-5 target-repo-frozen-authorized-bound: PASS"; else echo "AC-MRDISPATCH-5 target-repo-frozen-authorized-bound: FAIL"; ok=0; fi
+
+  # ---- AC-WTLS-1: plugin-namespaced label sanitized to a valid worktree/ref, claim->rm round-trips ----
+  # On base foundry-wt (no _safe_agent) the `:` in foundry:app-engineer is an illegal git refname
+  # char, so `claim` fails rc=5 with empty stdout and the path assertion below fails (RED). The slug
+  # maps it to foundry-app-engineer, binding a valid worktree + branch, and the matching `rm` tears
+  # both down (symmetric slug on claim/rm) — change-attributable PASS.
+  local rns=1
+  local ns_path; ns_path="$(CLAUDE_PROJECT_DIR="$ws" "$0" claim app t-ns --as=foundry:app-engineer 2>/dev/null)" || ns_path=""
+  case "$ns_path" in
+    *"/.worktrees/app/foundry-app-engineer/t-ns") : ;;
+    *) _err "selftest AC-WTLS: namespaced claim path '$ns_path' (want …/.worktrees/app/foundry-app-engineer/t-ns)"; rns=0 ;;
+  esac
+  git -C "$ws/app" show-ref --verify --quiet "refs/heads/foundry-app-engineer/t-ns" || { _err "selftest AC-WTLS: branch foundry-app-engineer/t-ns not created"; rns=0; }
+  CLAUDE_PROJECT_DIR="$ws" "$0" rm app t-ns --as=foundry:app-engineer >/dev/null 2>&1
+  [ -d "$ns_path" ] && { _err "selftest AC-WTLS: worktree not removed by rm ($ns_path)"; rns=0; } || true
+  git -C "$ws/app" show-ref --verify --quiet "refs/heads/foundry-app-engineer/t-ns" && { _err "selftest AC-WTLS: branch not deleted by rm"; rns=0; } || true
+  if [ "$rns" -eq 1 ]; then echo "AC-WTLS-1 namespaced-label-sanitized-roundtrip: PASS"; else echo "AC-WTLS-1 namespaced-label-sanitized-roundtrip: FAIL"; ok=0; fi
+
+  [ "$ok" -eq 1 ] && echo "FOUNDRY-WT-SELFTEST-GREEN" || { echo "FOUNDRY-WT-SELFTEST-RED"; return 1; }
+}
+
+# --------------------------------------------------------------------------- dispatch
+ACTION="${1:-}"
+case "$ACTION" in
+  --selftest) _selftest ;;
+  resolve)    shift; cmd_resolve "${1:?usage: resolve <key>}" ;;
+  claim)
+    shift; key="${1:?}"; task="${2:?}"; shift 2; agent=""
+    while [ $# -gt 0 ]; do case "$1" in --as=*) agent="${1#--as=}" ;; esac; shift; done
+    : "${agent:?usage: claim <key> <task> --as=<agent>}"; cmd_claim "$key" "$task" "$agent" ;;
+  rm)
+    shift; key="${1:?}"; task="${2:?}"; shift 2; agent=""
+    while [ $# -gt 0 ]; do case "$1" in --as=*) agent="${1#--as=}" ;; esac; shift; done
+    : "${agent:?usage: rm <key> <task> --as=<agent>}"; cmd_rm "$key" "$task" "$agent" ;;
+  bind-check) shift; cmd_bind_check "${1:?manifest_target_repo}" "${2:?contract.yaml}" ;;
+  *) echo "usage: $0 resolve|claim|rm|bind-check|--selftest …" >&2; exit 2 ;;
+esac

@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/lukasrepublic/agentic-foundry/schema/foundry-project.schema.json",
+  "title": "Foundry adopter project inventory (.claude/foundry-project.json)",
+  "description": "The WHAT of an adopter's project: the repo/package inventory generic foundry primitives resolve project-specifics from instead of hardcoding them. Deliberately PERMISSIVE -- this file is inherently project-specific (names, repo paths, boot commands) and adopters extend it freely, so the schema pins the structural spine and the shape of the blocks consumers actually read, not an exhaustive closed vocabulary.",
+  "type": "object",
+  "required": ["schema_version"],
+  "properties": {
+    "schema_version": {"type": "integer", "minimum": 1},
+    "project": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "workspace_repo": {"type": "string"},
+        "description": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "repos": {
+      "type": "object",
+      "description": "Map of repo key -> repo record. Consumers resolve paths and boot recipes from here.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "path": {"type": "string"},
+          "kind": {"type": "string"},
+          "package_manager": {"type": "string"},
+          "boot_command": {"type": "string"},
+          "ci_install": {"type": "string"},
+          "datastores": {"type": "array", "items": {"type": "string"}},
+          "deploy_target": {"type": "string"},
+          "packages": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "path": {"type": "string"},
+                "stack": {"type": "string"},
+                "role": {"type": "string"}
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "gates": {
+      "type": "object",
+      "description": "Adopter-tunable gate knobs, merged over each consumer's shipped defaults.",
+      "properties": {
+        "audit_size": {
+          "type": "object",
+          "additionalProperties": {"type": "integer", "minimum": 1}
+        }
+      },
+      "additionalProperties": true
+    },
+    "github_projects": {
+      "type": "object",
+      "description": "Config-gated, default-OFF project-tracking block.",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

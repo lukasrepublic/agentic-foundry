@@ -1,0 +1,21 @@
+spec_ref: foundry/test/dogfood/feat-dogfood-ping.md
+spec_sha256: 0000000000000000000000000000000000000000000000000000000000000000
+scope:
+  allowed_paths:
+    - "services/ping/**"
+  denied_paths:
+    - "services/**/secrets/**"
+checkpoints:
+  - ac_id: AC-PING-1
+    surface: "api:/ping"
+    locator: "GET /ping"
+    expect: {op: equals, value: '{"ok":true}', baseline: pre-change}
+# === FOUNDRY-AUTHORIZED-TRAILER (excluded from contract_sha256) ===
+authorized:
+  operator_id: op_example
+  authorized_at: 2026-06-05T17:04:31Z
+  auth_seq: 1
+  supersedes: null
+  spec_sha256: 1e72924889b28bc34e6b210e5b9e11df3dcbac344e42624b2f52c1e83ebc342b
+  contract_sha256: 8d9a202d5005638afd2497ea5185f032393fe3d29b872bffbbf11558293b747f
+  merge_autonomy_mode: regular

@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# tests/fixtures/gh-stub/gh — the ONE stubbed `gh` binary the evidence rule (spec
+# feat-foundry-subtraction-contract-widening.md, normative preamble) places FIRST on PATH for
+# every gate-decision checkpoint in this atom: the git-discipline `gh pr merge` clause
+# (AC-SCW-1..5) and the btb-gates.yml `spec-link` / `security-path` step bodies (AC-SCW-10..13).
+#
+# ONE real stub, MANY fixture rows: every scenario is selected by env vars the test sets BEFORE
+# invoking the real hook/step body, never by a test-specific reimplementation of this script.
+# Every invocation is (optionally) journaled to $GH_STUB_LOG so a test can assert `gh` was never
+# called at all (AC-SCW-1: the `--admin` clause must refuse before any query is issued).
+set -u
+
+if [ -n "${GH_STUB_LOG:-}" ]; then
+  printf '%s\n' "$*" >> "$GH_STUB_LOG"
+fi
+
+# Artificial delay — AC-SCW-4 row (v): the query exceeds the git-discipline clause's own 30s
+# `subprocess.run(..., timeout=30)` cap, so the caller sees a real TimeoutExpired.
+if [ -n "${GH_STUB_SLEEP:-}" ]; then
+  sleep "${GH_STUB_SLEEP}"
+fi
+
+case "${1:-}" in
+  pr)
+    case "${2:-}" in
+      checks)
+        # git-discipline.sh's `gh pr checks [<pr_ref>]` query.
+        if [ -n "${GH_STUB_CHECKS_OUTPUT:-}" ]; then
+          printf '%s\n' "${GH_STUB_CHECKS_OUTPUT}"
+        fi
+        exit "${GH_STUB_CHECKS_EXIT:-0}"
+        ;;
+      view)
+        # btb-gates.yml's `gh pr view "$PR" --repo "$REPO" --json body -q .body` (spec-link) or
+        # `... --json labels -q '.labels[].name'` (spec-link + security-path). Dispatched on the
+        # `--json` field name present in argv, not on job identity.
+        if printf '%s\n' "$*" | grep -q -- '--json body'; then
+          printf '%s\n' "${GH_STUB_PR_BODY:-}"
+        elif printf '%s\n' "$*" | grep -q -- '--json labels'; then
+          printf '%s\n' "${GH_STUB_PR_LABELS:-}"
+        fi
+        exit "${GH_STUB_VIEW_EXIT:-0}"
+        ;;
+      *)
+        echo "gh-stub: unrecognized 'gh pr' subcommand: $*" >&2
+        exit 99
+        ;;
+    esac
+    ;;
+  api)
+    # `gh api` request-path DISPATCH (tier-a-ruleset-as-code, additive): scan the remaining argv
+    # for the first `repos/...` token (the endpoint, wherever `gh api`'s flag ordering places it)
+    # and for a `-X <method>` pair (the HTTP method; absent means GET, gh's own default) and the
+    # `--paginate` flag. The shipped `repos/*/pulls/*/files` arm (btb-gates.yml's `spec-link` /
+    # `security-path` steps) is PRESERVED VERBATIM as the fallback so
+    # tests/test_btb_gates.py and tests/test_hooks_guards.py pass unchanged (AC-TARC-13).
+    shift  # drop "api"
+    args=("$@")
+    api_path=""
+    method="GET"
+    paginate=0
+    input_path=""
+    for ((i = 0; i < ${#args[@]}; i++)); do
+      a="${args[i]}"
+      case "$a" in
+        --paginate) paginate=1 ;;
+        -X|--method) method="${args[i+1]:-GET}" ;;
+        --input) input_path="${args[i+1]:-}" ;;
+      esac
+      if [ -z "$api_path" ]; then
+        case "$a" in
+          repos/*) api_path="$a" ;;
+        esac
+      fi
+    done
+
+    # Journal the REQUEST BODY of a `--input <file>` call (the apply POST) so a test can observe
+    # the actual expanded template payload the CLI sent — not just the invocation's argv — without
+    # re-implementing the CLI's own expansion logic (tier-a-ruleset-as-code, AC-TARC-3).
+    if [ -n "${GH_STUB_LOG:-}" ] && [ -n "$input_path" ] && [ -f "$input_path" ]; then
+      printf 'INPUT-BODY: %s\n' "$(cat "$input_path")" >> "$GH_STUB_LOG"
+    fi
+
+    # Path-scoped stall: GH_STUB_SLEEP_SECONDS only fires when GH_STUB_SLEEP_MATCH is an EXACT
+    # match of the resolved endpoint path (not a substring — "repos/{o}/{r}" is itself a prefix
+    # of every other endpoint below it, so a substring match would stall all three), so the
+    # timeout battery can stall exactly ONE of the three endpoints per row (AC-TARC-7 rows vi-viii).
+    if [ -n "${GH_STUB_SLEEP_SECONDS:-}" ] && [ "${api_path}" = "${GH_STUB_SLEEP_MATCH:-}" ]; then
+      sleep "${GH_STUB_SLEEP_SECONDS}"
+    fi
+
+    if [[ "$api_path" =~ ^repos/[^/]+/[^/]+/rules/branches/.+$ ]]; then
+      # The branch-rules probe — the SOLE Tier A evidence (AC-TARC-5).
+      printf '%s\n' "${GH_STUB_PROBE_BODY:-}"
+      if [ -n "${GH_STUB_PROBE_STDERR:-}" ]; then printf '%s\n' "${GH_STUB_PROBE_STDERR}" >&2; fi
+      exit "${GH_STUB_PROBE_EXIT:-0}"
+    elif [[ "$api_path" =~ ^repos/[^/]+/[^/]+/rulesets$ ]]; then
+      # Create (POST) and list (GET, page-aware) share this one path.
+      if [ "$method" = "POST" ]; then
+        printf '%s\n' "${GH_STUB_CREATE_BODY:-}"
+        if [ -n "${GH_STUB_CREATE_STDERR:-}" ]; then printf '%s\n' "${GH_STUB_CREATE_STDERR}" >&2; fi
+        exit "${GH_STUB_CREATE_EXIT:-0}"
+      fi
+      items="${GH_STUB_RULESETS_PAGE1:-}"
+      if [ "$paginate" = "1" ] && [ -n "${GH_STUB_RULESETS_PAGE2:-}" ]; then
+        if [ -n "$items" ]; then
+          items="${items},${GH_STUB_RULESETS_PAGE2}"
+        else
+          items="${GH_STUB_RULESETS_PAGE2}"
+        fi
+      fi
+      printf '[%s]\n' "$items"
+      if [ -n "${GH_STUB_RULESETS_STDERR:-}" ]; then printf '%s\n' "${GH_STUB_RULESETS_STDERR}" >&2; fi
+      exit "${GH_STUB_RULESETS_EXIT:-0}"
+    elif [[ "$api_path" =~ ^repos/[^/]+/[^/]+/pulls/[^/]+/files$ ]]; then
+      # Shipped arm, PRESERVED VERBATIM (AC-TARC-13 non-regression).
+      printf '%s\n' "${GH_STUB_PR_FILES:-}"
+      exit "${GH_STUB_API_EXIT:-0}"
+    elif [[ "$api_path" =~ ^repos/[^/]+/[^/]+$ ]]; then
+      # Bare `repos/{owner}/{repo}` — default_branch (+ visibility, ignored by the CLI).
+      printf '%s\n' "${GH_STUB_REPO_BODY:-}"
+      if [ -n "${GH_STUB_REPO_STDERR:-}" ]; then printf '%s\n' "${GH_STUB_REPO_STDERR}" >&2; fi
+      exit "${GH_STUB_REPO_EXIT:-0}"
+    else
+      # No path resolved (or an unrecognized shape) — fall back to the shipped default arm so any
+      # caller that never set a path-specific fixture var still gets the historical behaviour.
+      printf '%s\n' "${GH_STUB_PR_FILES:-}"
+      exit "${GH_STUB_API_EXIT:-0}"
+    fi
+    ;;
+  *)
+    echo "gh-stub: unrecognized invocation: $*" >&2
+    exit 99
+    ;;
+esac

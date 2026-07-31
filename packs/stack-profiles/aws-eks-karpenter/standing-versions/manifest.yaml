@@ -1,0 +1,64 @@
+# aws-eks-karpenter — standing-versions pin BOM (feat-foundry-standing-versions-matrix, atom ID-SV-1).
+#
+# The flat, NON-EMPTY bill-of-materials for this infra profile's version-bearing subjects (AC-SVM-1): every
+# subject resolved to exactly ONE exact pin, each entry carrying a `kind` + that kind's exact-pin shape
+# field(s). Lifted from the already-RATIFIED workspace dogfood (docs/standing-versions.md +
+# docs/standing-versions.lock.yaml) and this profile's own committed content — NOT freshly researched here
+# (that discipline already ran in the dogfood; this atom maps it into the shipped profile's own catalog).
+#
+# SCOPE (ID-SV-1 boundary — see the spec's normative region): this file proves existence + the top-level
+# `pins:` structural token + parseability + byte-immutability (AC-SVM-4) ONLY. It does NOT wire any
+# derivation that parses a pin VALUE to prove it is a well-formed exact pin of its declared `kind` shape (no
+# `:latest`/floating/range/`@vN`/truncated-ref check) — that semantic pin-shape POLICY validation is the
+# generalized `standing-versions.rego` pack shipped-and-queried in ID-SV-2 (NOT shipped here; see the spec's
+# "Prior art" + "Out of scope" sections). No fresh version research was performed authoring this file.
+#
+# KINDS REPRESENTED (this atom): `github_action` (the factory's own CI supply-chain — the SHA-pinned actions
+# already ratified in docs/standing-versions.lock.yaml `ci_actions`, ID-SV-1's honestly-sourceable action
+# pins for this repo) and `ami` (the Karpenter EC2NodeClass canonical pinned-AMI form set, sourced from this
+# profile's own committed policy testdata convention — packs/stack-profiles/aws-eks-karpenter/policy/testdata
+# /should-flag/rendered-manifests.yaml uses `alias: al2023@v20260601` — plus the AWS-documented
+# version-pinned SSM-parameter form for the same EKS-optimized AMI family, per the research trail's cited
+# AWS SSM public-parameters convention: .foundry/research/version-compatibility-matrix-prior-art.md §C).
+#
+# KINDS DELIBERATELY OMITTED (no ratified dogfood source for THIS profile without fresh research —
+# disclosed, not silently absent): `tf_provider` (no ratified exact hashicorp/aws — or any other provider —
+# version exists in the dogfood; the profile's own opentofu-aws-modules blueprint carries only the FLOATING
+# example `~> 5.0`, which is not an exact pin and would misrepresent AC-SVM-1's exact-pin floor if lifted
+# as-is), `helm_chart` (no ratified Karpenter/ArgoCD chart version in the dogfood), `container_image` (the
+# dogfood's conftest/kubeconform/opentofu pins are TOOLCHAIN CLI binary versions — this profile's
+# `infra_binding.policy`/`plan` slots shell them as CLI tools, not pull them as container images at
+# profile-runtime — so mapping them to `container_image` would misrepresent the kind). A future atom
+# (operator-authored, reviewed) MAY extend this catalog with those kinds once a ratified source exists.
+pins_valid_as_of: "2026-07-23"   # AC-SVM-3 — matches docs/standing-versions.lock.yaml meta.pins_valid_as_of
+
+pins:
+  # ── github_action — this repo's CI supply-chain, SHA-pinned per docs/standing-versions.lock.yaml
+  #    `ci_actions` (already ratified there; `# vX.Y.Z` carried for readability, the SHA is the pin). ──────
+  - kind: github_action
+    subject: actions/checkout
+    uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"   # v5.1.0
+  - kind: github_action
+    subject: actions/setup-python
+    uses: "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065"   # v5.6.0
+  - kind: github_action
+    subject: actions/setup-node
+    uses: "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020"   # v4.4.0
+
+  # ── ami — the canonical pinned-AMI form set (AC-SVM-1 design fork 2) for the Karpenter-managed EKS
+  #    node capacity, anchored to the ratified k8s-1.35 validation target (docs/standing-versions.lock.yaml
+  #    stack_profiles.aws-eks-karpenter.k8s_validation_target). Two forms recorded on separate subjects —
+  #    the `alias` form Karpenter's EC2NodeClass.spec.amiSelectorTerms consumes directly (matching this
+  #    profile's own testdata convention), and a version-pinned `ssmParameter` form (AWS's documented
+  #    non-floating SSM-parameter naming pattern — never the floating `.../standard/recommended/image_id`
+  #    path) as the alternate managed-rollout handle. ID-SV-1 proves only the structural shape is present;
+  #    it does NOT assert the literal value resolves to a real, currently-published AMI — that is out of
+  #    threat model here (operator-authored pin-value correctness) and ID-SV-2's semantic validator. ──────
+  - kind: ami
+    subject: karpenter-ec2nodeclass-al2023-amiSelectorTerms
+    alias: "al2023@v20260601"          # date-versioned alias, never `@latest` — matches policy/testdata's convention
+  - kind: ami
+    subject: eks-optimized-ami-al2023-x86_64-k8s-1.35
+    ssmParameter: "/aws/service/eks/optimized-ami/1.35/amazon-linux-2023/x86_64/standard/amazon-eks-node-1.35-v20260601/image_id"
+    # version-pinned (the dated release segment names a SPECIFIC version) — never the floating
+    # `.../standard/recommended/image_id` path (AWS SSM public-parameters convention).

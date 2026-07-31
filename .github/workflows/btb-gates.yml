@@ -1,0 +1,197 @@
+# btb-gates.yml — the native merge floor's conditional gates (introduced in v0.24.0).
+# NOTE for adopters copying this template: the "merge floor tier" summary line below is a
+# hardcoded label — set this label to match your plan (A where rulesets enforce, B otherwise).
+#
+# THREE ALWAYS-REPORTING gate jobs (a required context that never reports blocks a PR forever —
+# each job always concludes, reporting `not applicable` when its condition doesn't bind):
+#   * spec-link          — floor #1 as CI: a factory-lane PR must name its authorizing spec
+#                          (`Spec:` trailer in the PR body); light-lane and docs-only PRs are
+#                          not-applicable. Replaces the provenance-marker chain as the lane signal.
+#   * security-path      — floor #3 routing as CI: a diff touching auth/secrets/supply-chain paths
+#                          requires the `security-reviewed` label (posted after a security-reviewer
+#                          subagent pass); clean diffs are not-applicable.
+#   * shell-parse-bash32 — bash32-parse-guard (feat-foundry-bash32-parse-guard, AC-B32-4..8,10,12):
+#                          runs `bash -n` under a digest-pinned, version-asserted bash 3.2
+#                          container over every git-tracked `*.sh`, DISCOVERED (never enumerated),
+#                          so a file that parses under the runner's modern bash but not under the
+#                          bash 3.2 macOS still ships as `/bin/bash` cannot ship unnoticed. Always
+#                          runs (no `if:`), fails closed on any parse failure. Tier B, advisory,
+#                          same as its two siblings.
+#
+# MERGE-FLOOR TIER (preflight 2026-07-27): this repo is PRIVATE on a Free personal plan —
+# rulesets/branch protection are unavailable (API 403), so these checks are TIER B: ADVISORY.
+# They always run and report; server-side enforcement arrives if the repo goes Pro/public
+# (Tier A). The local floor is the workspace deny rules + the git-discipline hook.
+# TIER-A PRECONDITIONS (recorded per the 2026-07-27 floor-#3 review, findings 5/8): before
+# these gates are load-bearing on a public repo, add branch protection + required checks +
+# CODEOWNERS on .github/, prefer label-only lane signals (a fork author controls the PR body),
+# and strip the review label on synchronize (stale-label TOCTOU) — the label is advisory
+# under the trusted-operator model until then.
+# E2E-journeys gate: not present for this repo (no app runtime); the adopter template ships
+# with the Phase-5 certification path.
+#
+# Checkout: `spec-link` and `security-path` remain pure-API (gh) — no repo code is fetched or
+# executed there (floor-#3 review finding 6: no token-in-.git/config, no fetch-and-execute).
+# `shell-parse-bash32` DOES check out the repo (feat-foundry-bash32-parse-guard, AC-B32-12) — a
+# parse gate over the repository's own shipped scripts cannot avoid it. The reversal is bounded:
+# `persist-credentials: false`, a job-level `permissions: contents: read` (no `pull-requests:
+# read`), the unchanged `pull_request` trigger (never `pull_request_target`, so fork code never
+# runs with a privileged token), and a read-only bind mount into the bash-3.2 container with
+# `-n` — the scripts are PARSED, never executed. The next floor-#3 review should re-examine
+# finding 6 against this job specifically.
+name: btb-gates
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  spec-link:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: spec-link gate (always reports)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          body="$(gh pr view "$PR" --repo "$REPO" --json body -q .body)"
+          labels="$(gh pr view "$PR" --repo "$REPO" --json labels -q '.labels[].name')"
+          files="$(gh api --paginate "repos/${REPO}/pulls/${PR}/files" -q '.[].filename')"
+          summary() { printf '%s\n' "$1" >> "$GITHUB_STEP_SUMMARY"; printf '%s\n' "$1"; }
+          summary "**merge floor tier: B (advisory)** — private repo, Free plan; checks report, server does not enforce"
+          if printf '%s\n' "$body" | grep -qE '^Spec: .+'; then
+            spec_ref="$(printf '%s\n' "$body" | grep -E '^Spec: ' | sed -n '1p' | tr -cd '[:alnum:]/._ :-' | cut -c1-200)"
+            summary "spec-link: PASS — factory lane, ${spec_ref}"
+          elif printf '%s\n' "$body" | grep -qiE '^Lane: light' || printf '%s\n' "$labels" | grep -qxF 'lane:light'; then
+            summary "spec-link: PASS (not applicable) — light lane (charter-authorized)"
+          elif ! printf '%s\n' "$files" | grep -qvE '\.(md|txt|png|svg|pdf)$'; then
+            summary "spec-link: PASS (not applicable) — docs-only diff"
+          else
+            summary "spec-link: FAIL — code diff with no lane signal. Add 'Spec: <workspace spec path>' (factory) or 'Lane: light' + a charter (light) to the PR body."
+            exit 1
+          fi
+
+  security-path:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: security-path gate (always reports)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          files="$(gh api --paginate "repos/${REPO}/pulls/${PR}/files" -q '.[].filename')"
+          labels="$(gh pr view "$PR" --repo "$REPO" --json labels -q '.labels[].name')"
+          summary() { printf '%s\n' "$1" >> "$GITHUB_STEP_SUMMARY"; printf '%s\n' "$1"; }
+          summary "**merge floor tier: B (advisory)** — private repo, Free plan; checks report, server does not enforce"
+          # Security-surface paths (floor-#3 review findings 1/4: UNANCHORED keyword substrings —
+          # foundry_authz.py, authorization checks etc. must match — plus .github/ wholesale,
+          # hooks/, plugin manifests, shipped version pins/policy, dependency manifests).
+          # GP-2 widening (AC-SCW-12/-13, security review required): `^skills/` and `^agents/`
+          # added, WHOLESALE (a skill/agent file is prompt-level executable surface — a stale
+          # deleted-module mention or a behaviour edit there is not distinguishable from a typo
+          # fix by file type). Both new arms are ANCHORED (`^`) so `myskills/`, `skillset/`,
+          # `docs/agents-guide.md` and `docs/agents/overview.md` stay clean — see the
+          # negative-control rows in tests/fixtures/btb-gates/security-path-matrix.yaml. This is
+          # an OR-append only: every existing alternative above is unchanged, so every
+          # previously-flagged path stays flagged (widen-only, AC-SCW-13). Expected volume +
+          # revisit trigger recorded in the spec's Residuals section.
+          # tier-a-ruleset-as-code widening (AC-TARC-15, security review required): `^rulesets/`
+          # and `^scripts/foundry_tier_preflight` appended so THIS ATOM's own two new surfaces —
+          # the shipped merge-floor ruleset template and the preflight/apply CLI that holds an
+          # Administration (write) token on its --apply path — are mechanically floor-#3-routed
+          # forever, not just today by operator memory. Both new arms are ANCHORED so
+          # `docs/rulesets/notes.md`, `rulesets-recipes/branch.json`, `scripts/foundry_tier.py`,
+          # and `scripts/my_foundry_tier_preflight.py` stay clean — see the negative-control rows
+          # in tests/fixtures/btb-gates/security-path-matrix.yaml. OR-append only, same discipline
+          # as the GP-2 widening above (widen-only, AC-TARC-15).
+          hits="$(printf '%s\n' "$files" | grep -E '(auth|secret|credential|token|provenance|signing|\.rego$)|^\.github/|^hooks/|^\.claude-plugin/|(^|/)(standing-versions|profile-version-ledger)|(^|/)(requirements[^/]*\.txt|package(-lock)?\.json|pyproject\.toml|Pipfile[^/]*|go\.(mod|sum)|Cargo\.(toml|lock))$|^skills/|^agents/|^rulesets/|^scripts/foundry_tier_preflight' || true)"
+          if [ -z "$hits" ]; then
+            summary "security-path: PASS (not applicable) — no auth/secrets/supply-chain path in the diff"
+          elif printf '%s\n' "$labels" | grep -qxF 'security-reviewed'; then
+            summary "security-path: PASS — security-flagged paths present AND 'security-reviewed' label posted (floor #3 review recorded)"
+            printf 'flagged paths:\n%s\n' "$hits"
+          else
+            summary "security-path: FAIL — diff touches security surfaces with no 'security-reviewed' label. Run the security-reviewer pass, then label the PR."
+            printf 'flagged paths:\n%s\n' "$hits"
+            exit 1
+          fi
+
+  shell-parse-bash32:
+    # feat-foundry-bash32-parse-guard, AC-B32-4..8,10,12. Always runs (no `if:`); fails closed
+    # (no `continue-on-error`) on any of: a mis-resolved image, a collapsed discovery, or a real
+    # bash-3.2 parse failure. Discovery, never enumeration: the covered set is derived from
+    # `git ls-files` at run time, so a newly added shipped shell script is covered with no edit
+    # to this job.
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout (read-only; a parse gate over the repo's own files cannot avoid it)
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: bash-3.2 parse gate (always reports)
+        run: |
+          set -euo pipefail
+          # Bash 3.2 pin — the version Apple still ships as /bin/bash on macOS. RESOLVED and
+          # VERIFIED by pulling the image (2026-07-28): BASH_VERSION 3.2.57(1)-release; the image
+          # carries no python3. Fully-qualified canonical form, pinned by immutable digest — the
+          # human tag (bash:3.2) never appears in an executable position, only here as a comment.
+          IMG="docker.io/library/bash@sha256:3a13e5da38baa575985778cd09ce8ac736d4b4dafc91a430e71271f6e5311b89"
+
+          summary() { printf '%s\n' "$1" >> "$GITHUB_STEP_SUMMARY"; printf '%s\n' "$1"; }
+          summary "**merge floor tier: B (advisory)** — private repo, Free plan; checks report, server does not enforce"
+
+          # AC-B32-10: a digest pins immutability, not identity — a digest resolved off a
+          # modern-bash tag would make every checkpoint here pass while checking nothing it
+          # claims to. Assert the resolved image really reports bash 3.2 before trusting it for
+          # anything below; reject and stop rather than run `bash -n` under the wrong interpreter.
+          version_line="$(docker run --rm --entrypoint bash "$IMG" --version | head -1)"
+          case "$version_line" in
+            *"version 3.2"*) : ;;
+            *)
+              summary "shell-parse-bash32: FAIL — resolved image does not report bash 3.2 (${version_line})"
+              exit 1
+              ;;
+          esac
+
+          # AC-B32-6: discovery, never enumeration — the job body names no shell-script filename.
+          # Per-directory minima guard a collapsed discovery query (an empty/short covered set is
+          # itself a failure: a gate that checks nothing must not report green); the ACTUAL
+          # covered set driven through `bash -n` below is the full shipped-shell-script set,
+          # a strict superset of the two directories the minima bound.
+          hook_count="$(git ls-files hooks | grep -c -e '[.]sh$' || true)"
+          script_count="$(git ls-files scripts | grep -c -e '[.]sh$' || true)"
+          if [ "${hook_count:-0}" -lt 11 ]; then
+            summary "shell-parse-bash32: FAIL — discovery found only ${hook_count:-0} hooks/*.sh (minimum 11) — discovery collapsed"
+            exit 1
+          fi
+          if [ "${script_count:-0}" -lt 5 ]; then
+            summary "shell-parse-bash32: FAIL — discovery found only ${script_count:-0} scripts/*.sh (minimum 5) — discovery collapsed"
+            exit 1
+          fi
+
+          failures=0
+          parsed=0
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            parsed=$((parsed + 1))
+            if ! docker run --rm --entrypoint bash -v "$PWD:/src:ro" -w /src "$IMG" -n "/src/$f"; then
+              summary "shell-parse-bash32: FAIL — ${f} does not parse under bash 3.2"
+              failures=$((failures + 1))
+            fi
+          done < <(git ls-files | grep -e '[.]sh$')
+
+          if [ "$failures" -gt 0 ]; then
+            summary "shell-parse-bash32: FAIL — ${failures} of ${parsed} shipped shell script(s) failed to parse under bash 3.2 (tier B, advisory — reports, does not server-side block on this repo's current plan)"
+            exit 1
+          fi
+          summary "shell-parse-bash32: PASS — all ${parsed} shipped shell script(s) parse under bash 3.2 (tier B, advisory — reports, does not server-side block on this repo's current plan)"

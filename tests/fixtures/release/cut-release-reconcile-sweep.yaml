@@ -1,0 +1,178 @@
+# tests/fixtures/release/cut-release-reconcile-sweep.yaml
+# Mirrors VERBATIM the "FROZEN SWEEP DEFINITION" preamble of the sibling
+# specs/features/foundry/release/cut-release-reconcile/acceptance-contract.yaml
+# (AC-CRRC-1..8). This is the SINGLE fixture tests/test_cut_release_reconcile.py reads — the
+# sweep's token set, surface set, allowlist, disclosure matrix, hook-comment expectation,
+# preflight expectation and operator-registry shape are hash-frozen with the contract.
+#
+# This sweep's SUBJECT is claim tokens (retired-wiring-machinery prose), deliberately disjoint
+# from tests/fixtures/subtraction/deleted-module-sweep.yaml's subject (deleted MODULE
+# identifiers) — see the spec's Clarifications. The two fixtures are never merged.
+
+# surface_set — the SEVEN enumerated shipped surfaces (explicit paths, not globs).
+surface_set:
+  - 'scripts/foundry-cut-release.py'
+  - 'scripts/foundry-release-acceptance.py'
+  - 'scripts/foundry-bootstrap.sh'
+  - 'skills/cut-release/SKILL.md'
+  - 'skills/release/SKILL.md'
+  - 'skills/init/SKILL.md'
+  - 'hooks/foundry-git-discipline.sh'
+
+# token_set — ERE alternation, one pattern per list item. The retired-wiring claim family plus
+# the two owed-follow-up markers. Deliberately disjoint in purpose from the deleted-module sweep's
+# module-identifier tokens.
+token_set:
+  - 'WIRING_FILES'
+  - 'PINHEAL'
+  - 'write[- ]pin'
+  - 'write[- ]manifest'
+  - 'wiring[- ]manifest'
+  - 'wiring[_-]hash\.pin'
+  - 'wiring[- ]pin'
+  - 'wiring[- ]hash'
+  - 'branch-protection'
+  - 'needs (its own|a dedicated) follow-up'
+  - 'flagged honestly'
+
+# zero_occurrence_surfaces — the FOUR of the seven surfaces expected to carry ZERO occurrences of
+# any frozen token (the strong claim); any hit the build finds there must be fixed, never
+# allowlisted.
+zero_occurrence_surfaces:
+  - 'scripts/foundry-cut-release.py'
+  - 'scripts/foundry-release-acceptance.py'
+  - 'scripts/foundry-bootstrap.sh'
+  - 'hooks/foundry-git-discipline.sh'
+
+# allowlist — every occurrence the sweep finds over (surface_set x token_set) is covered by
+# exactly one entry below: `path` (must resolve in the candidate tree), `token` (must be a
+# member of token_set, verbatim), `reason` (non-empty, states the occurrence is a retired
+# disclosure or live-and-accurate prose, never an instruction to perform a retired step).
+# Grounded against the real (post-reconcile) tree, 2026-07-28: every entry below was verified by
+# actually running the sweep over the shipped tree.
+allowlist:
+  - path: skills/release/SKILL.md
+    token: 'wiring[- ]pin'
+    reason: >-
+      The "Gate-wiring pin & manifest — RETIRED (historical note)" tombstone section names the
+      retired mechanism; a retirement disclosure, not an instruction to perform a retired step.
+  - path: skills/release/SKILL.md
+    token: 'wiring[- ]hash'
+    reason: >-
+      Same tombstone section, naming foundry-wiring-hash.py and the retired doctor check; a
+      retirement disclosure.
+  - path: skills/release/SKILL.md
+    token: 'wiring[_-]hash\.pin'
+    reason: >-
+      Same tombstone section, naming the retired .foundry/wiring-hash.pin file; a retirement
+      disclosure.
+  - path: skills/release/SKILL.md
+    token: 'wiring[- ]manifest'
+    reason: >-
+      Same tombstone section, naming the retired .claude-plugin/wiring-manifest.json file; a
+      retirement disclosure.
+  - path: skills/cut-release/SKILL.md
+    token: 'wiring[- ]pin'
+    reason: >-
+      The single consolidated "Retired" disclosure names the retired wiring-pin migrate
+      step; a retirement disclosure, not an instruction to perform it.
+  - path: skills/cut-release/SKILL.md
+    token: 'wiring[- ]hash'
+    reason: >-
+      Same consolidated disclosure, naming foundry-wiring-hash.py and the doctor's retired
+      wiring-hash check; a retirement disclosure.
+  - path: skills/cut-release/SKILL.md
+    token: 'wiring[_-]hash\.pin'
+    reason: >-
+      Same consolidated disclosure, naming the retired .foundry/wiring-hash.pin file; a
+      retirement disclosure.
+  - path: skills/init/SKILL.md
+    token: 'wiring[- ]pin'
+    reason: >-
+      Step 8's settled one-liner records that there is nothing left to pin, in the same sentence
+      that names foundry-wiring-hash.py's retirement; a retirement disclosure.
+  - path: skills/init/SKILL.md
+    token: 'wiring[- ]hash'
+    reason: >-
+      Step 8's settled one-liner names foundry-wiring-hash.py and the doctor's retired
+      wiring-hash check; a retirement disclosure.
+  - path: skills/init/SKILL.md
+    token: 'branch-protection'
+    reason: >-
+      Step 4's own section is titled "Branch-protection-as-code — RETIRED, Tier A pending a
+      rebuild" and accurately describes today's Tier B advisory floor; live-and-accurate prose,
+      not stale.
+
+# disclosure_matrix (AC-CRRC-3) — one row per prose surface, each naming the three required
+# elements a conformant retired disclosure must carry, authored independently of the prose it
+# checks.
+disclosure_matrix:
+  - path: skills/release/SKILL.md
+    mechanism: 'foundry-wiring-hash.py'
+    release: 'RETIRED'
+    load_bearer: 'source.sha'
+    closure_token: 'reconcile'
+    closure_token_2: 'complete'
+  - path: skills/cut-release/SKILL.md
+    mechanism: 'foundry-wiring-hash.py'
+    release: 'Retired'
+    load_bearer: 'foundry-release-acceptance'
+  - path: skills/init/SKILL.md
+    mechanism: 'foundry-wiring-hash.py'
+    release: 'Retired'
+    load_bearer: 'DOCTOR-GREEN'
+
+# forbidden_deferral_tokens — applied to ALL SEVEN surfaces; no surface may defer to a follow-up.
+forbidden_deferral_tokens:
+  - 'needs (its own|a dedicated) follow-up'
+  - 'flagged honestly'
+
+# hook_comment_expectation (AC-CRRC-8) — the git-discipline hook's CONFIG SOURCE comment.
+hook_comment_expectation:
+  forbidden_claim_fragments:
+    - 'wiring-hash-covered'
+    - 'edited only at the out-of-session wiring layer'
+  required_coverage_fragments:
+    - 'hooks.json'
+    # MAINTENANCE NOTE (security review, PR #281): the fragments below are
+    # absence-of-stale-claim expectations that hold ONLY while the mechanism stays
+    # retired. If a real integrity check for hooks.json is ever built, the correct
+    # response is to EDIT THIS FIXTURE to match the new truth — never to delete
+    # accurate prose from the hook so a frozen token sweep keeps passing.
+    - 'no mechanical integrity check'
+    - 'security-path'
+  # sha256 of the PRE-CHANGE shipped hook's EXECUTABLE CONTENT (full-line comments stripped,
+  # shebang retained), recorded by the build from the pre-edit file (git show origin/main).
+  executable_content_sha256: 'd1e63157dcb6cc285718ed0ba2e2e51a1c6fad3ad09ee04cadc99db43b0c83ca'
+
+# operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
+operator_registry_shape:
+  schema_version_type: int
+  operators_type: mapping
+
+# preflight_expectation (AC-CRRC-6) — the four check names the shipped preflight() returns, and
+# the forbidden-claim tokens its docstrings must not carry.
+preflight_expectation:
+  expected_preconditions:
+    - 'plugin.json version == target'
+    - 'marketplace.json version == target (bump BOTH manifests)'
+    - 'marketplace source.ref == vTARGET'
+    - 'CHANGELOG.md has the ## vTARGET section'
+  forbidden_claim_tokens:
+    - 'wiring-pin'
+    - 'merge-gate'
+    - 'wiring-hash'
+
+# deadness_evidence (AC-CRRC-4) — asserted directly.
+deadness_evidence:
+  tree_pin_path: '.foundry/wiring-hash.pin'
+  doctor_script: 'scripts/foundry-doctor.py'
+
+# sibling_sweep_source (AC-CRRC-7) — WHERE the non-regression expectation is read from (never
+# restated here). The three enumerated skill surfaces whose entries must stay non-vacuous are
+# looked up in that file's `allowlist`.
+sibling_sweep_fixture: 'tests/fixtures/subtraction/deleted-module-sweep.yaml'
+sibling_sweep_lookup_paths:
+  - 'skills/cut-release/SKILL.md'
+  - 'skills/init/SKILL.md'
+  - 'skills/release/SKILL.md'

@@ -1,0 +1,17 @@
+spec_ref: foundry/test/fixtures/golden-spec.md
+spec_sha256: deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+scope:
+  allowed_paths:
+    - "apps/api/src/routes/search/**"
+    - "apps/web/app/search/**"
+  denied_paths:
+    - "apps/**/auth/**"
+checkpoints:
+  - ac_id: AC-API-1
+    surface: "api:/v1/search"
+    locator: "POST /v1/search {q:'sedan under 20k'}"
+    expect: {op: count_gte, value: 1, baseline: pre-change}
+  - ac_id: AC-UI-1
+    surface: "ui:/search"
+    locator: "[data-testid=result-card]"
+    expect: {op: count_gte, value: 1, baseline: none}

@@ -1,0 +1,50 @@
+# should-flag — the LIVE POSITIVE control (AC-KPP-4).
+#
+# A rendered MULTI-DOCUMENT manifest, exactly as the profile's `plan:` slot produces it
+# (`helm template gitops/ > rendered/manifests.yaml`). Driven through the SHIPPED invocation:
+#   conftest test -o json --policy packs/stack-profiles/aws-eks-karpenter/policy <this file>
+#
+# EXPECTED: warnings[] carrying karpenter_uncapped_percentage_budget AND karpenter_disruption_change
+# (plus karpenter_expire_after, karpenter_capacity_type, karpenter_ami_change). NO failures.
+#
+# Before feat-foundry-karpenter-policy-pack-inert-input-shape this fixture produced ZERO warnings — the
+# pack was inert. If this file ever greens with only `successes`, the pack has gone dead again.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-settings
+  namespace: platform
+data:
+  tier: "prod"
+---
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: default
+spec:
+  amiFamily: AL2023
+  amiSelectorTerms:
+    - alias: al2023@v20260601
+  role: KarpenterNodeRole-platform
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: general-purpose
+spec:
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+    consolidateAfter: 1m
+    budgets:
+      - nodes: "10%"
+  template:
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default
+      expireAfter: 720h
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["spot", "on-demand"]

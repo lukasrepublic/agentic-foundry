@@ -1,0 +1,14 @@
+spec_ref: foundry/test/fixtures/golden-spec.md
+spec_sha256: deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+scope:
+  allowed_paths:
+    - "apps/api/src/routes/search/**"
+checkpoints:
+  - ac_id: AC-API-1
+    surface: "api:/v1/search"
+    locator: "POST /v1/search"
+    expect: {op: count_gte, value: 1, baseline: pre-change}
+  - ac_id: AC-BOGUS-9
+    surface: "ui:/search"
+    locator: "[data-testid=result-card]"
+    expect: {op: non-empty, baseline: none}

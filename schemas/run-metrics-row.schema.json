@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.dev/schemas/run-metrics-row.schema.json",
+  "title": "Foundry run-metrics row (feat-foundry-run-duration-capture, AC-RDC-1..12)",
+  "description": "One JSONL row in .foundry/run-metrics.jsonl, written exactly once per (run_id, spec_ref) at the write boundary (scripts/foundry_run_metrics.py write_row). The FIDELITY QUARTET (spec_sha256, auth_seq_at_dispatch, auth_seq_final — read off the atom's on-disk acceptance-contract.yaml by a component that is neither the dispatched agent nor the measured workflow; dispatched_at/completed_at — a host clock reading) is a HOST-SIDE OBSERVATION, never the measured run's own self-report (AC-RDC-11). spec_ref and outcome are payload-carried: spec_ref is bounded by a path-traversal/containment check plus a cross-check against the loaded contract's own top-level spec_ref key (scripts/foundry_run_metrics.py _resolve_contract_path/read_contract_fidelity); outcome is framework-computed from the consolidated review verdict but still transits the untrusted wave-return channel to reach this write boundary. `unobserved_reason` is present IFF measurement='unobserved' (the audit-ledger kill_reason iff-pattern); `auth_seq_at_dispatch`/`auth_seq_final` may be null ONLY when measurement='backfill-proxy' (AC-RDC-6).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "run_id", "spec_ref", "spec_sha256", "dispatched_at", "completed_at",
+    "active_seconds", "measurement", "auth_seq_at_dispatch", "auth_seq_final", "rounds", "outcome"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "description": "Discriminates the row shape so readers can dispatch deterministically."
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique identifier for this dispatch run. With spec_ref, the idempotency key (AC-RDC-12) — the write boundary refuses a second row for an already-recorded (run_id, spec_ref) pair. Session-prefixed correlation id, per foundry_audit_ledger._default_run_id's convention."
+    },
+    "spec_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The atom's spec path — with run_id, the idempotency key (AC-RDC-12)."
+    },
+    "spec_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 read from the atom's frozen acceptance-contract.yaml `authorized:` block, host-side, AT DISPATCH (AC-RDC-11) — never accepted from the measured run's own return payload, even when a same-named field is present there."
+    },
+    "dispatched_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$",
+      "description": "Host clock at the run's first observed execution boundary for the atom (ISO-8601 UTC, 'Z')."
+    },
+    "completed_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$",
+      "description": "Host clock read at the collect instant when the row is composed — NOT the last agent's return (ISO-8601 UTC, 'Z')."
+    },
+    "active_seconds": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "The summed duration of the atom's per-agent EXECUTION intervals as observed host-side — NEVER completed_at minus dispatched_at. null iff measurement == 'unobserved'."
+    },
+    "measurement": {
+      "type": "string",
+      "enum": ["measured", "unobserved", "backfill-proxy"],
+      "description": "measured: active_seconds is a real host-observed sum of execution intervals. unobserved: the host genuinely could not observe per-agent execution boundaries for this run — active_seconds is null, unobserved_reason names why. backfill-proxy: a later historical-backfill writer (this atom writes none)."
+    },
+    "unobserved_reason": {
+      "type": "string",
+      "enum": ["no-timing-source", "queue-indistinguishable", "self-reported-timing", "clock-unavailable", "atom-unresolvable"],
+      "description": "Present IFF measurement == 'unobserved' (the audit-ledger kill_reason iff-pattern). Closed 5-member set — never a free-text substitute."
+    },
+    "unobserved_detail": {
+      "type": "string",
+      "description": "Optional free text accompanying unobserved_reason. Never a substitute for the code; present only alongside unobserved_reason."
+    },
+    "auth_seq_at_dispatch": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "auth_seq read from the frozen acceptance-contract.yaml `authorized:` block, host-side, as observed AT DISPATCH (AC-RDC-9/-11). null allowed ONLY when measurement == 'backfill-proxy'."
+    },
+    "auth_seq_final": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "auth_seq read from the same on-disk block, host-side, as observed AT COLLECT (AC-RDC-9/-11) — a re-freeze between dispatch and collect is visible as two different values on one row. null allowed ONLY when measurement == 'backfill-proxy'."
+    },
+    "rounds": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Implementation dispatches within this run; structurally 1 on the shipped release-wave.js path (no in-run re-dispatch loop)."
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["landed", "failed", "merged", "abandoned", "superseded", "in-progress"],
+      "description": "The collect-time writer emits only landed|failed (AC-RDC-7), derived from implementation status AND the framework-computed CONSOLIDATED review verdict (review.verdict from assembleReviewResult), never the raw agent-reported verdict. merged|abandoned|superseded|in-progress are reserved for a later post-collect lifecycle writer."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"measurement": {"const": "unobserved"}},
+        "required": ["measurement"]
+      },
+      "then": {
+        "required": ["unobserved_reason"],
+        "properties": {"active_seconds": {"type": "null"}}
+      },
+      "else": {
+        "not": {
+          "anyOf": [{"required": ["unobserved_reason"]}, {"required": ["unobserved_detail"]}]
+        },
+        "properties": {"active_seconds": {"type": "integer", "minimum": 0}}
+      }
+    },
+    {
+      "if": {
+        "properties": {"measurement": {"const": "backfill-proxy"}},
+        "required": ["measurement"]
+      },
+      "then": {},
+      "else": {
+        "properties": {
+          "auth_seq_at_dispatch": {"type": "integer", "minimum": 1},
+          "auth_seq_final": {"type": "integer", "minimum": 1}
+        }
+      }
+    }
+  ]
+}

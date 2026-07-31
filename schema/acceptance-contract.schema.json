@@ -1,0 +1,416 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.dev/schema/acceptance-contract.schema.json",
+  "title": "Foundry acceptance-contract.yaml",
+  "description": "The operator-authorized, content-hashed work order for one atomic spec. Frozen at /foundry:authorize; drives the live-seam walk (§22.4b) and the merge gate (§22.6). The contract-proper region (everything above the FOUNDRY-AUTHORIZED-TRAILER sentinel) is hashed into contract_sha256; the `authorized` block is the operator attestation and is EXCLUDED from that hash (resolves the self-reference in design §22.4b/§22.6).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["spec_ref", "spec_sha256", "scope", "checkpoints"],
+  "properties": {
+    "spec_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Repo-relative path to the authorized atomic spec this contract gates."
+    },
+    "spec_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Byte-canonical SHA-256 of the spec's delimited NORMATIVE region (excludes §Changelog/cosmetic sections per §22.4b). A reference TO the spec, not self-referential."
+    },
+    "target_repo": {
+      "type": "string",
+      "minLength": 1,
+      "description": "OPTIONAL repo KEY into the adopter's .claude/foundry-project.json repos{} (or the literal 'workspace' for a workspace-targeted atom). Names WHERE this atom's authorized code lands in a multi-repo adopter (UL-0022 / feat-foundry-work-isolation-multi-repo-dispatch). Lives in the contract-proper region → hashed into contract_sha256 (mutating it requires re-authorization) and displayed at /foundry:authorize. Omitted ⇒ workspace-targeted (single-repo default). The dispatch manifest's target_repo MUST equal this value (deterministic bind-check)."
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_paths"],
+      "description": "Diff-scope containment bound (§22.4c). Content-hashed into contract_sha256; widening is a re-authorization.",
+      "properties": {
+        "allowed_paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1},
+          "description": "Globset; the candidate PR's changed files for this atom MUST be a subset. Empty/missing fails the freeze (§22.4c)."
+        },
+        "denied_paths": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "description": "Globset; changed files MUST be disjoint from this set. Optional; defaults to empty."
+        }
+      }
+    },
+    "checkpoints": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Observable live-seam checkpoints (§22.4b). NON-EMPTY is a hard freeze floor (an empty set → vacuous PASS).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ac_id", "surface", "locator", "expect"],
+        "properties": {
+          "ac_id": {
+            "description": "Spec AC ID(s) this checkpoint covers (stable IDs). Drives the bijection coverage floor.",
+            "oneOf": [
+              {"type": "string", "minLength": 1},
+              {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+            ]
+          },
+          "surface": {
+            "type": "string",
+            "description": "WHERE the walk looks. Profile-enumerated + adopter-extensible (§22.4b): prefixed forms ui:/api:/policy:/fixture:/cli:/pipeline:/binary:/test:/file: or bare tofu-plan/gitops-diff/typecheck/build. `file:<path>` (feat-foundry-gate-integrity-file-surface-static-checkpoint, ER #245) is a first-class STATIC/OFFLINE checkpoint surface — a pure content-match read of `<path>` under the candidate venue root, walked offline with no app to boot.",
+            "pattern": "^((ui|api|policy|fixture|cli|pipeline|binary|test|file):.+|tofu-plan|gitops-diff|typecheck|build)$"
+          },
+          "locator": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Concrete target the walk must REACH (route, endpoint, suite, rule). A checkpoint whose locator is never reached is a FAIL (§22.4b reach-the-locator)."
+          },
+          "intended": {
+            "type": "array",
+            "description": "OPTIONAL operator-frozen intended-change manifest for a `tofu-plan` checkpoint (feat-foundry-acceptance-contract-intended / change-delivery-verdict-design-v2 D1): the specific resource changes the operator authorizes at /foundry:authorize. Lives in the contract-proper region → hashed into contract_sha256 (widening it is a re-authorization, exactly like widening allowed_paths). The verdict atom (feat-foundry-infra-change-verdict) interprets `plan ≡ intended`; this schema only fixes the SHAPE the operator freezes. Omitted ⇒ no intended-change manifest (back-compat, unchanged).",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["resource", "action"],
+              "properties": {
+                "resource": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "A Terraform/OpenTofu resource ADDRESS, or a single trailing-`*` glob the operator froze. Non-empty; the schema is intentionally permissive on string form (the verdict interprets address exact-or-glob)."
+                },
+                "action": {
+                  "type": "string",
+                  "enum": ["create", "update", "replace", "delete"],
+                  "description": "The closed plan-action enum. The verdict normalizes the plan's actions to this set."
+                },
+                "attr": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "OPTIONAL changed-attribute path (the Karpenter-Drift discriminator). Non-empty when present; `attr`-based blast tiering is v2 — v1 matching consumes only {resource, action}."
+                }
+              }
+            }
+          },
+          "ack": {
+            "type": "array",
+            "description": "OPTIONAL operator-frozen policy:high-blast-ack acknowledgement list (feat-foundry-acceptance-contract-intended v2 / change-delivery-verdict-design-v2 §14.3.1 Correction B + [[2026-06-20-v2a-policy-as-code-shapes]] C2): the HIGH policy findings the operator acknowledges at /foundry:authorize, each bound by {rule, resource}. Lives in the contract-proper region → hashed into contract_sha256 (widening it is a re-authorization, exactly like widening allowed_paths/intended). The verdict atom (feat-foundry-infra-change-verdict v2) requires every HIGH policy finding {rule, resource, severity:high} to have a matching frozen ack (resource matched by the shipped _resource_matches); this schema only fixes the SHAPE the operator freezes. Omitted ⇒ no acknowledgements (back-compat, unchanged). Mirrors `intended` EXACTLY — additive / optional / draft-07-safe / additionalProperties:false per item / hash-covered / fail-closed.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["rule", "resource"],
+              "properties": {
+                "rule": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "The policy finding's stable rule id (the policy-pack's id; see [[2026-06-20-v2a-policy-as-code-shapes]] C2). Non-empty."
+                },
+                "resource": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "The finding's identity — a Terraform/OpenTofu tf-address or a <kind>/<namespace>/<name> GitOps identity; exact OR a single trailing-`*` glob the operator froze. Non-empty; matched downstream by the shipped _resource_matches (the schema is intentionally permissive on string form, the verdict interprets exact-or-glob)."
+                }
+              }
+            }
+          },
+          "expect": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["op", "baseline"],
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": ["non-empty", "count_gte", "equals", "matches"],
+                "description": "Assertion operator. Non-trivial POSITIVE lower bound required at freeze (count_gte:1 not :0; no matches:.*; no always-true equals)."
+              },
+              "value": {
+                "description": "Operand for count_gte (int >=1), equals (literal), matches (regex). Omitted for non-empty."
+              },
+              "baseline": {
+                "type": "string",
+                "enum": ["pre-change", "none"],
+                "description": "pre-change → attributable (RED on merge-base, GREEN on candidate). At least one checkpoint MUST be pre-change (§22.4b floor 4)."
+              }
+            }
+          }
+        }
+      }
+    },
+    "system_grounding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifacts"],
+      "description": "OPTIONAL declared side of the reality-grounding gate (Atom C / #121, feat-foundry-system-grounding-contract-block, AC-SGC-1). Lives in the contract-proper region -> hash-covered into contract_sha256 (AC-SGC-2). Validated against Atom A's live system-state snapshot at /foundry:authorize freeze time (foundry_contract.system_grounding_errors) — NOT re-derived at the merge gate. The `::`-arity, duplicate-(kind,identifier), and value-enum checks beyond what JSON-Schema expresses are enforced by the hand-rolled `_system_grounding_structural_errors` floor.",
+      "properties": {
+        "artifacts": {
+          "type": "array",
+          "description": "Possibly-empty list of declared artifacts this atom touches. An empty list is a valid 'I touch no grounded artifact' declaration (AC-SGC-5).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "identifier", "classification"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["table", "column", "fk", "module", "queue", "event", "resource"],
+                "description": "Grounded kinds (table/column/module) are checked against Atom A's snapshot; ungrounded kinds (fk/queue/event/resource) are structurally validated only (AC-SGC-8)."
+              },
+              "identifier": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The artifact's live identifier. table -> snapshot.entities key; module -> snapshot.modules member; column -> '<entity>::<column>' (exactly one '::' separator)."
+              },
+              "classification": {
+                "type": "string",
+                "enum": ["exists", "alter", "net-new"],
+                "description": "The author-declared precondition: exists (reference), alter (mutate an existing artifact), or net-new (does not yet exist). Validated fail-closed against the live snapshot at freeze (AC-SGC-3/-4)."
+              },
+              "source_ref": {
+                "type": "string",
+                "minLength": 1,
+                "description": "OPTIONAL recovered-artifact reference/path (#124/Atom D supplies this; C accepts but does not require it). If present, must be a non-empty string."
+              }
+            }
+          }
+        }
+      }
+    },
+    "measurement_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["displaced_condition", "evidence", "durable_artifact"],
+      "description": "The atom admission contract (feat-foundry-governance-atom-admission-contract, AC-ADM-1..9): what condition this atom displaces, the evidence artifact a future instrument reads to prove it was implemented, and exactly one admit basis. Lives in the contract-proper region -> hash-covered into contract_sha256 and re-derived by the existing merge-gate contract-hash verification (AC-ADM-8) — no new hash mechanism. `/foundry:authorize` fail-closes on an absent/malformed block (`scripts/foundry_admission.py`, driven as a precondition from `foundry-authorize.py`) and emits a deterministic ADMIT/EXPERIMENT/REJECT disposition as a pure function of these fields (AC-ADM-3). Declared here (additive) so a contract carrying the block validates under this schema's root `additionalProperties: false`. Omitted ⇒ no admission gate applies to this contract (pre-existing/legacy atoms; the gate applies going forward per the spec's Out-of-scope note).",
+      "properties": {
+        "displaced_condition": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What condition this atom displaces, in plain prose. Non-vacuity floor (AC-ADM-6, enforced in `foundry_admission.py` — not expressible in JSON Schema alone): after trimming, must not be empty/whitespace-only, a case-insensitive member of the placeholder stop-list {n/a, tbd, todo, none, -, .}, or below three word tokens."
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["derivation_executable"],
+          "description": "The evidence side of the contract: the durable artifact a future instrument reads.",
+          "properties": {
+            "derivation_executable": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Repo-relative path (not absolute, no '..') to the executable that derives/reads the evidence — MUST lie within this atom's own `scope.allowed_paths` (AC-ADM-9). Authorize runs pre-build, so this is a SHAPE + scope-containment check, not existence."
+            }
+          }
+        },
+        "durable_artifact": {
+          "type": "string",
+          "enum": ["build_provenance_marker", "acceptance_flag_event", "released_gate_event", "walk_evidence", "ledger_row"],
+          "description": "The closed durable-artifact-type enum (AC-ADM-4): the kind of durable evidence a future instrument will read to prove this atom was implemented."
+        },
+        "target_metric": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "OPTIONAL admit-basis (1) — an OUTCOME atom. Exactly one of {target_metric.name, instrument_for, basis} must be structurally declared (AC-ADM-1/-2); an empty `target_metric: {}` stub does not count as declared.",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "description": "MUST be a member of the adopted-metric set {accepted_delivery_index, implementation_human_dependency_index} (AC-ADM-2) — `[Doc: docs/metrics/adopted-metrics.md]`."
+            },
+            "minimum_detectable_change": {
+              "description": "OPTIONAL pre-registered minimum-detectable-effect magnitude (hypothesis-driven-development framing). Intentionally permissive on type (numeric or string, e.g. a percentage) — the gate validates shape/binding, not the predicted magnitude's truthfulness (spec Residuals)."
+            },
+            "expected_direction": {
+              "type": "string",
+              "minLength": 1,
+              "description": "OPTIONAL pre-registered expected direction of effect (e.g. 'increase', 'decrease'). Intentionally permissive on string form; not validated against a closed enum by this schema."
+            }
+          }
+        },
+        "instrument_for": {
+          "type": "string",
+          "minLength": 1,
+          "description": "OPTIONAL admit-basis (2) — an INSTRUMENT atom: names an adopted metric (the same closed set as target_metric.name, AC-ADM-2) this atom instruments/derives. There is no standalone diagnostic target; a diagnostic rides this basis, chained to a named adopted metric."
+        },
+        "basis": {
+          "type": "string",
+          "enum": ["governance"],
+          "description": "OPTIONAL admit-basis (3) discriminator — a GOVERNANCE atom. When present, MUST equal 'governance' and MUST be paired with `governance_control` (AC-ADM-2)."
+        },
+        "governance_control": {
+          "type": "string",
+          "minLength": 1,
+          "description": "REQUIRED when basis: governance — names a control present in the floor-control registry (`scripts/foundry_floor_controls.json` — entries record each control's live/retired status honestly). The atom's own `scope.allowed_paths` MUST also declare that registry file (AC-ADM-2)."
+        },
+        "qualification": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "OPTIONAL companion (AC-ADM-3): the causal-link qualification driving EXPERIMENT vs ADMIT.",
+          "properties": {
+            "link": {
+              "type": "string",
+              "enum": ["provisional", "confirmed"],
+              "description": "The closed qualification-link enum. `provisional` (or the whole `qualification`/`link` key absent) -> disposition EXPERIMENT; `confirmed` -> disposition ADMIT. A value outside this enum yields REJECT (unknown convicts) — enforced structurally by this schema's own enum AND independently re-checked in `foundry_admission.py` (defense in depth, no reliance on jsonschema alone)."
+            }
+          }
+        }
+      }
+    },
+    "preconditions": {
+      "type": "array",
+      "description": "OPTIONAL operator-frozen build-lifecycle gate slot (feat-foundry-contract-schema-gate-slots / AC-CSG-1a, ADL Wave B / A12): the preconditions that must hold BEFORE a build starts (e.g. spec authorized, a dependency already merged, a clean worktree, fresh grounding). Top-level (siblings of `scope`/`checkpoints`), not per-checkpoint — a build-lifecycle obligation for the whole atom. Lives in the contract-proper region -> hash-covered into contract_sha256 (widening is a re-authorization, exactly like widening allowed_paths). This schema fixes only the SHAPE the operator freezes; enforcement is deferred to consumers (out of scope here). Omitted ⇒ no declared preconditions (back-compat, unchanged).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Stable non-empty identifier for this precondition."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["spec-authorized", "dependency-merged", "clean-worktree", "grounding-fresh", "custom"],
+            "description": "The closed precondition-kind enum; `custom` is the escape member for an adopter-declared, non-catalogued precondition."
+          },
+          "blocking": {
+            "type": "boolean",
+            "description": "OPTIONAL: whether this precondition blocks the build when unmet."
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1,
+            "description": "OPTIONAL non-empty free-text note."
+          }
+        }
+      }
+    },
+    "build_gates": {
+      "type": "array",
+      "description": "OPTIONAL operator-frozen build-lifecycle gate slot (feat-foundry-contract-schema-gate-slots / AC-CSG-1b, ADL Wave B / A12): the checks the build ITSELF must pass. Top-level (siblings of `scope`/`checkpoints`). Lives in the contract-proper region -> hash-covered into contract_sha256 (widening is a re-authorization). This schema fixes only the SHAPE the operator freezes; enforcement is deferred to consumers (out of scope here). Omitted ⇒ no declared build gates (back-compat, unchanged).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "check"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Stable non-empty identifier for this build gate."
+          },
+          "check": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The check the build must pass — a command/locator string the consumer interprets. Intentionally permissive on string form (non-empty only)."
+          },
+          "blocking": {
+            "type": "boolean",
+            "description": "OPTIONAL: whether this build gate blocks the build when unmet."
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1,
+            "description": "OPTIONAL non-empty free-text note."
+          }
+        }
+      }
+    },
+    "post_apply_checks": {
+      "type": "array",
+      "description": "OPTIONAL operator-frozen build-lifecycle gate slot (feat-foundry-contract-schema-gate-slots / AC-CSG-1c, ADL Wave B / A12): the checks that must hold AFTER an apply/deploy step. Top-level (siblings of `scope`/`checkpoints`). Lives in the contract-proper region -> hash-covered into contract_sha256 (widening is a re-authorization). This schema fixes only the SHAPE the operator freezes; enforcement is deferred to consumers (out of scope here). Omitted ⇒ no declared post-apply checks (back-compat, unchanged).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "check", "on_failure"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Stable non-empty identifier for this post-apply check."
+          },
+          "check": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The check that must hold after apply — a command/locator string the consumer interprets. Intentionally permissive on string form (non-empty only)."
+          },
+          "on_failure": {
+            "type": "string",
+            "enum": ["block", "rollback", "warn"],
+            "description": "The closed on-failure-disposition enum: what the consumer does when this post-apply check fails."
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1,
+            "description": "OPTIONAL non-empty free-text note."
+          }
+        }
+      }
+    },
+    "mandatory_review": {
+      "type": "array",
+      "description": "OPTIONAL operator-frozen build-lifecycle gate slot (feat-foundry-contract-schema-gate-slots / AC-CSG-1d, ADL Wave B / A12): any mandatory review (e.g. security) the gate is expected to enforce. Top-level (siblings of `scope`/`checkpoints`). Lives in the contract-proper region -> hash-covered into contract_sha256 (widening is a re-authorization). This schema fixes only the SHAPE the operator freezes; enforcement is deferred to consumers (out of scope here). Omitted ⇒ no declared mandatory review (back-compat, unchanged).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["review"],
+        "properties": {
+          "review": {
+            "type": "string",
+            "enum": ["security", "privacy", "design", "legal", "custom"],
+            "description": "The closed mandatory-review-kind enum; `custom` is the escape member for an adopter-declared, non-catalogued review."
+          },
+          "required": {
+            "type": "boolean",
+            "description": "OPTIONAL: whether this review is required (vs advisory)."
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1,
+            "description": "OPTIONAL non-empty free-text rationale."
+          }
+        }
+      }
+    },
+    "drift_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["auto_rebaseline_mechanical"],
+      "description": "OPTIONAL, opt-in (feat-foundry-delegable-authorization-envelope / AC-DAE-1..8, ADL Wave B / A7): lets a single up-front operator authorization cover a WAVE of atoms whose contracts drift only MECHANICALLY after freeze (A6's `classify_drift` returns class=='MECHANICAL') by auto-rebaselining under the covering envelope, recorded append-only in the authorization ledger (AC-DAE-4). SEMANTIC drift ALWAYS hard-stops regardless of this value (AC-DAE-2) — there is no 'trust all drift' mode, and a rebaseline may only narrow/preserve scope.allowed_paths, never widen it (AC-DAE-3). Lives in the contract-proper region -> hash-covered into contract_sha256 (AC-DAE-8: the injection guard in foundry_contract.py rejects a drift_policy placed below the FOUNDRY-AUTHORIZED-TRAILER sentinel, so it can never validate-but-escape the hash) — any edit to this block itself re-hashes contract_sha256 and forces a fresh operator re-authorization. Omitted (or auto_rebaseline_mechanical:false) ⇒ no envelope, gated exactly as a 0.19.0 contract (AC-DAE-6, [NON-DISRUPTION]).",
+      "properties": {
+        "auto_rebaseline_mechanical": {
+          "type": "boolean",
+          "description": "The opt-in switch. true ⇒ MECHANICAL drift (per A6's classify_drift) MAY auto-rebaseline under this envelope; false/omitted ⇒ the envelope never engages (AC-DAE-6 default-off posture)."
+        },
+        "envelope_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "OPTIONAL identifier for the wave-level operator envelope this atom's auto-rebaseline is bound to (recorded in the ledger, AC-DAE-4). The exact identity scheme (explicit operator-granted id vs. an implicit release/wave-manifest binding) is left to the operator/authorize-time convention; this schema fixes only the SHAPE."
+        }
+      }
+    },
+    "rebaselined_by": {
+      "type": "string",
+      "enum": ["envelope"],
+      "description": "OPTIONAL top-level discriminator (feat-foundry-envelope-ledger-mandate / AC-ELM-1, closes ER #211): stamped by `foundry_authz.envelope_auto_rebaseline` into the contract-PROPER (hash-covered into contract_sha256) whenever a MECHANICAL drift auto-rebaselines under the delegable-authorization-envelope (A7). Absent on an operator-signed authorization and on every pre-0.20.1 contract. The merge gate's CHECK-3b (AC-ELM-2) reads this ONLY from the proper-only parse and MANDATES a covering, chain-valid `.foundry/authz-ledger.jsonl` record for any pinned authorization carrying it. Declared here so a stamped contract validates (`additionalProperties: false` would otherwise reject the new key) and so a trailer-override to any non-`envelope` value fails the schema when jsonschema is present (defense-in-depth over the proper-only read)."
+    },
+    "authorized": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Operator attestation written by /foundry:authorize. EXCLUDED from contract_sha256 (lives below the trailer sentinel). Absent on a DRAFT/HARDENED/FROZEN-but-unauthorized contract.",
+      "required": ["operator_id", "authorized_at", "auth_seq", "spec_sha256", "contract_sha256", "merge_autonomy_mode"],
+      "properties": {
+        "operator_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Resolved against .claude/foundry-operators.json (§22.1/§22.12). Unregistered id fails the gate."
+        },
+        "authorized_at": {"type": "string", "minLength": 1, "description": "ISO-8601 UTC. Corroborating-only attribution (§22.6c); not the binding ordering proof."},
+        "auth_seq": {"type": "integer", "minimum": 1, "description": "Monotonic per spec_ref. The gate requires the pinned auth_seq == HEAD canonical (§22.6 monotonic baseline)."},
+        "supersedes": {"type": ["string", "null"], "description": "Prior contract_sha256 this re-auth supersedes, or null for first-auth."},
+        "spec_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Operator's snapshot of the signed spec normative-region hash."},
+        "contract_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "= SHA-256 of the contract-proper region (bytes above the trailer sentinel). The operand of the freeze."},
+        "merge_autonomy_mode": {"type": "string", "enum": ["regular", "lean"], "description": "Committed, hash-covered (§22.6 red-team-3). Read identically by local hook and every non-local merge path."},
+        "reauth_after_impl": {"type": "boolean", "description": "True when this auth was issued after an impl branch/PR already existed → POST-IMPL re-authoring guard applies (§22.4b/§22.6)."}
+      }
+    }
+  }
+}

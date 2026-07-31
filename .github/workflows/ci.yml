@@ -1,0 +1,148 @@
+# .github/workflows/ci.yml — Agentic Foundry gate selftests on every PR.
+# The floor must stay green; CI runs the real pytest suite (the v0.25.0 test-suite
+# realignment — "one real test suite") + doctor + the machinery not yet covered by pytest.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+# Least-privilege default (floor-#3 review R6): read-only unless a job needs more.
+permissions:
+  contents: read
+jobs:
+  selftests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      - name: Install (PyYAML/jsonschema for the gate scripts + the pytest dev requirements)
+        run: |
+          pip install -r requirements-dev.txt
+      - name: pytest suite (replaces the per-script --selftest step battery)
+        # The denylist reaches the suite by CONTENT so AC-DOT-1(b) — "no proprietary term survives in
+        # any tracked file" — actually runs here rather than skipping in the one place that gates a
+        # merge. It is empty on a fork PR (secrets do not resolve), where that test reports NOT-RUN
+        # and claims no coverage rather than passing vacuously.
+        env:
+          FOUNDRY_LEAK_DENYLIST: ${{ secrets.FOUNDRY_LEAK_DENYLIST }}
+        run: python3 -m pytest tests/ -q
+      - name: Graph builder selftest
+        run: python3 scripts/foundry-build-citation-graph.py --selftest
+      - name: Graph MCP selftest
+        run: python3 scripts/foundry-graph-mcp.py --selftest
+      - name: Doctor (fail-closed health check)
+        run: python3 scripts/foundry-doctor.py
+      - name: Workflow syntax
+        run: node --check workflows/spec-audit.js && node --check workflows/release-wave.js
+      - name: Bootstrap selftest
+        run: bash scripts/foundry-bootstrap.sh --selftest
+      - name: Leak gate (no proprietary refs ship)
+        # The term list is NOT in this repository (feat-foundry-denylist-out-of-tree). It arrives as
+        # a secret and is materialized outside the checkout for the duration of the scan. Terms are
+        # never enumerated inline here, and the gate never echoes a matched term — a public Actions
+        # log would otherwise republish the very term the gate exists to protect.
+        #
+        # `is-fork-pr` MUST come from the event payload, never from the secret being empty: on a fork
+        # PR secrets do not resolve and the gate degrades to markers-only, but an empty secret on any
+        # OTHER event means it is unset/misconfigured and the gate REFUSES. Conflating the two would
+        # silently downgrade every push to main the moment the secret is deleted.
+        #
+        # pull_request_target is deliberately NOT used: it runs with secrets against untrusted code,
+        # trading a disclosure risk for a code-execution risk.
+        uses: ./.github/actions/leak-gate
+        with:
+          denylist: ${{ secrets.FOUNDRY_LEAK_DENYLIST }}
+          is-fork-pr: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true }}
+
+  # Mechanical secret scan over the PR diff (floor-#3 review R5) — restores, as a CI step, the ONE
+  # machine-enforced control the retired merge-side status-poster workflow used to run pre-merge.
+  # Drives the kept deterministic scanner (scripts/foundry_security_review.py's scan_candidate — a pinned
+  # high-signal ruleset: PEM/private-key blocks, AWS/GCP/GitHub/Slack tokens, JWTs, bearer tokens,
+  # generic secret assignments, PLUS a base64/hex entropy heuristic) over every file the PR actually
+  # changed. The changed-file set is computed from the TRUSTED webhook event base/head SHAs (never a
+  # PR-supplied ref) — the same "trusted event SHAs" pattern the deleted status workflow used
+  # (`git diff --raw --no-renames $BASE_SHA $HEAD_SHA`). Skips cleanly on a push-to-main event (no PR
+  # base/head SHAs to diff against — nothing new to scan that wasn't already scanned on its own PR).
+  secret-scan:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - name: Determine changed files (base...head, from trusted event SHAs)
+        id: diff
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git diff --raw --no-renames "$BASE_SHA" "$HEAD_SHA" > /tmp/secret-scan-diff-raw.txt
+          python3 - <<'PYEOF'
+          with open("/tmp/secret-scan-diff-raw.txt") as fh, open("/tmp/secret-scan-changed-files.txt", "w") as out:
+              for line in fh:
+                  line = line.rstrip("\n")
+                  if not line.strip() or "\t" not in line:
+                      continue
+                  _meta, path = line.split("\t", 1)
+                  out.write(path + "\n")
+          PYEOF
+          cat /tmp/secret-scan-changed-files.txt
+      - name: Mechanical secret scan (scripts/foundry_security_review.py scan_candidate)
+        run: |
+          python3 - <<'PYEOF'
+          import sys
+          sys.path.insert(0, "scripts")
+          import foundry_security_review as review
+
+          with open("/tmp/secret-scan-changed-files.txt") as fh:
+              changed = [ln.strip() for ln in fh if ln.strip()]
+
+          findings = review.scan_candidate(changed, adopter_root=".")
+          # ADVISORY (report-only) until the entropy allowlist is tuned — measured 108 false
+          # positives on the Phase-2b branch itself (long path strings + the doctor's own
+          # documented key/PEM test fixtures trip the heuristic). A chronically-red blocking
+          # check trains bypass, which is worse than visibility-only. TODO(phase-4 skill/hygiene sweep — re-dated 2026-07-27, was phase-3; the tuning
+          # did not land in Phase 3 and this note says so honestly): tune scan_candidate's
+          # allowlist/fixture handling, then remove this advisory guard so findings fail again.
+          if findings:
+              print(f"SECRET-SCAN (ADVISORY): {len(findings)} finding(s) — review below; job does NOT fail until the Phase-3 tuning lands:")
+              for f in findings:
+                  print(f"  [{f['severity']}] {f['category']} @ {f['location']}: {f['rationale']}")
+              sys.exit(0)
+          print(f"SECRET-SCAN: clean ({len(changed)} file(s) scanned, 0 findings)")
+          PYEOF
+
+  # Release acceptance-gate (feat-foundry-release-acceptance-gate) — validate the ARTIFACT as a fresh client
+  # receives it, using the tool's OWN first-party validators, BEFORE the cut. Guarded to TRUSTED refs only
+  # (push to main / tags, or a same-repo PR) — never a fork pull_request HEAD, since the gate runs the
+  # candidate's own validators/doctor. The binding enforcement is the /foundry:release pre-cut hard-stop
+  # (run locally where `claude` is always present); this CI job is the earlier advisory signal.
+  release-acceptance:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+      - name: Install deps (PyYAML/jsonschema + the Claude Code CLI for the first-party validators)
+        run: |
+          pip install -r requirements-dev.txt
+          # TODO(standing-versions): @anthropic-ai/claude-code has no pin in docs/standing-versions.md
+          # yet (only actions/checkout|setup-python|setup-node are researched + pinned there). Floats
+          # on latest until a version is researched + added to the matrix+lock — track before the next
+          # infra-upgrade reconciliation pass (docs/standing-versions.md §4).
+          npm install -g @anthropic-ai/claude-code
+      - name: Release acceptance-gate over the checked-out artifact
+        run: python3 scripts/foundry-release-acceptance.py --tree .

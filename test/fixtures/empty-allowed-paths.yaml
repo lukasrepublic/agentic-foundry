@@ -1,0 +1,9 @@
+spec_ref: foundry/test/fixtures/golden-spec.md
+spec_sha256: deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+scope:
+  allowed_paths: []
+checkpoints:
+  - ac_id: AC-API-1
+    surface: "api:/v1/search"
+    locator: "POST /v1/search"
+    expect: {op: count_gte, value: 1, baseline: pre-change}

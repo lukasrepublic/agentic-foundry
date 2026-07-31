@@ -1,0 +1,20 @@
+{
+  "name": "agentic-foundry",
+  "description": "Governed, spec-driven delivery for agent-built software: operator-authorized acceptance contracts, an honestly-tiered merge floor on your own branch protection + CI, deploy-once certification, and a citation-graph MCP.",
+  "owner": {
+    "name": "lukasrepublic"
+  },
+  "plugins": [
+    {
+      "name": "foundry",
+      "description": "Governed, spec-driven delivery for agent-built software (skills, acceptance contracts, honest merge-floor discipline, citation-graph MCP).",
+      "source": {
+        "source": "github",
+        "repo": "lukasrepublic/agentic-foundry",
+        "ref": "v1.0.0",
+        "sha": "e4f4485774a75e4008cacb13e71d42869485ed24"
+      },
+      "version": "1.0.0"
+    }
+  ]
+}

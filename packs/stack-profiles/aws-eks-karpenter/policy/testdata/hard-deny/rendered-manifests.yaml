@@ -1,0 +1,22 @@
+# hard-deny — the LIVE HARD-DENY control (AC-KPP-5).
+#
+# The pack's declared "never permitted" case: a NodePool that enables consolidation with NO
+# spec.disruption.budgets — an unbounded mass roll with no rollout guard. Driven through the SHIPPED
+# invocation, this MUST land in failures[] as karpenter_unbounded_disruption (a hard, UN-ackable deny;
+# no policy:high-blast-ack clears it).
+#
+# Before feat-foundry-karpenter-policy-pack-inert-input-shape this fixture ALSO greened — the pack's
+# un-ackable never-permitted rule was as dead as the rest.
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: unbounded-roll
+spec:
+  disruption:
+    consolidationPolicy: WhenEmptyOrUnderutilized
+  template:
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: default

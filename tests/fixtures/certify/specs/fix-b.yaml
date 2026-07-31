@@ -1,0 +1,9 @@
+spec_ref: specs/fix-b.md
+spec_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+scope:
+  allowed_paths: ["page2.html"]
+checkpoints:
+  - ac_id: AC-FIXB-1
+    surface: "cli:test"
+    locator: "echo hi"
+    expect: {op: matches, value: "hi", baseline: pre-change}

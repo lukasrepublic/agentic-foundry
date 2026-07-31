@@ -1,0 +1,398 @@
+#!/usr/bin/env bash
+# foundry-learn-capture — the PUBLIC, PATH-installed, version-independent learnings capture entrypoint
+# (feat-foundry-learn-capture-entrypoint, ER #36). The bin/ directory at the plugin root is added to
+# the Bash tool PATH while the plugin is enabled, so a CONSUMER skill body (model-invoked Bash, NOT a
+# hook) can pipe a single record here with NO version in the path and NO $CLAUDE_PLUGIN_ROOT
+# dependency. Records on STDIN ONLY (never argv → no secret in the process list).
+#
+# Two modes (the two-caller split): `append` (default) writes records WITHOUT touching the
+# once-per-session marker (a consumer can never suppress the session's own Stop reflection); `--final`
+# writes records then CASes the marker requested→done (the trusted Stop-reflection closer).
+#
+# Fail-closed around the impoverished skill-body env (verified: skill-body Bash exports neither
+# CLAUDE_SESSION_ID nor CLAUDE_PROJECT_DIR): explicit --session-id + --project-dir, fail-closed on an
+# unresolved buffer root (no silent wrong-repo write) and on an unresolved id in --final (no marker a
+# real session owns). Fail-OPEN on record ingestion (exit 0, never wedge a consumer) unless --strict.
+set -uo pipefail
+
+# self-resolving lib location (AC-PUBCAP-1): via our OWN BASH_SOURCE[0] dir → ../hooks/. NEVER
+# $CLAUDE_PLUGIN_ROOT / the version dir. bin/ is a PATH prepend-in-place, so this file stays a sibling
+# of hooks/. Overridable for the hermetic lib-unresolved selftest case.
+_BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo .)"
+_LIB="${FOUNDRY_LEARNINGS_LIB_OVERRIDE:-$_BIN_DIR/../hooks/foundry-learnings-lib.sh}"
+
+# content-free loss/diagnostic signal (NEVER the record content).
+_signal() { echo "foundry-learn-capture: $*" >&2; }
+
+_usage() {
+  cat <<'EOF'
+foundry-learn-capture — public learnings capture entrypoint (records JSONL on STDIN ONLY).
+Usage:
+  cat records.jsonl | foundry-learn-capture [--final] --session-id <id> --project-dir <workspace-root> [--strict]
+  foundry-learn-capture --selftest
+Modes: append (default; does NOT touch the once-per-session marker) | --final (CAS requested->done).
+Identity/root: --session-id <id> (else $CLAUDE_SESSION_ID), --project-dir <dir> (else $CLAUDE_PROJECT_DIR).
+  An unresolved --project-dir fails closed (nothing written). --strict: exit non-zero on any reject/loss.
+EOF
+}
+
+# ------------------------------------------------------------------------------------------------- #
+# The record-ingesting core. Reads its parameters from the _ARG_* globals the parser sets, so both the
+# real CLI dispatch and the hermetic selftest can drive it (the selftest sets the globals + STDIN and
+# calls _run_capture in a subshell with an isolated env). Returns 0 (fail-open) unless --strict and a
+# reject/loss/fail-closed-root occurred. NEVER exits the process (the caller decides exit).
+# ------------------------------------------------------------------------------------------------- #
+_run_capture() {
+  local mode="${_ARG_MODE:-append}" sid_arg="${_ARG_SID:-}" proj_arg="${_ARG_PROJ:-}"
+  local strict="${_ARG_STRICT:-0}" argv_count="${_ARG_POSCOUNT:-0}"
+
+  # Lib resolution (fail closed, content-free) — a mis-resolved entrypoint must be OBSERVABLE.
+  if [ ! -f "$_LIB" ]; then
+    _signal "shared library unresolved at expected sibling location — capture lost (no records written)"
+    [ "$strict" -eq 1 ] && return 1 || return 0
+  fi
+
+  # Source the lib FIRST (it defines functions ONLY — sourcing executes nothing), so the resolution-ONLY
+  # walk-up helper (_resolve_buffer_root_walkup) is available for the bin-local precedence below. Only
+  # that no-write resolver is used here; the scrub/CAS/reject seam is NOT invoked until after the
+  # fail-closed DECISION lands (AC-LCPR-1 freeze-scope: source the lib, then DECIDE bin-locally BEFORE
+  # any writer — _ingest_records/_write_records/_cas_done).
+  # shellcheck source=../hooks/foundry-learnings-lib.sh
+  . "$_LIB"
+
+  # BUFFER ROOT precedence (bin-local DECISION, BEFORE any writer call): (a) explicit --project-dir →
+  # (b) $CLAUDE_PROJECT_DIR → (c) a GIT-COMMON-DIR-CONSTRAINED walk-up for the OUTERMOST `.foundry/`-
+  # bearing workspace root (NEVER --show-toplevel / nearest-.git; a `.git` FILE never qualifies — so it
+  # never lands in a linked worktree nor a nested child product repo) → (d) fail closed. The shared
+  # _foundry_root can never report "unresolved" (it falls through to git-common-dir / pwd → the wrong
+  # repo in a multi-repo adopter), so the precedence + the refusal stay the bin's responsibility and run
+  # FIRST, before the lib's arg-less writer chain.
+  local root="${proj_arg:-${CLAUDE_PROJECT_DIR:-}}"
+  if [ -z "$root" ]; then root="$(_resolve_buffer_root_walkup "$PWD")"; fi
+  if [ -z "$root" ]; then
+    # FAIL CLOSED: content-free stderr loss signal, write NOTHING (do NOT call _log_attempt — it would
+    # write the row into pwd/.foundry/…). Self-resolution only ADDED sources; nothing valid resolved.
+    _signal "buffer root unresolved (pass --project-dir or set CLAUDE_PROJECT_DIR) — capture lost (nothing written)"
+    [ "$strict" -eq 1 ] && return 1 || return 0
+  fi
+  # Thread the resolved root to the (arg-less) shared writer chain so it never reaches the pwd
+  # fall-through (the no-fork mandate: the lib is unchanged; the DECISION is bin-local + ran first).
+  export CLAUDE_PROJECT_DIR="$root"
+
+  # SESSION ID: --session-id → $CLAUDE_SESSION_ID → unresolved. Reject a pure-dot id (which _sanitize
+  # preserves) since it would resolve a marker/buffer path component to the marker dir or its parent.
+  local sid="${sid_arg:-${CLAUDE_SESSION_ID:-}}" resolved=1
+  case "$sid" in
+    .|..) _signal "rejected invalid pure-dot --session-id — treating as unresolved"; sid=""; resolved=0 ;;
+  esac
+  [ -n "$sid" ] || resolved=0
+  if [ "$resolved" -eq 0 ]; then
+    if [ "$mode" = "final" ]; then
+      _signal "session id unresolved in --final mode — records written, NO marker flip (fail-closed)"
+    else
+      _signal "session id unresolved in append mode — records will be keyed under an unattributed id"
+    fi
+  fi
+  local skey; skey="$(_sanitize "${sid:-unresolved}")"
+
+  # Buffer STDIN to a temp so we can both test emptiness AND feed ingest (a pipe is single-pass).
+  local stdin_buf; stdin_buf="$(mktemp 2>/dev/null)" || stdin_buf=""
+  if [ -n "$stdin_buf" ]; then cat > "$stdin_buf" 2>/dev/null || true; fi
+  local stdin_empty=1
+  if [ -n "$stdin_buf" ] && grep -q '[^[:space:]]' "$stdin_buf" 2>/dev/null; then stdin_empty=0; fi
+
+  # RECORDS-ON-ARGV misuse: non-empty positional argv after flag-stripping AND empty STDIN → a distinct
+  # reject:argv-record loss row + content-free note; NOT a false `ok records:0`.
+  if [ "$argv_count" -gt 0 ] && [ "$stdin_empty" -eq 1 ]; then
+    _log_attempt session bin-capture 0 "reject:argv-record"
+    _signal "records were passed on argv (STDIN only) — rejected as reject:argv-record (nothing written)"
+    [ -n "$stdin_buf" ] && rm -f "$stdin_buf" 2>/dev/null || true
+    [ "$strict" -eq 1 ] && return 1 || return 0
+  fi
+
+  # INGEST via the SHARED orchestrator (channel `session`, task `bin-capture` so a bin-origin drop is
+  # separable from a Stop-hook `session` drop when triaging the loss-log).
+  if [ -n "$stdin_buf" ]; then
+    _ingest_records "$skey" session bin-capture < "$stdin_buf"
+    rm -f "$stdin_buf" 2>/dev/null || true
+  else
+    _ingest_records "$skey" session bin-capture
+  fi
+
+  # MARKER TAIL — mode-conditional (AC-PUBCAP-3). append: do NOTHING to the marker. --final: flip ONLY
+  # when the current marker state is exactly `requested`; from absent/anything-else do NOT create a
+  # `done` (AC-PUBCAP-3.2). Skip entirely if the id was unresolved.
+  # DELIBERATE ASYMMETRY vs the hook's _capture (foundry-session-learnings.sh): the hook is the TRUSTED
+  # reflection-turn closer and flips a RESOLVED-sid absent marker → done (COMPACT-2 CABS asserts that);
+  # this PUBLIC bin is the stricter surface and refuses absent→done. Same shared _cas_done, different
+  # outer guard — do NOT "unify" these guards (it would regress one of the two asserted behaviors).
+  if [ "$mode" = "final" ] && [ "$resolved" -eq 1 ]; then
+    if [ "${_INGEST_LOSS:-0}" -ne 0 ]; then
+      # AC-CLO-4 (ER #70): a write loss under --final must NOT consume the once-per-session marker —
+      # leave it un-flipped (a `requested` stays `requested`) so a RETRY can still capture, and say so
+      # LOUDLY (the silent-green total-loss was the ER's headline failure).
+      _signal "WRITE LOSS under --final — once-per-session marker NOT flipped; fix the write path and re-run this capture"
+    else
+      if [ "$(_marker_state "$skey")" = "requested" ]; then _cas_done "$skey"; fi
+      _prune_markers
+    fi
+  fi
+
+  # Content-free observability summary on any reject/loss (AC-CLO-3: read = accepted + rejects +
+  # write_loss; AC-CLO-1: the write-denial cause — path + OS error text — rides along, never content).
+  if [ "${_INGEST_REJECTS:-0}" -gt 0 ] || [ "${_INGEST_LOSS:-0}" -ne 0 ]; then
+    _signal "summary: read=${_INGEST_READ:-0} accepted=${_INGEST_ACCEPTED:-0} rejects=${_INGEST_REJECTS:-0} write_loss=${_INGEST_LOSS:-0}${_WRITE_LOSS_CAUSE:+ cause=${_WRITE_LOSS_CAUSE}}"
+  fi
+
+  # --strict: non-zero iff a per-line reject OR a write loss occurred (root/lib fail-closed handled
+  # above). The append unresolved-id WARNING alone does NOT trigger non-zero.
+  if [ "$strict" -eq 1 ] && { [ "${_INGEST_REJECTS:-0}" -gt 0 ] || [ "${_INGEST_LOSS:-0}" -ne 0 ]; }; then
+    return 1
+  fi
+  return 0
+}
+
+# ================================ hermetic --selftest (AC-PUBCAP-7) ================================ #
+# Sets its OWN isolated temp CLAUDE_PROJECT_DIR BEFORE any marker/buffer write so it never pollutes the
+# real corpus nor flips a live marker. Drives fixtures through _run_capture in subshells with an
+# isolated env, reads back marker state + buffer files, and _emit's PASS/FAIL. Exits non-zero on RED.
+_selftest() {
+  local fails=0 base proj date_part
+  # AC-DSST-1 (ER #76/#64): scratch precedence — mktemp -d (honors $TMPDIR) → the sandbox-writable
+  # project fallback $CLAUDE_PROJECT_DIR/.foundry/tmp → fail-fast SELFTEST-INCONCLUSIVE + exit 75
+  # (EX_TEMPFAIL). NEVER proceed with an empty $base (the "$base/proj" → mkdir /proj absolute-root
+  # fall-through that fail-closed every assertion under an OS sandbox).
+  base="$(mktemp -d "${TMPDIR:-/tmp}/foundry-selftest.XXXXXX" 2>/dev/null)" || base=""
+  if [ -z "$base" ] && [ -n "${CLAUDE_PROJECT_DIR:-}" ]; then
+    mkdir -p "${CLAUDE_PROJECT_DIR}/.foundry/tmp" 2>/dev/null || true
+    base="$(mktemp -d "${CLAUDE_PROJECT_DIR}/.foundry/tmp/selftest.XXXXXX" 2>/dev/null)" || base=""
+  fi
+  if [ -z "$base" ]; then
+    echo "SELFTEST-INCONCLUSIVE: filesystem sandbox denied scratch creation (mkdtemp in \$TMPDIR and the .foundry/tmp fallback); re-run with write access or sandbox-bypassed"
+    return 75
+  fi
+  # Point every downstream mktemp at the RESOLVED scratch (more hermetic; under a denied $TMPDIR the
+  # internal _run_capture/_ingest_records mktemps would otherwise still fail). Selftest-scoped only.
+  mkdir -p "$base/tmp" 2>/dev/null && export TMPDIR="$base/tmp" || true
+  date_part="$(date -u +%F)"
+  proj="$base/proj"; mkdir -p "$proj/.foundry"
+  echo "foundry-learn-capture self-test:"
+  _e() { if [ "$2" -eq 0 ]; then echo "$1: PASS${3:+ — $3}"; else echo "$1: FAIL${3:+ — $3}"; fails=$((fails+1)); fi; }
+
+  # Source the lib in THIS shell only for read-back helpers (marker state); the lib is idempotent and
+  # the writes happen in subshells with the isolated CLAUDE_PROJECT_DIR. Use the resolved real lib.
+  local LIBRO="$_LIB"
+  _mstate() { ( export CLAUDE_PROJECT_DIR="$proj"; . "$LIBRO"; _marker_state "$1" ); }
+  _setmk()  { ( export CLAUDE_PROJECT_DIR="$proj"; . "$LIBRO"; _set_marker "$1" "$2" ); }
+  _files()  { find "$proj/.foundry/session-learnings" -name "$1" 2>/dev/null | wc -l | tr -d ' '; }
+  _logf="$proj/.foundry/session-learnings/.harvest-log.jsonl"
+  # grep -c prints `0` AND exits 1 on no-match; capture just the count (no `|| echo 0` double-print).
+  _count() { local n; n="$(grep -c "$1" "$_logf" 2>/dev/null)"; printf '%s' "${n:-0}"; }
+
+  # helper: drive the capture core with an isolated env. args: mode sid stdin [extra positional]
+  _drive() {  # mode sid records-string [posarg]
+    local m="$1" s="$2" recs="$3" pos="${4:-}"
+    (
+      export CLAUDE_PROJECT_DIR="$proj"
+      unset CLAUDE_SESSION_ID 2>/dev/null || true
+      _ARG_MODE="$m" _ARG_SID="$s" _ARG_PROJ="$proj" _ARG_STRICT=0
+      _ARG_POSCOUNT=0; [ -n "$pos" ] && _ARG_POSCOUNT=1
+      printf '%s' "$recs" | _run_capture
+    )
+  }
+
+  # ---- AC-PUBCAP-1: path/bin/STDIN-only/self-resolving-failclosed-lib.
+  local r1=0
+  # (exec bit + name + location)
+  [ -x "$_BIN_DIR/foundry-learn-capture" ] || [ -x "${BASH_SOURCE[0]}" ] || r1=1
+  case "$_LIB" in *"/hooks/foundry-learnings-lib.sh") : ;; *) r1=1 ;; esac    # sibling hooks/ resolution
+  # STDIN-only: a record on STDIN is ingested (a file lands).
+  _drive append PB1 '{"l":"path-ok"}
+' >/dev/null 2>&1
+  [ "$(_files 'PB1__bin-capture__*.jsonl')" -ge 1 ] || r1=1
+  # lib-unresolved (override to a nonexistent path) → loss signal to stderr, NO write, returns.
+  local libloss; libloss="$(
+    export CLAUDE_PROJECT_DIR="$proj"; unset CLAUDE_PLUGIN_ROOT 2>/dev/null || true
+    printf '%s\n' '{"l":"x"}' | ( _LIB="$base/nope/missing-lib.sh" _ARG_MODE=append _ARG_SID=LIBX _ARG_PROJ="$proj" _ARG_STRICT=0 _ARG_POSCOUNT=0 _run_capture ) 2>&1 1>/dev/null
+  )"
+  printf '%s' "$libloss" | grep -qi 'library unresolved' || r1=1
+  [ "$(_files 'LIBX__bin-capture__*.jsonl')" -eq 0 ] || r1=1
+  _e "AC-PUBCAP-1 path-bin-stdin-only-self-resolving-failclosed-lib" "$r1" "exec+name+sibling-lib; STDIN ingest lands; lib-unresolved→stderr loss, no write"
+
+  # ---- AC-PUBCAP-2: failclosed sessionid AND projectdir.
+  local r2=0
+  # (vi) unresolved root: --project-dir absent, CLAUDE_PROJECT_DIR unset, pwd = a NON-corpus temp dir.
+  # AC-DSST-1 interplay: under the project-fallback scratch, $base itself sits INSIDE a `.foundry/`-
+  # bearing tree, so "$base/nocorpus" would (correctly) RESOLVE via the walk-up — the unresolved-root
+  # fixture needs a genuinely corpus-free cwd; use a system corpus-free dir in that environment.
+  local nocorp="$base/nocorpus"; mkdir -p "$nocorp"
+  if [ -n "$( (. "$LIBRO"; _resolve_buffer_root_walkup "$base") 2>/dev/null )" ]; then
+    local _cfd
+    for _cfd in /var/empty /dev; do [ -d "$_cfd" ] && { nocorp="$_cfd"; break; }; done
+  fi
+  local rootloss; rootloss="$(
+    cd "$nocorp" || exit 0
+    unset CLAUDE_PROJECT_DIR 2>/dev/null || true
+    unset CLAUDE_SESSION_ID 2>/dev/null || true
+    printf '%s\n' '{"l":"orphan"}' | ( _ARG_MODE=append _ARG_SID=NOROOT _ARG_PROJ="" _ARG_STRICT=0 _ARG_POSCOUNT=0 _run_capture ) 2>&1 1>/dev/null
+  )"
+  printf '%s' "$rootloss" | grep -qi 'buffer root unresolved' || r2=1     # signal to stderr
+  [ "$(find "$nocorp/.foundry" -type f 2>/dev/null | wc -l | tr -d ' ')" -eq 0 ] || r2=1   # NO write under pwd/.foundry
+  # session-id unresolved in --final → NO marker flip but records still written.
+  _setmk SIDF requested >/dev/null 2>&1
+  (
+    export CLAUDE_PROJECT_DIR="$proj"; unset CLAUDE_SESSION_ID 2>/dev/null || true
+    printf '%s\n' '{"l":"noid"}' | ( _ARG_MODE=final _ARG_SID="" _ARG_PROJ="$proj" _ARG_STRICT=0 _ARG_POSCOUNT=0 _run_capture )
+  ) >/dev/null 2>&1
+  # an unresolved id keys under `unresolved`; SIDF marker must remain `requested` (no real session owns it)
+  [ "$(_mstate SIDF)" = "requested" ] || r2=1
+  [ "$(_files 'unresolved__bin-capture__*.jsonl')" -ge 1 ] || r2=1        # records still written
+  # pure-dot id rejected (treated as unresolved → keyed `unresolved`, not `.`/`..`)
+  _drive append '.' '{"l":"dot"}
+' >/dev/null 2>&1
+  [ "$(_files '.__bin-capture__*.jsonl')" -eq 0 ] || r2=1
+  _e "AC-PUBCAP-2 failclosed-sessionid-and-projectdir" "$r2" "unresolved-root→fail-closed (no write under pwd, stderr); --final unresolved-id→no flip, records written; pure-dot rejected"
+
+  # ---- AC-PUBCAP-3: append no-touch; --final CAS; refuse absent.
+  local r3=0
+  # (i) append over absent / requested / done leaves the marker UNCHANGED.
+  _drive append APA '{"l":"a"}
+' >/dev/null 2>&1
+  [ -z "$(_mstate APA)" ] || r3=1                                          # absent stays absent
+  _setmk APR requested >/dev/null 2>&1; _drive append APR '{"l":"b"}
+' >/dev/null 2>&1
+  [ "$(_mstate APR)" = "requested" ] || r3=1                               # requested stays requested
+  _setmk APD done >/dev/null 2>&1; _drive append APD '{"l":"c"}
+' >/dev/null 2>&1
+  [ "$(_mstate APD)" = "done" ] || r3=1                                    # done stays done
+  # (ii) --final requested→done; preserve raced-in rearmed; absent→NO done.
+  _setmk FQ requested >/dev/null 2>&1; _drive final FQ '{"l":"d"}
+' >/dev/null 2>&1
+  [ "$(_mstate FQ)" = "done" ] || r3=1                                     # requested→done
+  _setmk FR rearmed >/dev/null 2>&1; _drive final FR '{"l":"e"}
+' >/dev/null 2>&1
+  [ "$(_mstate FR)" = "rearmed" ] || r3=1                                  # rearmed preserved: the requested-only outer guard skips the flip (the bin never reaches _cas_done here; _cas_done's own rearmed-preserve branch is exercised by the hook selftest's CAS case)
+  _drive final FABS '{"l":"f"}
+' >/dev/null 2>&1
+  [ -z "$(_mstate FABS)" ] || r3=1                                         # absent → NO done created
+  [ "$(_files 'FABS__bin-capture__*.jsonl')" -ge 1 ] || r3=1              # records still written
+  _e "AC-PUBCAP-3 append-no-touch-final-cas-refuse-absent" "$r3" "append: absent/requested/done unchanged; --final: requested→done, rearmed preserved, absent→no done (records written)"
+
+  # ---- AC-PUBCAP-4: structural JSONL; observable drops; no false ok.
+  local r4=0
+  # (iii) non-object + unparseable → content-free reject; dict forwarded.
+  local sek='AKIAIOSFODNN7EXAMPLE'
+  _drive append RJ "totally-not-json
+[1,2]
+{\"keepme\":\"alpha\"}
+raw $sek leak not-json
+" >/dev/null 2>&1
+  [ "$(_files 'RJ__bin-capture__*.jsonl')" -ge 1 ] || r4=1                 # the one dict forwarded
+  grep -q '"task_id":"bin-capture".*"outcome":"reject:unparseable"' "$_logf" 2>/dev/null || r4=1
+  grep -q '"task_id":"bin-capture".*"outcome":"reject:non-object"' "$_logf" 2>/dev/null || r4=1
+  grep -q "$sek" "$_logf" 2>/dev/null && r4=1                              # content-free: rejected-line secret NEVER logged
+  # (iv) argv-record with empty STDIN → reject:argv-record, not a false ok:0.
+  local okmid; okmid="$(_count '"records":0,"outcome":"ok"')"
+  _drive append AV '' 'a-record-on-argv' >/dev/null 2>&1
+  grep -q '"outcome":"reject:argv-record"' "$_logf" 2>/dev/null || r4=1
+  local okafter; okafter="$(_count '"records":0,"outcome":"ok"')"
+  [ "$okafter" -eq "$okmid" ] || r4=1                                      # argv misuse did NOT mask as ok:0
+  _e "AC-PUBCAP-4 structural-jsonl-observable-drops-no-false-ok" "$r4" "non-object/unparseable rejected content-free; dict forwarded; argv-record reject (not ok:0)"
+
+  # ---- AC-PUBCAP-7: hermetic real oracle anti-tautology.
+  local r7=0
+  # (v) self-resolves with CLAUDE_PLUGIN_ROOT UNSET (the PB1 write above ran with it possibly set; redo unset).
+  ( export CLAUDE_PROJECT_DIR="$proj"; unset CLAUDE_PLUGIN_ROOT 2>/dev/null || true
+    printf '%s\n' '{"l":"noenv"}' | ( _ARG_MODE=append _ARG_SID=NOENV _ARG_PROJ="$proj" _ARG_STRICT=0 _ARG_POSCOUNT=0 _run_capture ) ) >/dev/null 2>&1
+  [ "$(_files 'NOENV__bin-capture__*.jsonl')" -ge 1 ] || r7=1
+  # (vii) records passed on argv are NOT ingested (STDIN-only) — even with non-empty argv + empty STDIN
+  # nothing keyed under the sid was written (already proven by AV: no AV file).
+  [ "$(_files 'AV__bin-capture__*.jsonl')" -eq 0 ] || r7=1
+  # anti-tautology: prove the known-bad would be caught — an UNSCRUBBED secret in a *rejected* line must
+  # NOT appear in the log (re-assert), and the GOOD path produced real artifacts (not a vacuous all-skip).
+  grep -q "$sek" "$_logf" 2>/dev/null && r7=1
+  [ "$(_files 'RJ__bin-capture__*.jsonl')" -ge 1 ] || r7=1
+  # known-bad direction for append-over-done (would suppress): re-assert APD stayed done.
+  [ "$(_mstate APD)" = "done" ] || r7=1
+  _e "AC-PUBCAP-7 selftest-hermetic-real-oracle-anti-tautology" "$r7" "self-resolve w/ PLUGIN_ROOT unset writes; argv not ingested; rejected-secret not logged; real artifacts present"
+
+  # ============================ feat-foundry-capture-loss-observability (ER #70) ============================
+  # A chmod-denied buffer partition is the write-denial oracle; markers live OUTSIDE session-learnings
+  # so the marker dir stays writable (exactly the live sandbox-denial shape the ER reported).
+  local rcl1=0 rcl2=0 rcl3=0 rcl4=0 deny="$base/deny" losserr mixerr
+  mkdir -p "$deny/.foundry/session-learnings"
+  ( export CLAUDE_PROJECT_DIR="$deny"; . "$LIBRO"; _set_marker CLO requested ) >/dev/null 2>&1
+  chmod 0500 "$deny/.foundry/session-learnings"
+  losserr="$(
+    export CLAUDE_PROJECT_DIR="$deny"; unset CLAUDE_SESSION_ID 2>/dev/null || true
+    printf '%s\n' '{"l":"1"}' '{"l":"2"}' '{"l":"3"}' '{"l":"4"}' | ( _ARG_MODE=final _ARG_SID=CLO _ARG_PROJ="$deny" _ARG_STRICT=0 _ARG_POSCOUNT=0 _run_capture ) 2>&1 1>/dev/null
+  )"
+  chmod 0700 "$deny/.foundry/session-learnings" 2>/dev/null || true
+
+  # ---- AC-CLO-1: the loss signal names the failing path + the OS error text — and stays content-free.
+  printf '%s' "$losserr" | grep -q 'cause=' || rcl1=1
+  printf '%s' "$losserr" | grep -q "$deny" || rcl1=1                                    # failing PATH named
+  printf '%s' "$losserr" | grep -Eqi 'not permitted|permission denied|denied' || rcl1=1  # OS error text present
+  printf '%s' "$losserr" | grep -q '"l":"1"' && rcl1=1                                  # record content NEVER in the signal
+  _e "AC-CLO-1 write-denial-cause-surfaced" "$rcl1" "cause= names the denied path + OS error text; content-free"
+
+  # ---- AC-CLO-2: loss counters count RECORDS not batches (4-record lost batch → write_loss=4, not 1);
+  # the harvest-log fail-open row (stderr fallback — the log itself is under the denied dir) carries the
+  # ATTEMPTED count, not 0.
+  printf '%s' "$losserr" | grep -q 'write_loss=4' || rcl2=1
+  printf '%s' "$losserr" | grep -q 'write_loss=1' && rcl2=1                             # anti-tautology: the old batch-flag would FAIL
+  printf '%s' "$losserr" | grep -q '"records":4,"outcome":"fail-open"' || rcl2=1
+  printf '%s' "$losserr" | grep -q '"records":0,"outcome":"fail-open"' && rcl2=1        # the old records:0 row would FAIL
+  _e "AC-CLO-2 loss-counts-records-not-batches" "$rcl2" "write_loss=4 (not 1); fail-open row records:4 (not 0)"
+
+  # ---- AC-CLO-3: the summary reconciles read = accepted + rejects + write_loss, on BOTH the denied
+  # batch (4=0+0+4) and a writable mixed batch (2 good + 1 reject: 3=2+1+0).
+  printf '%s' "$losserr" | grep -q 'read=4 accepted=0 rejects=0 write_loss=4' || rcl3=1
+  mixerr="$(
+    export CLAUDE_PROJECT_DIR="$proj"; unset CLAUDE_SESSION_ID 2>/dev/null || true
+    printf '%s\n' '{"m":"one"}' 'not-json' '{"m":"two"}' | ( _ARG_MODE=append _ARG_SID=MIX _ARG_PROJ="$proj" _ARG_STRICT=0 _ARG_POSCOUNT=0 _run_capture ) 2>&1 1>/dev/null
+  )"
+  printf '%s' "$mixerr" | grep -q 'read=3 accepted=2 rejects=1 write_loss=0' || rcl3=1
+  _e "AC-CLO-3 summary-reconciles-read-accepted-rejects-loss" "$rcl3" "denied: 4=0+0+4; mixed writable: 3=2+1+0"
+
+  # ---- AC-CLO-4: a TOTAL --final write loss leaves the once-per-session marker un-flipped (`requested`
+  # stays `requested`; a `done` here is the known-bad silent-consume and would FAIL) + a loud signal.
+  # The writable-path flip is UNCHANGED (AC-PUBCAP-3's FQ requested→done above already asserts it).
+  [ "$( ( export CLAUDE_PROJECT_DIR="$deny"; . "$LIBRO"; _marker_state CLO ) )" = "requested" ] || rcl4=1
+  printf '%s' "$losserr" | grep -q 'marker NOT flipped' || rcl4=1
+  [ "$(_mstate FQ)" = "done" ] || rcl4=1                                                # loss-guard did NOT regress the writable flip
+  _e "AC-CLO-4 final-total-loss-preserves-marker" "$rcl4" "denied --final: requested preserved + loud signal; writable --final still flips"
+
+  rm -rf "$base" 2>/dev/null || true
+  echo ""
+  if [ "$fails" -eq 0 ]; then echo "FOUNDRY-LEARN-CAPTURE-SELFTEST-GREEN"; return 0; else echo "FOUNDRY-LEARN-CAPTURE-SELFTEST-RED"; return 1; fi
+}
+
+# ================================ flag parse + dispatch ================================ #
+# Explicit parser; RETAINS unrecognized positionals (does NOT inherit _capture's `*) shift` swallow) so
+# an argv-borne record is detectable (AC-PUBCAP-4). --selftest / --help dispatch BEFORE any STDIN read.
+_main() {
+  local mode="append" sid_arg="" proj_arg="" strict=0 do_selftest=0 do_help=0
+  local poscount=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --final)         mode="final"; shift ;;
+      --append)        mode="append"; shift ;;
+      --session-id)    sid_arg="${2:-}"; shift 2 || shift ;;
+      --session-id=*)  sid_arg="${1#*=}"; shift ;;
+      --project-dir)   proj_arg="${2:-}"; shift 2 || shift ;;
+      --project-dir=*) proj_arg="${1#*=}"; shift ;;
+      --strict)        strict=1; shift ;;
+      --selftest)      do_selftest=1; shift ;;
+      --help|-h)       do_help=1; shift ;;
+      *)               poscount=$((poscount+1)); shift ;;   # RETAIN (counted) — never silently swallow
+    esac
+  done
+  if [ "$do_help" -eq 1 ]; then _usage; exit 0; fi
+  if [ "$do_selftest" -eq 1 ]; then _selftest; exit $?; fi
+  _ARG_MODE="$mode" _ARG_SID="$sid_arg" _ARG_PROJ="$proj_arg" _ARG_STRICT="$strict" _ARG_POSCOUNT="$poscount"
+  _run_capture
+  exit $?
+}
+
+_main "$@"

@@ -1,0 +1,44 @@
+# Agentic Foundry
+
+> Governed, spec-driven delivery for agent-built software, shipped as a Claude Code plugin.
+> The loop: spec → operator authorization → governed build in an isolated worktree → an
+> honestly-tiered merge floor (the platform's own enforcement) → certification against the
+> real running app → human sign-off. Gates make problems visible, not impossible; the
+> operator's judgment is terminal by design.
+
+Key facts for agents: the core loop is six verbs (intake, spec-review, authorize, dispatch,
+certify-local, release accept); specs are atomic (stable AC-IDs, ≤14 ACs / 8,000 words, no
+override); the acceptance contract is frozen (content-hashed, operator-signed) at
+authorization and scope-widening requires re-authorization; certification refuses rather
+than passing vacuously; there is no unattended-merge mode.
+
+## Docs
+
+- [README](README.md): the loop in one picture, quickstart, task→verb table, honest comparison
+- [Docs home](docs/README.md): the four-quadrant index (tutorials / how-to / reference / explanation)
+- [Quickstart](docs/QUICKSTART.md): zero to a first governed merge, artifact by artifact
+- [Design & trust model](docs/DESIGN.md): what the machine enforces, what stays human, what is deliberately not guaranteed
+- [Merge floor](docs/merge-floor.md): the tier model (A server-enforced / B labeled-advisory) and exact hook semantics
+- [Architecture](docs/architecture.md): workspace (WHAT) ⟷ factory (HOW) and the wiring contract
+- [Verb reference](docs/VERBS-QUICK-REF.md): every /foundry:* verb, one line each
+- [Glossary](docs/glossary.md): atom, contract, floor, journey, operator…
+- [Comparison](docs/comparison.md): vs SDD tools / review bots / agent platforms, including when NOT to use this
+- [Troubleshooting](docs/troubleshooting.md): symptom-first runbooks
+- [FAQ](docs/faq.md)
+
+## How-to
+
+- [Recover from a failed gate](docs/how-to/recover-from-a-failed-gate.md)
+- [Adopt on an existing codebase](docs/how-to/adopt-on-an-existing-codebase.md)
+- [Team review with CODEOWNERS](docs/how-to/team-review-with-codeowners.md)
+- [Multi-repo control center](docs/how-to/multi-repo-control-center.md)
+- [Cut a release](docs/how-to/cut-a-release.md)
+- [Migrate from Spec Kit](docs/how-to/migrate-from-spec-kit.md)
+- [Migrate from OpenSpec](docs/how-to/migrate-from-openspec.md)
+
+## Optional
+
+- [Terminology standard](docs/TERMINOLOGY.md): the naming standard skills/agents conform to
+- [Identity isolation](docs/identity-isolation.md)
+- [Changelog](CHANGELOG.md)
+- [Contributing](CONTRIBUTING.md) · [Security policy](SECURITY.md) · [Agents guide](AGENTS.md)

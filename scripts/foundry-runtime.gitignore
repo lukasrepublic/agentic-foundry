@@ -1,0 +1,5 @@
+# .foundry/ runtime partitions are ignored by default; the designed-tracked set is re-included.
+/.foundry/*
+!/.foundry/README.md
+!/.foundry/build-provenance.yaml
+!/.foundry/stack-profile.lock

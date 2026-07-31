@@ -1,0 +1,269 @@
+# tests/fixtures/subtraction/deleted-module-sweep.yaml
+# Mirrors VERBATIM the "FROZEN SWEEP DEFINITION" preamble of the sibling
+# specs/features/foundry/governance/subtraction-contract-widening/acceptance-contract.yaml
+# (AC-SCW-6/-7/-9). This is the SINGLE fixture tests/test_subtraction_absence.py reads — the
+# widened locators are hash-frozen with the contract and the normative region stays stable
+# under a set edit.
+#
+# token_set — ERE alternation, one pattern per list item (both spellings of every deleted
+# module PLUS the retired hook, workflow, skill and config names). `foundry-branch-protection`
+# (Block 2) and the hyphen forms `foundry-emit-provenance` / `foundry-authorize-light` /
+# `foundry-merge-gate-status` are the widened members the shipped AC-SUB-2/AC-SUB-6 alternation
+# could not match.
+token_set:
+  - 'foundry[_-]merge[_-]gate'
+  - 'foundry[_-]ci[_-]gate'
+  - 'foundry[_-]walk[_-]evidence'
+  - 'foundry[_-]ui[_-]walk'
+  - 'foundry[_-]provenance'
+  - 'foundry-emit-provenance'
+  - 'foundry[_-]wiring[_-]hash'
+  - 'foundry[_-]wiring[_-]heal'
+  - 'foundry[_-]authz[_-]light'
+  - 'foundry-authorize-light'
+  - 'foundry[_-]authz[_-]drift'
+  - 'foundry[_-]admission'
+  - 'foundry[_-]acceptance[_-]flag'
+  - 'foundry[_-]released[_-]gate'
+  - 'foundry[_-]operator[_-]interaction'
+  - 'foundry[_-]adi'
+  - 'foundry[_-]ihdi'
+  - 'foundry[_-]debit'
+  - 'foundry[_-]run[_-]ledger'
+  - 'foundry[_-]drift[_-]sweep'
+  - 'foundry-spawn-worker'
+  - 'foundry-fanout'
+  - 'foundry-branch-protection'
+  - 'branch-protection\.json'
+  - 'merge-gate-hook'
+  - 'pr-create-provenance'
+  - 'foundry-merge-gate-status'
+  - 'skills/authorize-light'
+  - 'skills/emit-provenance'
+
+# surface_set — the whole executable AND prompt-executable surface. The shipped AC-SUB-6
+# locator named only five files; skills/ + agents/ join this round (skill/agent prose is
+# prompt-level executable surface, so a stale deleted-module mention there is an instruction to
+# invoke it).
+surface_set:
+  - 'scripts/*.py'
+  - 'scripts/*.sh'
+  - 'scripts/foundry_checks/*.py'
+  - 'hooks/*.sh'
+  - 'hooks/hooks.json'
+  - 'workflows/*.js'
+  - '.github/workflows/*.yml'
+  - 'skills/*/SKILL.md'
+  - 'agents/*.md'
+
+# absent_paths — the AC-SUB-1 set (32 paths, unchanged, not renumbered) PLUS
+# scripts/foundry-branch-protection.sh (Block 2, AC-SCW-6). Every entry SHALL NOT exist in the
+# candidate tree.
+absent_paths:
+  - scripts/foundry_merge_gate.py
+  - scripts/foundry-merge-gate.py
+  - scripts/foundry-ci-gate.py
+  - hooks/foundry-merge-gate-hook.sh
+  - hooks/foundry-pr-create-provenance.sh
+  - .github/workflows/foundry-merge-gate-status.yml
+  - branch-protection.json
+  - scripts/foundry_walk_evidence.py
+  - scripts/foundry_ui_walk_driver.py
+  - scripts/foundry_ui_walk_journeys.py
+  - scripts/foundry_ui_walk
+  - scripts/foundry_provenance.py
+  - scripts/foundry-emit-provenance.py
+  - scripts/foundry_wiring_hash.py
+  - scripts/foundry-wiring-hash.py
+  - scripts/foundry_wiring_heal.py
+  - scripts/foundry_authz_light.py
+  - scripts/foundry-authorize-light.py
+  - scripts/foundry_authz_drift.py
+  - scripts/foundry_admission.py
+  - scripts/foundry_acceptance_flag.py
+  - scripts/foundry_released_gate.py
+  - scripts/foundry_operator_interaction.py
+  - scripts/foundry_adi.py
+  - scripts/foundry_ihdi.py
+  - scripts/foundry_debit.py
+  - scripts/foundry_run_ledger.py
+  - scripts/foundry_drift_sweep.py
+  - scripts/foundry-spawn-worker
+  - scripts/foundry-fanout
+  - skills/authorize-light
+  - skills/emit-provenance
+  - scripts/foundry-branch-protection.sh
+
+# allowlist — AC-SCW-9's approved exceptions. Every occurrence the widened sweep would
+# otherwise flag over (surface_set x token_set) is covered by exactly one entry below: `path`
+# (must resolve in the candidate tree), `token` (must be a member of token_set, verbatim), and
+# `reason` (non-empty, states the occurrence is comment/docstring/registry/skill-retirement-note
+# prose, never an executed reference). Grounded against the real tree, 2026-07-28 (GP-2 build):
+# every entry below was verified by actually running the widened sweep over the shipped tree —
+# nothing here is aspirational.
+allowlist:
+  - path: scripts/foundry_contract.py
+    token: 'foundry[_-]merge[_-]gate'
+    reason: >-
+      Comparative docstring naming the retired bespoke merge gate for contrast with the native
+      floor; not an import or invocation.
+  - path: scripts/foundry_contract.py
+    token: 'foundry-emit-provenance'
+    reason: >-
+      Comparative docstring listing the retired provenance-chain scripts by name; not an import
+      or invocation.
+  - path: scripts/foundry_reconcile.py
+    token: 'foundry[_-]merge[_-]gate'
+    reason: >-
+      Docstring explaining the reconcile check never mutates real state, contrasted against the
+      retired merge gate's `evaluate`; not an import or invocation.
+  - path: scripts/foundry_realization.py
+    token: 'foundry[_-]walk[_-]evidence'
+    reason: >-
+      Docstring distinguishing the post-merge verdict from the retired pre-merge walk-evidence
+      module; not an import or invocation.
+  - path: scripts/foundry_dispatch_lint.py
+    token: 'foundry-spawn-worker'
+    reason: >-
+      Comment recording that the dispatch preflight used to compose with the retired spawn-worker
+      script; not an import or invocation.
+  - path: scripts/foundry_grounding_conformance.py
+    token: 'foundry[_-]merge[_-]gate'
+    reason: >-
+      Comment stating the retired merge gate never imported/ran this module; not an import or
+      invocation.
+  - path: scripts/foundry_grounding_conformance.py
+    token: 'foundry[_-]drift[_-]sweep'
+    reason: >-
+      Comment noting this module's CLI mirrors the (dormant) drift-sweep module's shape; not an
+      import or invocation.
+  - path: scripts/foundry-coherence-check.py
+    token: 'foundry[_-]merge[_-]gate'
+    reason: >-
+      Comments explaining this module is never imported/run inside the retired merge gate; not an
+      import or invocation.
+  - path: workflows/release-wave.js
+    token: 'foundry-spawn-worker'
+    reason: >-
+      Comment recording that the deprecated spawn-worker/fanout scripts were retired entirely;
+      not an import or invocation (the native Workflow tool has no fs/import()/node: access).
+  - path: workflows/release-wave.js
+    token: 'foundry-fanout'
+    reason: >-
+      Same retirement comment as the foundry-spawn-worker entry above; not an import or
+      invocation.
+  - path: workflows/release-wave.js
+    token: 'foundry[_-]run[_-]ledger'
+    reason: >-
+      `foundry-run-ledger:journal` is a hardcoded console.log narration-line LABEL string this
+      workflow itself emits at runtime — not a reference to, import of, or invocation of the
+      deleted scripts/foundry_run_ledger.py module.
+  - path: skills/coherence-check/SKILL.md
+    token: 'foundry[_-]merge[_-]gate'
+    reason: >-
+      Skill prose recording that the bespoke foundry-merge-gate.py this rule/section originally
+      named was retired in the v0.24.0 subtraction; a retirement note, not an invocation
+      instruction.
+  - path: skills/cut-release/SKILL.md
+    token: 'foundry[_-]wiring[_-]hash'
+    reason: >-
+      Skill prose recording that foundry-wiring-hash.py no longer exists in this repo and its
+      write-manifest/write-pin steps no longer apply; a retirement note, not an invocation
+      instruction.
+  - path: skills/dispatch/SKILL.md
+    token: 'foundry[_-]merge[_-]gate'
+    reason: >-
+      Skill prose recording that scripts/foundry_merge_gate.py does not exist (deleted, v0.24.0
+      subtraction); a retirement note, not an invocation instruction.
+  - path: skills/dispatch/SKILL.md
+    token: 'foundry-spawn-worker'
+    reason: >-
+      Skill prose describing the retired bespoke process-spawn orchestrator and its worker
+      primitive; a retirement note, not an invocation instruction.
+  - path: skills/dispatch/SKILL.md
+    token: 'foundry-fanout'
+    reason: >-
+      Same retirement note as the foundry-spawn-worker entry above; not an invocation
+      instruction.
+  - path: skills/doctor/SKILL.md
+    token: 'foundry[_-]merge[_-]gate'
+    reason: >-
+      Skill prose recording that the required-status check this flag used to drive was retired
+      with foundry-merge-gate.py; a retirement note, not an invocation instruction.
+  - path: skills/doctor/SKILL.md
+    token: 'foundry[_-]wiring[_-]hash'
+    reason: >-
+      Skill prose recording there is no wiring-hash check in the current doctor (foundry-wiring
+      -hash.py and foundry-merge-gate.py both retired); a retirement note, not an invocation
+      instruction.
+  - path: skills/drift-sweep/SKILL.md
+    token: 'foundry[_-]merge[_-]gate'
+    reason: >-
+      Skill prose recording the bespoke foundry-merge-gate.py this line originally named was
+      retired in the v0.24.0 subtraction; a retirement note, not an invocation instruction.
+  - path: skills/drift-sweep/SKILL.md
+    token: 'foundry[_-]drift[_-]sweep'
+    reason: >-
+      This skill's OWN frontmatter/body honestly names itself CURRENTLY DORMANT because the
+      scripts/foundry_drift_sweep.py engine it drives was retired; a self-documenting dormancy
+      note, not a live invocation (the skill is not wired to run this engine).
+  - path: skills/grounding-conformance/SKILL.md
+    token: 'foundry[_-]merge[_-]gate'
+    reason: >-
+      Skill prose recording the bespoke foundry-merge-gate.py this line originally named was
+      retired in the v0.24.0 subtraction; a retirement note, not an invocation instruction.
+  - path: skills/infra-sandboxed-apply/SKILL.md
+    token: 'foundry[_-]walk[_-]evidence'
+    reason: >-
+      Skill prose recording that the `decide_sandbox_apply` gate named here was retired with
+      scripts/foundry_walk_evidence.py in the v0.24.0 subtraction; a retirement note, not an
+      invocation instruction.
+  - path: skills/init/SKILL.md
+    token: 'foundry[_-]merge[_-]gate'
+    reason: >-
+      Skill prose recording the universal foundry-merge-gate required-status backstop and its
+      required-status context no longer exist to enforce; a retirement note, not an invocation
+      instruction.
+  - path: skills/init/SKILL.md
+    token: 'foundry[_-]wiring[_-]hash'
+    reason: >-
+      Skill prose recording that foundry-wiring-hash.py no longer exists in this repo; a
+      retirement note, not an invocation instruction.
+  - path: skills/init/SKILL.md
+    token: 'foundry-branch-protection'
+    reason: >-
+      Skill prose recording that this skill used to run foundry-branch-protection.sh
+      apply/verify, and that the applier script is deleted; a retirement note, not an invocation
+      instruction.
+  - path: skills/init/SKILL.md
+    token: 'branch-protection\.json'
+    reason: >-
+      Skill prose recording that the branch-protection.json config the retired applier pinned is
+      also deleted; a retirement note, not a live config reference.
+  - path: skills/mode-autonomous/SKILL.md
+    token: 'foundry-spawn-worker'
+    reason: >-
+      Skill prose recording the bespoke process-spawn fallback (foundry-fanout/foundry-spawn
+      -worker) was REMOVED in the v0.24.0 subtraction; a retirement note, not an invocation
+      instruction.
+  - path: skills/mode-autonomous/SKILL.md
+    token: 'foundry-fanout'
+    reason: >-
+      Same retirement note as the foundry-spawn-worker entry above; not an invocation
+      instruction.
+  - path: skills/release/SKILL.md
+    token: 'foundry[_-]wiring[_-]hash'
+    reason: >-
+      Skill prose recording that the wiring-manifest.json, foundry-wiring-hash.py and its drop-in
+      doctor check are historical/retired; a retirement note, not an invocation instruction.
+  - path: skills/upgrade/SKILL.md
+    token: 'foundry[_-]merge[_-]gate'
+    reason: >-
+      This skill's own frontmatter honestly names itself RETIRED MACHINERY, kept as a pointer
+      only, recording that foundry-merge-gate.py was retired in the v0.24.0 subtraction; a
+      self-documenting retirement note, not an invocation instruction.
+  - path: skills/upgrade/SKILL.md
+    token: 'foundry[_-]wiring[_-]hash'
+    reason: >-
+      Same self-documenting retirement note as the foundry-merge-gate entry above (both retired
+      together); not an invocation instruction.

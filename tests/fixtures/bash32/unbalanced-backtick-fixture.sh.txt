@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# tests/fixtures/bash32/unbalanced-backtick-fixture.sh.txt — the AC-B32-5 negative control: the
+# EXACT reproduced defect shape (an unbalanced backtick inside a python3 heredoc nested in a
+# `$( … )` command substitution), stored with a non-`.sh` suffix so the shell-parse-bash32 job's
+# discovery query (`git ls-files | grep -e '[.]sh$'`) never picks it up on its own — the
+# fail-closed / coverage tests copy this file into a temporary tree under a `.sh` name so it IS
+# discovered there, on purpose, to prove the gate really detects the class it exists for. A
+# `docker run` that fails for an unrelated reason (bad image, missing daemon, wrong invocation)
+# would otherwise be indistinguishable from real detection; this fixture is the positive proof
+# that failure means "the parser really choked on this file", not "the harness is broken".
+set -uo pipefail
+
+out="$(python3 - <<'PY'
+# A single, LONE backtick in a Python comment below is the whole defect: bash 3.2's
+# command-substitution scanner counts it as a shell quote (it does not skip heredoc bodies the
+# way bash 4+/5 does), so the odd count swallows the rest of the file looking for a mate. This is
+# the mention: `unmatched
+print("unreachable under bash 3.2 — the file never gets this far")
+PY
+)"
+printf '%s' "$out"
