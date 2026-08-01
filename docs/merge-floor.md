@@ -130,6 +130,11 @@ the light lane from your copy of the workflow — it is four lines of shell.
      `GH_CONFIG_DIR`); anything else refuses, because variables like `GH_PAGER`/`GH_BROWSER` are
      programs `gh` executes and `PATH` would let a planted `gh` forge a green verdict.
 
+     **What a green verdict covers.** `gh pr checks` reports **CI check runs only**. It does
+     not report required reviews, CODEOWNERS approval, or merge-queue eligibility, so an admit
+     means "CI is green", never "this PR is mergeable". Those rules are the server's to enforce
+     (Tier A); on Tier B nothing enforces them.
+
      The refusal names the argument that resolves it and is worded distinctly from a
      check-failure refusal. **This costs explicitness**: a bare `gh pr merge --squash`, which
      older versions admitted, now requires a PR number or URL. That is deliberate — an unpinned
