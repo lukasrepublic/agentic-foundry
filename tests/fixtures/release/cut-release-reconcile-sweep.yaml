@@ -171,6 +171,9 @@ preflight_expectation:
     - 'marketplace.json version == target (bump BOTH manifests)'
     - 'marketplace source.ref == vTARGET'
     - 'CHANGELOG.md has the ## vTARGET section'
+    # AC-TPC-9 — the re-pin commit (R2) is created AFTER the acceptance verdict and the tag lands
+    # on it, so anything left uncommitted would ship under the release tag ungated
+    - 'working tree is clean (R2 is created after the gate runs)'
     # AC-TPC-2 — what an adopter installing by ref actually resolves
     - 'install pin at vTARGET resolves this release'
   forbidden_claim_tokens:

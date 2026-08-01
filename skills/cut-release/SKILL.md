@@ -1,6 +1,6 @@
 ---
 name: cut-release
-description: Cut an agentic-foundry release as a guarded playbook (/foundry:cut-release). Encodes the hand-run cut procedure as a loop whose EXIT GATE is the existing acceptance verdict — verifies the ordered preconditions (bump BOTH manifests, source.ref, CHANGELOG section), refuses to emit any publish plan until run_acceptance returns pass, then emits the gotcha-correct publish plan (annotated tag → re-pin marketplace source.sha to the TAG COMMIT → push, never force) WITHOUT pushing. Trigger when the operator is cutting/releasing a version — "cut a release", "release v0.6.1", "/foundry:cut-release", "ship the release".
+description: Cut an agentic-foundry release as a guarded playbook (/foundry:cut-release). Encodes the hand-run cut procedure as a loop whose EXIT GATE is the existing acceptance verdict — verifies the ordered preconditions (bump BOTH manifests, source.ref, CHANGELOG section), refuses to emit any publish plan until run_acceptance returns pass, then emits the gotcha-correct publish plan (re-pin marketplace source.sha to the release commit → annotated tag on the re-pin commit → machine-verify the tag → push, never force) WITHOUT pushing. Trigger when the operator is cutting/releasing a version — "cut a release", "release v0.6.1", "/foundry:cut-release", "ship the release".
 ---
 
 # /foundry:cut-release — the cut-release playbook
@@ -91,10 +91,31 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
    - `GATED` (exit 2) — `run_acceptance` returned FAIL; the candidate tree's own doctor / validate /
      hooks-executable check is red. Fix the defect (NOT the gate) and re-run.
    - `READY` (exit 0) — preconditions ok ∧ acceptance `pass`. The **publish plan** is printed.
-3. **Execute the emitted publish plan yourself** (cut-release never pushes): annotated tag at **R** →
-   re-pin `marketplace source.sha` to the **tag commit** (`git rev-parse vX.Y.Z^{commit}` — NOT the
-   annotated-tag object) as a separate commit **R2** → `push origin main` + `push origin vX.Y.Z`,
-   **never force-push** (if a parallel push rejects, reconcile by MERGE).
+3. **Execute the emitted publish plan yourself** (cut-release never pushes). **RE-PIN FIRST, THEN
+   TAG** — this order is the whole point, and the previous order shipped the wrong code twice:
+
+   1. `git status --porcelain` — **must be empty.** The re-pin commit is created *after* the
+      acceptance verdict and the tag lands on it, so any uncommitted edit would ship under the
+      release tag having never been gated.
+   2. `CONTENT=$(git rev-parse HEAD)` — the release commit **R**, the code being shipped.
+   3. Edit `.claude-plugin/marketplace.json`: `source.sha = $CONTENT`, `source.ref = vX.Y.Z`.
+   4. Commit it **path-scoped**: `git commit -m '…' -- .claude-plugin/marketplace.json`. Never
+      `commit -am`, which sweeps every modified tracked file into the tagged commit.  → **R2**
+   5. `git tag -a vX.Y.Z` — on **R2**, the commit that CARRIES the pin.
+   6. `python3 scripts/foundry-cut-release.py --tree <repo> --version X.Y.Z --verify-tag` — the
+      machine re-check. **Must print `TAG-PIN-COHERENT`.** Do not push until it does.
+   7. `push origin main` + `push origin vX.Y.Z`, **never force-push** (if a parallel push rejects,
+      reconcile by MERGE).
+
+   **Why the order matters.** An adopter installs by ref: `marketplace add <repo>#vX.Y.Z` resolves
+   `marketplace.json` **at the tag** and installs the commit its `source.sha` names. Tagging before
+   the re-pin leaves the tag serving the **previous** release's sha, so the install delivers the
+   previous version's code — for a security patch, the fix is simply not delivered. That shipped on
+   both v1.0.0 and v1.0.1 and was hand-corrected each time.
+
+   **Why step 6 is not optional.** On the cut that *creates* the tag, the preflight coherence check
+   reports "not applicable" — the tag does not exist yet, so there is nothing to inspect. Step 6 is
+   the only point at which the property is machine-verified rather than assumed.
 4. **Reconcile the release's ERs** (the backstop's operator step). The `READY` plan's **tail** carries one
    `gh issue close <n>` step per enhancement-request the release closes, derived from the `## vX.Y.Z`
    CHANGELOG section (the trace source authored in step 1). **Review each before running it** — see the
@@ -149,6 +170,14 @@ and emits their closes.
 ## Anti-patterns
 
 - **Editing the gate to make a red cut go green** — fix the candidate tree, never the acceptance gate.
-- **Re-pinning `source.sha` to the annotated-tag object** instead of the tag *commit* — the plan gives the
-  correct `^{commit}` form; use it.
+- **Tagging before re-pinning.** The tag must sit on the commit that carries the pin, or an install
+  by ref serves the previous release. This is the defect that shipped twice; the plan's order is the
+  fix and it is not a stylistic preference.
+- **Using `git commit -am` for the re-pin.** The tag lands on that commit *after* the gate ran —
+  path-scope it to `.claude-plugin/marketplace.json` so nothing ungated rides along.
+- **Pushing without running `--verify-tag`.** The preflight check is a no-op on the cut that creates
+  the tag; skipping the post-tag re-check leaves the property entirely unverified.
+- **Pinning `source.sha` to an annotated-tag object, a branch name, or an abbreviated hash** — it
+  must be a full 40-character commit id. A ref name is a *mutable* pin: what an adopter resolves
+  changes as the ref moves.
 - **Force-pushing to reconcile a parallel push** — reconcile by merge; the tag is already immutable.

@@ -101,21 +101,173 @@ def test_coherent_pin_is_ready(repo):
     assert ok, f"a coherent cut was refused: {detail}"
 
 
+def _step(plan, pred):
+    return next((n for n, s in enumerate(plan) if pred(s)), -1)
+
+
 def test_emitted_plan_order_yields_coherence(repo):
-    """AC-TPC-3 — following the EMITTED plan verbatim must produce a coherent tag. Asserted on the
-    plan's own text: the re-pin step must precede the tag step."""
-    plan = "\n".join(cr.publish_plan(str(repo), "1.0.1"))
-    tag_at = plan.index("tag -a")
-    repin_at = plan.index("source.sha")
+    """AC-TPC-3 — following the EMITTED plan verbatim must produce a coherent tag.
+
+    Asserted on the index of the EXECUTABLE STEPS, never on substring positions in the joined text.
+    The first version of this test did `plan.index("source.sha") < plan.index("tag -a")`, which
+    matched "source.sha" inside the human-readable `# edit …` COMMENT that sits above the commit.
+    Swapping the real `git commit` and `git tag -a` steps — the literal v1.0.0/v1.0.1 defect — left
+    that comment untouched and the assertion still passed. It proved nothing.
+    """
+    plan = cr.publish_plan(str(repo), "1.0.1")
+    repin_at = _step(plan, lambda s: s.startswith("git ") and " commit " in s and "source.sha" in s)
+    tag_at = _step(plan, lambda s: s.startswith("git ") and " tag -a v1.0.1" in s)
+    assert repin_at >= 0 and tag_at >= 0, f"plan is missing a re-pin or tag step:\n{plan}"
     assert repin_at < tag_at, (
         "the emitted plan still tags BEFORE re-pinning — following it verbatim reproduces the "
         f"stale-pin defect:\n{plan}")
+
+
+def test_emitted_plan_order_assertion_is_not_vacuous(repo):
+    """The meta-test: the order assertion above must FAIL on a plan with the steps swapped.
+
+    Without this, a future refactor could reintroduce a substring-position check and nothing would
+    notice that the guard stopped guarding."""
+    plan = cr.publish_plan(str(repo), "1.0.1")
+    repin_at = _step(plan, lambda s: s.startswith("git ") and " commit " in s and "source.sha" in s)
+    tag_at = _step(plan, lambda s: s.startswith("git ") and " tag -a v1.0.1" in s)
+    swapped = list(plan)
+    swapped[repin_at], swapped[tag_at] = swapped[tag_at], swapped[repin_at]
+    r2 = _step(swapped, lambda s: s.startswith("git ") and " commit " in s and "source.sha" in s)
+    t2 = _step(swapped, lambda s: s.startswith("git ") and " tag -a v1.0.1" in s)
+    assert not (r2 < t2), "the order assertion does not actually detect a swapped plan"
+
+
+def test_repin_step_is_path_scoped(repo):
+    """The reorder puts the tag on R2 — a commit created AFTER the acceptance gate ran. A bare
+    `commit -am` would sweep every modified tracked file into it and publish that under the release
+    tag, ungated. The re-pin must commit ONLY the manifest."""
+    plan = cr.publish_plan(str(repo), "1.0.1")
+    repin_at = _step(plan, lambda s: s.startswith("git ") and " commit " in s and "source.sha" in s)
+    step = plan[repin_at]
+    assert "commit -am" not in step, f"the re-pin step sweeps the whole working tree: {step}"
+    assert step.split("#")[0].rstrip().endswith(".claude-plugin/marketplace.json"), (
+        f"the re-pin step is not path-scoped to the manifest: {step}")
+
+
+def test_plan_verifies_the_tag_before_pushing(repo):
+    """AC-TPC-2 has no caller on the cut that CREATES the tag unless the plan makes one. The machine
+    re-check must sit after the tag step and before either push."""
+    plan = cr.publish_plan(str(repo), "1.0.1")
+    tag_at = _step(plan, lambda s: " tag -a v1.0.1" in s)
+    verify_at = _step(plan, lambda s: "--verify-tag" in s)
+    push_at = _step(plan, lambda s: "push origin" in s)
+    assert tag_at < verify_at < push_at, (
+        f"the plan does not machine-verify the tag between tagging and pushing:\n{plan}")
 
 
 def test_first_cut_with_no_tag_is_not_applicable(repo):
     """Before the tag exists the tree necessarily carries the previous sha; that is not a defect."""
     ok, detail = cr.tag_pin_coherence(str(repo), "9.9.9")
     assert ok and "not applicable" in detail
+
+
+# ------------------------------------------------------------------- FAIL CLOSED WHEN UNCHECKABLE
+def test_non_git_tree_refuses_rather_than_reporting_not_applicable(tmp_path):
+    """THE FAIL-OPEN. `git rev-parse --verify refs/tags/X` exits non-zero for 'not a git
+    repository', 'dubious ownership' (safe.directory — routine in CI containers and any checkout
+    owned by another uid), a corrupt object store and permission errors — all indistinguishable
+    from 'the tag is absent'. Reading those as not-applicable let a tree the gate could not inspect
+    sail through to READY."""
+    plain = tmp_path / "notarepo"
+    plain.mkdir()
+    _write_manifests(str(plain), "1.0.1")
+    ok, detail = cr.tag_pin_coherence(str(plain), "1.0.1")
+    assert not ok, f"a non-git tree reported OK: {detail}"
+    assert "not a readable git repository" in detail
+
+
+def test_dirty_tree_refuses(repo):
+    """The tag now lands on R2, created AFTER the acceptance verdict. Anything left uncommitted
+    would be swept into it by the re-pin step and published under the release tag ungated."""
+    assert cr.worktree_clean(str(repo))[0], "fixture should start clean"
+    with open(os.path.join(repo, "stray.txt"), "w") as f:
+        f.write("uncommitted")
+    git(repo, "add", "-A")
+    ok, detail = cr.worktree_clean(str(repo))
+    assert not ok and "stray.txt" in detail, detail
+
+
+def test_worktree_clean_fails_closed_off_a_repo(tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    ok, detail = cr.worktree_clean(str(plain))
+    assert not ok and "cannot check the working tree" in detail
+
+
+# ------------------------------------------------------------------- THE PIN MUST BE AN IMMUTABLE ID
+@pytest.mark.parametrize("bad", ["main", "HEAD", "v1.0.0", "abc1234", "0" * 39, "A" * 40])
+def test_sha_must_be_full_lowercase_hex(repo, bad):
+    """git resolves arbitrary revision expressions, so an unvalidated `source.sha` of "main" types
+    as a commit and passes every downstream check — while being a MUTABLE pin whose resolution
+    changes as the branch moves. That destroys the immutable-artifact property AC-TPC-1 asserts."""
+    cut_v101(repo, "correct")
+    git(repo, "tag", "-d", "v1.0.1")
+    _write_manifests(str(repo), "1.0.1", sha=bad)
+    git(repo, "add", "-A"); git(repo, "commit", "-qm", "bad pin: not a full hex id")
+    git(repo, "tag", "-a", "v1.0.1", "-m", "v1.0.1")
+    ok, detail = cr.tag_pin_coherence(str(repo), "1.0.1")
+    assert not ok, f"a non-immutable pin {bad!r} was accepted: {detail}"
+    assert "40-character lowercase hex" in detail
+
+
+def test_distant_ancestor_pin_is_refused(repo):
+    """AC-TPC-5 tightened. `merge-base --is-ancestor` admits EVERY commit reachable from the tag.
+    The version bump lands at the START of release work, so several ancestors carry the target
+    version — an ancestor-plus-version check would admit a pin naming the version-bump commit and
+    silently omit everything committed after it. Same wrong-code-delivered outcome, displaced by a
+    few commits. The pin must be the tag commit or its first parent."""
+    _write_manifests(str(repo), "1.0.1", sha=git(repo, "rev-parse", "v1.0.0^{commit}"))
+    git(repo, "add", "-A"); git(repo, "commit", "-qm", "v1.0.1 bump (carries the target version)")
+    early_bump = git(repo, "rev-parse", "HEAD")
+    with open(os.path.join(repo, "feature.txt"), "w") as f:
+        f.write("the code that would be omitted")
+    git(repo, "add", "-A"); git(repo, "commit", "-qm", "v1.0.1 content")
+    _write_manifests(str(repo), "1.0.1", sha=early_bump)      # pin the BUMP, not the content
+    git(repo, "add", "-A"); git(repo, "commit", "-qm", "re-pin (to the wrong, earlier commit)")
+    git(repo, "tag", "-a", "v1.0.1", "-m", "v1.0.1")
+    ok, detail = cr.tag_pin_coherence(str(repo), "1.0.1")
+    assert not ok, f"a distant ancestor pin passed — feature.txt would be omitted: {detail}"
+    assert "tag commit" in detail and "first parent" in detail
+
+
+def test_named_plugin_entry_is_used_not_index_zero(repo):
+    """The gate must select the 'foundry' entry BY NAME. Indexing [0] silently grades a different
+    plugin's pin the moment the marketplace lists a second plugin first."""
+    cut_v101(repo, "correct")
+    git(repo, "tag", "-d", "v1.0.1")
+    # the two-plugin manifest lands as a NEW commit, which becomes the tag commit — so the pin must
+    # name the commit that will be its first parent, i.e. today's HEAD.
+    content = git(repo, "rev-parse", "HEAD")
+    with open(os.path.join(repo, ".claude-plugin", "marketplace.json"), "w") as f:
+        json.dump({"plugins": [
+            {"name": "other", "source": {"ref": "v9.9.9", "sha": "1" * 40}},   # FIRST, and wrong
+            {"name": "foundry", "source": {"ref": "v1.0.1", "sha": content}},
+        ]}, f)
+    git(repo, "add", "-A"); git(repo, "commit", "-qm", "two-plugin manifest")
+    git(repo, "tag", "-a", "v1.0.1", "-m", "v1.0.1")
+    ok, detail = cr.tag_pin_coherence(str(repo), "1.0.1")
+    assert ok, f"the gate graded the wrong plugins[] entry: {detail}"
+
+
+def test_verify_tag_cli_convicts_and_exits_nonzero(repo):
+    """AC-TPC-2's caller. During a first cut the tag does not exist, so the check is a no-op — the
+    post-tag CLI is the point at which it stops being one."""
+    cut_v101(repo, "defective")
+    r = subprocess.run(["python3", CUT, "--tree", str(repo), "--version", "1.0.1", "--verify-tag"],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "TAG-PIN-INCOHERENT" in r.stdout
+    git(repo, "tag", "-d", "v1.0.1")
+    git(repo, "tag", "-a", "v1.0.1", "-m", "v1.0.1")           # move the tag onto the re-pin commit
+    r = subprocess.run(["python3", CUT, "--tree", str(repo), "--version", "1.0.1", "--verify-tag"],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and "TAG-PIN-COHERENT" in r.stdout, r.stdout + r.stderr
 
 
 # --------------------------------------------------------------------------- AC-TPC-4 / AC-TPC-5

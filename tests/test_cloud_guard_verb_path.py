@@ -122,6 +122,90 @@ def test_widening_only_and_inert_unchanged():
     assert run("totallyrandomcmd foo", tools="")[0] == ALLOW
 
 
+# --------------------------------------------------------------- AC-CGP-1 (widened): the same
+# path-resolution rule must hold at EVERY call site, or the guard disagrees with itself.
+@pytest.mark.parametrize("command", [
+    "/usr/bin/env aws s3 rm s3://bucket --recursive",
+    "/usr/bin/sudo aws s3 rm s3://bucket --recursive",
+    "/bin/xargs gcloud compute instances delete x",
+])
+def test_path_qualified_launcher_does_not_shield_the_tool(command):
+    """The launcher word was compared by raw equality while the tool word was path-resolved, so a
+    path-qualified launcher stopped the prefix scan dead and the real command word was never
+    checked at all. `/usr/bin/env <cmd>` is the most common launcher form on Linux."""
+    assert run(command)[0] == BLOCK, f"{command!r} shielded the tool behind a path-qualified launcher"
+
+
+@pytest.mark.parametrize("command", [
+    'ncls s3 rm s3://bucket --recursive'.replace("ncls", '"aws"'),
+    "'aws' s3 rm s3://bucket --recursive",
+    '"/usr/bin/aws" s3 rm s3://bucket --recursive',
+])
+def test_quoted_command_word_is_still_a_command(command):
+    """Quoting the command word is ordinary shell syntax, not obfuscation. The quoted-mention ALLOW
+    is carried by command POSITION (in `grep 'kubectl …'` the quoted token is an argument), not by
+    quoting, so excluding quoted tokens from the guarded-tool check let `"aws" s3 rm …` through."""
+    assert run(command)[0] == BLOCK, f"{command!r} escaped by quoting the command word"
+
+
+@pytest.mark.parametrize("command", [
+    "timeout 60 aws s3 rm s3://bucket --recursive",
+    "nice -n 5 gcloud compute instances delete x",
+    ">/dev/null aws s3 rm s3://bucket --recursive",
+    "2>&1 aws s3 rm s3://bucket --recursive",
+])
+def test_launcher_and_redirect_prefixes_do_not_shield(command):
+    """Only the first command word after a separator is convicted, so every launcher missing from
+    WRAPPER_WORDS — and every leading redirection — was a one-token evasion."""
+    assert run(command)[0] == BLOCK, f"{command!r} shielded the tool"
+
+
+def test_newline_is_a_command_separator():
+    """shlex consumes newlines as ordinary whitespace and never emits them as tokens, so the old
+    SEPARATORS membership was dead code: only the FIRST word of a multi-line string sat at a
+    command position."""
+    assert run("echo start\naws s3 rm s3://bucket --recursive")[0] == BLOCK
+    assert run("true\n/usr/bin/aws s3 rm s3://bucket --recursive")[0] == BLOCK
+
+
+def test_backslash_continuation_is_deleted_not_spaced():
+    """bash splices the word back together. Spacing it would turn `aw\\<newline>s` into `aw s`;
+    deleting it yields `aws`. A surviving lone `\\` token also blocks the command-position test."""
+    assert run("cd /repo && \\\n  aws s3 rm s3://bucket --recursive")[0] == BLOCK
+    assert run("aw\\\ns s3 rm s3://bucket --recursive")[0] == BLOCK
+
+
+def test_exemption_did_not_widen_into_a_bypass():
+    """AC-CGP-6 forbids any previously-BLOCKED input from now admitting. Resolving EVERY word of an
+    exempt sequence by basename — not just the program name — flipped one: under exempt
+    `aws configure`, `aws /x/configure list` matched the exemption. Subcommands are not programs."""
+    assert run("aws /x/configure list", exempt="aws configure")[0] == BLOCK
+
+
+def test_path_qualified_wrapper_config_still_enforces():
+    """The config side must be path-resolved too. An operator writing the wrapper the way this atom
+    just taught them is equivalent — `/usr/local/bin/cloudwrap exec` — otherwise matched nothing,
+    which did not over-block (safe, visible) but silently ADMITTED everything while the guard
+    reported as configured."""
+    assert run("aws s3 rm s3://b --recursive", wrapper="/usr/local/bin/cloudwrap exec")[0] == BLOCK
+    assert run("cloudwrap exec aws s3 ls", wrapper="/usr/local/bin/cloudwrap exec")[0] == ALLOW
+
+
+def test_refusal_redacts_inline_secrets():
+    """The refusal echoes the whole command, and a leading env assignment is exactly where a
+    credential sits. Hook stderr lands in the transcript."""
+    rc, out = run("AWS_SECRET_ACCESS_KEY=s3cr3tvalue aws s3 rm s3://b --recursive")
+    assert rc == BLOCK
+    assert "s3cr3tvalue" not in out, f"the refusal leaked a secret: {out}"
+    assert "AWS_SECRET_ACCESS_KEY=***" in out
+
+
+@pytest.mark.parametrize("form,expect", [("aws/", BLOCK), ("/usr/bin/aws/.", BLOCK)])
+def test_word_resolves_trailing_separators(form, expect):
+    """`rsplit("/", 1)[1]` returned "" for `aws/` and "." for `/usr/bin/aws/.` — matching nothing."""
+    assert run(f"{form} s3 rm s3://bucket --recursive")[0] == expect
+
+
 # ------------------------------------------------------------------------------- AC-CGP-7
 def test_residual_comment_is_accurate():
     """The comment declaring the path-qualified form uncovered must be gone, and what IS still
