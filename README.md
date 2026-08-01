@@ -11,7 +11,7 @@ real running app → human sign-off.**
 > to earn its keep. A gate ships only if it names the observed failure it prevents; the
 > operator's own judgment is what the automation serves, never what it replaces.
 
-**Status: v1.0.0.** Built solo, dogfooded daily — Foundry is built *with* Foundry: every release
+**Status: v1.0.1.** Built solo, dogfooded daily — Foundry is built *with* Foundry: every release
 you can install was itself specced, authorized, floor-gated, and certified through it.
 
 ## The loop, in one picture
@@ -138,7 +138,10 @@ factory dispatches a worker into that repo's working tree.
 > **If you use a control plane, start your Claude session at the control plane — never inside a
 > hosted repo.** Everything the factory needs (the plugin wiring, the operator registry, the repo
 > manifest, your specs) resolves from the session's project directory. Open a session inside
-> `api/` and none of it loads: no `/foundry:*` verbs, no authorization, no governance.
+> `api/` and none of that corpus is there. Whether the `/foundry:*` verbs themselves appear
+> depends on where the plugin was enabled — and the common case is the dangerous one, because
+> `claude plugin install` enables it **user-wide**: the verbs load, pointed at the wrong root,
+> so the factory *looks* available while the corpus, registry and manifest are all absent.
 
 Set it up: **[the control-plane guide](https://github.com/lukasrepublic/agentic-handbook/blob/main/docs/control-plane.md)**
 — the on-disk layout, step-by-step multi-repo setup, and shipping an atom across two repos. The
@@ -148,7 +151,7 @@ template.
 ## Quickstart
 
 ```bash
-claude plugin marketplace add lukasrepublic/agentic-foundry#v1.0.0
+claude plugin marketplace add lukasrepublic/agentic-foundry#v1.0.1
 claude plugin install foundry@agentic-foundry
 # in your repo's Claude Code session:
 /foundry:init       # wire your repo (operator registry, hooks, project config)
