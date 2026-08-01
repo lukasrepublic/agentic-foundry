@@ -22,6 +22,42 @@ specs living in the workspace and each atom's code landing in its declared targe
 keeps a fully independent history; the control center is never coupled to a submodule
 commit pointer.
 
+On disk that is **several git repositories inside one directory tree**:
+
+```
+acme-handbook/                      ◀── git repo #1 — the control center. You commit this.
+├── .claude/foundry-project.json        the manifest: repos{} maps a key → a path below
+├── specs/features/…                    the WHAT, for every repo
+├── .gitignore                          lists each hosted repo, root-anchored (/api/)
+│
+├── api/                            ◀── git repo #2 — gitignored, own history + CI + floor
+│   └── .git/ · src/ · .foundry/build-provenance.yaml
+└── infra/                          ◀── git repo #3 — gitignored, same deal
+    └── .git/ · terraform/
+```
+
+`git status` in the control center never shows anything from `api/` or `infra/`.
+
+## Run Claude from the control center, never from a hosted repo
+
+```bash
+cd ~/work/acme-handbook       # ✅ the factory is live here
+claude
+
+cd ~/work/acme-handbook/api   # ❌ a plain session with none of the factory
+claude
+```
+
+Claude Code resolves everything from the session's project directory (`CLAUDE_PROJECT_DIR`,
+falling back to the working directory), and every piece of the factory lives at the control
+center's root: the plugin wiring (`.claude/settings.json`), the operator registry, the `repos{}`
+manifest, your specs, and the governance hooks. Start a session inside `api/` and none of it
+loads — no `/foundry:*` verbs, no authorization, no git-discipline guard. It fails by **absence**
+rather than with an error, and no preflight check currently catches it.
+
+You still *work on* code in the hosted repos — the factory dispatches workers into those working
+trees. You just drive it from one session, at the top.
+
 ## Steps
 
 1. **Clone the hosted repo into the workspace as a gitignored subdir** (add the dir to the
@@ -65,3 +101,9 @@ contract names no `target_repo` is workspace-targeted — the single-repo defaul
   ([merge-floor.md](../merge-floor.md)); a Tier-A workspace does not confer Tier A on a
   hosted repo.
 - **Never commit a hosted repo into the workspace** — the gitignore is load-bearing.
+
+---
+
+**Setting up a project from scratch this way?** The workspace template carries the full
+step-by-step guide — layout, per-repo merge floors, shipping an atom across two repos, and
+day-two operations: [agentic-handbook → docs/control-plane.md](https://github.com/lukasrepublic/agentic-handbook/blob/main/docs/control-plane.md).
