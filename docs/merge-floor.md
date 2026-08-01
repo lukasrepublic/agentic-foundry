@@ -97,6 +97,9 @@ operator's own review is the terminal control regardless. But you should size th
 accurately: `spec-link` green means *"a lane was declared"*, not *"a frozen contract
 authorized this diff"*. If you want the stronger property, require the `Spec:` form and drop
 the light lane from your copy of the workflow — it is four lines of shell.
+
+### The git-discipline hook
+
 3. **The git-discipline hook** (`hooks/foundry-git-discipline.sh`, PreToolUse) — governs
    what an agent can do *from inside a Claude Code session*, fail-closed:
    - `gh pr merge --admin` (a server-side-check bypass) → **refused outright**, no
@@ -104,6 +107,40 @@ the light lane from your copy of the workflow — it is four lines of shell.
    - plain `gh pr merge` → admitted **only** after a live `gh pr checks` query returns
      all-green; a failing row, a pending row, a nonexistent PR, an API error, or an
      unrecognized verdict all **block**.
+   - **The merge must name the PR explicitly.** `gh` resolves a PR from ambient state — the
+     working directory's remote, `GH_CONFIG_DIR`/`GH_HOST`, the current branch — so the guard
+     pins its verification query to the coordinates in your command (`--repo`, a `cd` target,
+     inline `VAR=value` assignments) rather than inheriting its own. When those coordinates
+     cannot be resolved, it **refuses** instead of falling back to an ambient lookup:
+
+     | Command | Result |
+     |---|---|
+     | `gh pr merge <pr> --repo owner/name` | verified against that PR in `owner/name` |
+     | `gh pr merge https://github.com/owner/name/pull/<pr>` | verified — the URL is self-contained |
+     | `cd /abs/path/svc && gh pr merge <pr>` | verified in that directory |
+     | `gh pr merge --squash` *(no selector)* | **refused** — would grade whatever PR the current branch points at |
+     | `cd "$DIR" && gh pr merge <pr>` | **refused** — the target directory is not a literal path |
+     | `cd svc && gh pr merge <pr>` | **refused** — a relative path this guard cannot resolve against the shell's own cwd |
+     | `pushd … ` / `(cd … && gh …)` | **refused** — directory changes the scan does not model |
+
+     All five `--repo` spellings are recognised (`--repo V`, `--repo=V`, `-R V`, `-RV`, `-R=V`);
+     an unrecognised repo-selector token refuses rather than being ignored. Inline environment
+     assignments are carried only for an explicit GitHub-identity allowlist (`GH_TOKEN`,
+     `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN`, `GH_HOST`, `GH_REPO`,
+     `GH_CONFIG_DIR`); anything else refuses, because variables like `GH_PAGER`/`GH_BROWSER` are
+     programs `gh` executes and `PATH` would let a planted `gh` forge a green verdict.
+
+     **What a green verdict covers.** `gh pr checks` reports **CI check runs only**. It does
+     not report required reviews, CODEOWNERS approval, or merge-queue eligibility, so an admit
+     means "CI is green", never "this PR is mergeable". Those rules are the server's to enforce
+     (Tier A); on Tier B nothing enforces them.
+
+     The refusal names the argument that resolves it and is worded distinctly from a
+     check-failure refusal. **This costs explicitness**: a bare `gh pr merge --squash`, which
+     older versions admitted, now requires a PR number or URL. That is deliberate — an unpinned
+     query is not a weaker check, it is a check of a *different pull request*, and in a
+     multi-repo workspace a same-numbered PR elsewhere could admit a merge whose own checks
+     were red.
    - force-push to a protected branch → refused.
    - The hook has **no in-session off-switch**. To act around it, a human runs the
      command themselves in their own terminal — which is exactly the boundary it exists

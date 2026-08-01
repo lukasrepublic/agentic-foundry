@@ -15,6 +15,26 @@ The output names the failing probe. The five probes and their usual causes:
 | `stack-profile-lock` | `.foundry/stack-profile.lock` points at a profile not in `packs/` | re-run `/foundry:relock`, or remove the lock |
 | `operator-registry` | `.claude/foundry-operators.json` missing or invalid | re-run `/foundry:init`, then add yourself |
 
+## `gh pr merge` was refused: "the PR being merged cannot be resolved unambiguously"
+
+The guard verifies checks by querying the PR you are merging, and it will not guess which PR
+that is. Name it explicitly:
+
+```bash
+gh pr merge <pr-number> --repo owner/name --squash        # the PR number + its repo
+gh pr merge https://github.com/owner/name/pull/<pr-number> --squash   # or a self-contained URL
+```
+
+Common causes: no PR selector at all (the query would fall back to whatever PR your current
+branch points at), a `cd "$VAR"` whose target is not a literal path, or `--repo` given without a
+value.
+
+**This message is not a check failure.** If checks were genuinely red you would instead see
+*"not every check is green"* with the failing rows. This one means the command could not be
+pinned to a single pull request — previously the guard would silently verify a *different* PR
+that merely shared a number, which could admit a red merge. See
+[merge-floor.md](merge-floor.md) → *The git-discipline hook*.
+
 ## The merge was refused
 
 The git-discipline hook blocked `gh pr merge`. This is the floor working, not breaking:

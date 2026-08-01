@@ -141,9 +141,22 @@ hook_comment_expectation:
     # accurate prose from the hook so a frozen token sweep keeps passing.
     - 'no mechanical integrity check'
     - 'security-path'
-  # sha256 of the PRE-CHANGE shipped hook's EXECUTABLE CONTENT (full-line comments stripped,
-  # shebang retained), recorded by the build from the pre-edit file (git show origin/main).
-  executable_content_sha256: 'd1e63157dcb6cc285718ed0ba2e2e51a1c6fad3ad09ee04cadc99db43b0c83ca'
+  # sha256 of the shipped hook's EXECUTABLE CONTENT (full-line comments stripped, shebang
+  # retained). This row pins the hook against UNREVIEWED executable edits. Re-baselining is the
+  # documented response to a real, reviewed change (see the note above: edit the fixture to match
+  # the new truth) — it is NOT a relaxation: the row still fails on any later unreviewed edit.
+  #
+  # Re-baseline log — every entry is a deliberate executable change with its own spec + review:
+  #   1. originally recorded for a COMMENT-ONLY atom (assert the body did not change)
+  #   2. feat-foundry-merge-verify-context — clause (i) was querying the wrong PR (it dropped
+  #      --repo, the cwd and the gh identity), admitting merges whose checks were red
+  #   3. feat-foundry-verb-path-resolution — all three clause loops matched their verb by exact
+  #      token equality, so any path-qualified invocation (/usr/bin/git, /bin/rm) bypassed the
+  #      whole hook; routed through a shared _is_verb() matcher
+  #   4. spec-review Block on merge-verify-context — pflag CLUSTERS short flags, so
+  #      -sRowner/repo left the query unpinned; replaced spelling-enumeration with a
+  #      structural parse of gh pr merge's closed flag set
+  executable_content_sha256: 'ffcb44c5e39b2f737f9b324a609e0e704f74d29b05213c570f29c150d97a784b'
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
 operator_registry_shape:
