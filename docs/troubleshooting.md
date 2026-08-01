@@ -21,8 +21,8 @@ The guard verifies checks by querying the PR you are merging, and it will not gu
 that is. Name it explicitly:
 
 ```bash
-gh pr merge 42 --repo owner/name --squash        # the PR number + its repo
-gh pr merge https://github.com/owner/name/pull/42 --squash   # or a self-contained URL
+gh pr merge <pr-number> --repo owner/name --squash        # the PR number + its repo
+gh pr merge https://github.com/owner/name/pull/<pr-number> --squash   # or a self-contained URL
 ```
 
 Common causes: no PR selector at all (the query would fall back to whatever PR your current
@@ -33,7 +33,7 @@ value.
 *"not every check is green"* with the failing rows. This one means the command could not be
 pinned to a single pull request — previously the guard would silently verify a *different* PR
 that merely shared a number, which could admit a red merge. See
-[merge-floor.md](merge-floor.md) → layer 3.
+[merge-floor.md](merge-floor.md) → *The git-discipline hook*.
 
 ## The merge was refused
 

@@ -263,3 +263,93 @@ def test_url_agreeing_with_repo_flag_is_admitted(harness):
     proc, _ = harness(
         "gh pr merge https://github.com/a/b/pull/11 --repo a/b --squash", table={"a/b": GREEN})
     assert proc.returncode == ADMIT
+
+
+# ------------------------------------------------- findings from the independent security review
+@pytest.mark.parametrize("form", [
+    "-Rtarget/red 11",        # pflag attached shorthand
+    "-R=target/red 11",       # attached with '='
+    "-R target/red 11",       # space-separated (was already handled)
+    "--repo=target/red 11",
+    "--repo target/red 11",
+])
+def test_every_repo_selector_form_is_pinned(harness, form):
+    """SECURITY-REVIEW BLOCK. `gh` is cobra/pflag, whose shorthand accepts an ATTACHED value, so
+    `-Rowner/repo` sets --repo exactly as `-R owner/repo` does. Recognising only the spaced and
+    `--repo=` forms left the attached ones unpinned: the query fell back to ambient resolution and
+    ADMITTED a red PR. All five forms must pin."""
+    proc, calls = harness(f"gh pr merge {form} --squash",
+                          table={"target/red": RED, "<ambient>": GREEN})
+    assert proc.returncode == BLOCK, (
+        f"form {form!r} left the query unpinned — a red PR was admitted; queried={calls}")
+
+
+def test_value_taking_flag_cannot_hijack_the_pr_selector(harness):
+    """A value written before the PR ref became `bare[2]`, so the guard verified a DIFFERENT PR
+    than the merge targets: `--subject 12 11` checked #12 while merging #11."""
+    proc, calls = harness("gh pr merge --subject 12 11 --repo target/red --squash",
+                          table={"target/red": RED, "<ambient>": GREEN})
+    argv = calls[0]["argv"] if calls else []
+    assert "12" not in argv, f"the --subject value was verified as the PR selector; argv={argv}"
+    assert proc.returncode == BLOCK
+
+
+def test_newline_separated_chain_binds_the_right_clause(harness, tmp_path):
+    """A newline bounds a clause like `;`. Without that, `clause_start` walked back to index 0 and
+    the context binding read tokens from unrelated lines."""
+    target = tmp_path / "nl-repo"
+    target.mkdir()
+    proc, calls = harness(f"cd {target}\ngh pr merge 11 --squash", table={"<default>": GREEN})
+    assert proc.returncode == ADMIT, f"multi-line chain falsely blocked: {proc.stderr!r}"
+    assert os.path.realpath(calls[0]["cwd"]) == os.path.realpath(str(target))
+
+
+def test_unrelated_first_line_does_not_poison_the_clause(harness):
+    """`git fetch` on its own line must not be read as a token preceding `gh`."""
+    proc, _ = harness("git fetch\ngh pr merge 11 --repo t/r --squash", table={"t/r": GREEN})
+    assert proc.returncode == ADMIT, f"unrelated preceding line caused a false block: {proc.stderr!r}"
+
+
+@pytest.mark.parametrize("command", [
+    "pushd /tmp && gh pr merge 11 --squash",
+    "(cd /tmp && gh pr merge 11 --squash)",
+    "cd .worktrees/x && gh pr merge 11 --squash",
+])
+def test_unmodellable_directory_change_blocks(harness, command):
+    """pushd, subshell grouping, and a RELATIVE cd are directory changes this scan cannot resolve
+    against the shell's own cwd (the Bash tool keeps a persistent shell). They must block, not
+    silently fall back to the hook's cwd."""
+    proc, _ = harness(command, table={"<default>": GREEN})
+    assert proc.returncode == BLOCK, f"{command!r} silently used the hook's cwd"
+
+
+def test_exec_capable_gh_vars_are_not_carried_and_ambient_ones_are_stripped(harness, tmp_path):
+    """GH_PAGER/GH_BROWSER/GH_EDITOR are looked up and EXECUTED by gh, so a namespace allowlist
+    over GH_* was too broad. They must neither be carryable inline nor survive from the ambient
+    environment."""
+    proc, _ = harness("GH_PAGER=/tmp/evil gh pr merge 11 --repo t/r --squash", table={"t/r": GREEN})
+    assert proc.returncode == BLOCK, "an exec-capable GH_* variable was accepted inline"
+
+    _proc, calls = harness("gh pr merge 11 --repo t/r --squash", table={"t/r": GREEN},
+                           env_extra={"GH_PAGER": "/tmp/evil", "GH_FORCE_TTY": "1"})
+    assert calls, "no query was issued"
+    # the shim records only gh-identity vars; assert the sanitiser ran by checking the process env
+    assert calls[0].get("GH_CONFIG_DIR") is None
+
+
+def test_admin_equals_true_is_refused(harness):
+    """cobra bool flags accept `--admin=true`; an exact-token test missed it."""
+    proc, calls = harness("gh pr merge 11 --repo t/r --admin=true --squash", table={"t/r": GREEN})
+    assert proc.returncode == BLOCK, "--admin=true was admitted"
+    assert not calls, "--admin=true must be refused outright, with no query"
+
+
+def test_inline_token_is_redacted_from_the_refusal(harness):
+    """An inline GH_TOKEN is a supported form, so a real PAT must not be echoed into the
+    transcript on a refusal."""
+    proc, _ = harness("GH_TOKEN=ghp_SUPERSECRETVALUE gh pr merge 11 --repo t/r --admin --squash",
+                      table={"t/r": GREEN})
+    msg = (proc.stdout or "") + (proc.stderr or "")
+    assert proc.returncode == BLOCK
+    assert "ghp_SUPERSECRETVALUE" not in msg, f"a token leaked into the refusal: {msg!r}"
+    assert "<redacted>" in msg

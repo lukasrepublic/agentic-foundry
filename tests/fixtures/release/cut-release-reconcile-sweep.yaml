@@ -141,9 +141,15 @@ hook_comment_expectation:
     # accurate prose from the hook so a frozen token sweep keeps passing.
     - 'no mechanical integrity check'
     - 'security-path'
-  # sha256 of the PRE-CHANGE shipped hook's EXECUTABLE CONTENT (full-line comments stripped,
-  # shebang retained), recorded by the build from the pre-edit file (git show origin/main).
-  executable_content_sha256: 'd1e63157dcb6cc285718ed0ba2e2e51a1c6fad3ad09ee04cadc99db43b0c83ca'
+  # sha256 of the shipped hook's EXECUTABLE CONTENT (full-line comments stripped, shebang
+  # retained). RE-BASELINED by feat-foundry-merge-verify-context, which deliberately changes
+  # executable content: clause (i)'s verification subprocess was querying the wrong PR (it
+  # dropped --repo, the cwd and the gh identity), admitting merges whose checks were red.
+  # That fix carries its own spec, security review and gate. This pin was recorded for an
+  # earlier COMMENT-ONLY atom; re-baselining is the documented response to a real change
+  # (see the note above: edit the fixture to match the new truth), NOT a relaxation — the
+  # row still fails on any subsequent unreviewed edit to the hook's executable content.
+  executable_content_sha256: 'cdbdd63005a778203d9946cc436f73a47adf4f585832bf134b05dbd5ccee813e'
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
 operator_registry_shape:
