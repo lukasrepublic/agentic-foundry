@@ -52,7 +52,7 @@ set -euo pipefail
 
 DEFAULT_TEMPLATE="lukasrepublic/agentic-handbook"
 DEFAULT_MARKETPLACE="lukasrepublic/agentic-foundry"
-DEFAULT_MARKETPLACE_REF="v1.0.0"  # the pinned STABLE default; maintained by the release cut —
+DEFAULT_MARKETPLACE_REF="v1.0.1"  # the pinned STABLE default; maintained by the release cut —
                                     # tests/test_bootstrap_install_pin.py asserts it equals
                                     # .claude-plugin/marketplace.json plugins[foundry].source.ref
 EDGE_MARKETPLACE_REF="main"        # the plugin repository's default branch: the opt-in, UNSTABLE channel
