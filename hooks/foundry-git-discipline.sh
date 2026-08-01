@@ -342,11 +342,131 @@ for i, t in enumerate(low):
         block("gh pr merge --admin (server-side-check bypass) refused outright — the native "
               "floor may be Tier B advisory on this repo (see docs/merge-floor.md) and --admin would "
               "skip it entirely. Command: " + cmd)
-    # The PR selector (number/branch/URL), if given, is the third bare token (after "pr merge").
+
+    # --- CONTEXT BINDING (feat-foundry-merge-verify-context, AC-MVC-1..8) -------------------
+    # The verification MUST grade THE PR BEING MERGED. `gh` resolves a PR from ambient state —
+    # the cwd's git remote, GH_CONFIG_DIR/GH_HOST/GH_TOKEN, the current branch — so a query
+    # built from a stripped argv in THIS process's context grades whatever PR the ambient
+    # environment considers current. That produced both a false-BLOCK (a same-numbered PR in an
+    # unrelated repo) and, far worse, a silent FALSE-ALLOW: a red PR admitted because a
+    # same-numbered ambient PR was green. On a Tier-B repo this clause is the only in-session
+    # control preventing that merge, so the query is PINNED to the command's own coordinates or
+    # the merge is REFUSED. There is deliberately NO ambient fallback (AC-MVC-4).
+    def block_ctx(detail):
+        # Distinct from a red-check refusal (AC-MVC-7): this is an UNVERIFIABLE command, not a
+        # failing one. Never phrase it as a check failure — that misdiagnosis is the bug.
+        block("gh pr merge refused: the PR being merged cannot be resolved unambiguously from "
+              "this command, so its checks CANNOT be verified against the right PR. " + detail +
+              " Re-run naming the PR explicitly — a PR number or URL, plus `--repo owner/name` "
+              "when the target repo is not the working directory's. Command: " + cmd)
+
+    def clause_start(idx):
+        """Index of the first token of the clause containing token `idx`."""
+        j = idx
+        while j > 0 and toks[j - 1] not in SEPARATORS:
+            j -= 1
+        return j
+
+    _NONLITERAL = ("$", "`", "*", "?", "~")            # `~` only matters mid-token; see below
+
+    def _is_literal(tok):
+        return not any(c in tok for c in ("$", "`", "*", "?"))
+
+    # (1) The repo selector. Captured from --repo/-R/--repo=… and PROPAGATED (it was previously
+    #     parsed only to skip it, then discarded).
+    repo_sels, repo_flag_seen = [], False
+    k = 0
+    while k < len(args):
+        a = args[k]
+        if a in ("--repo", "-R"):
+            repo_flag_seen = True
+            if k + 1 < len(args) and not args[k + 1].startswith("-"):
+                repo_sels.append(args[k + 1])
+                k += 2
+                continue
+        elif a.startswith("--repo="):
+            repo_flag_seen = True
+            repo_sels.append(a.split("=", 1)[1])
+        k += 1
+    if len(set(repo_sels)) > 1:
+        # Two different repos named in one merge: gh's precedence is not ours to guess.
+        block_ctx(f"Conflicting repo selectors {sorted(set(repo_sels))!r} were given.")
+    repo_sel = repo_sels[0] if repo_sels else None
+    if repo_flag_seen and not (repo_sel and _is_literal(repo_sel)):
+        block_ctx("`--repo`/`-R` was given without a resolvable owner/name value.")
+
+    # (2) The PR selector — the third bare token. Absent, `gh pr checks` would fall back to the
+    #     CURRENT BRANCH's PR, which is exactly the ambient lookup this clause must never make.
     pr_ref = bare[2] if len(bare) >= 3 else None
-    check_argv = ["gh", "pr", "checks"] + ([pr_ref] if pr_ref else [])
+    if not pr_ref:
+        block_ctx("No PR number, branch or URL was given, so the check query would fall back to "
+                  "whichever PR the current branch points at.")
+    if not _is_literal(pr_ref):
+        block_ctx(f"The PR selector {pr_ref!r} is not a literal value.")
+    # A PR URL carries owner/repo/number. If `--repo` names a DIFFERENT repo the command is
+    # self-contradictory and we must not pick a winner (AC-MVC-8 keeps a lone URL sufficient).
+    _m_url = re.match(r"^https?://[^/]+/([^/]+/[^/]+)/pull/\d+", pr_ref)
+    if _m_url and repo_sel and _m_url.group(1).lower() != repo_sel.lower():
+        block_ctx(f"The PR URL names {_m_url.group(1)!r} but `--repo` names {repo_sel!r}.")
+
+    # (3) The working directory. `cd <dir> && gh …` changes where gh resolves the repo from; the
+    #     hook does not inherit it. A non-literal or non-existent target is unresolvable.
+    run_cwd, cd_unresolved = None, None
+    j, cstart = 0, clause_start(i)
+    while j < cstart:
+        if low[j] == "cd":
+            tgt, m = None, j + 1
+            while m < cstart and toks[m] not in SEPARATORS:
+                if not toks[m].startswith("-"):
+                    tgt = toks[m]
+                    break
+                m += 1
+            if tgt is None:
+                run_cwd, cd_unresolved = None, "a bare `cd` (to $HOME)"
+            elif not _is_literal(tgt):
+                run_cwd, cd_unresolved = None, f"a non-literal `cd` target ({tgt!r})"
+            else:
+                run_cwd, cd_unresolved = os.path.expanduser(tgt), None
+        j += 1
+    if cd_unresolved:
+        block_ctx(f"This command chain contains {cd_unresolved}, so the directory gh would "
+                  "resolve the repo from is unknown.")
+    if run_cwd is not None and not os.path.isdir(run_cwd):
+        block_ctx(f"The `cd` target {run_cwd!r} does not resolve to an existing directory.")
+
+    # (4) The GitHub identity. Inline `VAR=value gh …` assignments select the account, host and
+    #     config dir; without them the query runs as a DIFFERENT account, which resolves
+    #     different repos and different visibility.
+    #     STRICT ALLOWLIST — only variables that steer gh's own identity/host resolution are
+    #     carried. Copying an arbitrary assignment into this subprocess's environment would be a
+    #     NEW bypass, not a fidelity improvement: `PATH=/tmp/evil gh pr merge …` would make the
+    #     verification resolve a planted `gh` that prints "All checks were successful". The
+    #     executable lookup honours the passed env's PATH, so the allowlist is load-bearing, not
+    #     defence in depth. Anything outside it BLOCKS rather than being silently ignored — a
+    #     dropped assignment could equally change the answer.
+    _ENV_ALLOW = re.compile(r"^(GH_|GITHUB_)[A-Z0-9_]*$")
+    run_env = dict(os.environ)
+    for t in toks[cstart:i]:
+        if t.lower() in ("sudo", "env", "time", "command", "nohup", "-"):
+            continue
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", t)
+        if not m:
+            block_ctx(f"An unrecognized token {t!r} precedes `gh` in this clause, so the "
+                      "environment the merge would run under cannot be reproduced.")
+        name, val = m.group(1), m.group(2)
+        if not _ENV_ALLOW.match(name):
+            block_ctx(f"The inline assignment {name}= is not a GH_*/GITHUB_* variable. The "
+                      "verification subprocess carries only GitHub-identity variables, so this "
+                      "command's environment cannot be reproduced safely.")
+        if not _is_literal(val):
+            block_ctx(f"The inline assignment {t!r} is not a literal value, so the GitHub "
+                      "identity the merge would use cannot be reproduced.")
+        run_env[name] = val
+
+    check_argv = ["gh", "pr", "checks", pr_ref] + (["--repo", repo_sel] if repo_sel else [])
     try:
-        proc = subprocess.run(check_argv, capture_output=True, text=True, timeout=30)
+        proc = subprocess.run(check_argv, capture_output=True, text=True, timeout=30,
+                              cwd=run_cwd, env=run_env)
     except Exception as e:
         block(f"gh pr checks query failed ({type(e).__name__}: {e}) — cannot confirm the "
               "native floor is green; fail-closed. Command: " + cmd)

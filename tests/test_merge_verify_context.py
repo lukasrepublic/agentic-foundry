@@ -1,0 +1,265 @@
+"""feat-foundry-merge-verify-context — clause (i) must verify THE PR BEING MERGED.
+
+The hook's `gh pr merge` clause admits a merge only when a live `gh pr checks` query reports every
+check green. It built that query from a stripped argv running in the HOOK's own context, so the
+repo selector, the working directory and the GitHub identity were all dropped and the query
+resolved whatever PR the ambient environment considered current.
+
+These tests drive the REAL hook end-to-end against a recording `gh` shim on PATH and assert both
+the argv/cwd/env it issues and the exit code it returns. The load-bearing one is
+`test_cross_repo_red_pr_is_not_admitted`: the false-ALLOW, where a green same-numbered PR in the
+ambient repo admits a merge whose own checks are red.
+"""
+import json
+import os
+import subprocess
+import sys
+
+import pytest
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HOOK = os.path.join(REPO_ROOT, "hooks", "foundry-git-discipline.sh")
+
+BLOCK = 2
+ADMIT = 0
+
+# A `gh` shim that records each invocation (argv + cwd + the gh-relevant env) as one JSON line and
+# answers according to a scripted table, so a test can model two repos whose PR #11 differ.
+SHIM = r"""#!/usr/bin/env python3
+import json, os, sys
+rec = {"argv": sys.argv[1:], "cwd": os.getcwd(),
+       "GH_CONFIG_DIR": os.environ.get("GH_CONFIG_DIR"),
+       "GH_TOKEN": os.environ.get("GH_TOKEN"),
+       "GH_HOST": os.environ.get("GH_HOST")}
+with open(os.environ["GH_SHIM_LOG"], "a") as f:
+    f.write(json.dumps(rec) + "\n")
+table = json.loads(os.environ.get("GH_SHIM_TABLE", "{}"))
+key = "--repo" if "--repo" in sys.argv else ("-R" if "-R" in sys.argv else None)
+repo = sys.argv[sys.argv.index(key) + 1] if key else "<ambient>"
+answer = table.get(repo, table.get("<default>", {"out": "All checks were successful", "rc": 0}))
+print(answer["out"])
+sys.exit(answer["rc"])
+"""
+
+GREEN = {"out": "All checks were successful", "rc": 0}
+RED = {"out": "ci/build\tfail\t1m\thttps://example.invalid/runs/1", "rc": 1}
+
+
+@pytest.fixture
+def harness(tmp_path):
+    """A PATH-shimmed `gh`, a scratch cwd, and a runner returning (exit_code, invocations)."""
+    binp = tmp_path / "bin"
+    binp.mkdir()
+    gh = binp / "gh"
+    gh.write_text(SHIM)
+    gh.chmod(0o755)
+    log = tmp_path / "gh.log"
+    cwd = tmp_path / "ambient-repo"
+    cwd.mkdir()
+
+    def run(command, table=None, env_extra=None, run_cwd=None):
+        log.write_text("")
+        env = dict(os.environ)
+        env["PATH"] = f"{binp}:{env['PATH']}"
+        env["GH_SHIM_LOG"] = str(log)
+        env["GH_SHIM_TABLE"] = json.dumps(table or {"<default>": GREEN})
+        env.pop("GH_CONFIG_DIR", None)
+        env.pop("GH_TOKEN", None)
+        env.pop("GH_HOST", None)
+        env.update(env_extra or {})
+        proc = subprocess.run(
+            ["bash", HOOK, "--protected", "main"],
+            input=json.dumps({"tool_input": {"command": command}}),
+            capture_output=True, text=True, timeout=60,
+            cwd=str(run_cwd or cwd), env=env,
+        )
+        raw = log.read_text().strip()
+        calls = [json.loads(l) for l in raw.splitlines() if l.strip()]
+        return proc, calls
+
+    run.cwd = cwd
+    run.tmp = tmp_path
+    return run
+
+
+# ---------------------------------------------------------------- AC-MVC-5 — THE CROSS-REPO CASE
+def test_cross_repo_red_pr_is_not_admitted(harness):
+    """THE load-bearing case (AC-MVC-5). The merge names PR #11 in `target/repo`, whose checks are
+    RED. The ambient repo's PR #11 is GREEN. Before the fix the hook dropped `--repo`, queried the
+    ambient green PR, and ADMITTED a red merge — a silent, complete defeat of the control."""
+    proc, calls = harness(
+        "gh pr merge 11 --repo target/repo --squash",
+        table={"target/repo": RED, "<ambient>": GREEN},
+    )
+    assert calls, "the hook issued no verification query at all"
+    argv = calls[0]["argv"]
+    assert "--repo" in argv and "target/repo" in argv, (
+        f"verification did not name the repo being merged; argv={argv} — it graded a lookalike PR")
+    assert proc.returncode == BLOCK, (
+        f"a RED PR was ADMITTED (exit {proc.returncode}) because a same-numbered ambient PR was "
+        f"green; argv={argv}")
+
+
+def test_cross_repo_query_is_not_run_against_the_cwd_repo(harness):
+    """The same defect stated as the reported false-BLOCK: the query must not be resolved against
+    the working directory's repo when the command names a different one."""
+    _proc, calls = harness(
+        "gh pr merge 11 --repo target/repo --squash",
+        table={"target/repo": GREEN, "<ambient>": GREEN},
+    )
+    argv = calls[0]["argv"]
+    assert argv.count("--repo") == 1 and argv[argv.index("--repo") + 1] == "target/repo"
+
+
+# ---------------------------------------------------------------------------------- AC-MVC-1
+def test_repo_flag_is_carried(harness):
+    """--repo and -R both reach the verification query."""
+    for flag in ("--repo", "-R"):
+        _proc, calls = harness(f"gh pr merge 11 {flag} target/repo --squash",
+                               table={"target/repo": GREEN})
+        argv = calls[0]["argv"]
+        assert "--repo" in argv, f"{flag} was dropped from the query; argv={argv}"
+        assert argv[argv.index("--repo") + 1] == "target/repo"
+
+
+# ---------------------------------------------------------------------------------- AC-MVC-2
+def test_cd_target_becomes_cwd(harness):
+    """`cd <literal> && gh pr merge …` must run the query in that directory, since gh resolves the
+    repo from the local remote when --repo is absent."""
+    target = harness.tmp / "elsewhere"
+    target.mkdir()
+    _proc, calls = harness(f"cd {target} && gh pr merge 11 --squash")
+    assert os.path.realpath(calls[0]["cwd"]) == os.path.realpath(str(target)), (
+        f"query ran in {calls[0]['cwd']!r}, not the command's own cwd {str(target)!r}")
+
+
+# ---------------------------------------------------------------------------------- AC-MVC-3
+def test_inline_env_is_carried(harness):
+    """Inline `VAR=value gh …` assignments select the GitHub identity/host. Dropping them runs the
+    query as a different account, which resolves different repos and different visibility."""
+    _proc, calls = harness(
+        "GH_CONFIG_DIR=/tmp/gh-alt GH_HOST=github.example.com gh pr merge 11 --repo t/r --squash",
+        table={"t/r": GREEN})
+    assert calls[0]["GH_CONFIG_DIR"] == "/tmp/gh-alt", "inline GH_CONFIG_DIR was dropped"
+    assert calls[0]["GH_HOST"] == "github.example.com", "inline GH_HOST was dropped"
+
+
+def test_inline_env_does_not_leak_into_the_parent(harness):
+    """The carried env must be scoped to the subprocess, not exported into the hook itself."""
+    harness("GH_TOKEN=secret-value gh pr merge 11 --repo t/r --squash", table={"t/r": GREEN})
+    assert os.environ.get("GH_TOKEN") != "secret-value"
+
+
+# ------------------------------------------------------------------- AC-MVC-4 / AC-MVC-7
+@pytest.mark.parametrize("command,why", [
+    ("gh pr merge --squash", "no PR selector — would degrade to a current-branch lookup"),
+    ("gh pr merge --repo target/repo --squash", "repo pinned but PR resolved from ambient branch"),
+    ('cd "$SOMEDIR" && gh pr merge 11 --squash', "non-literal cd target"),
+    ("cd /nonexistent/path/xyz && gh pr merge 11 --squash", "cd target does not exist"),
+])
+def test_unresolvable_context_blocks(harness, command, why):
+    """AC-MVC-4: pinned or blocked. An ambient fallback is never acceptable — the query would grade
+    a different object than the merge touches. All-green shim, so any ADMIT here is the defect."""
+    proc, _calls = harness(command, table={"<default>": GREEN})
+    assert proc.returncode == BLOCK, f"admitted despite unresolvable context ({why})"
+
+
+def test_context_block_names_the_remedy(harness):
+    """AC-MVC-7: a context refusal must be distinguishable from a red-check refusal and must name
+    the argument that resolves it, or the operator debugs the wrong problem (as happened)."""
+    proc, _calls = harness("gh pr merge --squash", table={"<default>": GREEN})
+    msg = (proc.stdout or "") + (proc.stderr or "")
+    assert proc.returncode == BLOCK
+    assert "--repo" in msg or "PR number" in msg.lower() or "selector" in msg.lower(), (
+        f"refusal does not name the explicit argument that would fix it: {msg!r}")
+    assert "not every check is green" not in msg, (
+        "a context defect is being reported as a check failure — the misdiagnosis this atom fixes")
+
+
+# ---------------------------------------------------------------------------------- AC-MVC-8
+def test_url_selector_remains_sufficient(harness):
+    """A PR URL carries owner/repo/number, so it is already unambiguous and must not start
+    requiring --repo."""
+    proc, calls = harness(
+        "gh pr merge https://github.com/target/repo/pull/11 --squash",
+        table={"<default>": GREEN})
+    assert proc.returncode == ADMIT, "a fully-qualified PR URL was refused"
+    assert "https://github.com/target/repo/pull/11" in calls[0]["argv"]
+
+
+# ---------------------------------------------------------------------------------- AC-MVC-6
+def test_existing_failclosed_paths_preserved(harness):
+    """The no-bypass floor is untouched: --admin refused with NO query at all; a red check, a
+    pending check, and a non-zero query exit each still block."""
+    proc, calls = harness("gh pr merge 11 --repo t/r --admin --squash", table={"t/r": GREEN})
+    assert proc.returncode == BLOCK, "--admin was admitted"
+    assert not calls, "--admin must be refused outright, without running any query"
+
+    proc, _ = harness("gh pr merge 11 --repo t/r --squash", table={"t/r": RED})
+    assert proc.returncode == BLOCK, "a red check was admitted"
+
+    pending = {"out": "ci/build\tpending\t-\thttps://example.invalid/runs/2", "rc": 0}
+    proc, _ = harness("gh pr merge 11 --repo t/r --squash", table={"t/r": pending})
+    assert proc.returncode == BLOCK, "a pending check was admitted"
+
+
+def test_a_genuinely_green_pinned_merge_is_still_admitted(harness):
+    """The guard must not become unconditional: a correctly-pinned, genuinely green merge passes."""
+    proc, calls = harness("gh pr merge 11 --repo t/r --squash", table={"t/r": GREEN})
+    assert proc.returncode == ADMIT, (
+        f"a pinned, green merge was refused — the fix over-blocks. out={proc.stdout!r} "
+        f"err={proc.stderr!r}")
+    assert calls and "--repo" in calls[0]["argv"]
+
+
+def test_no_bypass_argument_downgrades_a_block(harness):
+    """AC-MVC-6 / AC-GITGUARD-3: no argument may turn a BLOCK into an ADMIT."""
+    for extra in ("--allow", "--force", "--no-verify-checks", "--skip-checks"):
+        proc, _ = harness(f"gh pr merge 11 --repo t/r {extra} --squash", table={"t/r": RED})
+        assert proc.returncode == BLOCK, f"{extra} downgraded a red-check BLOCK to an ADMIT"
+
+
+# ------------------------------------------------- AC-MVC-6: holes found in adversarial review
+def test_inline_path_assignment_cannot_plant_a_fake_gh(harness, tmp_path):
+    """Carrying inline env must NOT become a bypass. `PATH=<evil> gh pr merge …` would otherwise
+    make the verification subprocess resolve a planted `gh` that reports success — the executable
+    lookup honours the passed env's PATH. Only GH_*/GITHUB_* may be carried."""
+    evil = tmp_path / "evil"
+    evil.mkdir()
+    fake = evil / "gh"
+    fake.write_text("#!/bin/sh\necho 'All checks were successful'\nexit 0\n")
+    fake.chmod(0o755)
+    proc, calls = harness(f"PATH={evil} gh pr merge 11 --repo t/r --squash", table={"t/r": RED})
+    assert proc.returncode == BLOCK, (
+        "an inline PATH assignment was carried into the verification subprocess — a planted `gh` "
+        "could forge a green verdict")
+    assert not calls, "the planted gh should never have been consulted"
+
+
+def test_non_github_inline_assignment_blocks(harness):
+    """An assignment outside the allowlist is refused, not silently dropped — a dropped variable
+    could change the answer just as a carried one could."""
+    proc, _ = harness("FOO=bar gh pr merge 11 --repo t/r --squash", table={"t/r": GREEN})
+    assert proc.returncode == BLOCK
+
+
+def test_conflicting_repo_selectors_block(harness):
+    """Two different repos named in one merge: gh's precedence is not the guard's to guess."""
+    proc, _ = harness("gh pr merge 11 --repo a/b --repo c/d --squash",
+                      table={"a/b": GREEN, "c/d": GREEN})
+    assert proc.returncode == BLOCK
+
+
+def test_url_conflicting_with_repo_flag_blocks(harness):
+    """A URL carries its own owner/repo; contradicting it with --repo is self-inconsistent."""
+    proc, _ = harness(
+        "gh pr merge https://github.com/a/b/pull/11 --repo c/d --squash",
+        table={"<default>": GREEN})
+    assert proc.returncode == BLOCK
+
+
+def test_url_agreeing_with_repo_flag_is_admitted(harness):
+    """The agreeing case must not be caught by the conflict rule (no over-block)."""
+    proc, _ = harness(
+        "gh pr merge https://github.com/a/b/pull/11 --repo a/b --squash", table={"a/b": GREEN})
+    assert proc.returncode == ADMIT
