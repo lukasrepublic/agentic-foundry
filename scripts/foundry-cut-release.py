@@ -17,6 +17,7 @@ import argparse
 import importlib.util
 import json
 import os
+import subprocess
 import re
 import sys
 
@@ -200,6 +201,61 @@ def _failing_summary(out):
     return shown + (f" (+{len(names) - 5} more)" if len(names) > 5 else "")
 
 
+def tag_pin_coherence(tree, version):
+    """(ok, detail) for AC-TPC-1/-2/-4/-5: when tag vTARGET already exists, the marketplace.json
+    reachable AT THAT TAG must pin a COMMIT (never an annotated-tag object) that is inside the
+    released history and whose plugin.json version is TARGET.
+
+    Adopters install by ref, so the tag's own tree is what a `marketplace add <repo>#vX.Y.Z`
+    resolves. The old plan tagged BEFORE re-pinning, so the tag served the PREVIOUS release's sha
+    and an install by ref delivered the previous version's code. That shipped twice (v1.0.0 and
+    v1.0.1) before being caught. Absent tag => not applicable (a first cut cannot be coherent yet;
+    the re-pin has not happened).
+    """
+    tag = f"v{version}"
+    def git(*a):
+        r = subprocess.run(["git", "-C", tree, *a], capture_output=True, text=True, timeout=30)
+        return r.returncode, (r.stdout or "").strip()
+    rc, _ = git("rev-parse", "--verify", f"refs/tags/{tag}")
+    if rc != 0:
+        return True, f"tag {tag} does not exist yet (first cut — not applicable)"
+    rc, blob = git("show", f"{tag}:.claude-plugin/marketplace.json")
+    if rc != 0:
+        return False, f"tag {tag} carries no .claude-plugin/marketplace.json"
+    try:
+        src = json.loads(blob)["plugins"][0]["source"]
+        sha, ref = src.get("sha", ""), src.get("ref", "")
+    except Exception as e:
+        return False, f"marketplace.json at {tag} is unreadable: {type(e).__name__}"
+    if ref != tag:
+        return False, f"source.ref at {tag} is {ref!r}, expected {tag!r}"
+    rc, kind = git("cat-file", "-t", sha)
+    if rc != 0:
+        return False, f"source.sha {sha[:12]}… at {tag} does not resolve in this repo"
+    if kind != "commit":
+        return False, (f"source.sha at {tag} names a {kind} object, not a commit — use "
+                       f"`git rev-parse {tag}^{{commit}}`")
+    rc, _ = git("merge-base", "--is-ancestor", sha, f"{tag}^{{commit}}")
+    if rc != 0:
+        return False, (f"source.sha {sha[:12]}… at {tag} is NOT in the released history "
+                       f"(not an ancestor of the tag commit)")
+    rc, pj = git("show", f"{sha}:.claude-plugin/plugin.json")
+    if rc != 0:
+        return False, f"the pinned commit {sha[:12]}… has no plugin.json"
+    try:
+        pinned = json.loads(pj).get("version")
+    except Exception:
+        return False, f"plugin.json at the pinned commit {sha[:12]}… is unreadable"
+    if pinned != version:
+        rc2, relcommit = git("rev-parse", f"{tag}^{{commit}}")
+        return False, (f"INCOHERENT INSTALL PIN: installing #{tag} resolves marketplace source.sha "
+                       f"{sha[:12]}…, whose plugin.json says version {pinned!r} — but this release "
+                       f"is {version!r} (tag commit {relcommit[:12] if rc2 == 0 else '?'}…). An "
+                       f"adopter installing by ref would receive {pinned!r}, not {version!r}. "
+                       f"Re-pin BEFORE tagging, then move the tag onto the re-pin commit.")
+    return True, f"install pin at {tag} resolves {sha[:12]}… (version {pinned}) — coherent"
+
+
 def preflight(tree, version, *, suite_runner=None):
     """The ordered cut preconditions as [(check, ok, detail)]. ok iff plugin==marketplace==version ∧
     source.ref==v<version> ∧ CHANGELOG has the `## v<version>` section ∧ the candidate tree's suite passes.
@@ -221,6 +277,9 @@ def preflight(tree, version, *, suite_runner=None):
          v["marketplace_ref"] == tag, f"source.ref={v['marketplace_ref']!r} expected={tag!r}"),
         ("CHANGELOG.md has the ## vTARGET section",
          cl_present, f"## {tag} section: present={cl_present}"),
+        # AC-TPC-2: what an adopter installing by ref actually resolves. Not applicable until the
+        # tag exists, so a first cut passes and a RE-run convicts an incoherent one.
+        ("install pin at vTARGET resolves this release",) + tag_pin_coherence(tree, version),
     ]
     if not all(c[1] for c in cheap):
         return cheap
@@ -228,16 +287,26 @@ def preflight(tree, version, *, suite_runner=None):
 
 
 def publish_plan(tree, version):
-    """The ordered publish plan as DATA (command strings) — NEVER executed. Encodes the recurring gotchas:
-    an annotated tag at the release commit → re-pin marketplace source.sha to the TAG COMMIT (NOT the
-    annotated-tag object) → push main+tag with NO force (reconcile by merge if a parallel push rejects)."""
+    """The ordered publish plan as DATA (command strings) — NEVER executed.
+
+    ORDER IS LOAD-BEARING (feat-foundry-tag-pin-coherence, AC-TPC-3): RE-PIN FIRST, THEN TAG.
+    Adopters install by ref, which resolves marketplace.json AT THE TAG. The previous order tagged
+    the release commit and re-pinned afterwards, so the tag's own tree still carried the PREVIOUS
+    release's sha and `marketplace add <repo>#vX.Y.Z` delivered the PREVIOUS version's code. That
+    shipped twice (v1.0.0, v1.0.1) and was hand-corrected both times by moving the tag.
+
+    A commit cannot contain its own hash, so the pin necessarily names the CONTENT commit (R) while
+    the tag sits on the PINNING commit (R2). Both are inside the released history, which is exactly
+    what the gate's ancestor check (AC-TPC-5) asserts.
+    """
     tag = f"v{version}"
     return [
-        f"git -C {tree} tag -a {tag} -m 'agentic-foundry {tag}'   # annotated tag at the release commit (R)",
-        f"TAGSHA=$(git -C {tree} rev-parse {tag}^{{commit}})       # the TAG COMMIT, NOT the annotated-tag object",
-        "# edit .claude-plugin/marketplace.json: set plugins[foundry].source.sha = $TAGSHA (and source.ref = "
+        f"CONTENT=$(git -C {tree} rev-parse HEAD)                  # the release commit (R) — the code being shipped",
+        "# edit .claude-plugin/marketplace.json: set plugins[foundry].source.sha = $CONTENT (and source.ref = "
         f"{tag})",
-        f"git -C {tree} commit -am 'release: re-pin marketplace source.sha to the {tag} tag commit'  # separate commit (R2)",
+        f"git -C {tree} commit -am 'release: re-pin marketplace source.sha to the {tag} content commit'  # (R2)",
+        f"git -C {tree} tag -a {tag} -m 'agentic-foundry {tag}'    # annotated tag at R2 — the commit that CARRIES the pin",
+        f"git -C {tree} show {tag}:.claude-plugin/marketplace.json # VERIFY: source.sha == $CONTENT before pushing",
         f"git -C {tree} push origin main                           # never force-push",
         f"git -C {tree} push origin {tag}                          # if rejected by a parallel push: reconcile by MERGE, never force-push",
     ]
@@ -388,11 +457,15 @@ def _selftest():
         after = snapshot(d)
         plan = r["plan"] or []
         joined = "\n".join(plan)
-        tag_commit_repin = "rev-parse v0.7.0^{commit}" in joined and "source.sha" in joined
+        # AC-TPC-3: the plan must RE-PIN BEFORE TAGGING. Asserting order, not just presence —
+        # presence is what the old (defective) plan also satisfied.
+        repin_before_tag = ("source.sha" in joined and "tag -a v0.7.0" in joined
+                            and joined.index("source.sha") < joined.index("tag -a v0.7.0"))
+        tag_commit_repin = repin_before_tag and "rev-parse HEAD" in joined
         no_force = ("push origin main" in joined and "push origin v0.7.0" in joined and "--force" not in joined)
         no_side_effects = (after == before and not os.path.exists(os.path.join(d, ".git"))
                            and all(isinstance(x, str) for x in plan))
-    emit("cut-release-emits-tag-commit-repin-plan-no-push",
+    emit("cut-release-emits-repin-then-tag-plan-no-push",
          tag_commit_repin and no_force and no_side_effects,
          f"tag_commit_repin={tag_commit_repin} no_force_push={no_force} no_side_effects={no_side_effects}")
 

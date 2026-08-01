@@ -273,6 +273,18 @@ def skip_prefix(i):
         return k
     return n
 
+def _word(tok):
+    """The command word `tok` denotes, path-qualified or not.
+
+    Exact equality let `/usr/bin/aws` bypass this guard entirely while bare `aws` was refused —
+    the path prefix carries no security meaning. The sibling git-discipline guard closed the
+    identical hole in v1.0.1; this is the same rule, applied here so the two guards cannot
+    disagree about whether /usr/bin/<tool> is <tool>. Matching is on the WHOLE final path
+    segment, never a substring, so `aws-vault` / `gcloud-wrapper` / `myaws` are not this tool.
+    """
+    return tok.rsplit("/", 1)[1] if "/" in tok else tok
+
+
 def matches_prefix_seq(start, seq):
     """True iff the bare lowercased tokens at command-position `start` (after skipping
     env-assignments + wrapper words) begin with the token sequence `seq` (prefix-anchored)."""
@@ -281,7 +293,7 @@ def matches_prefix_seq(start, seq):
         idx = k + off
         if idx >= n or is_sep[idx] or quoted[idx]:
             return False, None
-        if btext[idx] != want:
+        if _word(btext[idx]) != want:      # path-qualified wrapper/exempt words resolve too
             return False, None
     return True, k + len(seq)
 
@@ -332,9 +344,13 @@ while i < n:
     k = skip_prefix(i)
     if k < n and not is_sep[k] and not quoted[k]:
         word = btext[k]
-        # basename-strip a path-qualified form is a NAMED bounded residual (NOT covered) —
-        # match the bare tool word only, as the reference does.
-        if word in guarded_set:
+        # A PATH-QUALIFIED form resolves to its final path segment (`_word`), so
+        # `/usr/bin/aws`, `./aws` and `~/bin/aws` are all `aws`. This was previously a
+        # declared residual citing the git-discipline guard as the reference; that guard
+        # closed the same hole in v1.0.1, so the citation no longer supports it. STILL
+        # NOT covered: shell indirection (`bash -c`, `eval`, `$(…)`) and a tool reachable
+        # under a DIFFERENT NAME (a copy or symlink) — both bounded residuals by design.
+        if _word(word) in guarded_set:
             # Name the exact wrapped form the operator must use instead (route_prefix already
             # carries the `exec` subverb — never doubled).
             wrapped = " ".join(route_prefix) + " " + word

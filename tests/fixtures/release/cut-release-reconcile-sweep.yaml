@@ -171,6 +171,8 @@ preflight_expectation:
     - 'marketplace.json version == target (bump BOTH manifests)'
     - 'marketplace source.ref == vTARGET'
     - 'CHANGELOG.md has the ## vTARGET section'
+    # AC-TPC-2 — what an adopter installing by ref actually resolves
+    - 'install pin at vTARGET resolves this release'
   forbidden_claim_tokens:
     - 'wiring-pin'
     - 'merge-gate'
