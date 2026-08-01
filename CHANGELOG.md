@@ -8,6 +8,49 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.0.1 — 2026-08-01
+
+**Security fix for the git-discipline guard. Upgrade if you rely on it.** Two defects let the
+guard be defeated; both were reproduced by execution before being fixed, and both are covered by
+new regression tests that fail against v1.0.0.
+
+- **The `gh pr merge` gate verified the wrong pull request.** Its `gh pr checks` query was built
+  from a stripped argv running in the hook's own process context, dropping the repo selector, the
+  working directory and the GitHub identity from the intercepted command. Because `gh` resolves a
+  PR from ambient state, the guard graded whatever PR the ambient environment considered current.
+  The visible symptom was a confusing refusal naming an unrelated branch; the **severe** direction
+  was silent — a merge whose checks were genuinely failing could be **admitted** because a
+  same-numbered PR in another repo was green. On a Tier-B repo this clause is the only in-session
+  control preventing that merge. The query is now pinned to the command's own coordinates, or the
+  merge is refused; there is no ambient fallback.
+
+  *This costs explicitness:* a bare `gh pr merge --squash` with no PR selector now refuses. An
+  unpinned query is not a weaker check — it is a check of a different pull request.
+  (`feat-foundry-merge-verify-context`, auth_seq=1)
+
+- **A path-qualified `git`/`gh`/`rm` bypassed every clause at once.** All three clause loops
+  matched their verb by exact token equality, so an absolute or relative path escaped the whole
+  guard — force-push to a protected branch, `branch -D`, `filter-repo`, `filter-branch`, repo
+  deletion, and the merge gate. Verbs now resolve through one shared matcher that compares the
+  final path segment (never a substring: `gitlab-runner`, `github-cli`, `git-lfs`, `gitk` are
+  unaffected). (`feat-foundry-verb-path-resolution`, auth_seq=1)
+
+Also fixed, found while reviewing the above: a backslash line continuation could splice a verb
+past the scan; the `shlex`-failure fallback preserved quotes and missed a quoted verb; `--help`
+invocations were refused; redirection operators could be mistaken for a PR selector; and the
+check query's output — untrusted content from whatever host `GH_HOST` resolved to — is now
+redacted and length-capped before being echoed into a refusal.
+
+**Documented, not fixed:** a green verdict covers **CI check runs only**, not required reviews,
+CODEOWNERS approval, or merge-queue eligibility. Two residuals are stated in the spec and
+acknowledged by the operator: the check-then-merge race, and an identity `export`ed in an earlier
+shell turn — a PreToolUse guard admits or refuses a command, it cannot rewrite one, so neither is
+closable here.
+
+**Security review:** performed on both atoms (separate-context reviewer, `hooks/**` security-path).
+The reviews returned one Block each; both were reproduced, fixed, and pinned by test before this
+release. See `docs/merge-floor.md` → *The git-discipline hook*.
+
 ## v1.0.0 — 2026-07-31
 
 The initial public release. Everything below is what ships, stated in full rather than as a
