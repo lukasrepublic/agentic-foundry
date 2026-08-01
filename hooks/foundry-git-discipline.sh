@@ -106,8 +106,17 @@ protected = {b.strip() for b in os.environ.get("PROTECTED", "main").split(",") i
 protected.add("main")                                   # always protected (widen-only)
 strict = os.environ.get("STRICT_HISTORY", "0") == "1"
 
+# Refusal messages echo the offending command (and, for the gh clause, the check query's output)
+# into the agent transcript. Since an inline `GH_TOKEN=<pat> gh pr merge …` is a supported form,
+# redact secret-bearing assignments centrally here so EVERY clause inherits it.
+_SECRET_ASSIGN = re.compile(
+    r"(?i)\b([A-Za-z_][A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|APIKEY|API_KEY|_KEY|_PAT))=(\S+)")
+
+def _redact(s):
+    return _SECRET_ASSIGN.sub(r"\1=<redacted>", s)
+
 def block(reason):
-    print("BLOCK " + reason)
+    print("BLOCK " + _redact(reason))
     sys.exit(0)
 
 def allow():
@@ -125,6 +134,10 @@ def allow():
 # spec's honest §8 BOUNDED RESIDUALS, not closed holes. Two-char operators are spaced before
 # the single-char ones so `&&`/`||` are not shredded into `& &` / `| |`. ---
 norm = cmd
+# A NEWLINE bounds a clause exactly as `;` does. shlex discards newlines as plain whitespace, so
+# without this a multi-line script is ONE unbounded clause: `clause_start` walks back to index 0
+# and the per-clause context binding below (cwd / inline env) reads tokens from unrelated lines.
+norm = re.sub(r"[\r\n]+", " ; ", norm)
 norm = re.sub(r"&&", " && ", norm)
 norm = re.sub(r"\|\|", " || ", norm)
 norm = re.sub(r";", " ; ", norm)
@@ -324,13 +337,18 @@ for i, t in enumerate(low):
     # know about (--repo/-R owner/repo) so it can't masquerade as the "pr" subcommand token —
     # any OTHER value-taking global flag interposed before `pr merge` is a bounded residual
     # (mirrors the git-clause conservatism of this file itself, not a closed hole).
+    # EVERY value-taking flag must be skipped, not just --repo/-R: a value written before the PR
+    # ref otherwise becomes the "PR selector" and the guard verifies a different PR than the one
+    # being merged (`gh pr merge --subject 12 11` would check #12 while merging #11).
+    _VALUE_FLAGS = {"--repo", "-R", "--body", "-b", "--body-file", "-F", "--subject", "-t",
+                    "--author-email", "--match-head-commit"}
     bare = []
     skip_next = False
     for a in args:
         if skip_next:
             skip_next = False
             continue
-        if a in ("--repo", "-R"):
+        if a in _VALUE_FLAGS:
             skip_next = True
             continue
         if a.startswith("-"):
@@ -338,7 +356,10 @@ for i, t in enumerate(low):
         bare.append(a)
     if len(bare) < 2 or bare[0].lower() != "pr" or bare[1].lower() != "merge":
         continue
-    if "--admin" in largs:
+    # cobra bool flags also accept `--admin=true`, which an exact-token test misses. On a repo
+    # whose protection requires REVIEWS, that form bypasses the review requirement even when the
+    # checks the clause verifies are green.
+    if any(a == "--admin" or a.startswith("--admin=") for a in largs):
         block("gh pr merge --admin (server-side-check bypass) refused outright — the native "
               "floor may be Tier B advisory on this repo (see docs/merge-floor.md) and --admin would "
               "skip it entirely. Command: " + cmd)
@@ -374,6 +395,11 @@ for i, t in enumerate(low):
 
     # (1) The repo selector. Captured from --repo/-R/--repo=… and PROPAGATED (it was previously
     #     parsed only to skip it, then discarded).
+    #     `gh` is cobra/pflag: a shorthand accepts an ATTACHED value, so `-Rowner/repo` and
+    #     `-R=owner/repo` set --repo exactly as `-R owner/repo` does. Recognising only the
+    #     space-separated and `--repo=` forms left the attached forms silently unpinned — the
+    #     query fell back to ambient resolution and admitted a red PR. All five forms below, and
+    #     ANY unconsumed `-R…`/`--repo…` token blocks rather than being ignored.
     repo_sels, repo_flag_seen = [], False
     k = 0
     while k < len(args):
@@ -384,9 +410,15 @@ for i, t in enumerate(low):
                 repo_sels.append(args[k + 1])
                 k += 2
                 continue
+            block_ctx("`--repo`/`-R` was given without a value.")
         elif a.startswith("--repo="):
             repo_flag_seen = True
             repo_sels.append(a.split("=", 1)[1])
+        elif a.startswith("-R") and a != "-R":
+            repo_flag_seen = True                       # -Rowner/repo  or  -R=owner/repo
+            repo_sels.append(a[3:] if a.startswith("-R=") else a[2:])
+        elif a.startswith("--repo"):
+            block_ctx(f"Unrecognized repo-selector token {a!r}.")
         k += 1
     if len(set(repo_sels)) > 1:
         # Two different repos named in one merge: gh's precedence is not ours to guess.
@@ -411,10 +443,19 @@ for i, t in enumerate(low):
 
     # (3) The working directory. `cd <dir> && gh …` changes where gh resolves the repo from; the
     #     hook does not inherit it. A non-literal or non-existent target is unresolvable.
+    #     Only an ABSOLUTE, literal `cd` target is resolvable. A RELATIVE one is resolved against
+    #     this process's cwd, which is not reliably the shell's — Claude Code's Bash tool keeps a
+    #     persistent shell, so an earlier turn's `cd` (or a dispatch worktree) makes the two
+    #     differ, and in a multi-repo tree that can silently select a different checkout with a
+    #     same-numbered PR. `pushd` and a subshell-grouped `(cd …` are directory changes this
+    #     scan does not model, so they block rather than being ignored.
     run_cwd, cd_unresolved = None, None
     j, cstart = 0, clause_start(i)
     while j < cstart:
-        if low[j] == "cd":
+        tok, ltok = toks[j], low[j]
+        if ltok in ("pushd", "popd") or ltok.lstrip("(") == "cd" and ltok != "cd":
+            run_cwd, cd_unresolved = None, f"a directory change this scan cannot model ({tok!r})"
+        elif ltok == "cd":
             tgt, m = None, j + 1
             while m < cstart and toks[m] not in SEPARATORS:
                 if not toks[m].startswith("-"):
@@ -425,6 +466,10 @@ for i, t in enumerate(low):
                 run_cwd, cd_unresolved = None, "a bare `cd` (to $HOME)"
             elif not _is_literal(tgt):
                 run_cwd, cd_unresolved = None, f"a non-literal `cd` target ({tgt!r})"
+            elif not os.path.isabs(os.path.expanduser(tgt)):
+                run_cwd, cd_unresolved = None, (
+                    f"a relative `cd` target ({tgt!r}), which this guard cannot resolve against "
+                    "the shell's own working directory")
             else:
                 run_cwd, cd_unresolved = os.path.expanduser(tgt), None
         j += 1
@@ -444,8 +489,22 @@ for i, t in enumerate(low):
     #     executable lookup honours the passed env's PATH, so the allowlist is load-bearing, not
     #     defence in depth. Anything outside it BLOCKS rather than being silently ignored — a
     #     dropped assignment could equally change the answer.
-    _ENV_ALLOW = re.compile(r"^(GH_|GITHUB_)[A-Z0-9_]*$")
+    #     An EXPLICIT name allowlist, not a `GH_*` namespace one: that namespace also contains
+    #     GH_PAGER / GH_BROWSER / GH_EDITOR, each of which gh LOOKS UP AND EXECUTES, plus
+    #     GH_FORCE_TTY (which re-enables the pager under capture_output). Carrying those would
+    #     hand an attacker-chosen program a say in the verdict text.
+    _ENV_ALLOW = {"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
+                  "GH_HOST", "GH_REPO", "GH_CONFIG_DIR"}
     run_env = dict(os.environ)
+    #     The inherited environment is sanitised too — the allowlist governs ADDITIONS, but an
+    #     AMBIENT GH_PAGER/GH_BROWSER already reaches gh and could rewrite the output the text
+    #     scan reads. (The returncode gate below is the stronger check and is unaffected, but the
+    #     fail/pending text scan is not, so both are hardened.)
+    for _v in ("GH_PAGER", "PAGER", "GH_BROWSER", "BROWSER", "GH_EDITOR", "EDITOR",
+               "GH_FORCE_TTY", "GH_DEBUG"):
+        run_env.pop(_v, None)
+    run_env["GH_PROMPT_DISABLED"] = "1"
+    run_env["GH_NO_UPDATE_NOTIFIER"] = "1"
     for t in toks[cstart:i]:
         if t.lower() in ("sudo", "env", "time", "command", "nohup", "-"):
             continue
@@ -454,10 +513,10 @@ for i, t in enumerate(low):
             block_ctx(f"An unrecognized token {t!r} precedes `gh` in this clause, so the "
                       "environment the merge would run under cannot be reproduced.")
         name, val = m.group(1), m.group(2)
-        if not _ENV_ALLOW.match(name):
-            block_ctx(f"The inline assignment {name}= is not a GH_*/GITHUB_* variable. The "
-                      "verification subprocess carries only GitHub-identity variables, so this "
-                      "command's environment cannot be reproduced safely.")
+        if name not in _ENV_ALLOW:
+            block_ctx(f"The inline assignment {name}= is not a carryable GitHub-identity "
+                      f"variable ({', '.join(sorted(_ENV_ALLOW))}), so this command's "
+                      "environment cannot be reproduced safely.")
         if not _is_literal(val):
             block_ctx(f"The inline assignment {t!r} is not a literal value, so the GitHub "
                       "identity the merge would use cannot be reproduced.")

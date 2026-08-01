@@ -97,6 +97,9 @@ operator's own review is the terminal control regardless. But you should size th
 accurately: `spec-link` green means *"a lane was declared"*, not *"a frozen contract
 authorized this diff"*. If you want the stronger property, require the `Spec:` form and drop
 the light lane from your copy of the workflow — it is four lines of shell.
+
+### The git-discipline hook
+
 3. **The git-discipline hook** (`hooks/foundry-git-discipline.sh`, PreToolUse) — governs
    what an agent can do *from inside a Claude Code session*, fail-closed:
    - `gh pr merge --admin` (a server-side-check bypass) → **refused outright**, no
@@ -112,11 +115,20 @@ the light lane from your copy of the workflow — it is four lines of shell.
 
      | Command | Result |
      |---|---|
-     | `gh pr merge 42 --repo owner/name` | verified against `owner/name`#42 |
-     | `gh pr merge https://github.com/owner/name/pull/42` | verified — the URL is self-contained |
-     | `cd svc && gh pr merge 42` | verified in `svc/` |
+     | `gh pr merge <pr> --repo owner/name` | verified against that PR in `owner/name` |
+     | `gh pr merge https://github.com/owner/name/pull/<pr>` | verified — the URL is self-contained |
+     | `cd /abs/path/svc && gh pr merge <pr>` | verified in that directory |
      | `gh pr merge --squash` *(no selector)* | **refused** — would grade whatever PR the current branch points at |
-     | `cd "$DIR" && gh pr merge 42` | **refused** — the target directory is not a literal path |
+     | `cd "$DIR" && gh pr merge <pr>` | **refused** — the target directory is not a literal path |
+     | `cd svc && gh pr merge <pr>` | **refused** — a relative path this guard cannot resolve against the shell's own cwd |
+     | `pushd … ` / `(cd … && gh …)` | **refused** — directory changes the scan does not model |
+
+     All five `--repo` spellings are recognised (`--repo V`, `--repo=V`, `-R V`, `-RV`, `-R=V`);
+     an unrecognised repo-selector token refuses rather than being ignored. Inline environment
+     assignments are carried only for an explicit GitHub-identity allowlist (`GH_TOKEN`,
+     `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN`, `GH_HOST`, `GH_REPO`,
+     `GH_CONFIG_DIR`); anything else refuses, because variables like `GH_PAGER`/`GH_BROWSER` are
+     programs `gh` executes and `PATH` would let a planted `gh` forge a green verdict.
 
      The refusal names the argument that resolves it and is worded distinctly from a
      check-failure refusal. **This costs explicitness**: a bare `gh pr merge --squash`, which
