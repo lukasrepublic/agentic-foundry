@@ -21,7 +21,7 @@ delete any section your project's mode (§V) doesn't carry.
    change, PR-then-merge, no admin-override merges.
 5. **Operator sign-off is the terminal gate** — every release gets the operator's own test
    pass, last. A practice, deliberately never machine-enforced; it caps what any control below
-   is worth building. (See CLAUDE.md / your project's control-center doc for the fuller framing
+   is worth building. (See CLAUDE.md / your project's control-plane doc for the fuller framing
    of why this is a practice and not a control.)
 
 ## II. Governance guardrails (how controls earn their existence)

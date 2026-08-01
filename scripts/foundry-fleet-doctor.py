@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """foundry-fleet-doctor — one-command health sweep across ALL Foundry adopter handbooks on a machine.
 
-A single operator typically runs several handbooks (control center + per-project), each wiring the
+A single operator typically runs several handbooks (control plane + per-project), each wiring the
 Foundry plugin. "Are they all current?" otherwise means visiting each repo and running
 `/foundry:doctor` by hand — and it's easy to miss that an adopter is on a DIFFERENT/stale plugin
 source (e.g. a vendored directory copy) that `claude plugin update` never touches. This sweep

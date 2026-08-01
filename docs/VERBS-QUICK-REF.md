@@ -2,21 +2,27 @@
 
 Every shipped `/foundry:<verb>`, one line each, grouped by where it sits in the loop. Outcome
 first — what running the verb gets you, not what it internally does. For the six verbs that
-matter on day one, see the `## Start here` table in [README.md](../README.md); this page is the
-full catalog, kept in lockstep with `skills/` by the build-time contract that shipped it.
+matter on day one, see the `## Start here` table in [README.md](../README.md).
+
+> **What is machine-checked here, and what is not.** `tests/test_docs_claims.py` asserts the
+> **roster** matches `skills/` in both directions — no shipped verb missing, no verb listed that
+> does not exist. The **descriptions are prose and are not machine-checked**; when a verb's
+> behavior changes, its line here has to be changed by hand. If a line below disagrees with the
+> verb's own `skills/<verb>/SKILL.md`, the SKILL.md is authoritative — and the disagreement is a
+> bug worth reporting.
 
 ## Start and wire
 
 | Verb | What it produces |
 |---|---|
 | `/foundry:init` | Seeds the operator registry and project config for this repo |
-| `/foundry:doctor` | Reports whether every wired guard and skill is present and healthy |
+| `/foundry:doctor` | Runs five structural checks on the wiring — plugin manifest, hooks, skill frontmatter, stack-profile lock, operator registry. Not a merge gate, and green here is not proof the merge floor is sound |
 | `/foundry:mode` | Shows which session posture and merge-autonomy mode are active |
 | `/foundry:mode-interactive` | Switches to the zero-ceremony lane: plain Claude Code, no pipeline |
 | `/foundry:mode-autonomous` | Switches to the noninteractive posture for unattended runs |
 | `/foundry:context` | Loads the workspace and product context a session needs to start |
 | `/foundry:env-hygiene` | Flags stray environment variables a session should not be carrying |
-| `/foundry:work-isolation` | Confirms the session is working inside its own isolated worktree |
+| `/foundry:work-isolation` | Manages the worktree write-jail and post-merge cleanup around an isolated worker |
 
 ## Specify
 
@@ -29,7 +35,7 @@ full catalog, kept in lockstep with `skills/` by the build-time contract that sh
 | `/foundry:research-capture` | Records prior-art grounding gathered during a research pass |
 | `/foundry:grounding-conformance` | Checks a spec's citations still resolve to the sources they claim |
 | `/foundry:report-citation-graph` | Renders the citation graph linking specs, code, and grounding sources |
-| `/foundry:index` | Lists the live catalog of every shipped verb straight from the tree |
+| `/foundry:index` | Lists every shipped skill, playbook and agent with how to trigger it, derived from the tree on demand so it cannot drift |
 | `/foundry:skill-authoring` | Walks through drafting a new skill to the shipped skill-authoring shape |
 
 ## Authorize and build
@@ -39,8 +45,8 @@ full catalog, kept in lockstep with `skills/` by the build-time contract that sh
 | `/foundry:authorize` | Freezes the spec and contract hashes and records your signed go-ahead |
 | `/foundry:dispatch` | Builds the authorized spec in an isolated worktree and opens a PR |
 | `/foundry:revert` | Rolls a merged change back out through the same governed loop |
-| `/foundry:upgrade` | Walks a dependency or toolchain bump through the same governed loop |
-| `/foundry:relock` | Refreshes a pinned lockfile against the standing-versions matrix |
+| `/foundry:upgrade` | After a `claude plugin update`, reports whether your adopter config has drifted from the current shape or gone malformed |
+| `/foundry:relock` | Re-locks your **already-locked** stack profiles after a trusted profile-version advance, refusing a downgrade or an incompatible profile |
 
 ## Certify and release
 
@@ -48,12 +54,12 @@ full catalog, kept in lockstep with `skills/` by the build-time contract that sh
 |---|---|
 | `/foundry:certify-local` | Deploys a release once locally and runs every atom's tagged journeys against it |
 | `/foundry:certify-staging` | Runs the same journey suite against a shared staging deployment |
-| `/foundry:verify` | Re-checks a release's evidence trail without re-running the full journey suite |
-| `/foundry:audit` | Produces an independent findings pass over a release's governance trail |
+| `/foundry:verify` | Runs your stack's static validation and tests — the format/lint/typecheck/build and test recipes the active stack profile declares. Skips when no stack profile is locked |
+| `/foundry:audit` | **Dormant — not the default review.** The exceptional multi-pass deep spec audit; `/foundry:spec-review` is the verb you want |
 | `/foundry:coherence-check` | Confirms a release's specs, contracts, and code still agree with each other |
 | `/foundry:authorize-release` | Records the operator go-ahead that gates a multi-atom release from shipping |
-| `/foundry:release` | Plans a multi-atom wave, or records your own sign-off on what shipped |
-| `/foundry:cut-release` | Bumps the plugin version and writes the dated changelog section adopters see |
+| `/foundry:release` | Shapes a release (manifest + dependency graph) and drives its backlog→planned→active→completed state machine. Closure is re-derived from per-atom evidence and **refused on assertion** — it will not take your word for it |
+| `/foundry:cut-release` | Verifies the release preconditions you staged (both manifests bumped, the changelog section written), refuses until the acceptance gate is green, then emits a publish plan **for you to run** — it never tags or pushes |
 | `/foundry:upstream-submit` | Prepares a change for submission back to an upstream project |
 
 ## Infra-delivery lane

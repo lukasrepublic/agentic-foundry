@@ -37,8 +37,18 @@ By design it never passes vacuously. The refusal names what's missing:
 
 - **No journeys tagged for an atom** → write the Playwright journeys the contract's AC-IDs
   name, or remove the atom from the release manifest.
-- **No boot recipe** → your stack profile must define how to deploy the release once
-  locally; see `packs/stack-profiles/<yours>/`.
+- **No boot recipe** → certification resolves the boot command from the **active stack
+  profile's** `app_exercise_binding.boot`, which requires `.foundry/stack-profile.lock` to
+  exist and resolve; see `packs/stack-profiles/<yours>/`.
+
+  > **Known limitation (v1).** No shipped verb creates that lock. `/foundry:relock` refreshes
+  > an existing one and refuses when there is none ("nothing to relock"), so an adopter who has
+  > never had a lock cannot reach `certify-local`, `/foundry:verify`, or the `id-*` lane's
+  > `infra_binding`. The `repos.<key>.boot_command` field in `.claude/foundry-project.json` is
+  > accepted by the schema but is **not** read by certification today. Wiring that field as the
+  > first-precedence boot recipe, and folding lock creation into `/foundry:init` (the
+  > `terraform init` shape), are tracked fixes — until they land, this path is not reachable
+  > from a clean install and we would rather say so than let you hunt for the flag.
 
 ## The authorize gate refused to freeze
 
@@ -48,6 +58,35 @@ By design it never passes vacuously. The refusal names what's missing:
   contract (re-specify); the gate is never the thing to relax.
 - **Oversize spec** → the spec size ceiling (fourteen criteria / eight thousand words) has no override. Decompose into
   smaller atoms.
+
+## Authorize printed `warn: … degraded` lines and froze anyway
+
+**Read these before you confirm — they mean less was checked than usual.**
+
+When a contract's `target_repo` names a `repos{}` key whose `path` does not resolve to a real
+directory, there is no venue root to ground against, and five floors degrade to a printed
+warning instead of running:
+
+| Floor | Warning |
+|---|---|
+| surface ⊆ scope | `surface⊆scope check degraded` |
+| doctor-row baseline | `doctor-row-baseline check degraded` |
+| system-grounding | `system-grounding floor SKIPPED` |
+| `allowed_paths` grounding | `allowed_paths grounding degraded` |
+| checkpoint-locator grounding | `checkpoint locator grounding degraded` |
+
+The freeze then proceeds and `auth_seq` still increments. This is deliberate — it exists so a
+repo you simply have not cloned yet cannot wedge an authorization — but it means **a typo in
+`target_repo` looks exactly like a not-yet-cloned repo**.
+
+- **You expected the degrade** (the repo genuinely is not cloned here): fine, carry on.
+- **You did not**: you have a manifest defect. Check `target_repo` against the `repos{}` keys in
+  `.claude/foundry-project.json`, fix it, and re-authorize — the earlier freeze validated far
+  less than a normal one.
+
+Note that the *absent* `target_repo` case behaves oppositely and **fails closed** with
+*"matches ZERO paths under the venue root"*, because the scope then grounds against the
+workspace root and matches nothing.
 
 ## Wedged or stale install
 

@@ -74,13 +74,30 @@ def test_test_count_claim_is_true():
     assert int(m.group(1)) >= 1000, f"the README claims >1,000 tests; collected {m.group(1)}"
 
 
+def _quick_ref_roster():
+    """(shipped, documented) verb name sets for VERBS-QUICK-REF.md."""
+    ref = _read(os.path.join(REPO_ROOT, "docs", "VERBS-QUICK-REF.md"))
+    shipped = {d for d in os.listdir(os.path.join(REPO_ROOT, "skills"))
+               if os.path.isdir(os.path.join(REPO_ROOT, "skills", d))}
+    documented = set(re.findall(r"`/foundry:([a-z0-9-]+)`", ref))
+    return shipped, documented
+
+
 def test_every_shipped_skill_is_in_the_verb_reference():
     """VERBS-QUICK-REF promises the full catalog; a skill missing from it is invisible."""
-    ref = _read(os.path.join(REPO_ROOT, "docs", "VERBS-QUICK-REF.md"))
-    skills = sorted(d for d in os.listdir(os.path.join(REPO_ROOT, "skills"))
-                    if os.path.isdir(os.path.join(REPO_ROOT, "skills", d)))
-    missing = [s for s in skills if f"/foundry:{s}`" not in ref and f"/foundry:{s} " not in ref]
+    shipped, documented = _quick_ref_roster()
+    missing = sorted(shipped - documented)
     assert not missing, f"skills shipped but absent from VERBS-QUICK-REF.md: {missing}"
+
+
+def test_the_verb_reference_lists_no_phantom_verbs():
+    """The other direction, which went unchecked and is the worse failure: a documented verb that
+    does not exist sends the reader to type a command that silently does nothing. A retired or
+    renamed skill must be removed from the reference in the same change that retires it."""
+    shipped, documented = _quick_ref_roster()
+    phantom = sorted(documented - shipped)
+    assert not phantom, (f"VERBS-QUICK-REF.md documents verbs with no skills/<verb>/ directory: "
+                         f"{phantom}")
 
 
 # ------------------------------------------------------------------ link + posture locks --

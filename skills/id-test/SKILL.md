@@ -145,7 +145,7 @@ command-policy guard; every command is **read-only**.
 
 ## Multi-repo targeting — `infra_binding.work_dirs` (the per-part CWD split)
 
-A control-center infra change spans an **infra/OpenTofu dir** and a **gitops/render dir** — but a
+A control-plane infra change spans an **infra/OpenTofu dir** and a **gitops/render dir** — but a
 profile's slot command is ONE `&&`-joined string. The additive, OPTIONAL **`infra_binding.work_dirs`**
 per-role map `{infra, gitops}` (loader-exposed; `None` when absent) makes the split explicit. Resolve it
 when you resolve the active profile, then bind each command PART to its role's CWD:
