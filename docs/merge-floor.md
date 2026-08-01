@@ -104,6 +104,26 @@ the light lane from your copy of the workflow — it is four lines of shell.
    - plain `gh pr merge` → admitted **only** after a live `gh pr checks` query returns
      all-green; a failing row, a pending row, a nonexistent PR, an API error, or an
      unrecognized verdict all **block**.
+   - **The merge must name the PR explicitly.** `gh` resolves a PR from ambient state — the
+     working directory's remote, `GH_CONFIG_DIR`/`GH_HOST`, the current branch — so the guard
+     pins its verification query to the coordinates in your command (`--repo`, a `cd` target,
+     inline `VAR=value` assignments) rather than inheriting its own. When those coordinates
+     cannot be resolved, it **refuses** instead of falling back to an ambient lookup:
+
+     | Command | Result |
+     |---|---|
+     | `gh pr merge 42 --repo owner/name` | verified against `owner/name`#42 |
+     | `gh pr merge https://github.com/owner/name/pull/42` | verified — the URL is self-contained |
+     | `cd svc && gh pr merge 42` | verified in `svc/` |
+     | `gh pr merge --squash` *(no selector)* | **refused** — would grade whatever PR the current branch points at |
+     | `cd "$DIR" && gh pr merge 42` | **refused** — the target directory is not a literal path |
+
+     The refusal names the argument that resolves it and is worded distinctly from a
+     check-failure refusal. **This costs explicitness**: a bare `gh pr merge --squash`, which
+     older versions admitted, now requires a PR number or URL. That is deliberate — an unpinned
+     query is not a weaker check, it is a check of a *different pull request*, and in a
+     multi-repo workspace a same-numbered PR elsewhere could admit a merge whose own checks
+     were red.
    - force-push to a protected branch → refused.
    - The hook has **no in-session off-switch**. To act around it, a human runs the
      command themselves in their own terminal — which is exactly the boundary it exists
