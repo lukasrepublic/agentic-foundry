@@ -142,14 +142,18 @@ hook_comment_expectation:
     - 'no mechanical integrity check'
     - 'security-path'
   # sha256 of the shipped hook's EXECUTABLE CONTENT (full-line comments stripped, shebang
-  # retained). RE-BASELINED by feat-foundry-merge-verify-context, which deliberately changes
-  # executable content: clause (i)'s verification subprocess was querying the wrong PR (it
-  # dropped --repo, the cwd and the gh identity), admitting merges whose checks were red.
-  # That fix carries its own spec, security review and gate. This pin was recorded for an
-  # earlier COMMENT-ONLY atom; re-baselining is the documented response to a real change
-  # (see the note above: edit the fixture to match the new truth), NOT a relaxation — the
-  # row still fails on any subsequent unreviewed edit to the hook's executable content.
-  executable_content_sha256: 'cdbdd63005a778203d9946cc436f73a47adf4f585832bf134b05dbd5ccee813e'
+  # retained). This row pins the hook against UNREVIEWED executable edits. Re-baselining is the
+  # documented response to a real, reviewed change (see the note above: edit the fixture to match
+  # the new truth) — it is NOT a relaxation: the row still fails on any later unreviewed edit.
+  #
+  # Re-baseline log — every entry is a deliberate executable change with its own spec + review:
+  #   1. originally recorded for a COMMENT-ONLY atom (assert the body did not change)
+  #   2. feat-foundry-merge-verify-context — clause (i) was querying the wrong PR (it dropped
+  #      --repo, the cwd and the gh identity), admitting merges whose checks were red
+  #   3. feat-foundry-verb-path-resolution — all three clause loops matched their verb by exact
+  #      token equality, so any path-qualified invocation (/usr/bin/git, /bin/rm) bypassed the
+  #      whole hook; routed through a shared _is_verb() matcher
+  executable_content_sha256: 'cb72fbfe57eaa763330600e19ab9e5f3847a5ebda22200ee162b862a84dc6faf'
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
 operator_registry_shape:
