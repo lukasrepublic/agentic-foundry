@@ -25,13 +25,28 @@
 # the default set; they are the `strict_history_ops` OPT-IN widening (--strict-history),
 # which ADDS them to the active set (a widening, never a relaxation).
 #
+# VERB MATCHING (what "at ANY command position" actually covers) — the guarded verbs (`git`,
+# `gh`, `rm`) are matched by `_is_verb()` below, which resolves a PATH-QUALIFIED invocation to
+# its final path segment: `/usr/bin/git`, `./git`, `../bin/git`, `~/bin/git` and `bin/git` are
+# all `git`. Exact token equality alone let EVERY clause be bypassed at once (`/usr/bin/git
+# push --force origin main` was ADMITTED while the bare form blocked), because the path prefix
+# carries no security meaning. Quoted (`"git"`) and backslash-escaped (`\git`) forms are
+# normalized by shlex before the scan sees them. Matching is on the WHOLE final segment, never
+# a substring, so `gitlab-runner` / `github-cli` / `git-lfs` / `gitk` are correctly not matched.
+# NOT covered: resolving PATH to discover some other NAME is really this binary (a copied or
+# symlinked `mygit`) — that would trade a bounded token scan for unbounded filesystem
+# inspection, and is out of scope by design.
+#
 # THREAT MODEL — trusted operator, honest limit: an AGENT-FALLIBILITY mistake-catcher, NOT
 # an unbypassable sandbox. "NO bypass" = there is NO in-session CONFIG off-switch (no
 # per-invocation flag, no env var, no session-writable file) that downgrades a BLOCK to an
 # ADMIT. It does NOT mean "no command can evade it": a literal-string scan cannot see
 # through shell indirection (`bash -c …`, `eval`, `$(…)`, variable indirection, aliases,
 # write-script-then-run) or reach non-Bash channels — those are acknowledged BOUNDED
-# RESIDUALS (spec §8), not closed holes.
+# RESIDUALS (spec §8), not closed holes. Path-qualified invocation used to belong on that
+# list; it no longer does (see VERB MATCHING above) — an absolute path is an ordinary thing
+# for an agent to emit, not an unusual construction, so it was a realistic mistake-path rather
+# than a deliberate-evasion residual.
 #
 # CONFIG SOURCE (load-bearing) — the protected-branch list + the strict_history_ops opt-in
 # are read ONLY from this hook's COMMAND-LINE ARGUMENTS as set in hooks.json (--protected /
@@ -134,6 +149,13 @@ def allow():
 # spec's honest §8 BOUNDED RESIDUALS, not closed holes. Two-char operators are spaced before
 # the single-char ones so `&&`/`||` are not shredded into `& &` / `| |`. ---
 norm = cmd
+# A backslash LINE CONTINUATION is removed by the shell BEFORE it parses words, so it must be
+# removed here FIRST — before the newline rule below turns it into a separator. Two defects
+# otherwise, both verified: `gi\<newline>t push --force origin main` executes `git push --force`
+# while the scan sees tokens `["gi ;", "t", …]` and ADMITS (fail-open); and an ordinary
+# `cd /repo && \<newline>  gh pr merge …` produced a bogus `" ;"` token that the gh clause's
+# context binding reported as an unrecognized token preceding `gh` (a false BLOCK).
+norm = re.sub(r"\\\r?\n", "", norm)     # DELETED, not spaced — bash splices the word back together
 # A NEWLINE bounds a clause exactly as `;` does. shlex discards newlines as plain whitespace, so
 # without this a multi-line script is ONE unbounded clause: `clause_start` walks back to index 0
 # and the per-clause context binding below (cwd / inline env) reads tokens from unrelated lines.
@@ -152,7 +174,13 @@ norm = re.sub(r"&", " & ", norm)
 try:
     toks = shlex.split(norm, posix=True)
 except Exception:
-    toks = norm.split()
+    # DEGRADED PATH — reached only when shlex refuses the string (an unbalanced quote, e.g. an
+    # apostrophe inside a trailing `# comment` that bash ignores entirely). A plain split would
+    # PRESERVE quotes, so `"git" push --force origin main # don't` yielded the token '"git"',
+    # matched no verb, and ADMITTED a force-push bash really does run. Strip quote characters
+    # outright here: this scan's only job is detection, the input is already known-malformed, and
+    # over-matching is the safe direction for a guard that must never silently stop scanning.
+    toks = [t.replace('"', "").replace("'", "") for t in norm.split()]
 
 low = [t.lower() for t in toks]
 n = len(toks)
@@ -181,6 +209,26 @@ def strip_dst_ref(ref):
 # ordinary tokens that simply bound a clause's argument run. ---
 SEPARATORS = {"&&", "||", ";", "|", "&"}
 
+
+def _is_verb(tok, verb):
+    """True when `tok` invokes `verb`, however it is spelled.
+
+    Exact token equality alone let EVERY clause be bypassed at once by a path-qualified
+    invocation — `/usr/bin/git push --force origin main`, `./git`, `~/bin/git`, `/bin/rm -rf
+    .git` — because the path prefix carries no security meaning but the matcher treated it as
+    identity. Quoted (`"git"`) and backslash-escaped (`\\git`) forms never had this problem;
+    shlex normalises those before we see them.
+
+    Matching is on the WHOLE final path segment, never a substring, so `gitlab-runner`,
+    `github-cli`, `git-lfs` and `gitk` are correctly NOT this verb. Resolving PATH to discover
+    that some other name is really this binary is deliberately out of scope (it would trade a
+    bounded token scan for unbounded filesystem inspection); shell indirection (`bash -c`,
+    `eval`, `$(…)`, variable indirection) remains the declared BOUNDED RESIDUAL it always was.
+    """
+    if tok == verb:
+        return True
+    return "/" in tok and tok.rsplit("/", 1)[1] == verb
+
 def clause_args(start):
     """Return the argument tokens of the git clause whose `git` token is at index `start`,
     i.e. everything after `git` up to the next shell separator."""
@@ -196,7 +244,7 @@ def clause_args(start):
 # Iterate every `git` token (position-independent — env-prefix/wrapper/compound all fall
 # out of scanning all indices).
 for i, t in enumerate(low):
-    if t != "git":
+    if not _is_verb(t, "git"):
         continue
     args = clause_args(i)
     largs = [a.lower() for a in args]
@@ -302,7 +350,7 @@ for i, t in enumerate(low):
 
 # (g) rm -rf .git — NOT necessarily a `git` clause. Scan every `rm` token.
 for i, t in enumerate(low):
-    if t != "rm":
+    if not _is_verb(t, "rm"):
         continue
     args = clause_args(i)
     largs = [a.lower() for a in args]
@@ -329,7 +377,7 @@ for i, t in enumerate(low):
 # status, because the floor being enforced here is "every check is actually green right now",
 # which no string pattern over the command itself could ever prove or disprove.
 for i, t in enumerate(low):
-    if t != "gh":
+    if not _is_verb(t, "gh"):
         continue
     args = clause_args(i)
     largs = [a.lower() for a in args]
@@ -505,8 +553,12 @@ for i, t in enumerate(low):
         run_env.pop(_v, None)
     run_env["GH_PROMPT_DISABLED"] = "1"
     run_env["GH_NO_UPDATE_NOTIFIER"] = "1"
+    _WRAPPERS = ("sudo", "env", "time", "command", "nohup")
     for t in toks[cstart:i]:
-        if t.lower() in ("sudo", "env", "time", "command", "nohup", "-"):
+        # Wrappers are matched through the SAME path-qualified resolver as the guarded verbs, or
+        # `/usr/bin/env GH_TOKEN=… gh pr merge …` would be refused as an unrecognized token
+        # rather than taking the intended environment-reproduction path.
+        if t == "-" or any(_is_verb(t.lower(), w) for w in _WRAPPERS):
             continue
         m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", t)
         if not m:
@@ -526,6 +578,14 @@ for i, t in enumerate(low):
     try:
         proc = subprocess.run(check_argv, capture_output=True, text=True, timeout=30,
                               cwd=run_cwd, env=run_env)
+    except FileNotFoundError:
+        # Distinct from a check failure: `gh` is not resolvable on THIS process's PATH. Hook
+        # processes do not inherit a login shell's rc-modified PATH, so a shim-managed install
+        # (homebrew/mise/asdf) is the common cause — and it is exactly why a command names an
+        # absolute path in the first place. Say that, rather than reporting it as a red check.
+        block("gh pr checks could not run: `gh` is not on this guard's PATH, so the merge cannot "
+              "be verified; fail-closed. This is a tooling problem, not a failing check — the PR's "
+              "checks were never queried. Command: " + cmd)
     except Exception as e:
         block(f"gh pr checks query failed ({type(e).__name__}: {e}) — cannot confirm the "
               "native floor is green; fail-closed. Command: " + cmd)
