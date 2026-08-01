@@ -108,6 +108,43 @@ checkpoints:
     expect: { op: equals, value: "HTTP 429 on request 101" }
 ```
 
+## Where you run it: one repo, or a control plane over many
+
+Foundry works **inside a single repository** — install it, `/foundry:init`, and the loop below is
+live in that repo. That is the fastest way to try it, and the Quickstart takes that path.
+
+But it is **designed to be operated from a control plane**: a small *workspace* repo that holds
+your specifications and hosts your code repositories as gitignored siblings, with the factory
+dispatching work into each of them.
+
+```
+   SINGLE REPO                          CONTROL PLANE  (what it is built for)
+   ───────────                          ─────────────
+
+   your-app/                            acme-handbook/          ◀── specs live here; you run
+   ├── .claude/  ← the wiring           ├── .claude/                Claude from HERE
+   ├── specs/    ← the WHAT             ├── specs/features/…    ◀── the WHAT for every repo
+   └── src/      ← the code             │
+                                        ├── api/    ◀── its own git repo, gitignored
+                                        ├── web/    ◀── its own git repo, gitignored
+                                        └── infra/  ◀── its own git repo, gitignored
+```
+
+Why it matters: real projects are an app, some services, and the infrastructure under them. The
+control plane keeps **one governed corpus of specs** across all of them, while each repo keeps its
+own history, CI, and merge floor. A contract names its venue with `target_repo: api`, and the
+factory dispatches a worker into that repo's working tree.
+
+> **If you use a control plane, start your Claude session at the control plane — never inside a
+> hosted repo.** Everything the factory needs (the plugin wiring, the operator registry, the repo
+> manifest, your specs) resolves from the session's project directory. Open a session inside
+> `api/` and none of it loads: no `/foundry:*` verbs, no authorization, no governance.
+
+Set it up: **[the control-plane guide](https://github.com/lukasrepublic/agentic-handbook/blob/main/docs/control-plane.md)**
+— the on-disk layout, step-by-step multi-repo setup, and shipping an atom across two repos. The
+workspace itself starts from the **[agentic-handbook](https://github.com/lukasrepublic/agentic-handbook)**
+template.
+
 ## Quickstart
 
 ```bash
@@ -194,6 +231,10 @@ Direct links: [Quickstart](docs/QUICKSTART.md) · [How-to guides](docs/how-to/) 
 [Merge floor](docs/merge-floor.md) · [Comparison](docs/comparison.md) ·
 [Glossary](docs/glossary.md) · [Troubleshooting](docs/troubleshooting.md) ·
 [Changelog](CHANGELOG.md)
+
+**Running it over several repositories** — the control-plane model, its on-disk layout, and the
+step-by-step multi-repo setup live with the workspace template:
+**[agentic-handbook → docs/control-plane.md](https://github.com/lukasrepublic/agentic-handbook/blob/main/docs/control-plane.md)**.
 
 ## Roadmap (near-term, honest)
 
