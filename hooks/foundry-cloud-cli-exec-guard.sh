@@ -8,11 +8,21 @@
 # WHAT IT ENFORCES (only once a valid `wrapper` resolves): a bare invocation of a guarded
 # cloud/IaC CLI (default `aws|kubectl|tofu|terraform|helm|argocd`) at ANY command position
 # — command start, or after a separator/opener (`;` `&` `|` `&&` `||` `(` `{` backtick,
-# newline), behind ≥0 leading `VAR=val` env-assignments and ≥0 leading wrapper words
-# (`sudo env time xargs command builtin exec nohup stdbuf`), with quoted strings blanked
-# so mere mentions (`grep 'kubectl …'`) do not false-positive — is BLOCKED (exit 2, denial
-# on stderr naming the wrapped form), UNLESS routed through `<wrapper> exec [--flag…] <tool>`
-# (neutralized first), OR it is an adopter-listed `offline_exempt` command-position prefix.
+# newline), behind ≥0 leading `VAR=val` env-assignments, ≥0 leading redirections, and ≥0
+# leading wrapper/launcher words with their flag or numeric operands (`sudo env time xargs
+# command builtin exec nohup stdbuf timeout nice ionice setsid doas flock chrt taskset
+# unbuffer script runuser su`) — is BLOCKED (exit 2, denial on stderr naming the wrapped
+# form, inline `VAR=secret` values redacted), UNLESS routed through
+# `<wrapper> exec [--flag…] <tool>` (neutralized first), OR it is an adopter-listed
+# `offline_exempt` command-position prefix.
+#
+# The tool word, the launcher word and the FIRST word of the wrapper/exempt sequences are all
+# resolved to their final path segment, so `/usr/bin/aws` is `aws` and `/usr/bin/env aws …`
+# does not shield the tool. Later words of a sequence are SUBCOMMANDS and are matched
+# literally — resolving those by basename would widen an exemption into a bypass.
+#
+# A quoted MENTION (`grep 'kubectl …'`) does not false-positive because it is not at a command
+# POSITION — not because it is quoted. Quoting is not an escape: `"aws" s3 rm …` is blocked.
 #
 # CONFIG-GATED ACTIVATION — FAIL-INERT (the key difference from the git-discipline guard):
 # the guard reads `cloud_cli_exec_guard:{guarded_tools, wrapper, offline_exempt}` from the
@@ -27,11 +37,20 @@
 # when unconfigured. The fail-closed / ambiguity-blocks behaviour engages ONLY once a valid
 # `wrapper` IS resolved.
 #
-# THREAT MODEL — TRUSTED OPERATOR, honest limit. A command-string guard, NOT a sandbox:
-# deliberate obfuscation (`bash -c "<tool> …"`, `$(echo tool) …`, write-then-exec) is out of
-# scope (spec Out-of-scope / §8 bounded residuals), not a closed hole. It catches the
-# realistic direct/piped/prefixed paths — the motivating incident (a bare direct `tofu
-# apply`) IS caught.
+# THREAT MODEL — TRUSTED OPERATOR, honest limit. A command-string guard, NOT a sandbox.
+# It is one tier weaker than the MAC systems it is sometimes compared to: those bind to the
+# executed object at the kernel exec() boundary, this matches text before anything runs.
+# OUT OF SCOPE, and NOT closed holes: shell indirection (`bash -c "<tool> …"`, `eval`,
+# `$(echo tool) …`, variable indirection, aliases); a guarded tool reachable under a DIFFERENT
+# NAME (copy/symlink, write-then-exec); intra-word quote/escape splicing (`aw"s"`, `\aws`);
+# and a launcher taking a non-numeric, non-flag operand ahead of the tool
+# (`flock /tmp/lock aws …`). It catches the realistic direct/piped/prefixed paths — the
+# motivating incident (a bare direct `tofu apply`) IS caught.
+#
+# The pattern that closes the whole class is CREDENTIAL SCOPING (the wrapper being the only
+# thing that materializes live cloud credentials, so a bare invocation fails on authentication
+# however it is spelled) — filed as an open enhancement request against this guard series.
+# Do not extend this matcher with another spelling variant before that research runs.
 set -uo pipefail
 
 # --eval (SELFTEST ONLY) — drive the matcher hermetically over a throwaway command-string
@@ -167,7 +186,13 @@ for line in exempt_raw.split("\n"):
 # Leading wrapper words skipped before a command word at a command position (item (3)). Same
 # fixed list as the reference; the named bounded-residual launchers (timeout/setsid/doas/…)
 # and flag-bearing wrapper words are honest limits (spec Out-of-scope), not covered here.
-WRAPPER_WORDS = {"sudo", "env", "time", "xargs", "command", "builtin", "exec", "nohup", "stdbuf"}
+WRAPPER_WORDS = {"sudo", "env", "time", "xargs", "command", "builtin", "exec", "nohup", "stdbuf",
+                 # An UNRECOGNISED leading word shields the rest of its segment (only the first
+                 # command word after a separator is ever convicted), so every launcher missing from
+                 # this set is a bypass: `timeout 60 aws s3 rm …` was admitted. These were named as
+                 # bounded residuals in this file's own header while being one-token evasions.
+                 "timeout", "nice", "ionice", "setsid", "doas", "flock", "chrt", "taskset",
+                 "unbuffer", "script", "runuser", "su"}
 
 # Wrapper-form tokens: `<wrapper> exec [--flag…] <tool>`. The wrapper value may itself be a
 # multi-word command (`ctx exec`); the canonical reference form is `<wrapper-words> exec`.
@@ -195,7 +220,36 @@ else:
 # SEPARATOR/OPENER tokens. Two-char operators are spaced BEFORE the single-char ones so
 # `&&`/`||` are not shredded into `& &` / `| |`. This is a literal-string static scan — it
 # does NOT see through `bash -c "…"`, `eval`, `$(…)` (spec §8 bounded residuals). ---
+_SECRET_ASSIGN = re.compile(
+    r"(?i)\b([A-Za-z_][A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|APIKEY|API_KEY|_KEY|_PAT))=(\S+)")
+
+
+def _redact(s):
+    """Mask inline VAR=value secrets before echoing a command back.
+
+    The refusal prints the whole command, and skip_prefix explicitly anticipates leading
+    `NAME=value` env assignments — which is precisely where a credential sits. Hook output lands in
+    the session transcript and in anything scraping stderr, so `AWS_SECRET_ACCESS_KEY=… aws s3 rm …`
+    would write the secret there. Mirrors the sibling git-discipline guard's redaction."""
+    return _SECRET_ASSIGN.sub(lambda m: m.group(1) + "=***", s)
+
+
 norm = cmd
+# --- LINE STRUCTURE FIRST, and in this order. Both defects below were verified in this guard and
+# were already fixed in the sibling git-discipline guard; the two must not disagree.
+#   1. A backslash line-continuation is DELETED, never spaced. bash splices the word back together,
+#      so `aw\<newline>s s3 rm …` executes `aws s3 rm` — and a lone surviving `\` token also blocks
+#      the command-position test for everything after it (`cd /r && \<newline> aws s3 rm …`).
+#   2. A newline is a COMMAND SEPARATOR. shlex consumes it as ordinary whitespace and never emits it
+#      as a token, so the old `replace("\n", " \n ")` + SEPARATORS membership was dead code: only the
+#      FIRST word of a multi-line string sat at a command position, and `echo hi<newline>aws s3 rm …`
+#      was admitted. Rewriting to " ; " makes the separator real.
+norm = re.sub(r"\\\r?\n", "", norm)
+norm = re.sub(r"[\r\n]+", " ; ", norm)
+# Protect fd-duplicating redirections (`2>&1`, `>&2`) from the blanket `&` split below, which would
+# otherwise shred `2>&1` into `2>`, `&`, `1` — making `&` a separator and `1` the command word, so
+# `2>&1 aws s3 rm …` never reached the tool. Restored immediately after the separator rewrites.
+norm = re.sub(r"([<>])&", "\\1\x00", norm)
 norm = re.sub(r"&&", " && ", norm)
 norm = re.sub(r"\|\|", " || ", norm)
 norm = re.sub(r";", " ; ", norm)
@@ -206,6 +260,7 @@ norm = re.sub(r"\)", " ) ", norm)
 norm = re.sub(r"\{", " { ", norm)
 norm = re.sub(r"\}", " } ", norm)
 norm = re.sub(r"`", " ` ", norm)
+norm = norm.replace("\x00", "&")            # restore the protected fd-dup redirections
 
 # --- Tokenize. shlex (posix) STRIPS quotes — so a quoted/argument mention (`grep 'kubectl …'`,
 # `echo tofu`) becomes a bare token, which would false-positive a naive scan. To honor the
@@ -214,7 +269,6 @@ norm = re.sub(r"`", " ` ", norm)
 # and exclude them from command-position matching. Newline is also a separator. On a shlex
 # failure fall back to a whitespace split (never silently stop scanning => the matcher must
 # still run; the wrapper IS configured here so we are in fail-closed territory). ---
-norm = norm.replace("\n", " \n ")
 try:
     raw_toks = shlex.split(norm, posix=False)
 except Exception:
@@ -266,9 +320,27 @@ def skip_prefix(i):
         if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", t):
             k += 1
             continue
-        # wrapper word (bare, no flags — flag-bearing wrapper words are a named bounded residual).
-        if t in WRAPPER_WORDS:
+        # a redirection operator token (`>f`, `>>f`, `2>&1`, `<f`) is not a command word — bash
+        # accepts redirections before the command, so `>/dev/null aws s3 rm …` still runs aws.
+        if re.match(r"^\d*[<>]+&?\d*", t):
             k += 1
+            continue
+        # wrapper word (bare, no flags — flag-bearing wrapper words are a named bounded residual).
+        # PATH-RESOLVED, same as the tool word: `/usr/bin/env aws s3 rm …` and `/usr/bin/sudo aws …`
+        # otherwise stop the prefix scan dead, leaving the real command word at a non-command
+        # position and never checked at all. That is the atom's own premise ("a path prefix carries
+        # no security meaning") applied to only one side of the same command.
+        if _word(t) in WRAPPER_WORDS:
+            k += 1
+            # …and skip that launcher's own option flags / numeric operand, so `timeout 60 aws …`
+            # and `nice -n 5 tofu …` reach the real command word. A launcher taking a NON-numeric,
+            # non-flag operand (`flock /tmp/l aws …`, `su user -c …`) still shields what follows —
+            # a NAMED residual (see AC-CGP-7), not a claim of coverage. Modelling every launcher's
+            # argument grammar is exactly the anti-gaming machinery CLAUDE.md says to price against
+            # the operator's own terminal test pass rather than build.
+            while k < n and not is_sep[k] and not quoted[k] and (
+                    btext[k].startswith("-") or btext[k].isdigit()):
+                k += 1
             continue
         return k
     return n
@@ -281,8 +353,13 @@ def _word(tok):
     identical hole in v1.0.1; this is the same rule, applied here so the two guards cannot
     disagree about whether /usr/bin/<tool> is <tool>. Matching is on the WHOLE final path
     segment, never a substring, so `aws-vault` / `gcloud-wrapper` / `myaws` are not this tool.
+
+    Trailing separators resolve to the last NON-EMPTY segment (`aws/` -> `aws`, `/usr/bin/aws/.` ->
+    `aws`) rather than to "" or ".", which would silently match nothing. Neither form is executable,
+    so resolving them is a free widening.
     """
-    return tok.rsplit("/", 1)[1] if "/" in tok else tok
+    parts = [p for p in tok.split("/") if p not in ("", ".")]
+    return parts[-1] if parts else tok
 
 
 def matches_prefix_seq(start, seq):
@@ -293,8 +370,19 @@ def matches_prefix_seq(start, seq):
         idx = k + off
         if idx >= n or is_sep[idx] or quoted[idx]:
             return False, None
-        if _word(btext[idx]) != want:      # path-qualified wrapper/exempt words resolve too
-            return False, None
+        if off == 0:
+            # Only the FIRST word of a sequence is a program name, so only it is path-resolved —
+            # and BOTH sides are, so a wrapper configured as "/usr/local/bin/cloudwrap exec" still
+            # routes (an unnormalized config side matched nothing and silently made the guard admit
+            # everything wrapper-shaped while reporting as configured).
+            if _word(btext[idx]) != _word(want):
+                return False, None
+        else:
+            # Later words are SUBCOMMANDS (`exec`, `configure`), not programs. Resolving them by
+            # basename flipped previously-BLOCKED input to ALLOW — under exempt `aws configure`,
+            # `aws /x/configure list` matched the exemption. AC-CGP-6 forbids any such flip.
+            if btext[idx] != want:
+                return False, None
     return True, k + len(seq)
 
 # --- Walk every command position. At each, in priority order:
@@ -342,20 +430,34 @@ while i < n:
         continue
     # (3) guarded tool at this command position?
     k = skip_prefix(i)
-    if k < n and not is_sep[k] and not quoted[k]:
+    # NOTE: `quoted[k]` is deliberately NOT excluded here. The quoted-mention ALLOW is carried by
+    # is_command_position, not by quoting: in `grep 'kubectl …'` the quoted token sits at index 1
+    # whose predecessor is `grep`, so it is not a command position and is never reached. Excluding
+    # quoted tokens here as well meant `"aws" s3 rm s3://bucket --recursive` — ordinary shell syntax,
+    # not obfuscation — skipped the guard entirely. `bare()` already strips the surrounding quotes.
+    if k < n and not is_sep[k]:
         word = btext[k]
         # A PATH-QUALIFIED form resolves to its final path segment (`_word`), so
-        # `/usr/bin/aws`, `./aws` and `~/bin/aws` are all `aws`. This was previously a
-        # declared residual citing the git-discipline guard as the reference; that guard
-        # closed the same hole in v1.0.1, so the citation no longer supports it. STILL
-        # NOT covered: shell indirection (`bash -c`, `eval`, `$(…)`) and a tool reachable
-        # under a DIFFERENT NAME (a copy or symlink) — both bounded residuals by design.
+        # `/usr/bin/aws`, `./aws` and `~/bin/aws` are all `aws` — and the same resolution is
+        # applied to launcher words (`/usr/bin/env aws …`) and to the first word of the
+        # wrapper/exempt sequences, so no call site disagrees about what a tool word is.
+        #
+        # AC-CGP-7 — WHAT IS STILL NOT COVERED (stated in full, not by example):
+        #   * shell indirection: `bash -c "…"`, `eval`, `$(…)`, variable indirection, aliases;
+        #   * a guarded tool reachable under a DIFFERENT NAME (a copy or symlink);
+        #   * intra-word quote/escape splicing: `aw"s"`, `\aws` — `bare()` strips only
+        #     SURROUNDING matched quotes, and non-posix shlex does no escape processing;
+        #   * a launcher taking a non-numeric, non-flag operand ahead of the tool
+        #     (`flock /tmp/lock aws …`, `su user -c …`), which still shields what follows.
+        # None of these are closed by string matching at all; the pattern that closes the whole
+        # class is credential scoping (the wrapper being the only thing that materializes live
+        # credentials), which is filed as an open enhancement request against this guard series.
         if _word(word) in guarded_set:
             # Name the exact wrapped form the operator must use instead (route_prefix already
             # carries the `exec` subverb — never doubled).
             wrapped = " ".join(route_prefix) + " " + word
             print("BLOCK bare guarded tool %r at a command position not routed through the "
-                  "wrapper. Re-run it as: %s …  Command: %s" % (word, wrapped, cmd))
+                  "wrapper. Re-run it as: %s …  Command: %s" % (word, wrapped, _redact(cmd)))
             sys.exit(0)
         # advance past this command word
         i = k + 1

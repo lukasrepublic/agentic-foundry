@@ -15,10 +15,11 @@ data** — it never tags, never pushes, never closes issues itself. You execute 
                                       │ READY
                                       ▼
                             the publish plan (data):
-                              1. annotated tag vX.Y.Z at R
-                              2. re-pin marketplace source.sha to the TAG COMMIT (R2)
-                              3. push main + tag  (never force)
-                              4. gh issue close … (review each first)
+                              1. re-pin marketplace source.sha = R (path-scoped commit R2)
+                              2. annotated tag vX.Y.Z on R2 — the commit CARRYING the pin
+                              3. --verify-tag  →  must print TAG-PIN-COHERENT
+                              4. push main + tag  (never force)
+                              5. gh issue close … (review each first)
 ```
 
 ## Steps
@@ -42,15 +43,34 @@ data** — it never tags, never pushes, never closes issues itself. You execute 
      candidate tree. Fix the defect, never the gate; re-run.
    - `READY` — the publish plan prints.
 
-3. **Execute the plan yourself**, in its order. The one subtle step: re-pin
-   `marketplace source.sha` to the **tag commit** —
+3. **Execute the plan yourself, in its order — RE-PIN FIRST, THEN TAG.**
 
    ```bash
-   git rev-parse vX.Y.Z^{commit}     # NOT the annotated-tag object hash
+   git status --porcelain                     # must be EMPTY (see the warning below)
+   CONTENT=$(git rev-parse HEAD)              # the release commit R
+   # edit .claude-plugin/marketplace.json: source.sha = $CONTENT, source.ref = vX.Y.Z
+   git commit -m 'release: re-pin …' -- .claude-plugin/marketplace.json   # R2, PATH-SCOPED
+   git tag -a vX.Y.Z -m 'agentic-foundry vX.Y.Z'                          # on R2
+   python3 scripts/foundry-cut-release.py --tree . --version X.Y.Z --verify-tag
+   # → TAG-PIN-COHERENT before you push anything
+   git push origin main && git push origin vX.Y.Z                         # never force
    ```
 
-   — as a separate commit (R2), then push `main` and the tag. Never force-push; if a
-   parallel push rejects, reconcile by merge (the tag is already immutable).
+   **Why this order.** An adopter installs by ref, which resolves `marketplace.json` **at the
+   tag** and installs the commit its `source.sha` names. Tag first and the tag serves the
+   *previous* release's sha — the install delivers the previous version's code. That shipped on
+   v1.0.0 and v1.0.1 and was hand-corrected both times.
+
+   **Why the tree must be clean, and why the commit is path-scoped.** The tag now lands on R2,
+   created *after* the acceptance gate ran. `git commit -am` would sweep every modified tracked
+   file into it and publish that under the release tag, ungated.
+
+   **Why `--verify-tag` is not optional.** On the cut that creates the tag, the preflight
+   coherence check reports "not applicable" — the tag does not exist yet. This is the only step
+   that machine-verifies what an adopter will actually resolve.
+
+   Never force-push; if a parallel push rejects, reconcile by merge (the tag is already
+   immutable).
 
 4. **Review the emitted `gh issue close` steps before running them.** The plan traces
    `ER #<n>` markers in the CHANGELOG section; a *"deferred to ER #n"* mention traces too,
