@@ -385,25 +385,105 @@ for i, t in enumerate(low):
     # know about (--repo/-R owner/repo) so it can't masquerade as the "pr" subcommand token —
     # any OTHER value-taking global flag interposed before `pr merge` is a bounded residual
     # (mirrors the git-clause conservatism of this file itself, not a closed hole).
-    # EVERY value-taking flag must be skipped, not just --repo/-R: a value written before the PR
-    # ref otherwise becomes the "PR selector" and the guard verifies a different PR than the one
-    # being merged (`gh pr merge --subject 12 11` would check #12 while merging #11).
-    _VALUE_FLAGS = {"--repo", "-R", "--body", "-b", "--body-file", "-F", "--subject", "-t",
-                    "--author-email", "--match-head-commit"}
-    bare = []
-    skip_next = False
-    for a in args:
-        if skip_next:
-            skip_next = False
-            continue
-        if a in _VALUE_FLAGS:
-            skip_next = True
-            continue
-        if a.startswith("-"):
-            continue
-        bare.append(a)
+    # `gh` is cobra/pflag. Enumerating literal flag SPELLINGS was the wrong shape and left a
+    # false-ALLOW: pflag CLUSTERS short flags, so `-sRowner/repo` is `-s` + `-R owner/repo`, and
+    # a token starting `-s` matched neither the recognized `-R` forms nor a `-R…` catch-all — it
+    # fell through the generic "skip anything starting with -" branch and the repo selector was
+    # silently dropped. `-st 12 11` likewise leaked `--subject`'s value into the PR-selector slot,
+    # verifying #12 while merging #11. Parse pflag's grammar STRUCTURALLY against gh pr merge's
+    # CLOSED declared flag set instead, and fail closed on anything outside it — a flag gh adds
+    # later then refuses loudly rather than silently unpinning the query.
+    _BOOL_SHORT = set("dmrsh")                  # -d -m -r -s (+ -h help)
+    _VALUE_SHORT = set("AbFtR")                 # -A -b -F -t -R
+    _BOOL_LONG = {"--admin", "--auto", "--disable-auto", "--delete-branch", "--merge",
+                  "--rebase", "--squash", "--help"}
+    _VALUE_LONG = {"--author-email", "--body", "--body-file", "--match-head-commit",
+                   "--subject", "--repo"}
+
+    def _parse_merge_args(argv):
+        """(bare_positionals, repo_selectors, help_requested) or raises _AmbiguousFlag."""
+        bare_, repos_, want_help, k_, end_of_flags = [], [], False, 0, False
+        while k_ < len(argv):
+            a_ = argv[k_]
+            # Redirection operators are not arguments. The `&` connector normalization splits
+            # `2>&1` into `2>` and `1`, and `2>` then landed in the positional slot and became
+            # the "PR selector" — the guard queried a nonexistent PR named `2>`. Skip them.
+            if re.match(r"^\d*[<>]+&?\d*$", a_):
+                k_ += 1
+                continue
+            if end_of_flags or not a_.startswith("-") or a_ == "-":
+                bare_.append(a_)
+                k_ += 1
+                continue
+            if a_ == "--":
+                end_of_flags = True
+                k_ += 1
+                continue
+            if a_.startswith("--"):
+                name_, _, inline_ = a_.partition("=")
+                if name_ in _VALUE_LONG:
+                    val_ = inline_ if "=" in a_ else (argv[k_ + 1] if k_ + 1 < len(argv) else None)
+                    if val_ is None:
+                        raise _AmbiguousFlag(f"{name_} was given without a value")
+                    if name_ == "--repo":
+                        repos_.append(val_)
+                    k_ += 1 if "=" in a_ else 2
+                    continue
+                if name_ in _BOOL_LONG:
+                    if name_ == "--help":
+                        want_help = True
+                    k_ += 1
+                    continue
+                raise _AmbiguousFlag(f"unrecognized flag {name_!r} for `gh pr merge`")
+            # single-dash: walk the CLUSTER letter by letter
+            j_ = 1
+            while j_ < len(a_):
+                ch_ = a_[j_]
+                if ch_ in _BOOL_SHORT:
+                    if ch_ == "h":
+                        want_help = True
+                    j_ += 1
+                    continue
+                if ch_ in _VALUE_SHORT:
+                    rest_ = a_[j_ + 1:]
+                    if rest_.startswith("="):
+                        rest_ = rest_[1:]
+                    if rest_:                              # attached value: -Rowner/repo
+                        val_ = rest_
+                        k_ += 1
+                    else:                                  # detached value: -R owner/repo
+                        if k_ + 1 >= len(argv):
+                            raise _AmbiguousFlag(f"-{ch_} was given without a value")
+                        val_ = argv[k_ + 1]
+                        k_ += 2
+                    if ch_ == "R":
+                        repos_.append(val_)
+                    break                                  # the cluster ends at a value flag
+                raise _AmbiguousFlag(f"unrecognized short flag -{ch_} for `gh pr merge`")
+            else:
+                k_ += 1                                    # cluster was all booleans
+        return bare_, repos_, want_help
+
+    class _AmbiguousFlag(Exception):
+        pass
+
+    try:
+        bare, _repo_sels_parsed, _want_help = _parse_merge_args(args)
+    except _AmbiguousFlag as e:
+        bare, _repo_sels_parsed, _want_help = [], [], False
+        _flag_error = str(e)
+    else:
+        _flag_error = None
     if len(bare) < 2 or bare[0].lower() != "pr" or bare[1].lower() != "merge":
+        # A parse failure must not silently skip the clause when this REALLY is `gh pr merge`.
+        _raw = [a for a in args if not a.startswith("-")]
+        if _flag_error and len(_raw) >= 2 and _raw[0].lower() == "pr" and _raw[1].lower() == "merge":
+            block("gh pr merge refused: this command's flags could not be parsed against the "
+                  f"known `gh pr merge` flag set ({_flag_error}), so the PR being merged cannot "
+                  "be resolved and its checks cannot be verified. Command: " + cmd)
         continue
+    if _want_help:
+        continue                                           # `gh pr merge --help` merges nothing
     # cobra bool flags also accept `--admin=true`, which an exact-token test misses. On a repo
     # whose protection requires REVIEWS, that form bypasses the review requirement even when the
     # checks the clause verifies are green.
@@ -443,31 +523,11 @@ for i, t in enumerate(low):
 
     # (1) The repo selector. Captured from --repo/-R/--repo=… and PROPAGATED (it was previously
     #     parsed only to skip it, then discarded).
-    #     `gh` is cobra/pflag: a shorthand accepts an ATTACHED value, so `-Rowner/repo` and
-    #     `-R=owner/repo` set --repo exactly as `-R owner/repo` does. Recognising only the
-    #     space-separated and `--repo=` forms left the attached forms silently unpinned — the
-    #     query fell back to ambient resolution and admitted a red PR. All five forms below, and
-    #     ANY unconsumed `-R…`/`--repo…` token blocks rather than being ignored.
-    repo_sels, repo_flag_seen = [], False
-    k = 0
-    while k < len(args):
-        a = args[k]
-        if a in ("--repo", "-R"):
-            repo_flag_seen = True
-            if k + 1 < len(args) and not args[k + 1].startswith("-"):
-                repo_sels.append(args[k + 1])
-                k += 2
-                continue
-            block_ctx("`--repo`/`-R` was given without a value.")
-        elif a.startswith("--repo="):
-            repo_flag_seen = True
-            repo_sels.append(a.split("=", 1)[1])
-        elif a.startswith("-R") and a != "-R":
-            repo_flag_seen = True                       # -Rowner/repo  or  -R=owner/repo
-            repo_sels.append(a[3:] if a.startswith("-R=") else a[2:])
-        elif a.startswith("--repo"):
-            block_ctx(f"Unrecognized repo-selector token {a!r}.")
-        k += 1
+    #     The repo selectors come from the STRUCTURAL pflag parse above, so every spelling
+    #     gh accepts — including clustered `-sRowner/repo` — is captured by construction
+    #     rather than by enumerating literal token shapes.
+    repo_sels = list(_repo_sels_parsed)
+    repo_flag_seen = bool(repo_sels)
     if len(set(repo_sels)) > 1:
         # Two different repos named in one merge: gh's precedence is not ours to guess.
         block_ctx(f"Conflicting repo selectors {sorted(set(repo_sels))!r} were given.")
@@ -589,7 +649,13 @@ for i, t in enumerate(low):
     except Exception as e:
         block(f"gh pr checks query failed ({type(e).__name__}: {e}) — cannot confirm the "
               "native floor is green; fail-closed. Command: " + cmd)
+    # The query's output is echoed into refusals, i.e. into the agent's own transcript. It is
+    # UNTRUSTED CONTENT — it comes from whatever host GH_HOST resolved to — so redact and cap it
+    # before it is quoted, and never treat it as directive text.
     out = (proc.stdout or "") + (proc.stderr or "")
+    if len(out) > 4000:
+        out = out[:4000] + f"\n… [truncated, {len(out)} bytes total]"
+    out = _redact(out)
     if proc.returncode != 0:
         block("gh pr checks reports a non-zero exit (not every check is green) — merge "
               f"refused. gh pr checks output:\n{out}\nCommand: {cmd}")

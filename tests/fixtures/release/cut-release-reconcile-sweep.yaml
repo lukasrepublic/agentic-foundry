@@ -153,7 +153,10 @@ hook_comment_expectation:
   #   3. feat-foundry-verb-path-resolution — all three clause loops matched their verb by exact
   #      token equality, so any path-qualified invocation (/usr/bin/git, /bin/rm) bypassed the
   #      whole hook; routed through a shared _is_verb() matcher
-  executable_content_sha256: 'cb72fbfe57eaa763330600e19ab9e5f3847a5ebda22200ee162b862a84dc6faf'
+  #   4. spec-review Block on merge-verify-context — pflag CLUSTERS short flags, so
+  #      -sRowner/repo left the query unpinned; replaced spelling-enumeration with a
+  #      structural parse of gh pr merge's closed flag set
+  executable_content_sha256: 'ffcb44c5e39b2f737f9b324a609e0e704f74d29b05213c570f29c150d97a784b'
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
 operator_registry_shape:

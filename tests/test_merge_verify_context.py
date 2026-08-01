@@ -344,6 +344,82 @@ def test_admin_equals_true_is_refused(harness):
     assert not calls, "--admin=true must be refused outright, with no query"
 
 
+# ------------------------------------------------- Blocks from the spec-review adversarial lens
+@pytest.mark.parametrize("form", [
+    "-sRtarget/red 11",       # pflag CLUSTERS short flags: -s + -R<attached value>
+    "-dRtarget/red 11",
+    "-sR=target/red 11",
+    "-sdRtarget/red 11",
+    "-sR target/red 11",
+])
+def test_clustered_short_flags_still_pin_the_repo(harness, form):
+    """SPEC-REVIEW BLOCK, reproduced before fixing. Enumerating literal flag SPELLINGS was the
+    wrong shape: `-sRowner/repo` starts with `-s`, so it matched neither the recognised `-R` forms
+    nor the `-R…` catch-all, fell through the generic skip-any-dash branch, and the repo selector
+    was silently dropped — readmitting the exact false-ALLOW this atom exists to close."""
+    proc, calls = harness(f"gh pr merge {form}", table={"target/red": RED, "<ambient>": GREEN})
+    argv = calls[0]["argv"] if calls else []
+    assert "target/red" in argv, f"clustered form {form!r} left the query unpinned; argv={argv}"
+    assert proc.returncode == BLOCK, f"a RED PR was admitted via clustered form {form!r}"
+
+
+def test_clustered_value_flag_does_not_hijack_the_pr_selector(harness):
+    """`-st 12 11` clusters boolean -s with value-taking -t, so `12` is --subject's value. It was
+    landing in the PR-selector slot, making the guard verify #12 while gh merged #11."""
+    _proc, calls = harness("gh pr merge -st 12 11 --repo target/green",
+                           table={"target/green": GREEN})
+    argv = calls[0]["argv"]
+    assert "11" in argv and "12" not in argv, (
+        f"the --subject value was verified as the PR selector; argv={argv}")
+
+
+def test_author_email_short_flag_is_recognised(harness):
+    """-A/--author-email is value-taking and was absent from the old enumeration entirely."""
+    _proc, calls = harness("gh pr merge -A me@example.com 11 --repo target/green",
+                           table={"target/green": GREEN})
+    argv = calls[0]["argv"]
+    assert "11" in argv and "me@example.com" not in argv
+
+
+@pytest.mark.parametrize("bad", ["-Z 11", "--frobnicate 11", "-sZ 11", "--repo"])
+def test_unrecognised_flag_fails_closed(harness, bad):
+    """A flag outside gh's closed declared set must REFUSE, not be skipped — that is what makes
+    the structural parse safe against a flag gh adds later."""
+    proc, calls = harness(f"gh pr merge {bad}", table={"<default>": GREEN})
+    assert proc.returncode == BLOCK, f"{bad!r} was silently skipped instead of failing closed"
+    assert not calls, "an unparseable command must not reach the query"
+
+
+@pytest.mark.parametrize("helpflag", ["--help", "-h"])
+def test_help_invocation_merges_nothing_and_is_admitted(helpflag, harness):
+    """`gh pr merge --help` prints usage. Refusing it is a pure false positive — and it bit the
+    author of this atom while reading gh's own flag list."""
+    proc, calls = harness(f"gh pr merge {helpflag}", table={"<default>": GREEN})
+    assert proc.returncode == ADMIT, f"{helpflag!r} was refused; it merges nothing"
+    assert not calls, "a help invocation must not trigger a check query"
+
+
+def test_redirection_tokens_are_not_mistaken_for_the_pr_selector(harness):
+    """The `&` connector normalisation splits `2>&1` into `2>` and `1`; `2>` then landed in the
+    positional slot and the guard queried a PR named `2>`. Observed in practice."""
+    proc, calls = harness("gh pr merge 11 --repo target/green --squash 2>&1",
+                          table={"target/green": GREEN})
+    argv = calls[0]["argv"] if calls else []
+    assert "2>" not in argv, f"a redirection operator became the PR selector; argv={argv}"
+    assert proc.returncode == ADMIT
+
+
+def test_query_output_is_capped_and_redacted_in_refusals(harness):
+    """The query's output is echoed into the transcript and comes from whatever host GH_HOST
+    resolved to — untrusted content. It must be redacted and bounded."""
+    huge = {"out": "GH_TOKEN=ghp_LEAKED_FROM_OUTPUT fail " + ("x" * 9000), "rc": 1}
+    proc, _ = harness("gh pr merge 11 --repo t/r --squash", table={"t/r": huge})
+    msg = (proc.stdout or "") + (proc.stderr or "")
+    assert proc.returncode == BLOCK
+    assert "ghp_LEAKED_FROM_OUTPUT" not in msg, "a secret in the query output was echoed verbatim"
+    assert "truncated" in msg, "unbounded query output was echoed into the transcript"
+
+
 def test_inline_token_is_redacted_from_the_refusal(harness):
     """An inline GH_TOKEN is a supported form, so a real PAT must not be echoed into the
     transcript on a refusal."""
