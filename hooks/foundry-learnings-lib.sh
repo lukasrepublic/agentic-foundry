@@ -31,7 +31,7 @@ _foundry_root() {
 
 # Resolution-ONLY buffer-root walk-up (feat-foundry-capture-projectdir-resolve, AC-LCPR-1/-2/-6).
 # Writes NOTHING; mutates nothing (the scrub/CAS/reject seam is UNTOUCHED). Constrained so it NEVER
-# mis-resolves in this multi-repo control center (gitignored child product repos + dispatch worktrees):
+# mis-resolves in this multi-repo control plane (gitignored child product repos + dispatch worktrees):
 #   (1) a full directory walk-up from <start> picks the OUTERMOST ancestor carrying a `.foundry/`
 #       DIRECTORY (the buffer partition's own home) — so a nested CHILD product repo (its own
 #       `.foundry/`) under an outer workspace resolves to the OUTER workspace, never the child;

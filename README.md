@@ -206,10 +206,16 @@ is the heart of the [trust model](docs/DESIGN.md). Full mechanics: **[docs/merge
 | | Spec Kit / OpenSpec / BMAD | Review bots (CodeRabbit…) | Agent platforms (Devin, Cursor…) | **Foundry** |
 |---|---|---|---|---|
 | Spec artifacts | ✅ generate them | — | plans, ephemeral | ✅ + frozen, hash-bound contracts |
-| Authorization before build | IDE/UX approvals at best | — | — | ✅ operator-signed, no skip |
+| Authorization before build | IDE/UX approvals at best | — | — | ✅ operator-signed hash freeze; the factory lane has no skip<sup>†</sup> |
 | Merge enforcement | prompt packs | advisory comments | — | ✅ tiered floor, honestly labeled |
 | Certification vs the running app | — | — | — | ✅ deploy-once + real journey suite |
 | Human authority | varies | — | sandbox-level | ✅ operator sign-off is terminal, by design |
+
+<sup>†</sup> `/foundry:authorize` itself has no skip — the freeze is unconditional and
+operator-signed. Separately, the `spec-link` merge gate accepts a **declared light lane**
+(`Lane: light`) for changes that are not spec-driven, and that declaration is self-asserted.
+So "nothing merges unauthorized" is a property of the factory lane, not of every possible
+PR. The trade and how to remove it: [docs/merge-floor.md → *The two lanes*](docs/merge-floor.md#the-two-lanes-and-the-escape-hatch-you-should-know-about).
 
 **When NOT to use Foundry:** exploratory prototyping (use plain Claude Code — our
 interactive mode *is* that), teams not on Claude Code, GitLab (not yet supported), or if

@@ -26,7 +26,7 @@ Four kinds of page, four kinds of question. Start where your question lives:
 - [Recover from a failed gate](how-to/recover-from-a-failed-gate.md)
 - [Adopt Foundry on an existing codebase](how-to/adopt-on-an-existing-codebase.md) (brownfield)
 - [Run author/approver separation with CODEOWNERS](how-to/team-review-with-codeowners.md)
-- [Run a multi-repo control center](how-to/multi-repo-control-center.md) — **the mode Foundry is built for**: one workspace governing several code repos, and why you run Claude from the control center rather than inside a repo
+- [Run a multi-repo control plane](how-to/multi-repo-control-plane.md) — **the mode Foundry is built for**: one workspace governing several code repos, and why you run Claude from the control plane rather than inside a repo
 - [Cut a release](how-to/cut-a-release.md)
 - [Migrate from Spec Kit](how-to/migrate-from-spec-kit.md) · [Migrate from OpenSpec](how-to/migrate-from-openspec.md)
 

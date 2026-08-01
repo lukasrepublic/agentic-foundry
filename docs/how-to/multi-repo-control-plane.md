@@ -1,4 +1,4 @@
-# How to run a multi-repo control center
+# How to run a multi-repo control plane
 
 One workspace can govern several code repos — an app repo, an infra repo, services — with
 specs living in the workspace and each atom's code landing in its declared target repo.
@@ -19,13 +19,13 @@ specs living in the workspace and each atom's code landing in its declared targe
 ```
 
 **The pattern is gitignored siblings + a manifest — not git submodules.** Each hosted repo
-keeps a fully independent history; the control center is never coupled to a submodule
+keeps a fully independent history; the control plane is never coupled to a submodule
 commit pointer.
 
 On disk that is **several git repositories inside one directory tree**:
 
 ```
-acme-handbook/                      ◀── git repo #1 — the control center. You commit this.
+acme-handbook/                      ◀── git repo #1 — the control plane. You commit this.
 ├── .claude/foundry-project.json        the manifest: repos{} maps a key → a path below
 ├── specs/features/…                    the WHAT, for every repo
 ├── .gitignore                          lists each hosted repo, root-anchored (/api/)
@@ -36,9 +36,9 @@ acme-handbook/                      ◀── git repo #1 — the control center
     └── .git/ · terraform/
 ```
 
-`git status` in the control center never shows anything from `api/` or `infra/`.
+`git status` in the control plane never shows anything from `api/` or `infra/`.
 
-## Run Claude from the control center, never from a hosted repo
+## Run Claude from the control plane, never from a hosted repo
 
 ```bash
 cd ~/work/acme-handbook       # ✅ the factory is live here

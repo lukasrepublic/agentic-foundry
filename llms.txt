@@ -31,7 +31,7 @@ than passing vacuously; there is no unattended-merge mode.
 - [Recover from a failed gate](docs/how-to/recover-from-a-failed-gate.md)
 - [Adopt on an existing codebase](docs/how-to/adopt-on-an-existing-codebase.md)
 - [Team review with CODEOWNERS](docs/how-to/team-review-with-codeowners.md)
-- [Multi-repo control center](docs/how-to/multi-repo-control-center.md)
+- [Multi-repo control plane](docs/how-to/multi-repo-control-plane.md)
 - [Cut a release](docs/how-to/cut-a-release.md)
 - [Migrate from Spec Kit](docs/how-to/migrate-from-spec-kit.md)
 - [Migrate from OpenSpec](docs/how-to/migrate-from-openspec.md)
