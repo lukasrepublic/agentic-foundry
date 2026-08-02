@@ -249,6 +249,36 @@ which already-executed declaration is consulted first, not whether a command is 
 absent side effects, submodule recursion is off on clone and fetch, and every emitted string
 (including captured `foreach` child output) passes through the registry module's single sink.
 
+**Security review (PR #59) — remediation disposition.** A separate-context review pass returned
+1 Block + 9 Risks. **Block B1** — `skills/repos/SKILL.md`'s blanket "every git child is
+hardened" claim overstated the boundary — is **fixed**: qualified to "every git child this tool
+itself invokes", with a stated residual that `foreach` children run under the ambient environment
+minus only `GIT_DIR`/`GIT_WORK_TREE` (AC-WRV-5, as authorized) and get **no** `-c` hardening at
+all, so a governed checkout's own `.git/config` can direct a `foreach -- git …` child; approving
+that at the ask tier is trusting the checkouts' own configs, not this tool's hardening. **Applied:**
+R3 — `sync`'s fetch leg now refuses (zero git spawns) a `present`/`match` row whose resolved path
+carries no `.git` entry, re-derived at the boundary independently of the row's own claim; R6 —
+`sync --timeout` now defaults to a declared `DEFAULT_SYNC_TIMEOUT_SECONDS = 600.0` rather than
+unbounded, `--timeout` still overrides (the AC-WRV-10-pinned `reconcile()` callable's own
+`timeout=None` default is untouched); R9 — the per-row `except` handler's fallback
+`declared_remote` lookup is now `isinstance(row, dict)`-guarded like its neighbors; R1 —
+`_sink_env()` now also removes `GIT_ALLOW_PROTOCOL` as an explicit additional over-removal (the
+spec-pinned `SINK_ENV_REMOVED_VARS` tuple itself is unchanged, pending a Terminology amendment);
+R8 — the module's own `sys.path` bootstrap is now a guarded, idempotent `append` rather than an
+unconditional `insert(0, …)`; R4 — `--end-of-options` now guards the revision-range positional on
+`git rev-list --left-right --count`, verified locally (git 2.43.0) to leave its output
+byte-identical. The sibling `git rev-parse --abbrev-ref <branch>@{upstream}` call is **left
+unguarded**: the same treatment there makes `rev-parse` echo a spurious `--end-of-options` line
+ahead of the resolved ref in this git's non-`--verify` mode, corrupting the parsed upstream value
+— a functional rejection, recorded as a residual rather than mis-applied. **Residuals recorded**
+(spec-amendment / follow-on-atom territory, not implemented here): R2 (`protocol.file.allow=always`
+→ `user` — the 11-entry hardening set is spec-pinned member-for-member); R5 (AC-WRV-11's
+`core.sshCommand` side-effect plant plus the vacuous `foreach` leg of the same marker run); R7
+(`envelope()`'s double-sanitize path escapes a preserved newline to the literal `\x0a` — an
+assert-on-wrong-layer risk); B1's mechanical half (spawning `foreach` children under `_sink_env()`
+needs its own AC-WRV-5 spec amendment before it can change — today's unhardened `foreach` children
+are what the authorized contract specifies); and the `git rev-parse …@{upstream}` leg of R4 above.
+
 ## v1.0.1 — 2026-08-01
 
 **Security fix for the git-discipline guard. Upgrade if you rely on it.** Two defects let the
