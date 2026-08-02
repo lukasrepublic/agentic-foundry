@@ -680,7 +680,10 @@ rc=$?
 # scan itself failed, so we fail closed conservatively.
 if [ "$rc" -ne 0 ] || [ -z "$verdict" ]; then
   echo "foundry-git-discipline: internal evaluator error while a command was recovered; fail-closed BLOCK." >&2
-  echo "  command: $cmd" >&2
+  # Security review 2026-08-02: never echo the raw command on the error path — an inline
+  # GH_TOKEN=<pat> or similar would leak verbatim into the transcript exactly when the
+  # evaluator (which knows how to handle it) has failed.
+  echo "  (command withheld: evaluator failed, raw echo could leak inline credentials)" >&2
   exit 2
 fi
 
