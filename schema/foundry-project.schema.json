@@ -21,14 +21,41 @@
       "description": "Map of repo key -> repo record. Consumers resolve paths and boot recipes from here.",
       "additionalProperties": {
         "type": "object",
+        "required": ["path"],
         "properties": {
-          "path": {"type": "string"},
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!-).+$",
+            "description": "On-disk location of this repo, relative to the workspace root (or absolute). Required -- a record with no path validates against nothing and fails at dispatch. Must not begin with '-' (an argv-hostile shape)."
+          },
           "kind": {"type": "string"},
           "package_manager": {"type": "string"},
           "boot_command": {"type": "string"},
           "ci_install": {"type": "string"},
           "datastores": {"type": "array", "items": {"type": "string"}},
           "deploy_target": {"type": "string"},
+          "remote": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!-)[^\\x00-\\x1f\\x7f-\\x9f]+$",
+            "description": "Optional clone provenance: the URL (https://, ssh://, git://, or scp-like [user@]host:path) or local path this repo was/should be cloned from. Not validated for URL semantics -- only shape (non-empty, no leading '-', no C0/C1 control characters, since the value reaches an argv position and a terminal)."
+          },
+          "default_branch": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!-)[^\\x00-\\x1f\\x7f-\\x9f]+$",
+            "description": "Optional standing-ref branch name this repo tracks (distinct from a point-in-time pin, which lives in each atom's .foundry/build-provenance.yaml). Same shape floor as remote: no leading '-', no C0/C1 control characters."
+          },
+          "role": {
+            "type": "string",
+            "enum": ["product", "handbook", "infra", "app", "workspace"],
+            "description": "Closed governance vocabulary for this repo's place in the control plane: 'product' -- the repo that ships the product; 'handbook' -- the agentic-handbook template/methodology repo; 'infra' -- infrastructure/provisioning code; 'app' -- a runnable application/service surface (product and app overlap for a single-app product; the distinction is descriptive); 'workspace' -- the self-entry a freshly seeded manifest may carry for the workspace root itself. Free-form prose belongs in the sibling `description` field, not here."
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional free-form prose about this repo record -- the home for anything that used to be written into `role` before `role` closed to its governance vocabulary."
+          },
           "packages": {
             "type": "object",
             "additionalProperties": {

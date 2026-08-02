@@ -65,6 +65,49 @@ files); `hooks/**`, `scripts/**`, `schema/**` and `.github/workflows/**` are con
 gate decision, permission rule, hook, or CI check is touched. The discipline reinforces the harness
 denial (limb (b) forbids verbatim retry and tool substitution) rather than working around it.
 
+### The governed-repo registry is formalized: a tightened manifest schema + a read-only registry-integrity report (feat-foundry-repo-registry-formalization, AC-RRF-1..7)
+
+- **`.claude/foundry-project.json` `repos{}` now matches the repo/meta/vcstool manifest
+  consensus.** `schema/foundry-project.schema.json` requires `path` on every `repos.<key>`
+  record (a pathless record used to validate, then fail only at dispatch), and adds four
+  optional fields — `remote`, `default_branch`, `role` (closed to `product`/`handbook`/
+  `infra`/`app`/`workspace`), `description` — each carrying its own non-empty schema
+  description, since this atom ships no separate how-to prose. Everything else stays
+  additive: no other `required` key, `additionalProperties: true` unchanged at all three
+  levels, `packages.<key>.role` still an unconstrained string. A JSON-Schema shape floor
+  (no leading `-`, no C0/C1 control character) guards `path`/`remote`/`default_branch`
+  against the one place they reach an argv position and a terminal — never a URL validator.
+  The tightening reaches `scripts/foundry-config.py check`/`adopt` with **no code change** to
+  that script, which remains the schema's sole consumer.
+- **New: `scripts/foundry_repo_registry.py`, a read-only registry-integrity report.** Per
+  `repos.<key>` entry it answers, and never repairs: is the path `present`, `not-cloned`
+  (declared `remote`, no checkout yet) or `dangling` (no `remote`, nothing there) — the
+  headline gap this atom closes, since today both absent-path cases look identical; is it
+  paired with a root-anchored `.gitignore` rule via `git check-ignore -v --no-index`, and is
+  it already swept into the control plane's own index via `git ls-files` (`tracked` outranks
+  every other pairing state); and does the checkout's `origin` match the declared `remote`,
+  read via `git config --get remote.origin.url` — the raw, unrewritten value, never `git
+  remote get-url`, which would let a checkout's own `url.*.insteadOf` forge a match. Path
+  resolution is physical (symlinks followed), mirroring `scripts/foundry-wt`'s `cd && pwd -P`
+  confinement. `--json` emits a `{degraded, degraded_reason, rows}` envelope for Wave-2 verbs
+  to consume; a manifest with no `repos{}` is the named `no-repos` outcome (exit 2), never a
+  silent clean exit. The exit code is advisory (tri-state, `terraform plan
+  -detailed-exitcode`-style) and consumed by no gate. Every emitted field — repo key, remote,
+  discovered origin, paths, remedy text — passes through one sanitizing sink at stdout/
+  stderr/`--json`/exception-path alike: userinfo redacted to a fixed `***`, every C0/C1
+  control character and ANSI CSI escape neutralized.
+- **The `role` closed set is this atom's one non-additive element**, order-pinned behind the
+  named prerequisite atom `handbook-manifest-role-migration` (moves the handbook's prose
+  `role` values into the new `description` field first) — see the spec's Residual R1.
+  `scripts/foundry-doctor.py` and the sibling validator `feat-foundry-control-plane-preflight`
+  are untouched; this atom surfaces drift, it never convicts it.
+
+**Security review:** not flagged — the report is read-only (writes nothing, fetches nothing,
+edits no `.gitignore`/manifest/git state), every git invocation is a fixed, `--`-guarded argv
+drawn from a closed config-read-only plumbing set, and the credential-bearing surface (a
+remote URL's userinfo) is redacted at a single emission sink covering every output channel
+including the exception path (spec AC-RRF-7).
+
 ## v1.1.0 — 2026-08-02
 
 ### The project's own `boot_command` now wins certification's boot-recipe resolution (feat-foundry-boot-recipe-precedence, AC-BRP-1..8)
