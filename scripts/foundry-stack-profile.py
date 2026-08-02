@@ -521,6 +521,49 @@ def write_lock(lock_obj, project_dir=None):
         raise
 
 
+def _resolve_profile_entry(pid, *, root=None, plugin_root=None, base_entry=None):
+    """THE SHARED ENTRY-BUILDER (AC-SPLC-1b) — the ONE place a lock entry's per-profile field set is
+    built, used by BOTH `create_lock()` (the `--lock` CREATE path) and `relock_lock()` (the refresh
+    path). Loads + schema-validates `pid` from the trusted `packs/` tree, enforces the SAME
+    trusted-resolve guardrails `resolve_lock()` verifies (AC-SPLC-2) — the running core admits
+    `requires_core`, and the profile does not leak into the core plugin's `skills/` bundle (D4
+    guardrail 3) — then derives the entry's digests EXACTLY as `resolve_lock()` re-derives and checks
+    them: `blueprints_sha256` present iff the pack has a non-empty `blueprints/` subtree,
+    `standing_versions_sha256` present iff the profile document declares the `standing-versions`
+    block. This is deliberately the SAME optional-digest handling in ONE place — the prior
+    hand-duplication between `relock_lock()` and `resolve_lock()` is exactly the divergence hazard an
+    enumerated field set (or a third hand-copy) would repeat (see the module docstring's relock note
+    and AC-SPLC-1's changelog). `base_entry`, when given, seeds the returned dict with its OTHER keys
+    (e.g. `pack_ref`) so `relock_lock()` can preserve them; `create_lock()` passes `None` — a fresh
+    entry carrying only what THIS function computes. Returns `(entry_dict, resolved_version)`.
+    Raises `StackProfileError` fail-closed on any guardrail violation; NEVER writes anything — the
+    caller decides when (and whether) to call `write_lock()`."""
+    doc, path, actual_sha = load_profile(pid, root=root, plugin_root=plugin_root)  # raises if absent/invalid
+    cv = core_version(plugin_root)
+    if not core_satisfies(doc["requires_core"], cv):
+        raise StackProfileError(
+            f"profile {pid!r}: requires_core {doc['requires_core']!r} excludes running core {cv}")
+    if bundle_leak(pid, plugin_root=plugin_root):
+        raise StackProfileError(f"profile {pid!r}: leaks into the core plugin skills/ bundle")
+    entry = dict(base_entry) if base_entry else {}
+    entry["id"] = pid
+    new_ver = doc["version"]
+    entry["version"] = new_ver
+    entry["sha256"] = actual_sha
+    bsha = _blueprints_sha256_of(os.path.dirname(path))
+    if bsha is not None:
+        entry["blueprints_sha256"] = bsha
+    else:
+        entry.pop("blueprints_sha256", None)
+    # AC-SVM-4: derive the standing-versions/ digest exactly as resolve_lock verifies it.
+    svsha = _standing_versions_sha256_of(os.path.dirname(path), doc)
+    if svsha is not None:
+        entry["standing_versions_sha256"] = svsha
+    else:
+        entry.pop("standing_versions_sha256", None)
+    return entry, new_ver
+
+
 def relock_lock(project_dir=None, *, root=None, plugin_root=None):
     """AC-SPRL-1/2: re-resolve the ALREADY-locked profile ids against the trusted packs/ tree and
     atomically re-write `.foundry/stack-profile.lock` with each id's CURRENT
@@ -538,26 +581,20 @@ def relock_lock(project_dir=None, *, root=None, plugin_root=None):
     entries = lock.get("profiles")
     if not isinstance(entries, list) or not entries:
         raise StackProfileError("stack-profile.lock has no `profiles` list")
-    cv = core_version(plugin_root)
     new_entries, deltas = [], []
-    # NB: the per-entry trusted checks below (load_profile + core_satisfies + bundle_leak + the
-    # blueprints digest) intentionally MIRROR resolve_lock's, minus the sha/version-match gates (which are
-    # exactly what relock is replacing). They are hand-duplicated, not shared — if a NEW trusted-resolve
-    # guardrail is ever added to resolve_lock, add it here too, or relock could write a lock that then fails
-    # resolve_lock ("relocked OK but doctor still RED"). The selftest's relock→resolve round-trip catches it.
+    # NB: the per-entry field set is built by _resolve_profile_entry() — the SAME helper create_lock()
+    # uses (AC-SPLC-1b) — so a NEW trusted-resolve guardrail or digest added there is picked up HERE too,
+    # rather than needing a second hand-copy kept in sync by hand.
     for ent in entries:                      # validate EVERY entry before writing ANY
         if not isinstance(ent, dict):
             raise StackProfileError(f"lock entry not a mapping: {ent!r}")
         pid, locked_ver = ent.get("id"), ent.get("version")
         if not pid:
             raise StackProfileError(f"lock entry missing id: {ent!r}")
-        doc, path, actual_sha = load_profile(pid, root=root, plugin_root=plugin_root)  # raises if absent/invalid
-        if not core_satisfies(doc["requires_core"], cv):
-            raise StackProfileError(
-                f"profile {pid!r}: requires_core {doc['requires_core']!r} excludes running core {cv} — refuse relock")
-        if bundle_leak(pid, plugin_root=plugin_root):
-            raise StackProfileError(f"profile {pid!r}: leaks into the core plugin skills/ bundle — refuse relock")
-        new_ver = doc["version"]
+        try:
+            updated, new_ver = _resolve_profile_entry(pid, root=root, plugin_root=plugin_root, base_entry=ent)
+        except StackProfileError as e:
+            raise StackProfileError(f"{e} — refuse relock")
         try:
             is_downgrade = locked_ver is not None and _pad(new_ver) < _pad(locked_ver)
         except (ValueError, AttributeError) as e:
@@ -565,26 +602,94 @@ def relock_lock(project_dir=None, *, root=None, plugin_root=None):
         if is_downgrade:
             raise StackProfileError(
                 f"profile {pid!r}: resolved version {new_ver} < locked {locked_ver} (downgrade) — refuse relock")
-        updated = dict(ent)                  # preserve id / pack_ref / any other per-entry keys
-        updated["version"] = new_ver
-        updated["sha256"] = actual_sha
-        bsha = _blueprints_sha256_of(os.path.dirname(path))
-        if bsha is not None:
-            updated["blueprints_sha256"] = bsha
-        else:
-            updated.pop("blueprints_sha256", None)
-        # AC-SVM-4: re-derive the standing-versions/ digest exactly as resolve_lock verifies it.
-        svsha = _standing_versions_sha256_of(os.path.dirname(path), doc)
-        if svsha is not None:
-            updated["standing_versions_sha256"] = svsha
-        else:
-            updated.pop("standing_versions_sha256", None)
         new_entries.append(updated)
         deltas.append((pid, locked_ver, new_ver))
     new_lock = dict(lock)                    # preserve other top-level lock keys
     new_lock["profiles"] = new_entries
     write_lock(new_lock, project_dir)        # atomic — reached ONLY after all entries validated
     return deltas
+
+
+def _existing_lock_state(project_dir=None):
+    """Classify what is at `.foundry/stack-profile.lock` for `create_lock()`'s AC-SPLC-4 / AC-SPLC-4b
+    guard. Returns one of `'absent'`, `'corrupt'`, `'valid'`. `'corrupt'` covers BOTH malformed JSON
+    (`read_lock()` raises `StackProfileError`) AND parseable-but-structurally-invalid JSON — not a
+    mapping, or no non-empty `profiles` list — the SAME shape `resolve_lock()` itself requires before
+    it will even attempt a profile. Defining "already exists" as mere file presence (rejected in
+    review, AC-SPLC-4b) would strand an adopter holding a corrupt lock: `--lock` would refuse and
+    point at `/foundry:relock`, and `relock_lock()`'s `read_lock()` raises on the very same file — two
+    documented paths that both refuse, neither naming a way out. Splitting `'corrupt'` out gives
+    `create_lock()` a distinct, actionable refusal."""
+    lpath = lock_path(project_dir)
+    if not os.path.isfile(lpath):
+        return "absent"
+    try:
+        existing = read_lock(project_dir)
+    except StackProfileError:
+        return "corrupt"
+    if not isinstance(existing, dict) or not isinstance(existing.get("profiles"), list) or not existing.get("profiles"):
+        return "corrupt"
+    return "valid"
+
+
+def create_lock(ids, project_dir=None, *, root=None, plugin_root=None):
+    """AC-SPLC-1..6 — the missing CREATE half of the lock lifecycle: resolve each named profile `id`
+    against the trusted `packs/` tree and atomically write a FRESH `.foundry/stack-profile.lock` —
+    never a second writer (`write_lock()` is called exactly once, here, on success). Each entry is
+    built by `_resolve_profile_entry()` — the SAME helper `relock_lock()` uses (AC-SPLC-1b) — so every
+    digest `resolve_lock()` verifies is present and every digest it does not verify is absent.
+
+    VALIDATE-BEFORE-WRITE (AC-SPLC-3): every named id is checked — existing-lock state, unknown ids,
+    then each id's trusted-resolve guardrails — BEFORE any byte is written; on ANY failure this raises
+    `StackProfileError` with NO lock file created and no `.tmp` residue (the single `write_lock()`
+    call below is reached only after every id has already passed).
+
+    Refuses (fail-closed, no write) when:
+      * a PARSEABLE lock already exists (AC-SPLC-4) — never re-points it; names `/foundry:relock` as
+        the refresh path;
+      * an existing lock is present but CORRUPT/unparseable (AC-SPLC-4b) — named distinctly from the
+        above, with the stated remedy (remove the file, then re-run `--lock`); the corrupt file is
+        NEVER deleted or overwritten by this refusal;
+      * an unknown profile id is named (AC-SPLC-5) — the refusal lists the ids that ARE available
+        under `packs/stack-profiles/`;
+      * any named id fails a trusted-resolve guardrail (AC-SPLC-2) — schema-invalid, absent from
+        `packs/`, core-incompatible (`requires_core` excludes the running core), or leaking into the
+        core plugin `skills/` bundle.
+
+    Returns the list of `(id, version)` created. NO network fetch — resolution is the pinned in-repo
+    `packs/` tree only, matching the module's own threat model."""
+    if not ids:
+        raise StackProfileError("--lock requires at least one profile id")
+    state = _existing_lock_state(project_dir)
+    lpath = lock_path(project_dir)
+    if state == "corrupt":
+        raise StackProfileError(
+            f"{lpath} exists but is CORRUPT (unparseable, or structurally invalid — not a mapping, or "
+            "no `profiles` list) — `--lock` will not overwrite it. Remove the file, then re-run "
+            "`--lock <id>[,<id>…]` to create a fresh one.")
+    if state == "valid":
+        raise StackProfileError(
+            f"{lpath} already exists — `--lock` never re-points an existing lock. "
+            "Run `/foundry:relock` to refresh it instead.")
+    # AC-SPLC-5: an unknown id lists what IS available, up front, before any per-id resolution runs.
+    profiles_dir = _profiles_dir(root)
+    available = sorted(
+        d for d in os.listdir(profiles_dir)
+        if os.path.isdir(os.path.join(profiles_dir, d))
+    ) if os.path.isdir(profiles_dir) else []
+    unknown = [pid for pid in ids if pid not in available]
+    if unknown:
+        raise StackProfileError(
+            f"unknown profile id(s) {unknown!r} — available under packs/stack-profiles/: {available!r}")
+    # VALIDATE-BEFORE-WRITE: resolve every id via the SHARED entry-builder before any write; a
+    # StackProfileError from any one id propagates uncaught, refusing the WHOLE operation.
+    entries, created = [], []
+    for pid in ids:
+        entry, ver = _resolve_profile_entry(pid, root=root, plugin_root=plugin_root)
+        entries.append(entry)
+        created.append((pid, ver))
+    write_lock({"profiles": entries}, project_dir)   # atomic; the ONE writer — reached only after ALL pass
+    return created
 
 
 def loaded_context(resolved, *, root=None, plugin_root=None):
@@ -626,6 +731,10 @@ def main(argv=None):
     ap.add_argument("--relock", action="store_true",
                     help="re-resolve the already-locked profiles against packs/ and re-write the lock "
                          "(validate-before-write; fail-closed on downgrade/invalid/core-incompatible)")
+    ap.add_argument("--lock", metavar="ID[,ID…]",
+                    help="CREATE .foundry/stack-profile.lock for the named profile id(s) (comma-"
+                         "separated); refuses if a lock already exists (see /foundry:relock) or any "
+                         "id is unknown/invalid/core-incompatible (validate-before-write; fail-closed)")
     args = ap.parse_args(argv)
     try:
         if args.validate:
@@ -650,6 +759,13 @@ def main(argv=None):
             for pid, old, new in deltas:
                 print(f"relocked: {pid} {old}→{new}" if old != new else f"relocked: {pid} {new} (sha refreshed)")
             print(f"stack-profile.lock re-locked ({len(deltas)} profile(s))")
+            return 0
+        if args.lock:
+            ids = [x.strip() for x in args.lock.split(",") if x.strip()]
+            created = create_lock(ids)
+            for pid, ver in created:
+                print(f"locked: {pid}@{ver}")
+            print(f"stack-profile.lock created ({len(created)} profile(s))")
             return 0
         ap.print_help()
         return 0
