@@ -1,6 +1,6 @@
 # Quickstart — zero to your first governed merge
 
-Every command below is copy-paste-runnable against **v1.0.1**. If a command here ever
+Every command below is copy-paste-runnable against **v1.1.0**. If a command here ever
 drifts from the shipped CLI, that's a bug — file it (a CI doc-drift test locks the pins
 on our side).
 
@@ -45,7 +45,7 @@ the hook layer, the merge-floor tiers, certification detail — is covered after
 ## 0. Install
 
 ```bash
-claude plugin marketplace add lukasrepublic/agentic-foundry#v1.0.1
+claude plugin marketplace add lukasrepublic/agentic-foundry#v1.1.0
 claude plugin install foundry@agentic-foundry
 ```
 
