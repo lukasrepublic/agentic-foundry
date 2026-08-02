@@ -37,6 +37,28 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 **Security review:** not flagged — no auth, secrets, or supply-chain path in scope (this changes
 which already-executed declaration is consulted first, not whether a command is executed).
 
+### Stack-profile lock creation (feat-foundry-stack-profile-lock-create, AC-SPLC-1..8)
+
+- **`--lock` creates a stack-profile lock — the missing half of the lock lifecycle.**
+  `write_lock()` had exactly one caller, `relock_lock()`, which refuses when no
+  `.foundry/stack-profile.lock` exists ("nothing to relock"); there was no shipped way to
+  *adopt* one of the four stack profiles Foundry ships. `/foundry:verify`, `/foundry:certify-local`,
+  and the `id-*` lane's `infra_binding` all gate on an active lock, so a fresh adopter could not
+  reach any of them. `scripts/foundry-stack-profile.py --lock <id>[,<id>…]` resolves each named id
+  against the trusted `packs/` tree and atomically writes a fresh lock, enforcing the SAME
+  trusted-resolve guardrails `relock` already does (schema-valid, present in `packs/`,
+  `requires_core` satisfied, no core-plugin `skills/` bundle leak) — validate-before-write, so a
+  failure on any named id leaves no lock file and no `.tmp` residue. It refuses (no write) when a
+  lock already exists (naming `/foundry:relock` as the refresh path) or is present but corrupt
+  (naming the file as corrupt with a stated remedy, distinctly from the exists case), or when an
+  id is unknown (listing the ids that are available). The per-entry field set is built by a SINGLE
+  helper now shared between `--lock` and `relock_lock()` — no third hand-copy of the digest logic
+  `resolve_lock()` verifies. `/foundry:init` offers profile selection and invokes this scripted
+  path (never hand-writing a lock in prose); selecting no profile still completes normally, and a
+  lockless workspace remains fully supported and `DOCTOR-GREEN`. (`feat-foundry-stack-profile-lock-create`)
+
+**Security review:** floor holds (2026-08-02 pass over PRs 50-53) — trusted-resolve guardrails shared with relock; validate-before-write; TOFU pack-trust residual recorded.
+
 ## v1.0.1 — 2026-08-01
 
 **Security fix for the git-discipline guard. Upgrade if you rely on it.** Two defects let the

@@ -422,9 +422,13 @@ class TestDocsStateThePrecedence:
             "(AC-BRP-8)")
 
     def test_docs_state_the_precedence_known_limitation_narrowed_not_deleted(self):
+        # Release reconciliation (v0.29.0): the sibling lock-create atom landed in the SAME
+        # release, so the limitation this note narrowed is now genuinely resolved. The honest
+        # doc state is either the narrowed "Known limitation" (lock-create absent) or the
+        # "Resolved (previously known limitations)" record (lock-create present) — in both,
+        # the historical record and both atom slugs must survive, never a silent deletion.
         text = self._read()
-        assert "Known limitation" in text, "the v1 known-limitation note must be NARROWED, not deleted"
+        assert ("Known limitation" in text) or ("Resolved (previously known limitation" in text), (
+            "the limitation note must be narrowed or explicitly resolved, never deleted")
         assert "stack-profile.lock" in text
-        # the note must still be honest that the PROFILE path (not the boot_command path) remains
-        # unreached until the sibling lock-create atom ships.
         assert "feat-foundry-stack-profile-lock-create" in text

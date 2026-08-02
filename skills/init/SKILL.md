@@ -143,11 +143,32 @@ standalone plugin repo) so the gates are live + fail-closed.
    into `foundry/` under their foundry names (the KEEP→rename bulk) by hand — the
    `foundry-migrate.py` helper this step originally named was retired and does not ship. Deeper prose
    generification is a separate review pass.
-8. **Run `/foundry:doctor`** — must be `DOCTOR-GREEN` before the adopter is live. Fail-closed.
+8. **Stack-profile lock (opt-in adoption, `feat-foundry-stack-profile-lock-create`, AC-SPLC-7).**
+   Foundry ships four stack profiles under `packs/stack-profiles/` (`aws-eks-karpenter`, `node-web`,
+   `python-uv-lib`, `python-uv-service`) — `/foundry:verify`, `/foundry:certify-local`, and the
+   `id-*` lane's `infra_binding` all gate on an ACTIVE `.foundry/stack-profile.lock`. Offer the
+   operator a choice of the shipped ids (or "none"). **On a choice**, invoke the SCRIPTED create
+   path below — never hand-write a lock in prose (a hand-written lock skips the trusted-resolve
+   guardrails `resolve_lock()` enforces and can strand the adopter on the very first `/foundry:doctor`
+   run). **On "none"**, complete this step with no lock — a lockless workspace is a fully-supported,
+   `DOCTOR-GREEN` state (AC-SPLC-8); adopt a profile later via the same command.
+
+   <!-- foundry:stack-profile-lock-create-prescribed (AC-SPLC-7 anchor — the prescribed command lives in THIS block) -->
+   ```bash
+   # Creates .foundry/stack-profile.lock for the named id(s) (comma-separated for >1 profile).
+   # Refuses (no write) if a lock already exists (see /foundry:relock), an id is unknown, or an id
+   # fails a trusted-resolve guardrail (schema-invalid / core-incompatible / bundle-leaking).
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-stack-profile.py" --lock <id>[,<id>…]
+   ```
+   <!-- /foundry:stack-profile-lock-create-prescribed -->
+
+   If the operator selects no profile, skip this block entirely and move on — do not run `--lock`
+   with an empty/placeholder id.
+9. **Run `/foundry:doctor`** — must be `DOCTOR-GREEN` before the adopter is live. Fail-closed.
    (Retired: this step used to also pin the gate wiring via `foundry-wiring-hash.py`;
    that script no longer exists in this repo, and the current thin doctor —
    `skills/doctor/SKILL.md` — carries no wiring-hash check, so there is nothing left to pin.)
-9. **Status lines (opt-in, additive — isolation-first).** Offer to wire the isolation-first native
+10. **Status lines (opt-in, additive — isolation-first).** Offer to wire the isolation-first native
    `statusLine` + the `subagentStatusLine` fleet rows so the highest-value ambient signals are visible
    every prompt: *am I isolated (a linked worktree, green `⊞`) or on the main checkout (amber `⌂ main ⚠`)?
    what is this session doing right now (the native `⊙` task)? how close is auto-compact (the color-coded
@@ -215,10 +236,10 @@ standalone plugin repo) so the gates are live + fail-closed.
 
    - Opt-in extras (model / cost / ahead-behind) are OFF by default; the operator turns them on by setting
      the `FOUNDRY_STATUSLINE_EXTRAS` environment variable (truthy).
-10. **Native Bash sandbox (opt-in write-confinement hardening).** Offer to enable Claude Code's native
+11. **Native Bash sandbox (opt-in write-confinement hardening).** Offer to enable Claude Code's native
     OS-level Bash sandbox so a dispatched worker's Bash **writes** are kernel-confined to its
     worktree (macOS Seatbelt / Linux+WSL2 bubblewrap; subagent- + git-worktree-aware). Reuse the SAME
-    load-modify-write seam as the status-line step (step 9) over the adopter's project `.claude/settings.json`:
+    load-modify-write seam as the status-line step (step 10) over the adopter's project `.claude/settings.json`:
     - Read the adopter's `.claude/settings.json` (create it as `{}` if absent), as parsed JSON.
     - **If it has no `sandbox` key** → **enable the sandbox** by setting `sandbox.enabled` = `true`
       (the documented on-switch, whose default boundary confines Bash writes to the working directory +
@@ -235,7 +256,7 @@ standalone plugin repo) so the gates are live + fail-closed.
     to the whole machine), is native-Windows-unsupported, and can fall back to unsandboxed if OS deps are
     missing. (The companion `native-bash-sandbox` doctor check this line originally named was retired with the drop-in registry — the thin doctor carries no sandbox check.)
     when the sandbox is off.
-11. **Runtime-partition `.gitignore` (default-deny, leak-prevention).** Run `scripts/foundry-apply-runtime-gitignore.sh <repo-root>`
+12. **Runtime-partition `.gitignore` (default-deny, leak-prevention).** Run `scripts/foundry-apply-runtime-gitignore.sh <repo-root>`
     against the adopter repo. It installs the
     default-deny `.foundry/*` block (re-including only the small designed-tracked set:
     `README.md`, `build-provenance.yaml`, the `/foundry:relock` pin, `stack-profile.lock`) as an idempotent
@@ -265,3 +286,6 @@ standalone plugin repo) so the gates are live + fail-closed.
 - **Baking a project-specific var** (`<PROJECT>_*`) into a foundry primitive — map onto `FOUNDRY_*`.
 - **Enabling non-local auto-merge at all** — no distinct-principal poster ships; there is no supported unattended-merge posture.
 - **Skipping the app-exercise binding** — without a live-seam driver the evidence floor is unrealizable for that adopter.
+- **Hand-writing `.foundry/stack-profile.lock` in prose** — always the scripted `--lock` path (step
+  8); a hand-written lock skips the trusted-resolve guardrails and can fail the very first
+  `/foundry:doctor`/`resolve_lock()` check it is supposed to pass.

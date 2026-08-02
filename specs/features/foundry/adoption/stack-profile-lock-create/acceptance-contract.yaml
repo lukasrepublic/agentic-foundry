@@ -1,0 +1,96 @@
+# Acceptance contract — sibling of feat-foundry-stack-profile-lock-create.md.
+#
+# Adds the missing CREATE half of the stack-profile lock lifecycle. `write_lock()` already exists
+# and is atomic (tmp + os.replace); its only caller today is `relock_lock()`, which refuses when no
+# lock exists. This atom adds a second caller — the create path — behind the SAME trusted-resolve
+# guardrails, and wires /foundry:init to invoke it rather than hand-writing a lock in prose.
+#
+# THE ROUND-TRIP IS THE LOAD-BEARING CONSTRAINT. A create that writes a lock `resolve_lock()` then
+# rejects, or that the doctor then reds, is worse than no create at all — it strands the adopter in
+# a state only manual file surgery escapes. AC-SPLC-6 is a first-class checkpoint, not a smoke test.
+#
+# Live-seam: `python3 -m pytest tests/test_stack_profile_lock_create.py -q` — the real CLI + real
+# callables driven over materialized fixture trees (a clean create, a pre-existing lock, an unknown
+# id, a core-incompatible profile, a validate-before-write failure, the doctor round-trip).
+spec_ref: specs/features/foundry/adoption/stack-profile-lock-create/feat-foundry-stack-profile-lock-create.md
+spec_sha256: "0000000000000000000000000000000000000000000000000000000000000000"  # /foundry:authorize fills this
+target_repo: agentic-foundry
+scope:
+  allowed_paths:
+    - "scripts/foundry-stack-profile.py"            # AC-SPLC-1..6: the create path + its CLI flag
+    - "skills/init/SKILL.md"                        # AC-SPLC-7: init invokes the SCRIPTED path —
+                                                    #   the refusal-in-prose failure mode is exactly
+                                                    #   what naming the script here prevents
+    - "skills/relock/SKILL.md"                      # AC-SPLC-4: name create as the sibling of refresh
+    - "tests/test_stack_profile_lock_create.py"     # NEW — named by every checkpoint below
+    - "docs/troubleshooting.md"                     # the "no boot recipe"/no-lock remedy
+    - "CHANGELOG.md"
+  denied_paths:
+    - "packs/**"                                    # the four shipped profiles are INPUT here,
+                                                    #   never edited to make a create pass
+    - "scripts/foundry-doctor.py"                   # the doctor is an ORACLE for AC-SPLC-6 —
+                                                    #   editing it would let the atom grade itself
+    - "scripts/foundry-authorize.py"
+    - "scripts/foundry_authz.py"
+    - ".github/workflows/**"
+    - "hooks/**"
+checkpoints:
+  # House `&& echo <TOKEN>` form; one checkpoint per named case.
+
+  # --- AC-SPLC-1 — a clean create writes a resolvable lock from the trusted packs/ tree
+  - {ac_id: AC-SPLC-1, surface: "file:scripts/foundry-stack-profile.py", locator: "sh -c 'python3 -m pytest tests/test_stack_profile_lock_create.py -q -k creates_lock_from_packs && echo SPLC-1-CREATE-OK'", expect: {op: matches, value: "SPLC-1-CREATE-OK", baseline: pre-change}}
+
+  # --- AC-SPLC-1 THE OMITTED DIGEST — every profile that declares a standing-versions/ block must
+  #     round-trip. 3 of the 4 shipped profiles do (aws-eks-karpenter, python-uv-lib,
+  #     python-uv-service); an enumerated {version, sha256, blueprints_sha256} entry shape would
+  #     fail resolve_lock for all three. Parametrized over the WHOLE shipped catalogue so a future
+  #     profile cannot be added into the same gap.
+  - {ac_id: AC-SPLC-1, surface: "file:scripts/foundry-stack-profile.py", locator: "sh -c 'python3 -m pytest tests/test_stack_profile_lock_create.py -q -k every_shipped_profile_round_trips && echo SPLC-1-DIGESTS-OK'", expect: {op: matches, value: "SPLC-1-DIGESTS-OK", baseline: pre-change}}
+
+  # --- AC-SPLC-1b ONE ENTRY-BUILDER — --lock and relock must call the SAME helper, not a third
+  #     hand-copy. The existing relock/resolve duplication is already flagged in the source as a
+  #     divergence hazard, and the omitted digest above is proof the hazard is live.
+  - {ac_id: AC-SPLC-1b, surface: "file:scripts/foundry-stack-profile.py", locator: "sh -c 'python3 -m pytest tests/test_stack_profile_lock_create.py -q -k entry_builder_is_shared_with_relock && echo SPLC-1B-SHARED-OK'", expect: {op: matches, value: "SPLC-1B-SHARED-OK", baseline: pre-change}}
+
+  # --- AC-SPLC-2 — the create path enforces relock's trusted-resolve guardrails
+  - {ac_id: AC-SPLC-2, surface: "file:scripts/foundry-stack-profile.py", locator: "sh -c 'python3 -m pytest tests/test_stack_profile_lock_create.py -q -k refuses_untrusted_or_incompatible && echo SPLC-2-GUARDS-OK'", expect: {op: matches, value: "SPLC-2-GUARDS-OK", baseline: pre-change}}
+
+  # --- AC-SPLC-3 — VALIDATE-BEFORE-WRITE: no lock, no .tmp residue on any failure
+  - {ac_id: AC-SPLC-3, surface: "file:scripts/foundry-stack-profile.py", locator: "sh -c 'python3 -m pytest tests/test_stack_profile_lock_create.py -q -k validate_before_write_leaves_nothing && echo SPLC-3-ATOMIC-OK'", expect: {op: matches, value: "SPLC-3-ATOMIC-OK", baseline: pre-change}}
+
+  # --- AC-SPLC-4 — an existing lock is never re-pointed; refuse, naming /foundry:relock
+  - {ac_id: AC-SPLC-4, surface: "file:scripts/foundry-stack-profile.py", locator: "sh -c 'python3 -m pytest tests/test_stack_profile_lock_create.py -q -k refuses_when_lock_exists && echo SPLC-4-EXISTS-OK'", expect: {op: matches, value: "SPLC-4-EXISTS-OK", baseline: pre-change}}
+
+  # --- AC-SPLC-4b THE STRANDING — a CORRUPT lock must be named as corrupt with a stated remedy,
+  #     distinctly from the refuse-on-existing case. Defining "exists" as file presence leaves the
+  #     adopter between two verbs that both refuse: --lock points at relock, and relock's load_lock
+  #     does a bare json.load that raises on the same file. The refusal must NOT delete it.
+  - {ac_id: AC-SPLC-4b, surface: "file:scripts/foundry-stack-profile.py", locator: "sh -c 'python3 -m pytest tests/test_stack_profile_lock_create.py -q -k corrupt_lock_is_named_and_not_deleted && echo SPLC-4B-CORRUPT-OK'", expect: {op: matches, value: "SPLC-4B-CORRUPT-OK", baseline: pre-change}}
+
+  # --- AC-SPLC-5 — an unknown id refusal lists the ids that ARE available
+  - {ac_id: AC-SPLC-5, surface: "file:scripts/foundry-stack-profile.py", locator: "sh -c 'python3 -m pytest tests/test_stack_profile_lock_create.py -q -k unknown_id_lists_available && echo SPLC-5-UNKNOWN-OK'", expect: {op: matches, value: "SPLC-5-UNKNOWN-OK", baseline: pre-change}}
+
+  # --- AC-SPLC-6 THE ROUND-TRIP — resolve_lock accepts it AND the doctor reports ok
+  - {ac_id: AC-SPLC-6, surface: "file:scripts/foundry-stack-profile.py", locator: "sh -c 'python3 -m pytest tests/test_stack_profile_lock_create.py -q -k created_lock_round_trips && echo SPLC-6-ROUNDTRIP-OK'", expect: {op: matches, value: "SPLC-6-ROUNDTRIP-OK", baseline: pre-change}}
+
+  # --- AC-SPLC-7 — init drives the SCRIPTED create, and no-profile completes normally
+  - {ac_id: AC-SPLC-7, surface: "file:skills/init/SKILL.md", locator: "sh -c 'python3 -m pytest tests/test_stack_profile_lock_create.py -q -k init_invokes_scripted_create && echo SPLC-7-INIT-OK'", expect: {op: matches, value: "SPLC-7-INIT-OK", baseline: none}}
+
+  # --- AC-SPLC-8 THE NEGATIVE CONTROL — a lockless workspace stays fully supported + green
+  - {ac_id: AC-SPLC-8, surface: "test:tests/test_stack_profile_lock_create.py", locator: "sh -c 'python3 -m pytest tests/test_stack_profile_lock_create.py -q -k lockless_workspace_stays_green && echo SPLC-8-LOCKLESS-OK'", expect: {op: matches, value: "SPLC-8-LOCKLESS-OK", baseline: none}}
+
+  # --- regression floor: the EXISTING stack-profile + relock suites stay green, untouched
+  - {ac_id: AC-SPLC-2, surface: "test:tests/test_python_stack_profile.py", locator: "sh -c 'python3 -m pytest tests/test_python_stack_profile.py -q && echo SPLC-REGRESS-OK'", expect: {op: matches, value: "SPLC-REGRESS-OK", baseline: pre-change}}
+
+  # --- DOCTOR-GREEN on this very repo (the change must not convict its own author)
+  - {ac_id: AC-SPLC-6, surface: "file:scripts/foundry-stack-profile.py", locator: "sh -c 'python3 scripts/foundry-doctor.py | tail -1'", expect: {op: matches, value: "DOCTOR-GREEN", baseline: none}}
+# /foundry:authorize appends the signed `authorized:` trailer below a sentinel (excluded from contract_sha256).
+# === FOUNDRY-AUTHORIZED-TRAILER (excluded from contract_sha256) ===
+authorized:
+  operator_id: op_lukas
+  authorized_at: 2026-08-02T03:15:43Z
+  auth_seq: 1
+  supersedes: null
+  spec_sha256: 0e7e41bd443ae5ed89c29dc58f8d96a223532d712bbd828bb89540488917d5d3
+  contract_sha256: 2d747ff5637085e1e86f4de8696662128d5e6745cb43ed68825ae41403c3c64f
+  merge_autonomy_mode: lean
