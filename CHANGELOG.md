@@ -10,6 +10,28 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 
 ## Unreleased
 
+### The plugin now ships a reviewed permission-floor declaration (feat-foundry-permission-floor-map, AC-PFM-1..7)
+
+- **`docs/permission-floor.json` is the canonical three-tier allow/ask/deny map** of every command
+  shape the plugin's own workflow instructs — one `{rule, tier, rationale}` entry per invocable
+  `scripts/` shape (`*.py` plus every owner-executable `*.sh`/extensionless file), closed-world
+  complete and verified at test time against the shipped tree so a new un-tiered script fails
+  closed. The ceremonies (`foundry-authorize.py`, `foundry-decommission.py record`/`gate-check`,
+  `foundry_release.py accept`, `foundry-upstream-submit.py`, `foundry-cut-release.py`,
+  `foundry-project-sync.py`, `foundry_tier_preflight.py`, `foundry-doctor.py --heal`,
+  `foundry-stack-profile.py --relock`, `foundry-bootstrap.sh`, `claude plugin tag`) are pinned
+  `ask`; the absolute anti-patterns (`gh pr merge --admin`, `git push --force`,
+  `tofu destroy -auto-approve`, `docker system prune`) are pinned `deny`.
+- **The map grants nothing by itself.** It is inert data — no hook, gate, authorization path, or
+  runtime reads it in this atom. Consent stays at the platform's workspace-trust dialog. The `generated_for_plugin_version` updates at each release cut alongside the two manifests (convention; the field ships equal to the cut version).
+  pre-session bootstrap CLI that applies it and the doctor drift check that watches it are
+  separate, out-of-scope atoms.
+- **`tests/test_permission_floor_map.py`** derives its ground truth from the shipped tree at run
+  time, asserts schema well-formedness, closed-world coverage (with reverse-direction and
+  not-commanded truth checks), the pinned ceremony/anti-pattern rules, rule syntax, and the
+  no-silent-subsumption rule across tiers — with five materialized negative-control fixtures
+  proving each fail-closed direction actually fires.
+
 ### Harness-denial fallback discipline across the seven ceremony-instructing skills (feat-foundry-gate-denial-fallback, AC-GDF-1..5)
 
 - **When the harness denies a ceremony command, the model now has an instruction, not a guess.**
