@@ -111,6 +111,7 @@ Only `core-plugin` / `handbook-template` candidates get an ER. `adopter-local` n
   contribution-to-`main` would bypass front-authorization; acceptance is a maintainer-gated
   factory run.
 - **Reinventing a native primitive (b) or an L1 substrate (c)** instead of requesting guidance.
+- **On a harness denial** of the `gh issue create` invocation, see `docs/harness-denial-fallback.md` and STOP: hand back the exact denied command; never retry it, and never route around it with a different `gh` identity.
 
 ## Relationship to existing primitives
 

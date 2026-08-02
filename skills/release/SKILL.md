@@ -194,3 +194,4 @@ a follow-up any longer.
 - **Re-implementing the loader/state-machine in the skill** — always drive `foundry_release.py`.
 - **Declaring a floor gate in the manifest** — there is no floor-gate field; the floor is core-owned and
   re-derives per atom regardless of the release.
+- **On a harness denial** of a release-state or closure command, see `docs/harness-denial-fallback.md` and STOP: hand back the exact denied invocation; never retry it or route around it.

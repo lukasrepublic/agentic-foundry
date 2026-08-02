@@ -181,3 +181,4 @@ and emits their closes.
   must be a full 40-character commit id. A ref name is a *mutable* pin: what an adopter resolves
   changes as the ref moves.
 - **Force-pushing to reconcile a parallel push** — reconcile by merge; the tag is already immutable.
+- **On a harness denial** of a cut-release command — distinct from this loop's own `REFUSED`/`GATED` states — see `docs/harness-denial-fallback.md` and STOP: hand back the exact denied invocation; never retry it or route around it.

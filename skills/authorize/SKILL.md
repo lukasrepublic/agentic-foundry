@@ -83,3 +83,4 @@ wrapper** — it never re-implements the freeze logic.
 - **Relaxing the contract to pass the gate.** A failing freeze-floor means the contract is under-specified — re-specify it (re-author checkpoints), never weaken the floors.
 - **Re-implementing the freeze.** Always invoke `foundry-authorize.py`; never hand-write the `authorized:` block (byte-canonical hashing + newline canonicalization + monotonic `auth_seq` are easy to get subtly wrong).
 - **Authorizing a DRAFT that cleared no review** (no `/foundry:spec-review` evidence row, no dormant-deep-audit row) without the operator's explicit `--skip-audit-reason "<reason>"` flag — the ONLY escape hatch, reserved for a genuine operator exception, never the routine path (see step 2 above).
+- **On a harness denial** (e.g. the classifier blocks `--yes`), see `docs/harness-denial-fallback.md` and STOP: hand the operator the exact denied invocation; never retry it or route around the classifier.

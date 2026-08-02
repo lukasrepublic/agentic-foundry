@@ -101,3 +101,7 @@ the standalone `--id-apply-selftest` doctor flag it registered no longer exists 
 is now a thin 5-check probe, see `skills/doctor/SKILL.md`). Run `python3 -m pytest
 tests/test_infra_delivery.py -k TestIdApplyGate -q` — CI runs the full suite on every PR — to prove
 `classify_gitops`/`decide_apply` or this skill's described behavior has not regressed.
+
+
+## Anti-patterns
+- **On a harness denial** of the EXECUTE/apply invocation, see `docs/harness-denial-fallback.md` and STOP: hand back the exact denied `infra_binding.apply` command; never retry it or route around it — the runbook stays frozen.
