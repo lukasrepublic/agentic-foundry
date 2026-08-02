@@ -45,7 +45,7 @@ the hook layer, the merge-floor tiers, certification detail — is covered after
 ## 0. Install
 
 ```bash
-claude plugin marketplace add lukasrepublic/agentic-foundry#v1.0.1
+claude plugin marketplace add lukasrepublic/agentic-foundry#v1.1.0
 claude plugin install foundry@agentic-foundry
 ```
 
