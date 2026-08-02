@@ -145,7 +145,11 @@ fi
 # non-empty wrapper does enforcement engage and THEN fail closed on a recognized guarded
 # tool at a command position whose routing cannot be proven wrapper-safe.
 # ----------------------------------------------------------------------------------------
-verdict="$(CMD="$cmd" WRAPPER="$wrapper_in" GUARDED_TOOLS="$tools_in" OFFLINE_EXEMPT="$exempt_in" python3 - <<'PY'
+# bash-3.2 parse compat: the heredoc lives INSIDE a function body, never inside `$(...)` —
+# bash 3.2's command-substitution scanner mis-tracks backquotes/quotes across heredoc content
+# (feat-foundry-bash32-parse-guard), so the substitution below contains only the function call.
+_cloud_guard_eval() {
+  CMD="$cmd" WRAPPER="$wrapper_in" GUARDED_TOOLS="$tools_in" OFFLINE_EXEMPT="$exempt_in" python3 - <<'PY'
 import os, re, shlex, sys
 
 cmd = os.environ.get("CMD", "")
@@ -466,7 +470,8 @@ while i < n:
 
 print("ALLOW")
 PY
-)"
+}
+verdict="$(_cloud_guard_eval)"
 rc=$?
 
 # FAIL boundary: the evaluator MUST produce a verdict. If python3 failed (non-zero) or
