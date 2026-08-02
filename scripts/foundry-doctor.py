@@ -13,6 +13,12 @@ What this probe checks, every run, cheaply:
      reached a release candidate before this class of check existed).
   4. `.foundry/stack-profile.lock` (if present) resolves against the shipped `packs/` tree.
   5. The operator registry (`.claude/foundry-operators.json`) resolves.
+  6. Control-plane preflight (feat-foundry-control-plane-preflight, AC-CPP-1/-2/-3/-3b): no
+     dangling `repos{}` path in THIS project's own manifest, and no ancestor
+     `.claude/foundry-project.json` already names (or merely governs) this project directory as a
+     hosted repo. A MISTAKE-CATCHER for the operator, not a floor — see
+     `scripts/foundry_control_plane.py`'s module docstring. `--session-start` still fails open
+     (AC-CPP-7); the operator-invoked exit code is this check's only enforcement.
 
 Fails CLOSED for the operator-invoked check (exit non-zero on any hard failure). The
 --session-start cadence is ADVISORY (exits 0 so it never wedges a session) — the real merge-side
@@ -201,6 +207,46 @@ def check_operator_registry(project_dir=None):
 
 
 # --------------------------------------------------------------------------------------- #
+# 6. control-plane preflight (feat-foundry-control-plane-preflight, AC-CPP-1/-2/-3/-3b)
+# --------------------------------------------------------------------------------------- #
+def _load_control_plane_module(plugin_root):
+    path = os.path.join(plugin_root, "scripts", "foundry_control_plane.py")
+    if not os.path.isfile(path):
+        return None
+    scripts_dir = os.path.dirname(path)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import foundry_control_plane as cp  # lazy import, mirrors check_operator_registry above
+    return cp
+
+
+def check_control_plane(plugin_root=None, project_dir=None):
+    root = plugin_root or PLUGIN_ROOT
+    pdir = project_dir or _project_dir()
+    try:
+        cp = _load_control_plane_module(root)
+    except Exception as e:
+        return False, f"control-plane preflight module unimportable: {e}"
+    if cp is None:
+        return None, "control-plane preflight module absent (not applicable)"
+
+    findings = []
+
+    # AC-CPP-1 — a dangling repos{} path in THIS project's own manifest.
+    for key, resolved in sorted(cp.dangling_repo_paths(pdir).items()):
+        findings.append(cp.format_dangling(key, resolved))
+
+    # AC-CPP-2 / AC-CPP-3 / AC-CPP-3b — an ancestor manifest already governs this project dir.
+    ancestor_finding = cp.find_ancestor_control_plane(pdir)
+    if ancestor_finding is not None:
+        findings.append(cp.format_ancestor_finding(ancestor_finding, pdir))
+
+    if findings:
+        return False, "; ".join(findings)
+    return True, "control-plane: no dangling repos{} path; session is correctly rooted"
+
+
+# --------------------------------------------------------------------------------------- #
 # main
 # --------------------------------------------------------------------------------------- #
 def main():
@@ -234,6 +280,7 @@ def main():
         _run("skills-frontmatter", check_skills_frontmatter),
         _run("stack-profile-lock", check_stack_profile_lock, project_dir=project_dir),
         _run("operator-registry", check_operator_registry, project_dir),
+        _run("control-plane", check_control_plane, project_dir=project_dir),
     ]
 
     hard_fail = False
