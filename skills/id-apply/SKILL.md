@@ -93,6 +93,7 @@ fail-closed function) — this procedure drives the I/O around it.
 - **Break-glass EXECUTE carries `audited=True`** so `id-apply` can stamp it into the audit ledger.
 - The GitOps class is sourced from the **profile/target, not CTX** (a recorded design decision: CTX does
   not signal GitOps).
+- **On a harness denial** of the EXECUTE/apply invocation, see `docs/harness-denial-fallback.md` and STOP: hand back the exact denied `infra_binding.apply` command; never retry it or route around it — the runbook stays frozen.
 
 The behavioral controls (a)-(h) are asserted over synthetic inputs (never a real apply) by
 `tests/test_infra_delivery.py::TestIdApplyGate` (the v0.25.0 test-suite realignment ported the drop-in
