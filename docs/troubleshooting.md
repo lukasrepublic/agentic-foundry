@@ -57,9 +57,19 @@ By design it never passes vacuously. The refusal names what's missing:
 
 - **No journeys tagged for an atom** → write the Playwright journeys the contract's AC-IDs
   name, or remove the atom from the release manifest.
-- **No boot recipe** → certification resolves the boot command from the **active stack
-  profile's** `app_exercise_binding.boot`, which requires `.foundry/stack-profile.lock` to
-  exist and resolve; see `packs/stack-profiles/<yours>/`.
+- **No boot recipe** → certification resolves the boot recipe with **the project's own
+  declaration first**:
+  1. `repos.<key>.boot_command` in `.claude/foundry-project.json`, keyed under the release's
+     resolved venue (`workspace` for the merge-gate sentinel / single-repo self-host default, or
+     the explicit `target_repo` key) — wins whenever it is a non-empty string, and the active
+     stack profile is **not consulted at all**.
+  2. Otherwise, the **active stack profile's** `app_exercise_binding.boot`, which requires
+     `.foundry/stack-profile.lock` to exist and resolve; see `packs/stack-profiles/<yours>/`.
+
+  A refusal always names declaring `boot_command` as the remedy, and additionally names
+  "activate a different stack profile" only when a `.foundry/stack-profile.lock` already exists
+  (relocking is reachable only once a lock exists — naming it unconditionally would be a
+  dead-end pointer).
 
   If there is no lock yet, create one:
 
@@ -73,14 +83,13 @@ By design it never passes vacuously. The refusal names what's missing:
   lists the ids available under `packs/stack-profiles/`), or any named id is schema-invalid,
   core-incompatible, or leaks into the core plugin's `skills/` bundle.
 
-  > **Resolved (previously a known limitation).** Earlier releases shipped no create verb —
-  > `/foundry:relock` only refreshed an already-locked id-set and refused when there was none
-  > ("nothing to relock"), so a fresh adopter could not reach `certify-local`, `/foundry:verify`,
-  > or the `id-*` lane's `infra_binding`. `--lock` (above) is the fix
-  > (`feat-foundry-stack-profile-lock-create`). The `repos.<key>.boot_command` field in
-  > `.claude/foundry-project.json` remains accepted by the schema but is **not** read by
-  > certification — that precedence change is tracked separately
-  > (`feat-foundry-boot-recipe-precedence`).
+  > **Resolved (previously known limitations).** Earlier releases shipped no lock-create verb —
+  > `/foundry:relock` only refreshed an existing lock ("nothing to relock") — and
+  > `repos.<key>.boot_command` was accepted by the schema but never read. Both are fixed in this
+  > release: `--lock` (above) creates the lock (`feat-foundry-stack-profile-lock-create`), and
+  > `boot_command` is now the first-precedence boot recipe
+  > (`feat-foundry-boot-recipe-precedence`) — certification is reachable from a clean install by
+  > either path.
 
 ## The authorize gate refused to freeze
 

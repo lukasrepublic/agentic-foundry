@@ -10,6 +10,35 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 
 ## Unreleased
 
+### The project's own `boot_command` now wins certification's boot-recipe resolution (feat-foundry-boot-recipe-precedence, AC-BRP-1..8)
+
+- **`certify-local` is reachable from a clean install.** `repos.<key>.boot_command` in
+  `.claude/foundry-project.json` — already accepted by the schema but never read — is now the
+  **first-precedence** boot recipe: declare it and certification boots from it directly, no
+  `.foundry/stack-profile.lock` required. The active stack profile's
+  `app_exercise_binding.boot` remains the fallback, byte-for-byte unchanged, when the project
+  declares nothing usable. The precedence key follows the release's resolved venue exactly the
+  way `foundry_release._resolve_repo` resolves it: the literal `workspace` key for the
+  merge-gate sentinel / single-repo self-host default, `self_host_code_repo` when set, or the
+  explicit `target_repo` key.
+- **A malformed manifest degrades, never breaks.** An unreadable/invalid
+  `.claude/foundry-project.json` falls through to the profile path instead of raising, but is
+  reported on its own line — distinct from "declared nothing" — so a typo'd `boot_command` is
+  never silently indistinguishable from an absent one.
+- **The refusal names only reachable remedies.** With neither source yielding a recipe,
+  `certify-local` always names declaring `boot_command` (the one an adopter can always act on),
+  and names "activate a different stack profile" only when a lock already exists — until the
+  sibling atom (`feat-foundry-stack-profile-lock-create`) ships, nothing creates a lock, so
+  naming that remedy unconditionally would send the reader nowhere.
+- `docs/troubleshooting.md`'s "No boot recipe" entry is reconciled to the shipped precedence,
+  and its v1 known-limitation note is narrowed (not deleted): the profile path itself still
+  requires a lock nothing yet creates.
+
+**Security review:** not flagged — no auth, secrets, or supply-chain path in scope (this changes
+which already-executed declaration is consulted first, not whether a command is executed).
+
+### Stack-profile lock creation (feat-foundry-stack-profile-lock-create, AC-SPLC-1..8)
+
 - **`--lock` creates a stack-profile lock — the missing half of the lock lifecycle.**
   `write_lock()` had exactly one caller, `relock_lock()`, which refuses when no
   `.foundry/stack-profile.lock` exists ("nothing to relock"); there was no shipped way to
@@ -27,6 +56,8 @@ All notable changes to Agentic Foundry are documented here (SemVer).
   `resolve_lock()` verifies. `/foundry:init` offers profile selection and invokes this scripted
   path (never hand-writing a lock in prose); selecting no profile still completes normally, and a
   lockless workspace remains fully supported and `DOCTOR-GREEN`. (`feat-foundry-stack-profile-lock-create`)
+
+**Security review:** floor holds (2026-08-02 pass over PRs 50-53) — trusted-resolve guardrails shared with relock; validate-before-write; TOFU pack-trust residual recorded.
 
 ## v1.0.1 — 2026-08-01
 
