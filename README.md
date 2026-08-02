@@ -183,7 +183,7 @@ grouped by loop stage, is on **[docs/VERBS-QUICK-REF.md](docs/VERBS-QUICK-REF.md
 
 `intake → spec-review → authorize → dispatch → certify-local → release accept`
 
-That's the whole discipline. The other ~59 skills are an **optional catalog** — release-wave
+That's the whole discipline. The other ~60 skills are an **optional catalog** — release-wave
 fan-out, infra-delivery (`id-*`) craft for OpenTofu/K8s/ArgoCD shops, brownfield extraction,
 citation-graph MCP, fleet/status tooling. Use six verbs, ignore the rest, add lanes when you
 need them. Want zero ceremony for a small change? `/foundry:mode-interactive` is the

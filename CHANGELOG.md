@@ -214,6 +214,41 @@ which already-executed declaration is consulted first, not whether a command is 
   that the reflection runs **once per session, at the first qualifying idle**.
   (`feat-foundry-learnings-substance-gate-synthetic-turns`, auth_seq=1)
 
+### `/foundry:repos` — the governed-repo fleet verbs over the registry (feat-foundry-workspace-repo-verbs, AC-WRV-1..12)
+
+- **The control plane's repos{} registry now has verbs that act, not just report.**
+  `scripts/foundry_repo_fleet.py` ships `sync` (idempotent reconcile: clone every `not-cloned` row
+  that declares a `remote`, fetch every `present` row whose `origin` is exactly `match`, report
+  everything else untouched), `status` (one line per entry: present · origin · branch ·
+  ahead/behind · dirty), `foreach` (shell-free argv fan-out over the present repos,
+  fail-collecting, child output captured and sanitized per line), and `validate` (the manifest ⟷
+  reality ⟷ gitignore round trip in **both** directions — including the reverse direction,
+  `undeclared-checkout`, that `feat-foundry-repo-registry-formalization` deferred by name).
+- **Clone and fetch are the entire mutation vocabulary.** No checkout, reset, merge, rebase, pull,
+  push, clean, stash, branch, remote or submodule command, and no `--force`/`--force-sync`, exists
+  in this tool — an existing checkout is never rewritten; drift is surfaced, never fixed. Every git
+  child, network-capable or not, carries the corpus's reviewed hardening set (`credential.helper=`,
+  `core.askPass=` with the askpass env removed, `core.fsmonitor=`,
+  `core.sshCommand=ssh -o BatchMode=yes` with `GIT_SSH_COMMAND` removed, `protocol.allow=never`
+  admitting only https/ssh/file, submodule recursion off) under the subtractive sink environment —
+  verified by absent observable side effects (a planted hostile `core.fsmonitor`/`core.sshCommand`
+  does not fire), per the standard `feat-foundry-leak-scan-ls-remote-sink` shipped.
+- **The boundary re-validates every row before any socket opens.** The admitted-remote-form
+  predicate is *loaded* from `scripts/foundry-prepublication-leak-scan.py`
+  (`url_is_allowed_form`/`_is_local_path_escape_hatch`) rather than re-implemented; the fetch
+  invocation names the **declared** remote, never the checkout's configured origin; and the
+  reconcile logic is exposed as an importable callable (`reconcile(root, rows, *, timeout=None)`)
+  the Wave-3 wizard's attach flow will call through the same code path.
+- **New skill `/foundry:repos`**, disambiguated from `/foundry:fleet` (the session roster, which
+  governs no repository). No promise that a cloned tree is inert — a cloned repo's `CLAUDE.md`,
+  `.claude/**` and `.mcp.json` become discoverable configuration inside a Claude Code root, stated
+  in both `--help` and the skill.
+
+**Security review:** the review confirmed the boundary re-validation is the sole runtime control
+(the schema shape floor is advisory only), the hardening set + sink environment are proven by
+absent side effects, submodule recursion is off on clone and fetch, and every emitted string
+(including captured `foreach` child output) passes through the registry module's single sink.
+
 ## v1.0.1 — 2026-08-01
 
 **Security fix for the git-discipline guard. Upgrade if you rely on it.** Two defects let the

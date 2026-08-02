@@ -191,6 +191,24 @@ asserted from memory; drift here fails this plugin's own test suite.
   rooted inside a hosted repo, or nested below the plane without being one itself (the residual
   above still applies) — this is a mistake-catcher for the operator, not a merge-blocking floor.
 
+## The fleet verbs — sync, status, foreach, validate
+
+The field-reference section above describes a **read-only** report. `/foundry:repos`
+(`scripts/foundry_repo_fleet.py`) ships four verbs that act on it: **`sync`** clones every
+`not-cloned` row that declares a `remote` and fetches every `present` row whose `origin` is
+exactly `match`, reporting everything else untouched; **`status`** renders one line per entry
+(present · origin · branch · ahead/behind · dirty); **`foreach`** fans a shell-free command out
+over the present repos, fail-collecting; **`validate`** closes the manifest ⟷ reality ⟷ gitignore
+round trip in both directions, including an `undeclared-checkout` finding for a repo on disk with
+no `repos{}` row.
+
+**Drift is surfaced, never fixed.** Clone and fetch are the entire mutation vocabulary — no
+checkout, reset, merge, rebase, pull, push, clean, stash, branch, remote or submodule command, and
+no `--force`/`--force-sync`, exists anywhere in this tool. A dirty, diverged, or origin-mismatched
+checkout is reported, never rewritten: the hosted repo evolves under its own origin and its own
+gates, and advancing its working tree from the control plane would move code no merge floor
+observed. See `skills/repos/SKILL.md` for the full verb reference and its security posture.
+
 ## Steps
 
 1. **Clone the hosted repo into the workspace as a gitignored subdir** (add the dir to the
