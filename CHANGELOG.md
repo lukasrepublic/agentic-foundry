@@ -10,6 +10,61 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 
 ## Unreleased
 
+### The plugin now ships a reviewed permission-floor declaration (feat-foundry-permission-floor-map, AC-PFM-1..7)
+
+- **`docs/permission-floor.json` is the canonical three-tier allow/ask/deny map** of every command
+  shape the plugin's own workflow instructs — one `{rule, tier, rationale}` entry per invocable
+  `scripts/` shape (`*.py` plus every owner-executable `*.sh`/extensionless file), closed-world
+  complete and verified at test time against the shipped tree so a new un-tiered script fails
+  closed. The ceremonies (`foundry-authorize.py`, `foundry-decommission.py record`/`gate-check`,
+  `foundry_release.py accept`, `foundry-upstream-submit.py`, `foundry-cut-release.py`,
+  `foundry-project-sync.py`, `foundry_tier_preflight.py`, `foundry-doctor.py --heal`,
+  `foundry-stack-profile.py --relock`, `foundry-bootstrap.sh`, `claude plugin tag`) are pinned
+  `ask`; the absolute anti-patterns (`gh pr merge --admin`, `git push --force`,
+  `tofu destroy -auto-approve`, `docker system prune`) are pinned `deny`.
+- **The map grants nothing by itself.** It is inert data — no hook, gate, authorization path, or
+  runtime reads it in this atom. Consent stays at the platform's workspace-trust dialog. The `generated_for_plugin_version` updates at each release cut alongside the two manifests (convention; the field ships equal to the cut version).
+  pre-session bootstrap CLI that applies it and the doctor drift check that watches it are
+  separate, out-of-scope atoms.
+- **`tests/test_permission_floor_map.py`** derives its ground truth from the shipped tree at run
+  time, asserts schema well-formedness, closed-world coverage (with reverse-direction and
+  not-commanded truth checks), the pinned ceremony/anti-pattern rules, rule syntax, and the
+  no-silent-subsumption rule across tiers — with five materialized negative-control fixtures
+  proving each fail-closed direction actually fires.
+
+### Harness-denial fallback discipline across the seven ceremony-instructing skills (feat-foundry-gate-denial-fallback, AC-GDF-1..5)
+
+- **When the harness denies a ceremony command, the model now has an instruction, not a guess.**
+  `docs/harness-denial-fallback.md` ships one canonical, delimited clause with three limbs: **(a)**
+  hand the denied invocation back byte-identical (modulo the leading in-session `!`), never
+  freeform-composed and never lifted from a spec or PR body, naming any override/exception flag
+  (`--yes`, `--skip-audit-reason`, `--reauth-after-impl`, `--admin`, `-auto-approve`) in plain
+  language above the block; **(b)** STOP — never retry the call, never route around it via another
+  tool or credential, explicitly excluding a verb's own documented degraded path
+  (`UPSTREAM-SUBMIT-LABEL-DEGRADED`, `cut-release`'s `REFUSED`/`GATED`); **(c)** name the durable
+  fix — `.claude/settings.json` and the native trust dialog, since chat confirmation is never a
+  consent channel.
+- **Single-sourced, pointer-checked.** Each of the seven ceremony-instructing skills
+  (`authorize`, `authorize-release`, `cut-release`, `decommission-gate`, `release`,
+  `upstream-submit`, `id-apply`) carries a one-line pointer (path + `STOP` + a
+  harness/permission-denial trigger word) rather than a copy, so voices and lengths stay native to
+  each skill while a three-way set equality (enumerated seven ⟷ the clause's own roster ⟷ the
+  on-disk pointers) convicts a half-done addition.
+- **No un-negated retry instruction survives the checked text.** A sentence-scoped negation check
+  over the delimited region plus every pointer line fails the build if any retry/route-around/
+  bypass wording appears without a `never`/`do not`/`must not` earlier in its own sentence — with a
+  single named exemption for the `**Resuming after a real grant.**` paragraph, where the accurate
+  rule (re-running is correct once state changed through a real consent channel) is expressible.
+- `tests/test_gate_denial_fallback.py` + `tests/support_gate_denial_fallback.py` assert AC-GDF-1..3
+  over the real tree and run a 5-case mutation negative control (`pointer-removed`, `limb-dropped`,
+  `limb-a-literal-dropped`, `retry-instruction`, `enumeration-desynced`) proving the suite is not
+  unconditionally green.
+
+**Security review:** not flagged — prose-only atom (a doc + skill-instruction text + two new test
+files); `hooks/**`, `scripts/**`, `schema/**` and `.github/workflows/**` are contract-denied, so no
+gate decision, permission rule, hook, or CI check is touched. The discipline reinforces the harness
+denial (limb (b) forbids verbatim retry and tool substitution) rather than working around it.
+
 ### The governed-repo registry is formalized: a tightened manifest schema + a read-only registry-integrity report (feat-foundry-repo-registry-formalization, AC-RRF-1..7)
 
 - **`.claude/foundry-project.json` `repos{}` now matches the repo/meta/vcstool manifest
