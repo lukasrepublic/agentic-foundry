@@ -49,8 +49,8 @@ _reflection_prompt() {  # sid
   [ -n "$root" ] || root="$(_resolve_buffer_root_walkup "$PWD" 2>/dev/null || true)"
   [ -n "$root" ] || root="$(_foundry_root)"
   cat <<EOF
-Before this session ends, reflect once on it and capture durable LEARNINGS for the Foundry
-self-improvement corpus (consumed by /foundry:learn-distill). Judge what is genuinely worth keeping —
+Reflect once on this session and capture durable LEARNINGS for the Foundry self-improvement
+corpus (consumed by /foundry:learn-distill). Judge what is genuinely worth keeping —
 reusable lessons, gotchas, decisions and their rationale; emitting ZERO records is fine for a low-value
 session. Do NOT include secrets, credentials, tokens, or raw PII.
 
@@ -60,7 +60,7 @@ script path so capture still works in the post-update window):
     if command -v foundry-learn-capture >/dev/null 2>&1; then cat /tmp/foundry-learnings.\$\$.jsonl | foundry-learn-capture --final --session-id "$sid" --project-dir "$root"; else cat /tmp/foundry-learnings.\$\$.jsonl | CLAUDE_PROJECT_DIR="$root" "$self" capture --session-id "$sid"; fi
 Pass records on STDIN only (never on the command line). Emit records ONLY through this capture CLI —
 never write a file directly under .foundry/session-learnings/ (a hand-written file the distiller
-cannot read is silently lost). This reflection runs once per session.
+cannot read is silently lost). This reflection runs once per session, at the first qualifying idle.
 EOF
 }
 
@@ -73,7 +73,7 @@ EOF
 # uninstructed session (R4). No shell command, no filesystem path, no session id in here.
 _short_reason() {
   cat <<'EOF'
-Foundry: routine end-of-session learnings capture — this is not an error (the harness captions every Stop hook that way).
+Foundry: routine learnings capture, once per session — this is not an error (the harness captions every Stop hook that way).
 Reflect briefly, then capture via /foundry:learn-capture. Turn this off with FOUNDRY_SESSION_LEARNINGS=off.
 EOF
 }
@@ -110,6 +110,19 @@ import os, sys, json
 MUT = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 DEL = {"Agent", "Task", "Workflow"}
 KNOWN = ("user", "assistant")     # the discriminator values this classifier actually understands
+# feat-foundry-learnings-substance-gate-synthetic-turns (AC-SYNT-1): the harness writes local
+# slash-command records (the invocation, its stdout, and the isMeta caveat wrapper) into the
+# transcript as type:"user" WITHOUT isMeta. A leading-tag match on one of these is POSITIVE
+# synthetic proof (excludes); origin.kind=="human" or a promptSource field is POSITIVE
+# structural human proof (dominates, even over a leading tag, since it is immune to a tag
+# rename); an entry with neither signal counts, preserving the AC-RUX-2 fail-toward-inject
+# direction. The tag match is a LEADING match only (stripped-whitespace startswith), never a
+# substring test, and in the list content shape looks at the FIRST text block only.
+SYNTHETIC_TAGS = ("<command-name>", "<local-command-stdout>", "<local-command-caveat>",
+                  "<command-message>", "<command-args>")
+def _leading_synthetic_tag(text):
+    s = text.lstrip() if isinstance(text, str) else ""
+    return any(s.startswith(tag) for tag in SYNTHETIC_TAGS)
 MAX_BYTES = 64 * 1024 * 1024      # whole-file budget; past it we cannot cheaply classify -> inject
 MAX_LINES = 200000                # line budget; ditto
 MAX_LINE  = 1024 * 1024           # a single line past this is a giant tool_result dump, never signal
@@ -154,14 +167,22 @@ try:
             elif t == "user":
                 if e.get("isMeta"):
                     continue      # hook-injected / system-synthesised turn, not a genuine user turn
+                origin = e.get("origin")
+                human_proof = (isinstance(origin, dict) and origin.get("kind") == "human") \
+                    or ("promptSource" in e)   # structural proof DOMINATES a leading tag match
                 if isinstance(content, str):
+                    if not human_proof and _leading_synthetic_tag(content):
+                        continue  # positive synthetic proof (leading-tag match) -> not a user turn
                     if content.strip():
                         turns += 1
                 elif isinstance(content, list):
                     if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
                         continue  # a tool-result continuation is not a user turn
-                    if any(isinstance(b, dict) and b.get("type") == "text" and str(b.get("text", "")).strip()
-                           for b in content):
+                    text_blocks = [b.get("text", "") for b in content
+                                   if isinstance(b, dict) and b.get("type") == "text"]
+                    if not human_proof and text_blocks and _leading_synthetic_tag(text_blocks[0]):
+                        continue  # FIRST text block only is the anchor; a later block never excludes
+                    if any(str(tb).strip() for tb in text_blocks):
                         turns += 1
     # UNRECOGNISED is absence-of-evidence, NOT evidence of insubstantiality: if not one line was
     # understood, the shape is unrecognised (a corrupt file, a wrong-but-valid JSONL file, or a harness
@@ -240,7 +261,7 @@ print(json.dumps({"decision":"block",
                   "reason":os.environ.get("_FOUNDRY_REASON","").strip(),
                   "hookSpecificOutput":{"hookEventName":"Stop",
                                         "additionalContext":os.environ.get("_FOUNDRY_CTX","")}}))' 2>/dev/null \
-    || printf '{"decision":"block","reason":"Foundry: routine end-of-session learnings capture (not an error). Capture via /foundry:learn-capture; disable with FOUNDRY_SESSION_LEARNINGS=off."}'
+    || printf '{"decision":"block","reason":"Foundry: routine learnings capture, once per session (not an error). Capture via /foundry:learn-capture; disable with FOUNDRY_SESSION_LEARNINGS=off."}'
   exit 0
 }
 
@@ -684,6 +705,110 @@ print(d if isinstance(d,str) else "")' "$2" 2>/dev/null
   # (iv) the good path produced a real, parseable artifact (not a vacuous all-skip)
   [ -n "$(_rux_get "$out1" hookSpecificOutput.additionalContext)" ] || ru4=1
   _emit "AC-RUX-4 selftest-real-oracle-anti-tautology" "$ru4" "runbook-in-reason would FAIL; reentrancy/headless/done/garbage-marker all still no-op; classifier separates the two fixtures; real parseable artifact"
+
+  # ================ feat-foundry-learnings-substance-gate-synthetic-turns ================ #
+  # Fixtures for the two-signal (origin/promptSource dominates; leading-tag excludes; neither
+  # counts) limb-(c) classifier. MIN_TURNS=1 margin engineering (spec design note): at the
+  # default threshold of 3 a single miscounted phantom record cannot flip the observable
+  # outcome; at 1 it always does, so a regression in any single tag's exclusion fails loudly.
+  local synt_names=(cn cso cav cmsg cargs)
+  local synt_bodies=(
+    '<command-name>/model</command-name>'
+    '<local-command-stdout>Set model to Fable 5</local-command-stdout>'
+    '<local-command-caveat>Caveat: local command output below</local-command-caveat>'
+    '<command-message>model</command-message>'
+    '<command-args></command-args>'
+  )
+
+  # ---- AC-SYNT-1: local-command records are not user turns (the ordered two-signal rule).
+  local sy1=0 si nm body
+  si=0
+  while [ "$si" -lt 5 ]; do
+    nm="${synt_names[$si]}"; body="${synt_bodies[$si]}"
+    # (i) per-tag margin case: ONLY the synthetic record (no isMeta, no origin) -> no decision,
+    # no marker write, at MIN_TURNS=1 (exercises the <local-command-caveat> belt-and-braces
+    # branch too — non-isMeta here, unlike a real caveat record which IS isMeta and already
+    # skipped upstream).
+    printf '{"type":"user","message":{"role":"user","content":"%s"}}\n' "$body" > "$tdir/synt_only_$nm.jsonl"
+    printf '%s' "$(FOUNDRY_SESSION_LEARNINGS_MIN_TURNS=1 _rux_stop "SYNT_ONLY_$nm" "$tdir/synt_only_$nm.jsonl")" | grep -q '"decision"' && sy1=1
+    [ -z "$(_marker_state "SYNT_ONLY_$nm")" ] || sy1=1
+    si=$((si+1))
+  done
+  # (iii) anchor/override proofs (entries without origin unless stated).
+  # a genuine string-shape turn that merely MENTIONS a tag mid-string still counts (leading-tag
+  # anchor, not a substring test).
+  printf '%s\n' '{"type":"user","message":{"role":"user","content":"why does <command-name> show up in my transcript?"}}' > "$tdir/synt_anchor_midstring.jsonl"
+  [ "$(FOUNDRY_SESSION_LEARNINGS_MIN_TURNS=1 _session_is_substantive "$tdir/synt_anchor_midstring.jsonl")" = "substantive" ] || sy1=1
+  # list-shape: first text block is genuine prose, a LATER block begins with a tag -> still
+  # counts (first-block anchor; paired below with the negative control: tag genuinely first ->
+  # excluded, proving the anchor is load-bearing in both directions).
+  cat > "$tdir/synt_anchor_listshape.jsonl" <<'EOJ'
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"genuine prose"},{"type":"text","text":"<local-command-stdout>data</local-command-stdout>"}]}}
+EOJ
+  [ "$(FOUNDRY_SESSION_LEARNINGS_MIN_TURNS=1 _session_is_substantive "$tdir/synt_anchor_listshape.jsonl")" = "substantive" ] || sy1=1
+  cat > "$tdir/synt_anchor_listshape_excluded.jsonl" <<'EOJ'
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"<local-command-stdout>data</local-command-stdout>"},{"type":"text","text":"genuine prose after"}]}}
+EOJ
+  [ "$(FOUNDRY_SESSION_LEARNINGS_MIN_TURNS=1 _session_is_substantive "$tdir/synt_anchor_listshape_excluded.jsonl")" = "insubstantial" ] || sy1=1
+  # structural human proof (origin.kind:"human") dominates a leading tag match.
+  printf '%s\n' '{"type":"user","message":{"role":"user","content":"<command-name>/model</command-name>"},"origin":{"kind":"human"}}' > "$tdir/synt_origin_dominates.jsonl"
+  [ "$(FOUNDRY_SESSION_LEARNINGS_MIN_TURNS=1 _session_is_substantive "$tdir/synt_origin_dominates.jsonl")" = "substantive" ] || sy1=1
+  # the second structural signal (a promptSource field, no origin at all) dominates too.
+  printf '%s\n' '{"type":"user","message":{"role":"user","content":"<command-name>/model</command-name>"},"promptSource":"typed"}' > "$tdir/synt_promptsource_dominates.jsonl"
+  [ "$(FOUNDRY_SESSION_LEARNINGS_MIN_TURNS=1 _session_is_substantive "$tdir/synt_promptsource_dominates.jsonl")" = "substantive" ] || sy1=1
+  _emit "AC-SYNT-1 local-command-records-excluded-from-turn-count" "$sy1" "all 5 tags excluded solo (no decision/marker @ MIN_TURNS=1); mid-string mention counts; list-shape first-block anchor counts/excludes correctly; origin.kind:human + promptSource both dominate a leading tag"
+
+  # ---- AC-SYNT-2: the cadence wording is honest, in every emitter.
+  local sy2=0 outw reasonw ctxw sentinelw='never write a file directly under .foundry/session-learnings/'
+  outw="$(_rux_stop "SYNTW" "$tdir/sub_mut.jsonl")"
+  reasonw="$(_rux_get "$outw" reason)"
+  ctxw="$(_rux_get "$outw" hookSpecificOutput.additionalContext)"
+  printf '%s' "$ctxw" | grep -qF 'once per session, at the first qualifying idle' || sy2=1
+  printf '%s' "$ctxw" | grep -qF "$sentinelw" || sy2=1                                # AC-LBC-3 sentinel still travels
+  printf '%s' "$reasonw" | grep -qF 'once per session' || sy2=1
+  printf '%s' "$reasonw" | grep -qF 'Before this session ends' && sy2=1
+  printf '%s' "$reasonw" | grep -qF 'end-of-session' && sy2=1
+  printf '%s' "$ctxw" | grep -qF 'Before this session ends' && sy2=1
+  printf '%s' "$ctxw" | grep -qF 'end-of-session' && sy2=1
+  # the rendered replacement phrase itself carries no shell-expansion metacharacter (the runbook
+  # heredoc is unquoted).
+  printf '%s' "$ctxw" | grep -F 'once per session, at the first qualifying idle' | grep -Eq '[$`\\]' && sy2=1
+  # _short_reason's heredoc stays single-quoted (source-level regression).
+  grep -A1 '^_short_reason() {' "$_LIB_DIR/foundry-session-learnings.sh" | grep -qF "cat <<'EOF'" || sy2=1
+  _emit "AC-SYNT-2 honest-once-per-session-cadence-wording" "$sy2" "additionalContext + reason carry the honest literal; neither channel carries the two banned phrases; wording metacharacter-free; _short_reason heredoc still single-quoted"
+
+  # ---- AC-SYNT-3: the live-seam is a real behavioral oracle with anti-tautology.
+  local sy3=0
+  # (ii) each per-tag fixture PLUS one genuine origin.kind:"human" turn flips to a block at the
+  # same MIN_TURNS=1 threshold — proving the exclusion does not over-suppress.
+  si=0
+  while [ "$si" -lt 5 ]; do
+    nm="${synt_names[$si]}"; body="${synt_bodies[$si]}"
+    {
+      printf '{"type":"user","message":{"role":"user","content":"%s"}}\n' "$body"
+      printf '{"type":"user","message":{"role":"user","content":"what next?"},"origin":{"kind":"human"}}\n'
+    } > "$tdir/synt_plus_human_$nm.jsonl"
+    printf '%s' "$(FOUNDRY_SESSION_LEARNINGS_MIN_TURNS=1 _rux_stop "SYNT_HUMAN_$nm" "$tdir/synt_plus_human_$nm.jsonl")" | grep -q '"decision"[[:space:]]*:[[:space:]]*"block"' || sy3=1
+    si=$((si+1))
+  done
+  # (iv) the python-failure fallback emitter, driven by forcing python3 to fail (a shell function
+  # override — the same interpreter, so it shadows every `python3` call this hook makes).
+  local out_fb reason_fb
+  export CLAUDE_SESSION_ID="SYNTFB"
+  python3() { return 127; }
+  out_fb="$(_rux_stop "SYNTFB" "")"
+  unset -f python3
+  unset CLAUDE_SESSION_ID
+  reason_fb="$(printf '%s' "$out_fb" | grep -o '"reason":"[^"]*"')"
+  [ -n "$reason_fb" ] || sy3=1
+  printf '%s' "$reason_fb" | grep -qF 'once per session' || sy3=1
+  printf '%s' "$reason_fb" | grep -qF 'Before this session ends' && sy3=1
+  printf '%s' "$reason_fb" | grep -qF 'end-of-session' && sy3=1
+  # anti-tautology: proves the FALLBACK shape (no hookSpecificOutput) was really hit — if the
+  # python3 override failed to engage, the primary emitter would run and this would FAIL.
+  printf '%s' "$out_fb" | grep -q 'hookSpecificOutput' && sy3=1
+  printf '%s' "$out_fb" | python3 -c 'import sys,json; json.load(sys.stdin)' >/dev/null 2>&1 || sy3=1
+  _emit "AC-SYNT-3 selftest-real-oracle-anti-tautology" "$sy3" "per-tag fixture+human-turn flips to block @ MIN_TURNS=1; python3-failure fallback reason carries the honest literal, no banned phrase, and is provably the no-hookSpecificOutput fallback shape (real+valid JSON)"
 
   rm -rf "$tmp" 2>/dev/null || true
   echo ""

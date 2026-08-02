@@ -73,6 +73,24 @@ which already-executed declaration is consulted first, not whether a command is 
   for the full contract, including the narrow residual (unreachable only when the plugin was
   enabled strictly per-project, never the common user-wide install).
 
+- **Substance gate no longer counts synthetic local-command records as user turns; the reflection
+  cadence wording is now honest.** The Stop-hook substance gate's limb (c) ("genuine user turns")
+  was counting Claude Code's own local-slash-command transcript records (`<command-name>…`,
+  `<local-command-stdout>…`) as real turns — they carry `type: "user"` but no `isMeta` flag, so a
+  session opened with `/model`, `/config`, `/help`, … pre-loaded 2 phantom turns and the
+  once-per-session reflection fired after the operator's very first real message, presenting as a
+  session-*start* error box rather than the intended mid-session checkpoint. The classifier now
+  applies an ordered two-signal rule: a structural human-authorship signal
+  (`origin.kind == "human"` or a `promptSource` field) counts and DOMINATES; otherwise a
+  leading-tag match on one of the five local-command record shapes excludes; otherwise the entry
+  counts, exactly as before — an unrecognized or older transcript shape still fails toward
+  injecting (the substance gate's one-directional conservatism is unchanged). Separately, the
+  reflection's cadence wording was dishonest ("Before this session ends…" / "routine
+  end-of-session learnings capture") for a `Stop` hook that cannot know which idle is the session's
+  last — every emitter (the primary JSON path and the python-failure fallback) now says plainly
+  that the reflection runs **once per session, at the first qualifying idle**.
+  (`feat-foundry-learnings-substance-gate-synthetic-turns`, auth_seq=1)
+
 ## v1.0.1 — 2026-08-01
 
 **Security fix for the git-discipline guard. Upgrade if you rely on it.** Two defects let the
