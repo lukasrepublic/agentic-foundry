@@ -32,6 +32,15 @@ def test_session_learnings_hook_selftest():
     proc = subprocess.run(["bash", script, "--selftest"], capture_output=True, text=True)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "FOUNDRY-SESSION-LEARNINGS-SELFTEST-GREEN" in proc.stdout
+    # feat-foundry-learnings-substance-gate-synthetic-turns: assert the three frozen contract
+    # checkpoints by their exact PASS lines, not just the overall GREEN sentinel (structure, not
+    # a substring of the aggregate) so a single AC regressing is diagnosable from pytest alone.
+    for line in (
+        "AC-SYNT-1 local-command-records-excluded-from-turn-count: PASS",
+        "AC-SYNT-2 honest-once-per-session-cadence-wording: PASS",
+        "AC-SYNT-3 selftest-real-oracle-anti-tautology: PASS",
+    ):
+        assert line in proc.stdout, proc.stdout
 
 
 def test_foundry_distill_own_selftest():
