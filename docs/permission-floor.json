@@ -59,6 +59,11 @@
       "rationale": "reads dated learning-capture files and distills them; run directly by the operator per learn-distill"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-doctor.py)",
+      "tier": "allow",
+      "rationale": "bare invocation runs the thin 5-check health probe; read-only, fail-open; exact rule deliberately \u2014 flag-qualified forms fall through to a prompt so no allow-prefix can reach the --heal ceremony (security review 2026-08-02)."
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-env-hygiene.py:*)",
       "tier": "allow",
       "rationale": "status/reap over machine-scoped worker sandbox envs; confined to isolated per-worker state"
@@ -119,6 +124,16 @@
       "rationale": "Phase 0 deterministic pre-lint wrapper for /foundry:spec-review; read-only checks"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-stack-profile.py --load:*)",
+      "tier": "allow",
+      "rationale": "read-only resolve of the already-locked stack-profile.lock"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-stack-profile.py --validate:*)",
+      "tier": "allow",
+      "rationale": "read-only profile validation against packs/ or a path"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-statusline.sh:*)",
       "tier": "allow",
       "rationale": "read-only, fail-open statusline renderer; prints and exits 0"
@@ -174,6 +189,11 @@
       "rationale": "read-only intake schema-defect / grounding checker over a project dir"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_repo_registry.py:*)",
+      "tier": "allow",
+      "rationale": "Read-only registry-integrity report (feat-foundry-repo-registry-formalization): physical-confinement + gitignore-pairing + origin-match rows over .claude/foundry-project.json; single read-only git choke point, sanitizing emission sink, writes nothing. Tiered at merge-reconciliation when the script landed after the map (the closed-world tripwire firing as designed)."
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_run_metrics.py:*)",
       "tier": "allow",
       "rationale": "posttooluse telemetry logger invoked by the run-metrics hook; appends a loss-tracking line"
@@ -184,29 +204,9 @@
       "rationale": "session-scoped mode/fork-policy set-and-resolve state-writer; not a release/repo ceremony"
     },
     {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-doctor.py)",
-      "tier": "allow",
-      "rationale": "bare invocation runs the thin 5-check health probe; read-only, fail-open; exact rule deliberately \u2014 flag-qualified forms fall through to a prompt so no allow-prefix can reach the --heal ceremony (security review 2026-08-02)."
-    },
-    {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-doctor.py --heal:*)",
+      "rule": "Bash(claude plugin tag:*)",
       "tier": "ask",
-      "rationale": "pinned ceremony (AC-PFM-3): documented no-op today, but the flag is the shape a future auto-heal would reuse"
-    },
-    {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-stack-profile.py --validate:*)",
-      "tier": "allow",
-      "rationale": "read-only profile validation against packs/ or a path"
-    },
-    {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-stack-profile.py --load:*)",
-      "tier": "allow",
-      "rationale": "read-only resolve of the already-locked stack-profile.lock"
-    },
-    {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-stack-profile.py --relock:*)",
-      "tier": "ask",
-      "rationale": "pinned ceremony (AC-PFM-3): re-writes the lock in place; leading flag verified prefix-keyable; the split tier with --validate/--load is safe ONLY because main() checks those flags before --relock \u2014 a combined invocation runs the earlier-checked verb (security review 2026-08-02)."
+      "rationale": "a tree path arrives between the verb and --push, not prefix-keyable at finer grain; a dry-run also prompts"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-authorize.py:*)",
@@ -214,24 +214,9 @@
       "rationale": "ceremony: front-authorization; --yes/--skip-audit-reason arrive after other args, not prefix-keyable, so the whole script is ask"
     },
     {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-decommission.py record:*)",
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-bootstrap.sh:*)",
       "tier": "ask",
-      "rationale": "ceremony: leading subcommand, writes a decommission record"
-    },
-    {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-decommission.py gate-check:*)",
-      "tier": "ask",
-      "rationale": "ceremony: leading subcommand, gate-checks a decommission"
-    },
-    {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_release.py accept:*)",
-      "tier": "ask",
-      "rationale": "ceremony: leading subcommand, appends a PRACTICE acceptance record"
-    },
-    {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-upstream-submit.py:*)",
-      "tier": "ask",
-      "rationale": "ceremony: --create arrives after other args, not prefix-keyable, so the whole script is ask"
+      "rationale": "writes GLOBAL git config (--global --unset-all/--get-regexp, two includeIf.*.path writes); machine-scope state"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-cut-release.py:*)",
@@ -239,9 +224,39 @@
       "rationale": "ER class-C release-cut ceremony marker, taken at the coarser fail-safe tier; the script itself mutates no tree"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-decommission.py gate-check:*)",
+      "tier": "ask",
+      "rationale": "ceremony: leading subcommand, gate-checks a decommission"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-decommission.py record:*)",
+      "tier": "ask",
+      "rationale": "ceremony: leading subcommand, writes a decommission record"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-doctor.py --heal:*)",
+      "tier": "ask",
+      "rationale": "pinned ceremony (AC-PFM-3): documented no-op today, but the flag is the shape a future auto-heal would reuse"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-project-sync.py:*)",
       "tier": "ask",
       "rationale": "re-tiered by spec review: non-dry-run path issues authenticated GraphQL write mutations against a remote"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-stack-profile.py --relock:*)",
+      "tier": "ask",
+      "rationale": "pinned ceremony (AC-PFM-3): re-writes the lock in place; leading flag verified prefix-keyable; the split tier with --validate/--load is safe ONLY because main() checks those flags before --relock \u2014 a combined invocation runs the earlier-checked verb (security review 2026-08-02)."
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-upstream-submit.py:*)",
+      "tier": "ask",
+      "rationale": "ceremony: --create arrives after other args, not prefix-keyable, so the whole script is ask"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_release.py accept:*)",
+      "tier": "ask",
+      "rationale": "ceremony: leading subcommand, appends a PRACTICE acceptance record"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_tier_preflight.py:*)",
@@ -249,14 +264,9 @@
       "rationale": "--apply POSTs repository rulesets with an Administration (write) token; it writes the merge floor itself"
     },
     {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-bootstrap.sh:*)",
-      "tier": "ask",
-      "rationale": "writes GLOBAL git config (--global --unset-all/--get-regexp, two includeIf.*.path writes); machine-scope state"
-    },
-    {
-      "rule": "Bash(claude plugin tag:*)",
-      "tier": "ask",
-      "rationale": "a tree path arrives between the verb and --push, not prefix-keyable at finer grain; a dry-run also prompts"
+      "rule": "Bash(docker system prune:*)",
+      "tier": "deny",
+      "rationale": "absolute anti-pattern: unattended bulk local-state destruction"
     },
     {
       "rule": "Bash(gh pr merge --admin:*)",
@@ -272,11 +282,6 @@
       "rule": "Bash(tofu destroy -auto-approve:*)",
       "tier": "deny",
       "rationale": "absolute anti-pattern: unattended destructive infra apply with no plan review"
-    },
-    {
-      "rule": "Bash(docker system prune:*)",
-      "tier": "deny",
-      "rationale": "absolute anti-pattern: unattended bulk local-state destruction"
     }
   ],
   "not_invoked": [
