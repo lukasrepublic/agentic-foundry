@@ -124,7 +124,15 @@ def _is_linked_worktree(dir_path: str) -> bool:
     the primary checkout — AC-CPP-6(d) requires it stay green unconditionally, since it is a
     deliberate git-native secondary checkout, never the operator mistake this atom targets."""
     p = os.path.join(dir_path, ".git")
-    return os.path.isfile(p)
+    # Security review 2026-08-02: require the gitdir: pointer content, not mere file-ness —
+    # a bare `touch .git` (or a submodule dir) must not silence the preflight.
+    if not os.path.isfile(p):
+        return False
+    try:
+        with open(p, "r", encoding="utf-8", errors="replace") as fh:
+            return fh.read(7) == "gitdir:"
+    except OSError:
+        return False
 
 
 def find_ancestor_control_plane(start_dir: str, max_levels: int = MAX_LEVELS):
