@@ -211,8 +211,16 @@ is the heart of the [trust model](docs/DESIGN.md). Full mechanics: **[docs/merge
 | Spec artifacts | ✅ generate them | — | plans, ephemeral | ✅ + frozen, hash-bound contracts |
 | Authorization before build | IDE/UX approvals at best | — | — | ✅ operator-signed hash freeze; the factory lane has no skip<sup>†</sup> |
 | Merge enforcement | prompt packs | advisory comments | — | ✅ tiered floor, honestly labeled |
-| Certification vs the running app | — | — | — | ✅ deploy-once + real journey suite |
+| Certification vs the running app | — | — | — | ✅ deploy-once + real journey suite<sup>‡</sup> |
 | Human authority | varies | — | sandbox-level | ✅ operator sign-off is terminal, by design |
+
+<sup>‡</sup> **Reachability caveat, stated plainly.** The certification machinery ships and works,
+but a *fresh* adopter cannot currently reach it: `/foundry:certify-local` takes its boot recipe
+only from an active stack profile, and no shipped code path creates the
+`.foundry/stack-profile.lock` that a profile is resolved through. The `repos.<key>.boot_command`
+field the schema advertises for this is read by nothing. Two atoms are specified to close this
+(`boot-recipe-precedence`, `stack-profile-lock-create`) and are awaiting authorization; until
+they ship, read this row as "built and exercised in this repo", not "available on first install".
 
 <sup>†</sup> `/foundry:authorize` itself has no skip — the freeze is unconditional and
 operator-signed. Separately, the `spec-link` merge gate accepts a **declared light lane**

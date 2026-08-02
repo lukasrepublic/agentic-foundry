@@ -17,6 +17,7 @@ import argparse
 import importlib.util
 import json
 import os
+import subprocess
 import re
 import sys
 
@@ -51,6 +52,24 @@ def _plugin_dir(tree):
     return os.path.join(tree, ".claude-plugin")
 
 
+def select_plugin_entry(mdoc):
+    """The marketplace.json plugins[] entry for 'foundry' — BY NAME, never by index.
+
+    Shared by read_versions and tag_pin_coherence so the gate cannot end up validating a different
+    plugin's pin than the one the cut is bumping. Indexing [0] happens to be right only while the
+    manifest stays single-plugin; the moment a second plugin is listed first, an index-based gate
+    silently grades the wrong entry and calls an incoherent release coherent."""
+    plugs = mdoc.get("plugins")
+    if not isinstance(plugs, list) or not plugs:
+        raise CutReleaseError("marketplace.json has no plugins[] list")
+    named = [p for p in plugs if isinstance(p, dict) and p.get("name") == "foundry"]
+    if named:
+        return named[0]
+    if len(plugs) == 1 and isinstance(plugs[0], dict):
+        return plugs[0]                       # single-plugin manifest → unambiguous
+    raise CutReleaseError("marketplace.json has no plugins[] entry named 'foundry'")
+
+
 def read_versions(tree):
     """{plugin, marketplace, marketplace_ref, marketplace_sha} from .claude-plugin/{plugin,marketplace}.json
     (the plugins[] entry named 'foundry'). Raises CutReleaseError on absent/malformed manifests."""
@@ -68,16 +87,7 @@ def read_versions(tree):
         raise CutReleaseError(f"manifest unreadable: {e}")
     if not isinstance(pdoc, dict) or not isinstance(mdoc, dict):
         raise CutReleaseError("a manifest is not a JSON object")
-    plugs = mdoc.get("plugins")
-    if not isinstance(plugs, list) or not plugs:
-        raise CutReleaseError("marketplace.json has no plugins[] list")
-    named = [p for p in plugs if isinstance(p, dict) and p.get("name") == "foundry"]
-    if named:
-        entry = named[0]
-    elif len(plugs) == 1 and isinstance(plugs[0], dict):
-        entry = plugs[0]                      # single-plugin manifest → unambiguous
-    else:                                     # multi-plugin with no 'foundry' entry → fail closed, never guess
-        raise CutReleaseError("marketplace.json has no plugins[] entry named 'foundry'")
+    entry = select_plugin_entry(mdoc)
     src = entry.get("source")
     if not isinstance(src, dict):
         src = {}
@@ -200,6 +210,155 @@ def _failing_summary(out):
     return shown + (f" (+{len(names) - 5} more)" if len(names) > 5 else "")
 
 
+def tag_pin_coherence(tree, version):
+    """(ok, detail) for AC-TPC-1/-2/-4/-5: when tag vTARGET already exists, the marketplace.json
+    reachable AT THAT TAG must pin a COMMIT (never an annotated-tag object) that is inside the
+    released history and whose plugin.json version is TARGET.
+
+    Adopters install by ref, so the tag's own tree is what a `marketplace add <repo>#vX.Y.Z`
+    resolves. The old plan tagged BEFORE re-pinning, so the tag served the PREVIOUS release's sha
+    and an install by ref delivered the previous version's code. That shipped twice (v1.0.0 and
+    v1.0.1) before being caught. Absent tag => not applicable (a first cut cannot be coherent yet;
+    the re-pin has not happened).
+    """
+    tag = f"v{version}"
+
+    def git(*a):
+        """(rc, stdout). rc=-1 means the command could not be RUN at all — never conflated with a
+        clean non-zero exit, because 'I could not check' must not read as 'I checked and it is
+        absent'. Mirrors suite_check's any-failure-to-RUN-refuses convention."""
+        try:
+            r = subprocess.run(["git", "-C", tree, *a],
+                               capture_output=True, text=True, timeout=30)
+        except Exception:
+            return -1, ""
+        return r.returncode, (r.stdout or "").strip()
+
+    # --- FAIL CLOSED WHEN THE CHECK CANNOT RUN. `git rev-parse --verify refs/tags/X` exits non-zero
+    # for "not a git repository", "dubious ownership" (safe.directory — routine in CI containers and
+    # any checkout owned by another uid), a corrupt object store and permission errors, all
+    # indistinguishably from "the tag is absent". Probing --git-dir first separates them, so a
+    # tree the gate cannot inspect REFUSES instead of reporting not-applicable and sailing to READY.
+    rc, _ = git("rev-parse", "--git-dir")
+    if rc != 0:
+        return False, (f"cannot verify the install pin: {tree} is not a readable git repository "
+                       f"(git rev-parse --git-dir {'could not run' if rc < 0 else f'exited {rc}'}). "
+                       f"The coherence gate refuses rather than reporting not-applicable.")
+
+    rc, _ = git("rev-parse", "--verify", f"refs/tags/{tag}")
+    if rc != 0:
+        return True, (f"tag {tag} does not exist yet (first cut — not applicable; the emitted plan's "
+                      f"order is what carries AC-TPC-3 here, and `--verify-tag` re-checks after tagging)")
+    rc, blob = git("show", f"{tag}:.claude-plugin/marketplace.json")
+    if rc != 0:
+        return False, f"tag {tag} carries no .claude-plugin/marketplace.json"
+    try:
+        src = select_plugin_entry(json.loads(blob)).get("source") or {}
+        sha, ref, repo = src.get("sha", ""), src.get("ref", ""), src.get("repo", "")
+    except Exception as e:
+        return False, f"marketplace.json at {tag} is unreadable: {type(e).__name__}: {e}"
+    if ref != tag:
+        return False, f"source.ref at {tag} is {ref!r}, expected {tag!r}"
+
+    # --- source.sha MUST be a full 40-hex object name. git resolves arbitrary revision expressions,
+    # so without this an unvalidated value like "main", "HEAD" or "v1.0.0^{commit}" types as a commit
+    # and passes every check below — and a BRANCH NAME is a MUTABLE pin, which destroys the exact
+    # immutable-artifact property AC-TPC-1 asserts. An abbreviation can also be ambiguous in a larger
+    # clone than the one that cut the release.
+    if not re.fullmatch(r"[0-9a-f]{40}", sha or ""):
+        return False, (f"source.sha at {tag} is {sha!r} — not a full 40-character lowercase hex "
+                       f"commit id. A ref name or abbreviation is a MUTABLE pin: what an adopter "
+                       f"resolves would change as the ref moves.")
+
+    rc, kind = git("cat-file", "-t", sha)
+    if rc != 0:
+        return False, f"source.sha {sha[:12]}… at {tag} does not resolve in this repo"
+    if kind != "commit":
+        return False, (f"source.sha at {tag} names a {kind} object, not a commit — use "
+                       f"`git rev-parse {tag}^{{commit}}`")
+
+    rc, tagc = git("rev-parse", f"{tag}^{{commit}}")
+    if rc != 0:
+        return False, f"cannot resolve the commit for tag {tag}"
+    rc, parent = git("rev-parse", f"{tag}^{{commit}}~1")
+    parent = parent if rc == 0 else ""
+
+    # --- The pin must be the TAG COMMIT ITSELF or its FIRST PARENT — not merely an ancestor.
+    # `merge-base --is-ancestor` admits every commit reachable from the tag, which after any merge is
+    # every commit of every branch ever merged in. Since the version bump lands at the START of
+    # release work, several ancestors carry the target version, so an ancestor-plus-version check
+    # would admit a pin naming the version-bump commit and silently omit everything that landed
+    # after it — the same "adopter receives the wrong code" outcome, displaced by a few commits.
+    # The plan's own shape is exactly two: R2 (tag == pinning commit) or R (its parent).
+    if sha not in (tagc, parent):
+        rc, anc = git("merge-base", "--is-ancestor", sha, f"{tag}^{{commit}}")
+        where = "an ancestor of, but not adjacent to," if anc == 0 and rc == 0 else "NOT in"
+        return False, (f"source.sha {sha[:12]}… at {tag} is {where} the released history. The pin "
+                       f"MUST name the tag commit ({tagc[:12]}…) or its first parent "
+                       f"({parent[:12] + '…' if parent else 'none'}) — the plan's R2/R shape. A pin "
+                       f"reaching further back omits everything committed after it.")
+
+    # --- both the PINNED commit and the TAG commit must carry the target version. The pinned commit
+    # is what a sha-resolving client installs; the tag commit is what a ref-resolving (or
+    # ref-falling-back) client installs. Checking only the former leaves the ref path unasserted.
+    for label, commit in (("pinned commit", sha), ("tag commit", tagc)):
+        rc, pj = git("show", f"{commit}:.claude-plugin/plugin.json")
+        if rc != 0:
+            return False, f"the {label} {commit[:12]}… has no .claude-plugin/plugin.json"
+        try:
+            found = json.loads(pj).get("version")
+        except Exception:
+            return False, f"plugin.json at the {label} {commit[:12]}… is unreadable"
+        if found != version:
+            return False, (f"INCOHERENT INSTALL PIN: installing #{tag} resolves the {label} "
+                           f"{commit[:12]}…, whose plugin.json says version {found!r} — but this "
+                           f"release is {version!r} (tag commit {tagc[:12]}…). An adopter "
+                           f"installing by ref would receive {found!r}, not {version!r}. Re-pin "
+                           f"BEFORE tagging, then place the tag on the re-pin commit.")
+
+    # --- source.repo cross-check. The gate resolves the sha against the LOCAL repo, which is only
+    # meaningful if the local repo IS source.repo. Refuse on a definite mismatch; when origin is
+    # unresolvable say so in the detail rather than implying the check ran.
+    rc, origin = git("remote", "get-url", "origin")
+    note = ""
+    if rc == 0 and origin and repo:
+        norm = origin.rstrip("/")
+        for pre in ("git@github.com:", "https://github.com/", "ssh://git@github.com/"):
+            if norm.startswith(pre):
+                norm = norm[len(pre):]
+        norm = norm[:-4] if norm.endswith(".git") else norm
+        if norm.lower() != str(repo).lower():
+            return False, (f"source.repo at {tag} is {repo!r} but origin resolves to {norm!r}. The "
+                           f"pin was verified against THIS repo's objects; an install by ref would "
+                           f"fetch from {repo!r}, which was not checked.")
+    elif repo:
+        note = f"; source.repo {repo!r} NOT cross-checked (no resolvable origin remote)"
+    return True, (f"install pin at {tag} resolves {sha[:12]}… (version {version}, "
+                  f"{'tag commit' if sha == tagc else 'tag parent'}) — coherent{note}")
+
+
+def worktree_clean(tree):
+    """(ok, detail) — the candidate tree has no uncommitted tracked changes.
+
+    Load-bearing because of the AC-TPC-3 reorder: the tag now lands on R2, a commit made AFTER the
+    acceptance verdict. Any modification sitting here at cut time would be committed into R2 by the
+    plan's re-pin step and published under the release tag having never been seen by the suite or
+    the acceptance gate. Fails CLOSED when git cannot be run, same as tag_pin_coherence."""
+    try:
+        r = subprocess.run(["git", "-C", tree, "status", "--porcelain"],
+                           capture_output=True, text=True, timeout=30)
+    except Exception as e:
+        return False, f"cannot check the working tree: {type(e).__name__}: {e}"
+    if r.returncode != 0:
+        return False, f"cannot check the working tree: git status exited {r.returncode}"
+    dirty = [ln for ln in (r.stdout or "").splitlines() if ln.strip()]
+    if dirty:
+        return False, ("uncommitted changes present — the re-pin commit (R2) would sweep them into "
+                       f"the release tag ungated: {'; '.join(dirty[:5])}"
+                       f"{f' (+{len(dirty) - 5} more)' if len(dirty) > 5 else ''}")
+    return True, "clean"
+
+
 def preflight(tree, version, *, suite_runner=None):
     """The ordered cut preconditions as [(check, ok, detail)]. ok iff plugin==marketplace==version ∧
     source.ref==v<version> ∧ CHANGELOG has the `## v<version>` section ∧ the candidate tree's suite passes.
@@ -221,6 +380,13 @@ def preflight(tree, version, *, suite_runner=None):
          v["marketplace_ref"] == tag, f"source.ref={v['marketplace_ref']!r} expected={tag!r}"),
         ("CHANGELOG.md has the ## vTARGET section",
          cl_present, f"## {tag} section: present={cl_present}"),
+        # AC-TPC-9: the tree must be CLEAN. The reorder creates R2 (and places the tag on it) after
+        # the acceptance verdict, so anything left modified here would be swept into the release
+        # tag without ever having been gated. Checked cheaply, before the suite.
+        ("working tree is clean (R2 is created after the gate runs)",) + worktree_clean(tree),
+        # AC-TPC-2: what an adopter installing by ref actually resolves. Not applicable until the
+        # tag exists, so a first cut passes and a RE-run convicts an incoherent one.
+        ("install pin at vTARGET resolves this release",) + tag_pin_coherence(tree, version),
     ]
     if not all(c[1] for c in cheap):
         return cheap
@@ -228,16 +394,37 @@ def preflight(tree, version, *, suite_runner=None):
 
 
 def publish_plan(tree, version):
-    """The ordered publish plan as DATA (command strings) — NEVER executed. Encodes the recurring gotchas:
-    an annotated tag at the release commit → re-pin marketplace source.sha to the TAG COMMIT (NOT the
-    annotated-tag object) → push main+tag with NO force (reconcile by merge if a parallel push rejects)."""
+    """The ordered publish plan as DATA (command strings) — NEVER executed.
+
+    ORDER IS LOAD-BEARING (feat-foundry-tag-pin-coherence, AC-TPC-3): RE-PIN FIRST, THEN TAG.
+    Adopters install by ref, which resolves marketplace.json AT THE TAG. The previous order tagged
+    the release commit and re-pinned afterwards, so the tag's own tree still carried the PREVIOUS
+    release's sha and `marketplace add <repo>#vX.Y.Z` delivered the PREVIOUS version's code. That
+    shipped twice (v1.0.0, v1.0.1) and was hand-corrected both times by moving the tag.
+
+    A commit cannot contain its own hash, so the pin necessarily names the CONTENT commit (R) while
+    the tag sits on the PINNING commit (R2). Both are inside the released history, which is exactly
+    what the gate's adjacency check (AC-TPC-5) asserts.
+
+    THE RE-PIN COMMIT IS PATH-SCOPED, AND THE TAG IS RE-VERIFIED BEFORE ANY PUSH. Reordering moves
+    the tag off R (the commit the acceptance gate inspected) and onto R2, which is created AFTER the
+    verdict. A bare `commit -am` would sweep every modified tracked file into R2 and publish it under
+    the release tag having never been gated. Committing ONLY the manifest keeps R2's delta to the one
+    line the reorder exists for, and the `--verify-tag` step re-runs the machine check against the
+    tag that actually now exists — which is the ONLY point at which the coherence gate is not
+    structurally a no-op.
+    """
     tag = f"v{version}"
     return [
-        f"git -C {tree} tag -a {tag} -m 'agentic-foundry {tag}'   # annotated tag at the release commit (R)",
-        f"TAGSHA=$(git -C {tree} rev-parse {tag}^{{commit}})       # the TAG COMMIT, NOT the annotated-tag object",
-        "# edit .claude-plugin/marketplace.json: set plugins[foundry].source.sha = $TAGSHA (and source.ref = "
+        f"git -C {tree} status --porcelain                         # MUST be empty: R2 is created after the gate ran",
+        f"CONTENT=$(git -C {tree} rev-parse HEAD)                  # the release commit (R) — the code being shipped",
+        "# edit .claude-plugin/marketplace.json: set plugins[foundry].source.sha = $CONTENT (and source.ref = "
         f"{tag})",
-        f"git -C {tree} commit -am 'release: re-pin marketplace source.sha to the {tag} tag commit'  # separate commit (R2)",
+        f"git -C {tree} commit -m 'release: re-pin marketplace source.sha to the {tag} content commit' "
+        f"-- .claude-plugin/marketplace.json  # (R2) PATH-SCOPED — commit ONLY the manifest, or stray "
+        f"working-tree edits are swept into the tag ungated",
+        f"git -C {tree} tag -a {tag} -m 'agentic-foundry {tag}'    # annotated tag at R2 — the commit that CARRIES the pin",
+        f"python3 scripts/foundry-cut-release.py --tree {tree} --version {version} --verify-tag  # MACHINE re-check; must print TAG-PIN-COHERENT",
         f"git -C {tree} push origin main                           # never force-push",
         f"git -C {tree} push origin {tag}                          # if rejected by a parallel push: reconcile by MERGE, never force-push",
     ]
@@ -338,6 +525,17 @@ def _selftest():
         # BEFORE the injected runner (deliberately -- a missing suite must never be rescuable by
         # injection), so the fixture needs the directory for _GREEN_SUITE to be reached at all.
         os.makedirs(os.path.join(d, "tests"), exist_ok=True)
+        open(os.path.join(d, "tests", ".keep"), "w").close()
+        # A real candidate tree is ALSO a committed git checkout. The fixtures used to omit .git
+        # entirely, which meant tag_pin_coherence and worktree_clean could not run at all — and while
+        # the coherence check still reported "not applicable" that made the selftest a standing proof
+        # of READY on a tree the gate was structurally unable to inspect. Both now fail CLOSED on a
+        # non-repo, so the fixture must be a real repo or it would be proving the wrong thing.
+        for cmd in (["init", "-q", "-b", "main"],
+                    ["config", "user.email", "selftest@example.invalid"],
+                    ["config", "user.name", "selftest"],
+                    ["add", "-A"], ["commit", "-qm", "selftest fixture"]):
+            subprocess.run(["git", "-C", d, *cmd], capture_output=True, text=True, timeout=30)
 
     def snapshot(d):
         out = {}
@@ -384,27 +582,64 @@ def _selftest():
     with tempfile.TemporaryDirectory() as d:
         write_tree(d, plugin_v="0.7.0", mp_v="0.7.0", mp_ref="v0.7.0", changelog_v="0.7.0")
         before = snapshot(d)
+        refs_before = subprocess.run(["git", "-C", d, "show-ref"],
+                                     capture_output=True, text=True, timeout=30).stdout
+        head_before = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"],
+                                     capture_output=True, text=True, timeout=30).stdout
         r = cut_release(d, "0.7.0", acceptance_fn=lambda **k: PASS, suite_runner=_GREEN_SUITE)
         after = snapshot(d)
         plan = r["plan"] or []
         joined = "\n".join(plan)
-        tag_commit_repin = "rev-parse v0.7.0^{commit}" in joined and "source.sha" in joined
+        # AC-TPC-3: the plan must RE-PIN BEFORE TAGGING. Asserted on the index of the EXECUTABLE
+        # STEPS, never on substring positions in the joined text. A substring search finds
+        # "source.sha" in the human-readable `# edit …` COMMENT, so swapping the actual `git commit`
+        # and `git tag -a` steps — the literal v1.0.0/v1.0.1 defect — still satisfied it. That is a
+        # vacuous assertion, and it was here.
+        def _step(pred):
+            return next((n for n, s in enumerate(plan) if pred(s)), -1)
+        repin_at = _step(lambda s: s.startswith("git ") and " commit " in s and "source.sha" in s)
+        tag_at = _step(lambda s: s.startswith("git ") and " tag -a v0.7.0" in s)
+        repin_before_tag = 0 <= repin_at < tag_at
+        # …and the re-pin commit must be PATH-SCOPED. `commit -am` sweeps every modified tracked file
+        # into R2, which the tag then points at — content no gate ever inspected.
+        path_scoped = (repin_at >= 0 and "commit -am" not in plan[repin_at]
+                       and plan[repin_at].split("#")[0].rstrip().endswith(".claude-plugin/marketplace.json"))
+        verify_after_tag = 0 <= tag_at < _step(lambda s: "--verify-tag" in s)
+        tag_commit_repin = repin_before_tag and path_scoped and verify_after_tag and "rev-parse HEAD" in joined
         no_force = ("push origin main" in joined and "push origin v0.7.0" in joined and "--force" not in joined)
-        no_side_effects = (after == before and not os.path.exists(os.path.join(d, ".git"))
-                           and all(isinstance(x, str) for x in plan))
+        # The fixture is now a real repo, so "no side effects" is asserted the way the pytest suite
+        # asserts it: refs and HEAD unmoved, tree byte-identical — not "never created a .git".
+        rc_refs = subprocess.run(["git", "-C", d, "show-ref"], capture_output=True, text=True, timeout=30)
+        rc_head = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"], capture_output=True, text=True, timeout=30)
+        no_side_effects = (after == before and all(isinstance(x, str) for x in plan)
+                           and rc_refs.stdout == refs_before and rc_head.stdout == head_before)
+    # BOTH tokens are emitted. The prior atom's contract (specs/.../release-eng/cut-release,
+    # auth_seq=1) asserts the ORIGINAL token by exact string; renaming it would silently stop that
+    # authorized checkpoint from matching, and a release-gate assertion that quietly stops asserting
+    # is worse than the rename is tidy. The new token names what the check now covers.
     emit("cut-release-emits-tag-commit-repin-plan-no-push",
          tag_commit_repin and no_force and no_side_effects,
          f"tag_commit_repin={tag_commit_repin} no_force_push={no_force} no_side_effects={no_side_effects}")
+    emit("cut-release-emits-repin-then-tag-plan-no-push",
+         repin_before_tag and path_scoped and verify_after_tag,
+         f"repin_step_before_tag_step={repin_before_tag} repin_is_path_scoped={path_scoped} "
+         f"verify_tag_after_tag={verify_after_tag}")
 
     # ER #134 backstop fixtures: a two-section CHANGELOG whose v0.7.0 section cites ER #12 + ER #7 alongside
     # a bare #999 and a PR ref, and a v0.6.0 section citing ER #34 (must NOT leak into the v0.7.0 trace).
     def write_er_changelog(d):
+        # NOTE: commits at the end. preflight now requires a CLEAN working tree (the re-pin commit
+        # R2 is created after the acceptance verdict, so a dirty tree would ship ungated content
+        # under the release tag), and a fixture that edits after write_tree's commit is dirty.
         with open(os.path.join(d, "CHANGELOG.md"), "w") as f:
             f.write("# Changelog\n\n"
                     "## v0.7.0 — 2026-01-01 — the cut\n\n"
                     "Fixed the thing (`cap`, AC-X, ER #12). Also closes ER #7. Landed in PR #500 and #999.\n\n"
                     "## v0.6.0 — 2025-12-01 — prior\n\n"
                     "An older fix (ER #34) that belongs to the previous release.\n")
+        subprocess.run(["git", "-C", d, "add", "-A"], capture_output=True, text=True, timeout=30)
+        subprocess.run(["git", "-C", d, "commit", "-qm", "er changelog"],
+                       capture_output=True, text=True, timeout=30)
 
     UNAVAILABLE = lambda ers, **k: None                       # fail-safe: gh absent/offline
 
@@ -465,11 +700,23 @@ def main(argv=None):
     ap.add_argument("--version", help="the release version being cut (the operator picks it; no inference)")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--verify-tag", action="store_true",
+                    help="re-run ONLY the install-pin coherence check against an EXISTING tag "
+                         "vTARGET, after tagging and BEFORE pushing. This is the step at which the "
+                         "check stops being a no-op: during a first cut the tag does not exist yet, "
+                         "so cut-release can only assert the PLAN's order, not the artifact.")
     args = ap.parse_args(argv)
     if args.selftest:
         return _selftest()
     if not args.tree or not args.version:
         ap.error("--tree and --version are required (unless --selftest)")
+    if args.verify_tag:
+        # A dedicated, callable post-tag verifier. Without it AC-TPC-2 has no caller on the cut that
+        # creates the tag, and the only defense against recurrence is the operator following the
+        # plan's order by hand — which is exactly the procedural failure this atom exists to end.
+        ok, detail = tag_pin_coherence(os.path.abspath(args.tree), args.version)
+        print(f"{'TAG-PIN-COHERENT' if ok else 'TAG-PIN-INCOHERENT'}: {detail}")
+        return 0 if ok else 2
     try:
         # NO suite_runner here, EVER. The CLI must use the real subprocess runner; injecting a stub on this
         # path would make every cut report a fabricated green suite — strictly worse than the v0.27.0 hole

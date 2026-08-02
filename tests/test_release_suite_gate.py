@@ -39,6 +39,15 @@ def _tree(tmp_path, version="9.9.9", *, plugin_v=None, mp_v=None, mp_ref=None, c
     if tests:
         (root / "tests").mkdir(exist_ok=True)
         (root / "tests" / "test_fixture.py").write_text(test_body, encoding="utf-8")
+    # A candidate tree is a COMMITTED checkout. preflight now fails closed when it cannot inspect
+    # the repo (tag_pin_coherence) and when the tree is dirty (worktree_clean) — the tag lands on a
+    # commit created after the acceptance verdict, so an uncommitted edit would ship under the
+    # release tag ungated. A fixture without .git would be proving READY on a tree the gate is
+    # structurally unable to check, which is the fail-open these preconditions exist to close.
+    for cmd in (["init", "-q", "-b", "main"],
+                ["config", "user.email", "t@example.invalid"], ["config", "user.name", "t"],
+                ["add", "-A"], ["commit", "-qm", "fixture"]):
+        subprocess.run(["git", "-C", str(root), *cmd], capture_output=True, text=True, timeout=30)
     return str(root)
 
 
