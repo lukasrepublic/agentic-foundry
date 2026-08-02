@@ -57,18 +57,30 @@ By design it never passes vacuously. The refusal names what's missing:
 
 - **No journeys tagged for an atom** → write the Playwright journeys the contract's AC-IDs
   name, or remove the atom from the release manifest.
-- **No boot recipe** → certification resolves the boot command from the **active stack
-  profile's** `app_exercise_binding.boot`, which requires `.foundry/stack-profile.lock` to
-  exist and resolve; see `packs/stack-profiles/<yours>/`.
+- **No boot recipe** → certification resolves the boot recipe with **the project's own
+  declaration first**:
+  1. `repos.<key>.boot_command` in `.claude/foundry-project.json`, keyed under the release's
+     resolved venue (`workspace` for the merge-gate sentinel / single-repo self-host default, or
+     the explicit `target_repo` key) — wins whenever it is a non-empty string, and the active
+     stack profile is **not consulted at all**.
+  2. Otherwise, the **active stack profile's** `app_exercise_binding.boot`, which requires
+     `.foundry/stack-profile.lock` to exist and resolve; see `packs/stack-profiles/<yours>/`.
 
-  > **Known limitation (v1).** No shipped verb creates that lock. `/foundry:relock` refreshes
-  > an existing one and refuses when there is none ("nothing to relock"), so an adopter who has
-  > never had a lock cannot reach `certify-local`, `/foundry:verify`, or the `id-*` lane's
-  > `infra_binding`. The `repos.<key>.boot_command` field in `.claude/foundry-project.json` is
-  > accepted by the schema but is **not** read by certification today. Wiring that field as the
-  > first-precedence boot recipe, and folding lock creation into `/foundry:init` (the
-  > `terraform init` shape), are tracked fixes — until they land, this path is not reachable
-  > from a clean install and we would rather say so than let you hunt for the flag.
+  A refusal always names declaring `boot_command` as the remedy, and additionally names
+  "activate a different stack profile" only when a `.foundry/stack-profile.lock` already exists
+  (relocking is reachable only once a lock exists — naming it unconditionally would be a
+  dead-end pointer).
+
+  > **Known limitation (v1), narrowed.** `repos.<key>.boot_command` now makes certification
+  > reachable from a clean install — declare it and `certify-local` boots from it, no lock
+  > required. What remains unreached: the **profile path**. No shipped verb *creates*
+  > `.foundry/stack-profile.lock` — `/foundry:relock` refreshes an existing one and refuses
+  > when there is none ("nothing to relock") — so an adopter who has never had a lock still
+  > cannot reach `/foundry:verify` or the `id-*` lane's `infra_binding` via a profile, and
+  > `certify-local` itself only reaches the profile fallback once a lock already exists.
+  > Folding lock creation into `/foundry:init` (the `terraform init` shape) is a tracked fix
+  > (`feat-foundry-stack-profile-lock-create`) — until it lands, only the `boot_command` path is
+  > reachable from a clean install.
 
 ## The authorize gate refused to freeze
 
