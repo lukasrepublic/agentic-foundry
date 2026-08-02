@@ -12,6 +12,17 @@ profile *version*, the locked `version`/`sha256` no longer match the profile now
 missing re-lock — the npm `update` / `terraform init -upgrade` / `/foundry:upgrade` (now a no-op pointer) "the
 trusted action re-pins the lock" pattern, for the stack-profile lock.
 
+**Refresh, not create — its sibling is `--lock` (`feat-foundry-stack-profile-lock-create`).**
+`relock` re-resolves an id-set that is **already locked**; it refuses outright when no lock exists
+("nothing to relock") and never adds/removes a profile. To **adopt** a profile for the first time —
+when there is no `.foundry/stack-profile.lock` yet — run
+`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-stack-profile.py" --lock <id>[,<id>…]` instead (or
+let `/foundry:init` drive it). The two verbs share the SAME entry-builder and the SAME
+trusted-resolve guardrails (schema-valid, present in `packs/`, `requires_core` satisfied, no
+core-plugin `skills/` bundle leak) so a lock either verb writes always resolves the same way; they
+stay separate operations so `--lock` never silently re-points an adopter's existing lock and
+`relock` never silently creates one that was never adopted.
+
 ## When to trigger
 
 - `/foundry:doctor` shows `stack-profile … does not resolve` **and** the cause is a **known trusted
@@ -43,7 +54,8 @@ trusted action re-pins the lock" pattern, for the stack-profile lock.
 ## What it does NOT do
 
 - **It re-locks only the profiles already in the lock** — it never adds or removes a profile. To adopt a
-  *new* profile, edit the lock / re-run the adoption flow, not `--relock`.
+  *new* profile, run `--lock <id>` (a fresh workspace) or hand-edit + re-run for an id-set change; never
+  `--relock`.
 - **It never blindly copies a sha to silence a mismatch.** Each profile must load + schema-validate + admit
   the running core + not be a downgrade before *any* byte is written; otherwise it fail-closes with the lock
   untouched.

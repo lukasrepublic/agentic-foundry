@@ -71,16 +71,25 @@ By design it never passes vacuously. The refusal names what's missing:
   (relocking is reachable only once a lock exists — naming it unconditionally would be a
   dead-end pointer).
 
-  > **Known limitation (v1), narrowed.** `repos.<key>.boot_command` now makes certification
-  > reachable from a clean install — declare it and `certify-local` boots from it, no lock
-  > required. What remains unreached: the **profile path**. No shipped verb *creates*
-  > `.foundry/stack-profile.lock` — `/foundry:relock` refreshes an existing one and refuses
-  > when there is none ("nothing to relock") — so an adopter who has never had a lock still
-  > cannot reach `/foundry:verify` or the `id-*` lane's `infra_binding` via a profile, and
-  > `certify-local` itself only reaches the profile fallback once a lock already exists.
-  > Folding lock creation into `/foundry:init` (the `terraform init` shape) is a tracked fix
-  > (`feat-foundry-stack-profile-lock-create`) — until it lands, only the `boot_command` path is
-  > reachable from a clean install.
+  If there is no lock yet, create one:
+
+  ```bash
+  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-stack-profile.py" --lock <id>[,<id>…]
+  ```
+
+  (`/foundry:init` offers this during onboarding; run it directly to adopt a profile later.) It
+  refuses — with no write — if a lock already exists (run `/foundry:relock` to refresh instead),
+  the lock file present is corrupt (the refusal names the remedy), an id is unknown (the refusal
+  lists the ids available under `packs/stack-profiles/`), or any named id is schema-invalid,
+  core-incompatible, or leaks into the core plugin's `skills/` bundle.
+
+  > **Resolved (previously known limitations).** Earlier releases shipped no lock-create verb —
+  > `/foundry:relock` only refreshed an existing lock ("nothing to relock") — and
+  > `repos.<key>.boot_command` was accepted by the schema but never read. Both are fixed in this
+  > release: `--lock` (above) creates the lock (`feat-foundry-stack-profile-lock-create`), and
+  > `boot_command` is now the first-precedence boot recipe
+  > (`feat-foundry-boot-recipe-precedence`) — certification is reachable from a clean install by
+  > either path.
 
 ## The authorize gate refused to freeze
 
