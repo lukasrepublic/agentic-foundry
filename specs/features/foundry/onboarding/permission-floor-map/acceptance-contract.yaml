@@ -1,0 +1,94 @@
+# Acceptance contract — sibling of feat-foundry-permission-floor-map.md (v1.1).
+# Code repo agentic-foundry. Realizes ER atom 2 of intake/er-onboarding-wizard-and-permission-floor.md:
+# the 2026-08-01 classifier sweep found the shipped plugin writes NO permission configuration, and the
+# in-session /foundry:init structurally cannot scaffold one (a model editing its own confinement is a
+# blocked shape — confirmed live). This atom ships the DECLARATION only: docs/permission-floor.json, the
+# three-tier allow/ask/deny map of every command shape the workflow instructs, one {rule, tier, rationale}
+# entry per shape, plus tests/test_permission_floor_map.py which derives ground truth from the shipped tree
+# so a new un-tiered INVOCABLE script (*.py, *.sh, or an owner-executable extensionless file) FAILS CLOSED.
+#
+# THE MAP GRANTS NOTHING. It is inert data: no hook, gate, authorization path, or runtime reads it in this
+# atom. Consent stays at the platform workspace-trust dialog (committed `allow` rules apply only after it;
+# deny/ask apply immediately). The consumers — the pre-session bootstrap CLI (ER atom 1) and the doctor
+# drift check (ER atom 4) — are OUT OF SCOPE here.
+#
+# No hook, no schema, no workflow, no authorization file is touched => NO wiring re-pin, no meta-regress,
+# no new exec seam. The deny tier is declared belt-and-braces behind the hook-enforced force-push /
+# destructive-op floor, never as coverage (spec R3). Declaring `authorize` at `ask` is a DELIBERATE change
+# to floor #1's harness posture (classifier hard-block -> one-keypress) per the ER's class-C decision — see
+# the spec's Security posture and R6 (the ask->allow decay through settings.local.json).
+#
+# Live-seam: `python3 -m pytest tests/test_permission_floor_map.py -q` (per-case -k selection below) plus
+# the DOCTOR-GREEN regression on this repo.
+spec_ref: specs/features/foundry/onboarding/permission-floor-map/feat-foundry-permission-floor-map.md
+spec_sha256: "0000000000000000000000000000000000000000000000000000000000000000"  # /foundry:authorize fills this
+target_repo: agentic-foundry
+scope:
+  allowed_paths:
+    - "docs/permission-floor.json"          # NEW — the canonical three-tier map (AC-PFM-1..4, -6); the only data artifact
+    - "tests/test_permission_floor_map.py"  # NEW — named by every checkpoint below (AC-PFM-5), incl. the five negative controls
+    - "CHANGELOG.md"
+  denied_paths:
+    - "hooks/**"                            # data only: no hook, no wiring change, no re-pin
+    - "scripts/foundry-authorize.py"        # the map RECORDS that authorize is a ceremony; it never edits the ceremony
+    - "scripts/foundry_authz.py"
+    - ".github/workflows/**"                # no new CI job/step, and no security-path widening here (spec R7)
+    - "schema/**"
+checkpoints:
+  # House `&& echo <TOKEN>` form; one checkpoint per named case.
+
+  # --- AC-PFM-1 — schema/shape: required keys, exact per-entry keys, closed tier set, unique rules,
+  #     unique not_invoked scripts, provenance field
+  - {ac_id: AC-PFM-1, surface: "file:docs/permission-floor.json", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_map.py -q -k map_schema_is_wellformed && echo PFM-1-SCHEMA-OK'", expect: {op: matches, value: "PFM-1-SCHEMA-OK", baseline: pre-change}}
+
+  # --- AC-PFM-1 — plugin_root_glob is EXACTLY `~/.claude/plugins/cache/*/foundry/*` (the pinned cache shape)
+  - {ac_id: AC-PFM-1, surface: "file:docs/permission-floor.json", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_map.py -q -k plugin_root_glob_is_the_pinned_cache_shape && echo PFM-1-GLOB-OK'", expect: {op: matches, value: "PFM-1-GLOB-OK", baseline: pre-change}}
+
+  # --- AC-PFM-2 — closed-world coverage: every INVOCABLE scripts/ file is tiered XOR excluded
+  - {ac_id: AC-PFM-2, surface: "file:docs/permission-floor.json", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_map.py -q -k every_script_is_tiered_exactly_once && echo PFM-2-COVERAGE-OK'", expect: {op: matches, value: "PFM-2-COVERAGE-OK", baseline: pre-change}}
+
+  # --- AC-PFM-2 — multi-entry scripts: all entries same tier, or pairwise reach-disjoint per AC-PFM-6
+  - {ac_id: AC-PFM-2, surface: "file:docs/permission-floor.json", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_map.py -q -k tiers_per_script_are_coherent && echo PFM-2-SAMETIER-OK'", expect: {op: matches, value: "PFM-2-SAMETIER-OK", baseline: pre-change}}
+
+  # --- AC-PFM-2 — the reverse direction: no map entry names a script absent from the shipped tree
+  - {ac_id: AC-PFM-2, surface: "file:docs/permission-floor.json", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_map.py -q -k no_dangling_map_entries && echo PFM-2-NODANGLE-OK'", expect: {op: matches, value: "PFM-2-NODANGLE-OK", baseline: pre-change}}
+
+  # --- AC-PFM-2 — not_invoked truth check: no excluded basename sits in command position in skills/hooks
+  - {ac_id: AC-PFM-2, surface: "file:docs/permission-floor.json", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_map.py -q -k not_invoked_scripts_are_never_commanded && echo PFM-2-NOTINVOKED-OK'", expect: {op: matches, value: "PFM-2-NOTINVOKED-OK", baseline: pre-change}}
+
+  # --- AC-PFM-3 — the twelve ask ceremonies + the four deny anti-patterns present VERBATIM at their tier,
+  #     plus the `git push` shaping rule (no bare `Bash(git push:*)` at any tier)
+  - {ac_id: AC-PFM-3, surface: "file:docs/permission-floor.json", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_map.py -q -k ceremony_and_denial_rules_are_pinned && echo PFM-3-PINNED-OK'", expect: {op: matches, value: "PFM-3-PINNED-OK", baseline: pre-change}}
+
+  # --- AC-PFM-4 — Bash(...) shape, prefix-anchored, wildcards only in the plugin-root prefix or trailing :*
+  - {ac_id: AC-PFM-4, surface: "file:docs/permission-floor.json", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_map.py -q -k rules_are_prefix_anchored_bash_rules && echo PFM-4-SYNTAX-OK'", expect: {op: matches, value: "PFM-4-SYNTAX-OK", baseline: pre-change}}
+
+  # --- AC-PFM-5 THE META-TEST — coverage must FAIL on a temp tree carrying one extra un-tiered .py script,
+  #     or AC-PFM-2 is vacuous. Drives the coverage check over an explicit (tree_root, parsed_map) pair.
+  - {ac_id: AC-PFM-5, surface: "test:tests/test_permission_floor_map.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_map.py -q -k coverage_assertion_is_not_vacuous && echo PFM-5-META-OK'", expect: {op: matches, value: "PFM-5-META-OK", baseline: pre-change}}
+
+  # --- AC-PFM-5 — the remaining four negative controls all FIRE: un-tiered .sh, un-tiered extensionless
+  #     executable, dangling map entry (reverse direction), blanket scripts allow beneath an ask pin
+  - {ac_id: AC-PFM-5, surface: "test:tests/test_permission_floor_map.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_map.py -q -k negative_controls_all_fire && echo PFM-5-CONTROLS-OK'", expect: {op: matches, value: "PFM-5-CONTROLS-OK", baseline: pre-change}}
+
+  # --- AC-PFM-5 — the whole module green (every AC case + every control, no skip/xfail)
+  - {ac_id: AC-PFM-5, surface: "test:tests/test_permission_floor_map.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_map.py -q && echo PFM-5-SUITE-OK'", expect: {op: matches, value: "PFM-5-SUITE-OK", baseline: pre-change}}
+
+  # --- AC-PFM-6 — no prefix rule subsumes an entry carrying a different tier (split tiers must be disjoint)
+  - {ac_id: AC-PFM-6, surface: "file:docs/permission-floor.json", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_map.py -q -k no_rule_subsumes_a_different_tier && echo PFM-6-SUBSUME-OK'", expect: {op: matches, value: "PFM-6-SUBSUME-OK", baseline: pre-change}}
+
+  # --- AC-PFM-6 — every rule naming the plugin scripts dir names a concrete ground-truth basename
+  - {ac_id: AC-PFM-6, surface: "file:docs/permission-floor.json", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_map.py -q -k scripts_dir_rules_name_a_concrete_script && echo PFM-6-CONCRETE-OK'", expect: {op: matches, value: "PFM-6-CONCRETE-OK", baseline: pre-change}}
+
+  # --- AC-PFM-7 — DOCTOR-GREEN regression on this very repo (data + test only; no hook, no gate)
+  - {ac_id: AC-PFM-7, surface: "cli:foundry-doctor", locator: "sh -c 'python3 scripts/foundry-doctor.py | tail -1'", expect: {op: matches, value: "DOCTOR-GREEN", baseline: none}}
+# /foundry:authorize appends the signed `authorized:` trailer below a sentinel (excluded from contract_sha256).
+# === FOUNDRY-AUTHORIZED-TRAILER (excluded from contract_sha256) ===
+authorized:
+  operator_id: op_lukas
+  authorized_at: 2026-08-02T15:15:30Z
+  auth_seq: 1
+  supersedes: null
+  spec_sha256: 103aadc58c638ca7dc294d71f62f64362b232690f2b73d147ece8fe6fc81c3ec
+  contract_sha256: 682eed7373e61d1192131576cdb028702e2ddcebd0f99dba5c58941a00195883
+  merge_autonomy_mode: lean

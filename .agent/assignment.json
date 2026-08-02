@@ -1,1 +1,1 @@
-{"target_repo": "agentic-foundry", "task": "wave-w1-gdf", "agent": "release-wave-worker", "contract_ref": "specs/features/foundry/onboarding/gate-denial-fallback/acceptance-contract.yaml"}
+{"target_repo": "agentic-foundry", "task": "wave-w1-pfm", "agent": "release-wave-worker", "contract_ref": "specs/features/foundry/onboarding/permission-floor-map/acceptance-contract.yaml"}
