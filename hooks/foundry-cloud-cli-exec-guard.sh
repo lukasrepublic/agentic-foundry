@@ -485,7 +485,9 @@ if [ "$rc" -ne 0 ] || [ -z "$verdict" ]; then
   if [ -n "${wrapper_in:-}" ] && [ -n "$(printf '%s' "${wrapper_in:-}" | tr -d '[:space:]')" ]; then
     if [ "$EVAL_MODE" -eq 1 ]; then echo "BLOCK internal evaluator error (fail-closed)"; exit 2; fi
     echo "foundry-cloud-cli-exec-guard: internal evaluator error with a wrapper configured; fail-closed BLOCK." >&2
-    echo "  command: $cmd" >&2
+    # Security review 2026-08-02: never echo the raw command on the error path — the AC-CGP-1e
+    # redaction lives in the (failed) evaluator, so a raw echo here would leak inline secrets.
+    echo "  (command withheld: the redacting evaluator failed, so it cannot be safely echoed)" >&2
     exit 2
   fi
   # No wrapper configured => INERT (an unconfigured adopter is never affected).
@@ -504,7 +506,7 @@ case "$verdict" in
     fi
     echo "FOUNDRY CLOUD-CLI EXEC-GUARD: BLOCKED (fail-closed) — a guarded cloud/IaC CLI was run bare, bypassing the guarded-exec wrapper." >&2
     echo "  ${verdict#BLOCK }" >&2
-    echo "  Route the tool through the wrapper. This guard has NO in-session off-switch; to proceed, route via the wrapper or run it yourself outside the agent." >&2
+    echo "  Route the tool through the wrapper. This guard takes no per-invocation override flag; its enforcement follows the project config's wrapper setting. To proceed, route via the wrapper or run it yourself outside the agent." >&2
     exit 2
     ;;
   ALLOW)
