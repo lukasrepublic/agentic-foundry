@@ -59,6 +59,20 @@ which already-executed declaration is consulted first, not whether a command is 
 
 **Security review:** floor holds (2026-08-02 pass over PRs 50-53) — trusted-resolve guardrails shared with relock; validate-before-write; TOFU pack-trust residual recorded.
 
+- **Control-plane preflight.** `/foundry:doctor` gains a sixth probe, `control-plane`: it catches
+  a session started in the wrong root — rooted directly IN a repo an ancestor
+  `.claude/foundry-project.json` already names as hosted (`repos{}`), rooted BELOW a control
+  plane without being its root, or carrying a dangling `repos{}` path in its own manifest. The
+  bounded ancestor walk (`scripts/foundry_control_plane.py`, new — shared by the doctor AND
+  `/foundry:init`, which now runs it as its scripted first step, before any write) deliberately
+  crosses ancestor `.git` and filesystem-mount boundaries rather than stopping at them, since the
+  hosted repo it must see past always carries its own `.git`. This is a MISTAKE-CATCHER for the
+  operator, not a floor: `--session-start` still fails open (a warning only), and the
+  operator-invoked exit code is the only enforcement — see
+  `specs/features/foundry/adoption/control-plane-preflight/feat-foundry-control-plane-preflight.md`
+  for the full contract, including the narrow residual (unreachable only when the plugin was
+  enabled strictly per-project, never the common user-wide install).
+
 - **Substance gate no longer counts synthetic local-command records as user turns; the reflection
   cadence wording is now honest.** The Stop-hook substance gate's limb (c) ("genuine user turns")
   was counting Claude Code's own local-slash-command transcript records (`<command-name>…`,
