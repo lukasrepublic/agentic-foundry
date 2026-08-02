@@ -32,6 +32,39 @@ All notable changes to Agentic Foundry are documented here (SemVer).
   no-silent-subsumption rule across tiers — with five materialized negative-control fixtures
   proving each fail-closed direction actually fires.
 
+### Harness-denial fallback discipline across the seven ceremony-instructing skills (feat-foundry-gate-denial-fallback, AC-GDF-1..5)
+
+- **When the harness denies a ceremony command, the model now has an instruction, not a guess.**
+  `docs/harness-denial-fallback.md` ships one canonical, delimited clause with three limbs: **(a)**
+  hand the denied invocation back byte-identical (modulo the leading in-session `!`), never
+  freeform-composed and never lifted from a spec or PR body, naming any override/exception flag
+  (`--yes`, `--skip-audit-reason`, `--reauth-after-impl`, `--admin`, `-auto-approve`) in plain
+  language above the block; **(b)** STOP — never retry the call, never route around it via another
+  tool or credential, explicitly excluding a verb's own documented degraded path
+  (`UPSTREAM-SUBMIT-LABEL-DEGRADED`, `cut-release`'s `REFUSED`/`GATED`); **(c)** name the durable
+  fix — `.claude/settings.json` and the native trust dialog, since chat confirmation is never a
+  consent channel.
+- **Single-sourced, pointer-checked.** Each of the seven ceremony-instructing skills
+  (`authorize`, `authorize-release`, `cut-release`, `decommission-gate`, `release`,
+  `upstream-submit`, `id-apply`) carries a one-line pointer (path + `STOP` + a
+  harness/permission-denial trigger word) rather than a copy, so voices and lengths stay native to
+  each skill while a three-way set equality (enumerated seven ⟷ the clause's own roster ⟷ the
+  on-disk pointers) convicts a half-done addition.
+- **No un-negated retry instruction survives the checked text.** A sentence-scoped negation check
+  over the delimited region plus every pointer line fails the build if any retry/route-around/
+  bypass wording appears without a `never`/`do not`/`must not` earlier in its own sentence — with a
+  single named exemption for the `**Resuming after a real grant.**` paragraph, where the accurate
+  rule (re-running is correct once state changed through a real consent channel) is expressible.
+- `tests/test_gate_denial_fallback.py` + `tests/support_gate_denial_fallback.py` assert AC-GDF-1..3
+  over the real tree and run a 5-case mutation negative control (`pointer-removed`, `limb-dropped`,
+  `limb-a-literal-dropped`, `retry-instruction`, `enumeration-desynced`) proving the suite is not
+  unconditionally green.
+
+**Security review:** not flagged — prose-only atom (a doc + skill-instruction text + two new test
+files); `hooks/**`, `scripts/**`, `schema/**` and `.github/workflows/**` are contract-denied, so no
+gate decision, permission rule, hook, or CI check is touched. The discipline reinforces the harness
+denial (limb (b) forbids verbatim retry and tool substitution) rather than working around it.
+
 ## v1.1.0 — 2026-08-02
 
 ### The project's own `boot_command` now wins certification's boot-recipe resolution (feat-foundry-boot-recipe-precedence, AC-BRP-1..8)
