@@ -1,0 +1,335 @@
+# Acceptance contract — sibling of feat-foundry-workspace-repo-verbs.md (v1.1).
+#
+# Code repo agentic-foundry; allowed_paths are relative to that repo root. Ships the control plane's
+# governed-repo FLEET VERBS over the formalized registry — the repo/vcstool/meta/myrepos universal
+# triad plus the round-trip validator:
+#   sync     — idempotent reconcile: CLONE the not-cloned rows that declare a remote, FETCH the
+#              present checkouts whose origin is exactly `match`, and REPORT everything else untouched
+#   status   — one honest line per entry: present · origin · branch · ahead/behind · dirty
+#   foreach  — shell-free argv fan-out over PRESENT repos, fail-collecting, child output captured
+#   validate — manifest <-> reality <-> gitignore, INCLUDING the reverse direction the registry atom
+#              deferred by name (a checkout on disk with no repos{} row = `undeclared-checkout`,
+#              carrying its discovered origin — the vcstool `vcs export` analog)
+#
+# THE MUTATION FLOOR IS THE POINT. clone + fetch are the ENTIRE mutation vocabulary — no checkout,
+# reset, merge, rebase, pull, push, clean, stash, branch, remote, submodule, no --force/--force-sync.
+# An existing tree is never rewritten: drift is SURFACED, NEVER FIXED (the id-drift posture, and the
+# deliberate departure from `repo sync`/`vcs pull`, which do update working files).
+#
+# THE HARDENING STANDARD IS THE CORPUS'S OWN, ADOPTED WHOLE (feat-foundry-leak-scan-ls-remote-sink,
+# delivered). EVERY git child — network-capable or not — carries the fixed, NON-MANIFEST-DERIVED
+# hardening set (credential.helper=, core.askPass=, core.fsmonitor=, core.sshCommand=ssh -o
+# BatchMode=yes, protocol.ext.allow=never, protocol.allow=never + https/ssh/file=always,
+# fetch.recurseSubmodules=no, submodule.recurse=false) under the SUBTRACTIVE sink environment
+# (GIT_DIR/GIT_WORK_TREE/GIT_CONFIG_*/GIT_SSH*/GIT_ASKPASS/SSH_ASKPASS removed, GIT_TERMINAL_PROMPT=0
+# pinned). Per AC-LSH-3's standard the checkpoints assert ABSENT OBSERVABLE SIDE EFFECTS (a planted
+# hostile core.fsmonitor / core.sshCommand does NOT fire, with a positive control), never argv strings
+# alone — an argv assertion stays green against an implementation that adds the flag and drops the
+# anchoring.
+#
+# THE ADMITTED REMOTE FORMS ARE LOADED, NOT RE-IMPLEMENTED: AC-WRV-3 decides remote form with the
+# leak scan's own `url_is_allowed_form` / `_is_local_path_escape_hatch` (https://, ssh://, scp-form,
+# absolute local dir; git:// and http:// and file:// and EVERY <name>:: transport-helper rejected BY
+# RULE), path-loaded via the shipped spec_from_file_location device. That module and its suites are
+# DENIED here, so the allow-list cannot be weakened or forked. The refusal checkpoint uses the
+# sibling suite's GENERICITY DEVICE (a uuid-generated helper name, absent from both sources), which
+# no enumeration can pre-satisfy.
+#
+# THE SCHEMA FLOOR IS NOT A RUNTIME CONTROL. AC-RRF-2's shape floor runs only under the advisory
+# `foundry-config.py check`, which nothing invokes as a precondition — so AC-WRV-3's own boundary
+# re-validation is the SOLE runtime control and is asserted as such.
+#
+# THE SIBLING REGISTRY IS CONSUMED, NOT RE-DERIVED — AND THAT IS STRUCTURAL. scripts/
+# foundry_repo_registry.py (feat-foundry-repo-registry-formalization, authorized) owns the per-entry
+# classification, the {degraded, degraded_reason, rows} envelope, and the ONE sanitizing emission
+# sink; it is DENIED scope here, the same move that atom made by denying scripts/foundry-config.py.
+#
+# MERGE ORDER IS A PRECONDITION, THREE ATOMS DEEP (spec R1): feat-foundry-control-plane-preflight
+# (auth_seq 1) -> feat-foundry-control-plane-docs -> this atom, and feat-foundry-repo-registry-
+# formalization lands FIRST of all (scripts/foundry_repo_registry.py does not exist on disk yet and
+# every AC consumes it). Operator-held sequencing, deliberately not a checkpoint.
+#
+# NO MANIFEST-DERIVED VALUE REACHES AN OPTION POSITION: clone/fetch are fixed argv with `--` before
+# every manifest-derived positional (and fetch NAMES THE DECLARED REMOTE there — never the checkout's
+# configured origin); commands inside an existing checkout run with the PHYSICALLY resolved path as
+# the child's cwd, never `git -C <path>` (which no `--` can guard). foreach passes the operator's
+# command as argv after `--` and spawns no shell at all — the departure from `repo forall -c` /
+# `git submodule foreach`, both of which evaluate through a shell.
+#
+# THE MODULE IS `scripts/foundry_repo_fleet.py` (UNDERSCORED): the Wave-3 wizard must `import` the
+# AC-WRV-10 reconcile callable, and a hyphen is not a Python identifier. The corpus already draws this
+# line — foundry_repo_registry.py / foundry_authz.py are imported by name; hyphenated files are
+# entrypoints only. The verb an operator types is unchanged: /foundry:repos.
+#
+# THE NEW VERB IS `/foundry:repos`, NOT a `fleet-` sibling: skills/ was inspected and no skill owns the
+# governed-repo registry; the shipped `/foundry:fleet` is the SESSION ROSTER (one row per active Claude
+# Code session — scripts/foundry-fleet-roster.py; the adopter-health foundry-fleet-doctor.py is
+# UNWIRED, referenced by no skill/doc/test), so the two are separated by name and by an AC-WRV-9
+# description clause. Registering a new skill drags two shipped locks: the VERBS-QUICK-REF <->
+# skills/*/SKILL.md bijection (tests/test_docs_claims.py) and README.md's derived `other ~N skills`
+# claim (tests/test_doc_claims.py) — both DENIED here and run unmodified as regressions.
+#
+# Live-seam: `python3 -m pytest tests/test_repo_fleet.py -q` — the real module driven over materialized
+# tmp_path fixtures (git init'd checkouts, local-path remotes, real .gitignore files, planted hostile
+# .git/config values, captured argv + child env).
+spec_ref: specs/features/foundry/onboarding/workspace-repo-verbs/feat-foundry-workspace-repo-verbs.md
+spec_sha256: "0000000000000000000000000000000000000000000000000000000000000000"  # /foundry:authorize fills this
+target_repo: agentic-foundry
+mandatory_review:
+  - review: security
+    required: true
+    rationale: >-
+      This atom opens the control plane's FIRST network egress (git clone / git fetch) and runs git
+      inside checkouts and against remotes it does not control — the workspace floor's security-review
+      trigger (CLAUDE.md, both-modes floor #3). The review must confirm (1) AC-WRV-3's boundary
+      re-validation is the sole runtime control and re-derives remote form, shape and PHYSICAL path
+      confinement from the row's own values, refusing before any socket, with the admitted-form
+      predicate LOADED from scripts/foundry-prepublication-leak-scan.py rather than re-implemented;
+      (2) every git child carries the full hardening set and the subtractive sink environment
+      (AC-WRV-11), verified by ABSENT observable side effects with a positive control, per AC-LSH-3;
+      (3) submodule recursion is off on clone AND fetch and the protocol.* pinning bounds the
+      transport layer (AC-WRV-12), so one declared remote cannot amplify into an undeclared one;
+      (4) fetch names the DECLARED remote positionally after `--` and no non-`match` row is fetched
+      (AC-WRV-2); (5) no credential is read, stored, printed or passed, and every emitted string —
+      including captured foreach child output — passes through the registry module's single sink
+      (AC-WRV-8); and (6) the cloned-tree inertness NON-promise (AC-WRV-12) is stated in --help and
+      the skill, since a cloned repo's CLAUDE.md/.claude/**/.mcp.json become discoverable inside a
+      Claude Code root.
+scope:
+  allowed_paths:
+    - "scripts/foundry_repo_fleet.py"             # NEW — AC-WRV-1..12: the four verbs + the AC-WRV-10
+                                                  #   reconcile callable the Wave-3 wizard imports
+    - "tests/test_repo_fleet.py"                  # NEW — named by every checkpoint below
+    - "skills/repos/SKILL.md"                     # NEW — AC-WRV-9: /foundry:repos <sync|status|
+                                                  #   foreach|validate>, disambiguated from /foundry:
+                                                  #   fleet; AC-WRV-12: the inertness non-promise
+    - "docs/VERBS-QUICK-REF.md"                   # AC-WRV-9: the shipped skill <-> reference bijection
+    - "README.md"                                 # AC-WRV-9: the derived `other ~N skills` claim
+    - "docs/how-to/multi-repo-control-plane.md"   # AC-WRV-9: the verbs section ONLY (shared with
+                                                  #   feat-foundry-control-plane-docs — spec R1/R2)
+    - "CHANGELOG.md"                              # AC-WRV-9: named in the TOPMOST release section
+  denied_paths:
+    - "scripts/foundry_repo_registry.py"          # the frozen classifier + envelope + redaction sink:
+                                                  #   CONSUMED unmodified (AC-WRV-2/-6/-7/-8/-10)
+    - "tests/test_repo_registry.py"               # its regression value depends on being unmodified
+    - "scripts/foundry-prepublication-leak-scan.py"  # the reviewed remote allow-list + the hardening
+                                                  #   standard: LOADED unmodified (AC-WRV-3/-11)
+    - "tests/test_prepublication_leak_scan.py"    # both leak-scan suites stay unmodified — an edit
+    - "tests/test_leak_scan_remote_forms.py"      #   here would be loosening the borrowed floor
+    - "tests/test_doc_claims.py"                  # the skill-count + doc-claim locks must be SATISFIED,
+    - "tests/test_docs_claims.py"                 #   never loosened, by the new skill + verbs section
+    - "scripts/foundry-config.py"                 # the schema's advisory drift checker is untouched
+    - "scripts/foundry-doctor.py"                 # conviction belongs to feat-foundry-control-plane-
+                                                  #   preflight; these verbs are advisory
+    - "scripts/foundry-wt"                        # the dispatch resolver + .worktrees/ convention this
+                                                  #   atom's reverse scan EXCLUDES — read, never written
+    - "scripts/foundry-bootstrap.sh"              # the cited credential-surface precedent, unmodified
+    - "scripts/foundry-authorize.py"              # no gate reads these verbs or their exit codes
+    - "scripts/foundry_authz.py"
+    - "schema/**"                                 # the manifest schema is the sibling atom's (incl.
+                                                  #   the repos-key `propertyNames` follow-on, spec R10)
+    - "hooks/**"                                  # no new hook, no wiring re-pin
+    - ".github/workflows/**"                      # no new CI step — the module rides `pytest tests/`
+    - "skills/fleet/**"                           # the session roster is a different verb and is not
+                                                  #   fused into this one
+checkpoints:
+  # House `&& echo <TOKEN>` form; one checkpoint per named case. Every locator runs from the
+  # agentic-foundry repo root.
+
+  # --- AC-WRV-1 THE MUTATION FLOOR, asserted on CAPTURED ARGV: over a full sync + status + foreach +
+  #     validate run, every git invocation is drawn from the closed set, shell=False, carries no
+  #     checkout/reset/merge/rebase/pull/push/clean/stash/branch/remote/submodule/gc and no
+  #     --force/-f/--hard/--force-sync, BEGINS with the fixed hardening-set `-c` prefix before its
+  #     subcommand, places `--` before every manifest-derived positional, and uses cwd= rather than
+  #     `git -C <path>` for in-checkout commands.
+  - {ac_id: AC-WRV-1, surface: "file:scripts/foundry_repo_fleet.py", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k git_argv_is_the_closed_set_hardened_and_dash_dash_guarded && echo WRV-1-ARGV-OK'", expect: {op: matches, value: "WRV-1-ARGV-OK", baseline: pre-change}}
+
+  # --- AC-WRV-1 SURFACED, NEVER FIXED: a fixture whose child checkouts are (a) dirty, (b) diverged
+  #     from upstream, (c) origin-mismatched — after a full run each checkout's HEAD sha, index,
+  #     working-tree bytes and git config are IDENTICAL, and each condition appears as a reported row.
+  - {ac_id: AC-WRV-1, surface: "file:scripts/foundry_repo_fleet.py", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k drift_is_reported_and_the_checkout_is_untouched && echo WRV-1-NOFIX-OK'", expect: {op: matches, value: "WRV-1-NOFIX-OK", baseline: pre-change}}
+
+  # --- AC-WRV-2 — sync acts BY path_status from the registry envelope: not-cloned -> clone;
+  #     present + checkout + origin EXACTLY `match` -> fetch; dangling / outside-workspace /
+  #     not-a-checkout / mismatch / undeclared -> NO git command, each a reported row in the sibling's
+  #     vocabulary. The fetch argv NAMES THE DECLARED REMOTE as a positional after `--`; the case
+  #     plants a checkout whose configured origin differs from the declared remote in a fetchable row
+  #     and asserts the declared value is what appears (never the configured origin).
+  - {ac_id: AC-WRV-2, surface: "file:scripts/foundry_repo_fleet.py", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k sync_acts_by_path_status_and_fetches_the_declared_remote && echo WRV-2-SYNC-OK'", expect: {op: matches, value: "WRV-2-SYNC-OK", baseline: pre-change}}
+
+  # --- AC-WRV-2 IDEMPOTENCE, both halves over the SAME entries: the FIRST sync issues clone_count
+  #     >= 1 (so the case cannot pass vacuously against a sync that clones nothing) and the SECOND,
+  #     over the unchanged tree, issues clone_count == 0 and creates no new path.
+  - {ac_id: AC-WRV-2, surface: "test:tests/test_repo_fleet.py", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k first_sync_clones_then_second_clones_nothing && echo WRV-2-IDEMPOTENT-OK'", expect: {op: matches, value: "WRV-2-IDEMPOTENT-OK", baseline: pre-change}}
+
+  # --- AC-WRV-3 THE BOUNDARY REFUSES BEFORE THE SOCKET, parametrized: a UUID-GENERATED transport
+  #     helper `<name>::rest` (the sibling suite's genericity device — absent from both sources, so no
+  #     enumeration pre-satisfies it), `ext::`/`fd::`, `git://`, `http://`, `file://`, a relative path,
+  #     a dash-leading remote, a C0/C1-bearing remote, a target path whose PHYSICAL resolution escapes
+  #     the root (symlinked parent), an already-existing target, and a hostile `repos.<key>` key
+  #     (leading `-` / control chars). Each yields a named refusal row, ZERO captured git argv for that
+  #     entry, a finding exit, and the remaining rows still processed; the hostile key never appears in
+  #     an argv option position. The case also asserts the predicate is the LOADED leak-scan one (the
+  #     module object's origin path), not a local re-implementation.
+  - {ac_id: AC-WRV-3, surface: "file:scripts/foundry_repo_fleet.py", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k boundary_refuses_disallowed_remote_forms_and_escaping_targets && echo WRV-3-REFUSE-OK'", expect: {op: matches, value: "WRV-3-REFUSE-OK", baseline: pre-change}}
+
+  # --- AC-WRV-3 THE ACCEPTED DIRECTION (so the refusal set is not vacuously "refuse all"): an
+  #     admitted row clones with the EXACT argv `git <hardening set> clone --no-recurse-submodules --
+  #     <remote> <path>` under the sink environment, and the clone succeeds against a local bare-repo
+  #     remote.
+  - {ac_id: AC-WRV-3, surface: "file:scripts/foundry_repo_fleet.py", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k accepted_row_clones_with_the_exact_hardened_argv && echo WRV-3-ACCEPT-OK'", expect: {op: matches, value: "WRV-3-ACCEPT-OK", baseline: pre-change}}
+
+  # --- AC-WRV-4 — status emits EXACTLY ONE row per repos.<key> entry carrying present / origin /
+  #     branch / ahead_behind / dirty, with the vocabularies the spec pins
+  - {ac_id: AC-WRV-4, surface: "file:scripts/foundry_repo_fleet.py", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k status_emits_one_row_per_entry_with_typed_fields && echo WRV-4-STATUS-OK'", expect: {op: matches, value: "WRV-4-STATUS-OK", baseline: pre-change}}
+
+  # --- AC-WRV-4 NO FABRICATED CLEAN: no tracked upstream -> `no-upstream` (NEVER `0/0`), detached
+  #     HEAD -> `detached`, absent path / unavailable oracle -> `unknown` per undecidable field —
+  #     no field is ever blank, absent, or defaulted to a clean value.
+  - {ac_id: AC-WRV-4, surface: "test:tests/test_repo_fleet.py", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k status_names_unknown_rather_than_faking_clean && echo WRV-4-UNKNOWN-OK'", expect: {op: matches, value: "WRV-4-UNKNOWN-OK", baseline: pre-change}}
+
+  # --- AC-WRV-5 — foreach runs over PRESENT rows only, with the physically-resolved path as the
+  #     child's cwd and GIT_DIR/GIT_WORK_TREE removed, and FAIL-COLLECTS: one failing repo does not
+  #     abort the fan-out, every repo's result is reported, the verb exits 2 with any failure and 0
+  #     with none.
+  - {ac_id: AC-WRV-5, surface: "file:scripts/foundry_repo_fleet.py", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k foreach_fans_out_over_present_repos_and_collects_failures && echo WRV-5-FOREACH-OK'", expect: {op: matches, value: "WRV-5-FOREACH-OK", baseline: pre-change}}
+
+  # --- AC-WRV-5 NO SHELL: a command argument carrying `;`, `&&`, `|`, `$(...)` and backticks reaches
+  #     the child as a SINGLE LITERAL argument (asserted on the child's own observed argv, not on
+  #     output prose) and nothing is interpreted — this tool spawns no shell.
+  - {ac_id: AC-WRV-5, surface: "file:scripts/foundry_repo_fleet.py", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k foreach_passes_argv_literally_with_no_shell && echo WRV-5-NOSHELL-OK'", expect: {op: matches, value: "WRV-5-NOSHELL-OK", baseline: pre-change}}
+
+  # --- AC-WRV-5 THE CHILD'S OUTPUT IS OWNED: a child emitting an ANSI CSI sequence + a C1 byte over
+  #     several lines is CAPTURED (never inherited onto this tool's descriptors), sanitized PER LINE
+  #     and re-joined on U+000A — the escape is neutralized while the line COUNT and ORDER are
+  #     preserved. Same case: a child exceeding the per-child timeout is terminated and reported
+  #     `timeout`, and a child that cannot be spawned at all (OSError — absent executable) is reported
+  #     `spawn-failed`; both are collected failures, neither aborts the fan-out.
+  - {ac_id: AC-WRV-5, surface: "test:tests/test_repo_fleet.py", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k foreach_captures_child_output_and_reports_timeout_and_spawn_failure && echo WRV-5-CAPTURE-OK'", expect: {op: matches, value: "WRV-5-CAPTURE-OK", baseline: pre-change}}
+
+  # --- AC-WRV-6 THE REVERSE DIRECTION (the gap the registry atom deferred BY NAME): a git checkout on
+  #     disk under the physical root with no repos{} row is reported `undeclared-checkout` with its
+  #     relative path, its DISCOVERED ORIGIN (git config --get remote.origin.url, raw; `undeclared`
+  #     when unset) and the remedy; a DECLARED one is not; a `.git` FILE counts as a checkout; and the
+  #     scan does not descend into a discovered checkout.
+  - {ac_id: AC-WRV-6, surface: "file:scripts/foundry_repo_fleet.py", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k validate_reports_undeclared_checkouts_with_discovered_origin && echo WRV-6-REVERSE-OK'", expect: {op: matches, value: "WRV-6-REVERSE-OK", baseline: pre-change}}
+
+  # --- AC-WRV-6 THE EXCLUSION SET IS CLOSED FOR REAL, in BOTH directions: a checkout planted under
+  #     each of .git / node_modules / .worktrees yields NO finding, AND a checkout planted under a
+  #     directory that is NOT in the set (e.g. `vendor/`, `.venv/`) IS descended into and IS reported
+  #     — so "exclude everything" cannot pass. Same case: a checkout reachable only through a
+  #     SYMLINKED directory is not traversed, and every reported candidate is physically confined
+  #     inside the root.
+  - {ac_id: AC-WRV-6, surface: "test:tests/test_repo_fleet.py", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k reverse_scan_excludes_exactly_three_names_and_descends_others && echo WRV-6-EXCLUSIONS-OK'", expect: {op: matches, value: "WRV-6-EXCLUSIONS-OK", baseline: pre-change}}
+
+  # --- AC-WRV-6 THE FORWARD DIRECTION, CONSUMED NOT RE-DERIVED: dangling / unpaired / unanchored /
+  #     tracked / mismatch / outside-workspace appear in validate's rows with the registry module's
+  #     OWN vocabulary (that module is denied scope), and validate exits 2 on a finding in EITHER
+  #     direction, 0 when neither yields one.
+  - {ac_id: AC-WRV-6, surface: "test:tests/test_repo_fleet.py", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k validate_round_trip_preserves_registry_vocabulary && echo WRV-6-ROUNDTRIP-OK'", expect: {op: matches, value: "WRV-6-ROUNDTRIP-OK", baseline: pre-change}}
+
+  # --- AC-WRV-7 THE ENVELOPE — for EACH of the four verbs, `--json` parses to an OBJECT whose
+  #     top-level keys are exactly {degraded, degraded_reason, rows} (never a bare array), on a clean
+  #     run, a findings run and a degraded run; degraded is true with a non-empty reason exactly when
+  #     an oracle is unavailable or the underlying registry report is itself degraded; exit codes are
+  #     the advisory tri-state 0/2/1 and the "no gate consumes this" line is in docstring + --help.
+  - {ac_id: AC-WRV-7, surface: "file:scripts/foundry_repo_fleet.py", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k json_envelope_and_advisory_tristate_for_every_verb && echo WRV-7-ENVELOPE-OK'", expect: {op: matches, value: "WRV-7-ENVELOPE-OK", baseline: pre-change}}
+
+  # --- AC-WRV-8 REDACTION, INHERITED: parametrized over the three remote forms (https:// userinfo,
+  #     ssh:// userinfo, scp-form user:pass@host:path) x {declared remote, discovered origin,
+  #     captured foreach output} x {clean run, findings run, error run} — raw userinfo is absent from
+  #     stdout AND stderr AND --json, the placeholder is the fixed literal, the exception path emits a
+  #     sanitized line rather than a traceback, and the sink IS the registry module's function object
+  #     (imported, not re-implemented).
+  - {ac_id: AC-WRV-8, surface: "file:scripts/foundry_repo_fleet.py", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k every_channel_uses_the_registry_redaction_sink && echo WRV-8-REDACT-OK'", expect: {op: matches, value: "WRV-8-REDACT-OK", baseline: pre-change}}
+
+  # --- AC-WRV-9 — the new skill ships: frontmatter name `repos`, the four verbs named in the body,
+  #     and a description clause that draws the boundary against the shipped /foundry:fleet SESSION
+  #     ROSTER (the two fleet-shaped verbs must not be confusable)
+  - {ac_id: AC-WRV-9, surface: "file:skills/repos/SKILL.md", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k skill_ships_and_disambiguates_from_the_session_roster && echo WRV-9-SKILL-OK'", expect: {op: matches, value: "WRV-9-SKILL-OK", baseline: pre-change}}
+
+  # --- AC-WRV-9 — the shipped VERBS-QUICK-REF bijection (every skills/<verb>/ documented, no phantom
+  #     verb documented) holds with /foundry:repos added. The suite is DENIED scope and runs unmodified.
+  - {ac_id: AC-WRV-9, surface: "file:docs/VERBS-QUICK-REF.md", locator: "sh -c 'python3 -m pytest tests/test_docs_claims.py -q -k verb_reference && echo WRV-9-VERBREF-OK'", expect: {op: matches, value: "WRV-9-VERBREF-OK", baseline: none}}
+
+  # --- AC-WRV-9 — the derived doc-claim locks hold: README.md's `other ~N skills` claim re-derives
+  #     against skills/*/SKILL.md with the new directory present, and the how-to's section + closed
+  #     `enforced` roster locks survive the appended verbs section. Both suites DENIED and unmodified.
+  - {ac_id: AC-WRV-9, surface: "file:README.md", locator: "sh -c 'python3 -m pytest tests/test_doc_claims.py tests/test_docs_claims.py -q && echo WRV-9-DOCLOCKS-OK'", expect: {op: matches, value: "WRV-9-DOCLOCKS-OK", baseline: none}}
+
+  # --- AC-WRV-9 — the how-to carries a verbs section naming sync/status/foreach/validate and stating
+  #     the surfaced-never-fixed rule, and introduces NO new label into the document's `enforced`
+  #     claim roster (which feat-foundry-control-plane-docs pins closed)
+  - {ac_id: AC-WRV-9, surface: "file:docs/how-to/multi-repo-control-plane.md", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k how_to_documents_the_verbs_without_new_enforced_labels && echo WRV-9-HOWTO-OK'", expect: {op: matches, value: "WRV-9-HOWTO-OK", baseline: pre-change}}
+
+  # --- AC-WRV-9 — the release note names the new verb IN THE TOPMOST RELEASE SECTION (the plugin is
+  #     version-keyed: an adopter receives only what the current section carries). awk emits only the
+  #     text from the first `## v` heading up to the next one, so a mention anywhere else in the file
+  #     — including an older release — does NOT satisfy this.
+  - {ac_id: AC-WRV-9, surface: "file:CHANGELOG.md", locator: "sh -c \"awk '/^## v/{n++} n==1' CHANGELOG.md | grep -q '/foundry:repos' && echo WRV-9-CHANGELOG-OK\"", expect: {op: matches, value: "WRV-9-CHANGELOG-OK", baseline: pre-change}}
+
+  # --- AC-WRV-9 — the plugin repo's own doctor is unmoved by the new module + skill + docs
+  - {ac_id: AC-WRV-9, surface: "cli:foundry-doctor", locator: "sh -c 'python3 scripts/foundry-doctor.py | tail -1'", expect: {op: matches, value: "DOCTOR-GREEN", baseline: none}}
+
+  # --- AC-WRV-10 THE WAVE-3 SEAM, pinned by SIGNATURE and RETURN SHAPE: `import foundry_repo_fleet`
+  #     resolves (the underscored module name is the point), `reconcile` is called DIRECTLY with the
+  #     pinned keyword-only signature (no argv, no CLI, no stream writes — stdout/stderr captured and
+  #     asserted EMPTY), returns the {degraded, degraded_reason, rows} envelope whose rows carry
+  #     key/path/remote/action/result/finding/detail with the pinned vocabularies, and the sync CLI's
+  #     rows ARE that callable's return value (a forked second reconcile path fails the case).
+  - {ac_id: AC-WRV-10, surface: "file:scripts/foundry_repo_fleet.py", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k reconcile_is_an_importable_callable_the_cli_renders && echo WRV-10-SEAM-OK'", expect: {op: matches, value: "WRV-10-SEAM-OK", baseline: pre-change}}
+
+  # --- AC-WRV-10 THE CALLABLE BOUNDARY IS ITSELF HOSTILE-SAFE (the wizard is not a trusted caller):
+  #     driven with FABRICATED rows that LIE — a row claiming path_status `not-cloned` whose path
+  #     escapes the physical root, a row whose remote is a generated transport helper, a row with a
+  #     hostile key — every one is refused with ZERO git argv despite the claim; and driven against a
+  #     hostile root — a root with NO manifest, and a root whose lexical path resolves elsewhere —
+  #     the callable resolves the root physically itself, refuses with a degraded envelope, and runs
+  #     no git command.
+  - {ac_id: AC-WRV-10, surface: "test:tests/test_repo_fleet.py", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k reconcile_revalidates_hostile_rows_and_hostile_roots && echo WRV-10-HOSTILE-OK'", expect: {op: matches, value: "WRV-10-HOSTILE-OK", baseline: pre-change}}
+
+  # --- AC-WRV-11 THE HARDENING SET + SINK ENV ON EVERY GIT CHILD, asserted MEMBER BY MEMBER (never as
+  #     one joined blob): over a full sync + status + foreach + validate run, every captured git argv
+  #     carries each `-c` override individually and every captured child env has each of GIT_DIR,
+  #     GIT_WORK_TREE, GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, GIT_CONFIG_COUNT, GIT_CONFIG_PARAMETERS,
+  #     GIT_SSH, GIT_SSH_COMMAND, GIT_ASKPASS, SSH_ASKPASS ABSENT (each asserted separately) with
+  #     GIT_TERMINAL_PROMPT=0 present — including the git run inside a DISCOVERED undeclared-checkout.
+  - {ac_id: AC-WRV-11, surface: "file:scripts/foundry_repo_fleet.py", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k every_git_child_carries_the_hardening_set_and_sink_env && echo WRV-11-HARDENED-OK'", expect: {op: matches, value: "WRV-11-HARDENED-OK", baseline: pre-change}}
+
+  # --- AC-WRV-11 THE PROPERTY, NOT THE ARGV (the AC-LSH-3 standard): a governed checkout AND a
+  #     discovered undeclared checkout each carry a hostile `core.fsmonitor` and a hostile
+  #     `core.sshCommand` in their OWN .git/config, each with an observable side effect (a marker
+  #     file). After a full run every marker is ABSENT — and a POSITIVE CONTROL in the same case runs
+  #     an unhardened git invocation against the same fixture and shows the marker DOES appear, so an
+  #     absent marker cannot be satisfied by a run that never reached git at all.
+  - {ac_id: AC-WRV-11, surface: "test:tests/test_repo_fleet.py", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k planted_hostile_config_does_not_fire_with_positive_control && echo WRV-11-NOFIRE-OK'", expect: {op: matches, value: "WRV-11-NOFIRE-OK", baseline: pre-change}}
+
+  # --- AC-WRV-12 EGRESS BOUND, asserted on captured argv + child env: the ONLY network-capable
+  #     invocations are clone/fetch, each bound to a DECLARED row's declared remote (no other host, no
+  #     undeclared row, nothing for a refused row). Fixture remotes are local bare repos, so the case
+  #     is hermetic — and BELT-AND-BRACES the case runs the whole fan-out with outbound sockets denied
+  #     at the process boundary (a socket-level guard) and asserts no invocation attempted a
+  #     connection: a run that quietly reached the network fails here even if its argv looked clean.
+  - {ac_id: AC-WRV-12, surface: "file:scripts/foundry_repo_fleet.py", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k egress_is_bounded_to_declared_remotes_with_sockets_denied && echo WRV-12-EGRESS-OK'", expect: {op: matches, value: "WRV-12-EGRESS-OK", baseline: pre-change}}
+
+  # --- AC-WRV-12 NO SUBMODULE AMPLIFICATION ON *EITHER* NETWORK VERB: a fixture remote carrying a
+  #     .gitmodules pointing at a SECOND, UNDECLARED local repo is both cloned and fetched; the
+  #     undeclared repo is never contacted (no argv names it, its object store is never read), the
+  #     clone/fetch argv each carry --no-recurse-submodules, and the hardening set's
+  #     fetch.recurseSubmodules=no + submodule.recurse=false are present on both.
+  - {ac_id: AC-WRV-12, surface: "test:tests/test_repo_fleet.py", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k submodule_recursion_is_off_on_clone_and_on_fetch && echo WRV-12-NORECURSE-OK'", expect: {op: matches, value: "WRV-12-NORECURSE-OK", baseline: pre-change}}
+
+  # --- AC-WRV-12 THE INERTNESS NON-PROMISE IS SHIPPED, NOT JUST SPECCED: `--help` and
+  #     skills/repos/SKILL.md each state that a cloned tree's content is untrusted and that its
+  #     CLAUDE.md / .claude/** / .mcp.json become discoverable configuration inside a Claude Code root.
+  - {ac_id: AC-WRV-12, surface: "file:skills/repos/SKILL.md", locator: "sh -c 'python3 -m pytest tests/test_repo_fleet.py -q -k help_and_skill_state_the_cloned_tree_non_promise && echo WRV-12-NONPROMISE-OK'", expect: {op: matches, value: "WRV-12-NONPROMISE-OK", baseline: pre-change}}
+# DRAFT — pending /foundry:authorize (spec_sha256 + contract_sha256 + the signed authorized: trailer).
+# === FOUNDRY-AUTHORIZED-TRAILER (excluded from contract_sha256) ===
+authorized:
+  operator_id: op_lukas
+  authorized_at: 2026-08-02T21:41:37Z
+  auth_seq: 1
+  supersedes: null
+  spec_sha256: 26abb45a51e931f0035882ab0c4036f9b06d3e79328cf32a7413ef0d8720f777
+  contract_sha256: e7f9d7ca243436d0caa16c288ab84f3456af87757d78601234306413ecec9abe
+  merge_autonomy_mode: lean
