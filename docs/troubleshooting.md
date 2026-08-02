@@ -61,14 +61,26 @@ By design it never passes vacuously. The refusal names what's missing:
   profile's** `app_exercise_binding.boot`, which requires `.foundry/stack-profile.lock` to
   exist and resolve; see `packs/stack-profiles/<yours>/`.
 
-  > **Known limitation (v1).** No shipped verb creates that lock. `/foundry:relock` refreshes
-  > an existing one and refuses when there is none ("nothing to relock"), so an adopter who has
-  > never had a lock cannot reach `certify-local`, `/foundry:verify`, or the `id-*` lane's
-  > `infra_binding`. The `repos.<key>.boot_command` field in `.claude/foundry-project.json` is
-  > accepted by the schema but is **not** read by certification today. Wiring that field as the
-  > first-precedence boot recipe, and folding lock creation into `/foundry:init` (the
-  > `terraform init` shape), are tracked fixes — until they land, this path is not reachable
-  > from a clean install and we would rather say so than let you hunt for the flag.
+  If there is no lock yet, create one:
+
+  ```bash
+  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-stack-profile.py" --lock <id>[,<id>…]
+  ```
+
+  (`/foundry:init` offers this during onboarding; run it directly to adopt a profile later.) It
+  refuses — with no write — if a lock already exists (run `/foundry:relock` to refresh instead),
+  the lock file present is corrupt (the refusal names the remedy), an id is unknown (the refusal
+  lists the ids available under `packs/stack-profiles/`), or any named id is schema-invalid,
+  core-incompatible, or leaks into the core plugin's `skills/` bundle.
+
+  > **Resolved (previously a known limitation).** Earlier releases shipped no create verb —
+  > `/foundry:relock` only refreshed an already-locked id-set and refused when there was none
+  > ("nothing to relock"), so a fresh adopter could not reach `certify-local`, `/foundry:verify`,
+  > or the `id-*` lane's `infra_binding`. `--lock` (above) is the fix
+  > (`feat-foundry-stack-profile-lock-create`). The `repos.<key>.boot_command` field in
+  > `.claude/foundry-project.json` remains accepted by the schema but is **not** read by
+  > certification — that precedence change is tracked separately
+  > (`feat-foundry-boot-recipe-precedence`).
 
 ## The authorize gate refused to freeze
 
