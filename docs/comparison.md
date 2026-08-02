@@ -69,9 +69,16 @@ seam where a spec becomes an authorized, floor-gated, certified change.
 | Spec/plan artifacts | ✅ | — | ephemeral plans | CLAUDE.md conventions | ✅ + frozen hash-bound contracts |
 | Authorization before build | IDE approvals at best | — | — | — | ✅ operator-signed, no skip |
 | Merge-seam enforcement | prompt packs | advisory | — | hooks (DIY) | ✅ tiered floor, honestly labeled |
-| Certification vs the running app | Kiro: property tests | — | — | — | ✅ deploy-once + real journeys |
+| Certification vs the running app | Kiro: property tests | — | — | — | ✅ deploy-once + real journeys (see the reachability caveat below) |
 | Provenance (spec → merged change) | — | — | line-attribution (Cursor) | git history | ✅ contract-pinned convention + shipped reader (writer is adopter-side today) |
 | Human authority | varies | n/a | sandbox-level | you | ✅ terminal sign-off, by design |
+
+**Reachability caveat on the certification row.** The machinery ships and is exercised in this
+repo, but a *fresh* adopter cannot currently reach it: `/foundry:certify-local` takes its boot
+recipe only from an active stack profile, and no shipped code path creates the
+`.foundry/stack-profile.lock` a profile resolves through. The `repos.<key>.boot_command` field the
+schema advertises for this is read by nothing. Two atoms are specified to close it
+(`boot-recipe-precedence`, `stack-profile-lock-create`) and are awaiting authorization.
 
 *Claims about other tools reflect mid-2026 public documentation; corrections welcome —
 file an issue and we'll fix this page.*
