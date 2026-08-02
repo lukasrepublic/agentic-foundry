@@ -87,3 +87,4 @@ GO is re-derived from live re-checks at the moment of turn-off.**
 - **An allow-by-default independence policy** — deny anything not enumerated; omission is not
   independence.
 - **Turn-off interleaved with build waves** — it is the last wave, once, with the ledger green.
+- **On a harness denial** of a `record` or `gate-check` invocation, see `docs/harness-denial-fallback.md` and STOP: hand back the exact denied command; never retry it or route around it via another credential.

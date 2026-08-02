@@ -1,0 +1,94 @@
+# Acceptance contract — sibling of feat-foundry-gate-denial-fallback.md (v1.1).
+# Code repo agentic-foundry; allowed_paths are relative to that repo root.
+# Codifies the harness-denial fallback discipline ONCE (docs/harness-denial-fallback.md — a delimited
+# region with three labelled limbs: (a) hand the denied invocation over BYTE-IDENTICALLY modulo the
+# in-session `!` prefix, never composed freeform / never lifted from a spec or PR body, naming any
+# override flag above the block; (b) STOP — never retry the denied call, never route around it via
+# another tool or credential, EXCLUDING a documented degraded path the verb itself publishes
+# (UPSTREAM-SUBMIT-LABEL-DEGRADED, cut-release's REFUSED/GATED); (c) name the durable fix: the
+# permission-floor rules / the workspace trust dialog) and points the SEVEN ceremony-instructing skills
+# at it (authorize, authorize-release, cut-release, decommission-gate, release, upstream-submit,
+# id-apply). Single-sourced (pointer, not copy-paste) with a three-way set equality: the enumerated
+# seven == the clause file's list == the on-disk skills carrying a pointer line.
+# PROSE-ONLY atom: no gate decision changes, no permission rule is written, no detector is added. The
+# discipline REINFORCES the harness denial (limb (b) forbids verbatim retry and tool substitution) and
+# routes consent back to settings rules + native prompts — chat text is never a consent channel.
+# Live seam: pytest tests/test_gate_denial_fallback.py (real-tree assertions + a 5-case mutation
+# negative control over a throwaway fixture) + a DOCTOR-GREEN regression.
+spec_ref: specs/features/foundry/onboarding/gate-denial-fallback/feat-foundry-gate-denial-fallback.md
+spec_sha256: "0000000000000000000000000000000000000000000000000000000000000000"  # /foundry:authorize fills this
+scope:
+  allowed_paths:
+    - "docs/harness-denial-fallback.md"
+    - "skills/authorize/SKILL.md"
+    - "skills/authorize-release/SKILL.md"
+    - "skills/cut-release/SKILL.md"
+    - "skills/decommission-gate/SKILL.md"
+    - "skills/release/SKILL.md"
+    - "skills/upstream-submit/SKILL.md"
+    - "skills/id-apply/SKILL.md"
+    - "tests/test_gate_denial_fallback.py"
+    - "tests/support_gate_denial_fallback.py"
+    - "CHANGELOG.md"
+  denied_paths:
+    - "hooks/**"
+    - "scripts/**"
+    - "schema/**"
+    - ".github/workflows/**"
+checkpoints:
+  - ac_id: AC-GDF-1
+    surface: "file:docs/harness-denial-fallback.md"
+    # docs/harness-denial-fallback.md carries EXACTLY ONE <!-- foundry:harness-denial-fallback v1 --> region
+    # with the three ordered labelled limbs (a)/(b)/(c) and each limb's required literals — (a) the 3-byte
+    # `!` sequence + 'in-session' + 'byte-identical' + 'never freeform' + 'spec or PR body' +
+    # 'name the override flag'; (b) 'never retry' + 'never route around' + 'another tool or credential' +
+    # 'documented degraded path' + 'UPSTREAM-SUBMIT-LABEL-DEGRADED' + 'GATED'; (c) '.claude/settings.json' +
+    # 'trust dialog'. The '## Skills that carry this clause' section is asserted by the AC-GDF-2 test below
+    # (it round-trips that section as one of the three sets) — not re-asserted here.
+    locator: "sh -c 'python3 -m pytest tests/test_gate_denial_fallback.py -q -k test_ac_gdf_1_clause_region_carries_three_limbs >/dev/null 2>&1 && echo GDF-1-OK'"
+    expect: {op: matches, value: "GDF-1-OK", baseline: pre-change}
+  - ac_id: AC-GDF-2
+    surface: "test:tests/test_gate_denial_fallback.py"
+    # Three-way set equality: the seven enumerated ceremony skills == the clause file's
+    # '## Skills that carry this clause' list == the on-disk skills/*/SKILL.md carrying a pointer line
+    # (ONE line holding ALL of: the literal path 'docs/harness-denial-fallback.md', the literal 'STOP', and a
+    # case-insensitive trigger literal from {'harness denial','permission denial'} — so the pointer cannot be
+    # misread as covering a skill-documented gate refusal).
+    locator: "sh -c 'python3 -m pytest tests/test_gate_denial_fallback.py -q -k test_ac_gdf_2_every_ceremony_skill_carries_the_pointer >/dev/null 2>&1 && echo GDF-2-OK'"
+    expect: {op: matches, value: "GDF-2-OK", baseline: pre-change}
+  - ac_id: AC-GDF-3
+    surface: "test:tests/test_gate_denial_fallback.py"
+    # Sentence-scoped negation anchor over the checked text (the delimited region + every pointer line):
+    # every case-insensitive, word-boundary occurrence of an enumerated retry token (retry/retries/retried/
+    # retrying, re-run/re-runs/re-ran/re-running, rerun/reran/rerunning, run it again, try again,
+    # attempt again, route around, work around, workaround, circumvent, sidestep,
+    # bypass/bypasses/bypassed/bypassing) is exempt ONLY IF a negator {never, do not, must not} begins
+    # earlier in the SAME sentence, OR it lies in the paragraph opened by the literal label
+    # '**Resuming after a real grant.**'. Otherwise FAIL naming file/line/token.
+    locator: "sh -c 'python3 -m pytest tests/test_gate_denial_fallback.py -q -k test_ac_gdf_3_retry_tokens_only_appear_negated >/dev/null 2>&1 && echo GDF-3-OK'"
+    expect: {op: matches, value: "GDF-3-OK", baseline: pre-change}
+  - ac_id: AC-GDF-4
+    surface: "test:tests/support_gate_denial_fallback.py"
+    # Per-class negative control: a throwaway fixture copied from the REAL clause + the REAL seven skills,
+    # mutated in exactly one of FIVE ways per case — pointer-removed | limb-dropped | limb-a-literal-dropped |
+    # retry-instruction | enumeration-desynced — makes the corresponding AC-GDF-1/2/3 check FAIL, naming the
+    # offending file. Establishes the suite is not unconditionally green (per-literal coverage is review-borne,
+    # spec R5).
+    locator: "sh -c 'python3 -m pytest tests/test_gate_denial_fallback.py -q -k test_ac_gdf_4_mutated_fixture_is_red >/dev/null 2>&1 && echo GDF-4-OK'"
+    expect: {op: matches, value: "GDF-4-OK", baseline: pre-change}
+  - ac_id: AC-GDF-5
+    surface: "cli:foundry-doctor"
+    # Regression: the prose + docs + test additions leave the default doctor verdict green.
+    locator: "foundry-doctor.py (default verdict) over the changed tree"
+    expect: {op: matches, value: 'DOCTOR-GREEN', baseline: none}
+target_repo: agentic-foundry
+# DRAFT — pending /foundry:authorize (spec_sha256 + contract_sha256 + the signed authorized: trailer).
+# === FOUNDRY-AUTHORIZED-TRAILER (excluded from contract_sha256) ===
+authorized:
+  operator_id: op_lukas
+  authorized_at: 2026-08-02T15:15:49Z
+  auth_seq: 1
+  supersedes: null
+  spec_sha256: cbd95d873fde2beb46f6de2065d064785b31c0bf9d5452a164616d0eb1253c55
+  contract_sha256: 0a296a6cd6612fba4cd5ed15bd140786b71e60b2e442e99545de382a784a5bfd
+  merge_autonomy_mode: lean
