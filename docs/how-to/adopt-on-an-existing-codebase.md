@@ -17,7 +17,7 @@ extract it into a spec, and run the loop on it — the rest of the codebase does
 1. **Install + wire** (same as greenfield):
 
    ```bash
-   claude plugin marketplace add lukasrepublic/agentic-foundry#v1.0.1
+   claude plugin marketplace add lukasrepublic/agentic-foundry#v1.1.0
    claude plugin install foundry@agentic-foundry
    # in a session: /foundry:init  →  /foundry:doctor → DOCTOR-GREEN
    ```
