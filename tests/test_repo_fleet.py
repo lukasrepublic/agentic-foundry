@@ -1031,3 +1031,101 @@ def test_help_and_skill_state_the_cloned_tree_non_promise():
     skill_text = open(SKILL_PATH, encoding="utf-8").read()
     for token in ("untrusted", "CLAUDE.md", ".claude", ".mcp.json"):
         assert token in skill_text, "SKILL.md missing %r" % token
+
+
+# =================================================================================================
+# Security review (PR #59) — regression tests for the applied fixes
+# =================================================================================================
+def test_r3_fetch_refuses_a_present_match_row_whose_path_is_not_a_git_checkout(scenario, monkeypatch):
+    """R3: a fabricated row claims path_status=present/origin=match against a directory that is
+    physically confined inside the root but is NOT a git checkout at all (no .git dir or file) —
+    `reconcile` SHALL refuse it rather than spawning `git fetch` inside a non-checkout directory."""
+    root = scenario["root"]
+    not_a_checkout = root / "just_a_plain_directory"
+    not_a_checkout.mkdir()
+
+    calls = _record_spawn(monkeypatch)
+    rows = [{
+        "key": "notacheckout", "path": "./just_a_plain_directory",
+        "path_status": "present", "origin": "match",
+        "declared_remote": str(scenario["bare_match"]),
+        "resolved_path": str(not_a_checkout),
+    }]
+    result = FLEET.reconcile(str(root), rows, timeout=5.0)
+    row = result["rows"][0]
+    assert row["action"] == "refuse", row
+    assert row["finding"] is True
+    assert not _git_calls(calls), "a git command was spawned for a non-checkout present/match row"
+
+
+def test_r6_sync_timeout_defaults_to_the_declared_bound_when_the_flag_is_absent():
+    """R6: `sync --timeout` previously defaulted to None (unbounded network egress). A declared
+    default now applies when the flag is absent; the flag still overrides it."""
+    parser = FLEET.build_parser()
+    args_default = parser.parse_args(["sync", "--root", "."])
+    assert args_default.timeout == FLEET.DEFAULT_SYNC_TIMEOUT_SECONDS
+    assert FLEET.DEFAULT_SYNC_TIMEOUT_SECONDS == 600.0
+
+    args_override = parser.parse_args(["sync", "--root", ".", "--timeout", "12.5"])
+    assert args_override.timeout == 12.5
+
+    # AC-WRV-10's pinned reconcile() signature/default is untouched by this CLI-only fix.
+    sig = inspect.signature(FLEET.reconcile)
+    assert sig.parameters["timeout"].default is None
+
+
+def test_r9_reconcile_except_handler_survives_a_non_dict_row_that_raises_mid_processing(monkeypatch, tmp_path):
+    """R9: the per-row except handler's fallback `remote` derivation must not itself crash on a
+    non-dict row -- guarded with the same isinstance(row, dict) check the adjacent lines carry."""
+    root = tmp_path / "r9-ws"
+    _init_repo(root)
+    _commit(root, "README.md", "root\n", "root init")
+    _write_manifest(root, {})
+
+    def boom(root_physical, row, timeout):
+        raise RuntimeError("forced failure mid-row-processing")
+
+    monkeypatch.setattr(FLEET, "_process_reconcile_row", boom)
+    hostile_non_dict_row = ["not", "a", "dict"]
+    result = FLEET.reconcile(str(root), [hostile_non_dict_row], timeout=5.0)
+    assert len(result["rows"]) == 1
+    row = result["rows"][0]
+    assert row["action"] == "refuse"
+    assert row["finding"] is True
+    assert row["key"] is None
+    assert row["remote"] is None
+
+
+def test_r1_sink_env_removes_git_allow_protocol_as_an_additional_over_removal():
+    """R1: an additional explicit removal beyond the spec-pinned SINK_ENV_REMOVED_VARS tuple, which
+    stays byte-identical to its original members (never extended) so the pinned tuple itself is
+    unchanged."""
+    base = dict(os.environ)
+    base["GIT_ALLOW_PROTOCOL"] = "https"
+    env = FLEET._sink_env(base_env=base)
+    assert "GIT_ALLOW_PROTOCOL" not in env
+    assert FLEET.SINK_ENV_REMOVED_VARS == (
+        "GIT_DIR", "GIT_WORK_TREE", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_PARAMETERS", "GIT_SSH", "GIT_SSH_COMMAND", "GIT_ASKPASS", "SSH_ASKPASS",
+    )
+
+
+def test_r8_sys_path_bootstrap_is_idempotent():
+    """R8: the module-level sys.path bootstrap (`if _HERE_DIR not in sys.path: sys.path.append(...)`)
+    SHALL NOT grow sys.path with duplicate entries across repeated bootstrap passes -- the guard
+    that replaced the unconditional `sys.path.insert(0, ...)`. Scoped to THIS module's own guard
+    behavior, not a whole-suite invariant: other shipped scripts (out of this atom's scope) still
+    use an unconditional `sys.path.insert(0, ...)` when loaded via `load_module()` elsewhere in the
+    suite, so sys.path may already carry more than one entry for this same directory by the time
+    this test runs; the guard's OWN idempotence is what is asserted here."""
+    here_dir = os.path.dirname(os.path.abspath(FLEET.__file__))
+    if here_dir not in sys.path:
+        sys.path.append(here_dir)
+    before_count = sys.path.count(here_dir)
+    assert before_count >= 1
+
+    for _ in range(3):
+        if here_dir not in sys.path:
+            sys.path.append(here_dir)
+    after_count = sys.path.count(here_dir)
+    assert after_count == before_count, "repeated guarded bootstrap passes grew sys.path"

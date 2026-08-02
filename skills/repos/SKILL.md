@@ -44,11 +44,17 @@ operator's move (or the child repo's own loop), never this control plane's.
 - **Egress is bounded.** `clone`/`fetch` only ever reach a remote a `repos.<key>` row **declares**
   — re-validated at the boundary (admitted form, no leading `-`, no control character, physical
   path confinement) independently of what the row classification claims, before any socket opens.
-- **Every git child is hardened**, network-capable or not: `credential.helper=`, `core.askPass=`
-  with the askpass env removed, `core.fsmonitor=`, `core.sshCommand=ssh -o BatchMode=yes` with
-  `GIT_SSH_COMMAND` removed, `protocol.allow=never` with only https/ssh/file admitted, submodule
-  recursion off. A cloned or fetched-into checkout's own hostile `.git/config` cannot direct or
-  execute anything at this tool.
+- **Every git child this tool itself invokes is hardened**, network-capable or not:
+  `credential.helper=`, `core.askPass=` with the askpass env removed, `core.fsmonitor=`,
+  `core.sshCommand=ssh -o BatchMode=yes` with `GIT_SSH_COMMAND` removed, `protocol.allow=never`
+  with only https/ssh/file admitted, submodule recursion off. A cloned or fetched-into checkout's
+  own hostile `.git/config` cannot direct or execute anything at one of **those** invocations.
+  **Stated residual:** `foreach` children run with the ambient environment minus only `GIT_DIR`
+  and `GIT_WORK_TREE` (per AC-WRV-5 as authorized) and receive **no** `-c` hardening at all — if
+  the child command you pass to `foreach` is itself `git` (e.g. `foreach -- git status`), a
+  governed checkout's own `.git/config` (`core.fsmonitor`, `core.pager`, and anything else it
+  sets) **can** direct that child. Approving `foreach -- git status` at the ask tier means trusting
+  the governed checkouts' own configs, not this tool's hardening.
 - **No promise that a cloned tree is inert.** A cloned repository's content is **untrusted**: this
   tool clones and fetches, it does not sandbox, review, or vouch for what it retrieves. Inside a
   Claude Code workspace root, a cloned repo's `CLAUDE.md`, `.claude/**` and `.mcp.json` become

@@ -50,7 +50,15 @@ import sys
 import time
 import traceback
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# R8 (security review, PR #59): guarded + idempotent (`append`, not `insert(0, ...)`) so this
+# module's own directory is added to sys.path AT MOST once and never shadows an entry a caller
+# (or an earlier-imported sibling module) already placed ahead of it — an unconditional
+# `insert(0, ...)` re-run (e.g. a caller re-importing this module's directory bootstrap logic, or
+# module reload under a test harness) would otherwise grow sys.path unbounded and could shadow a
+# same-named module the caller intentionally put first.
+_HERE_DIR = os.path.dirname(os.path.abspath(__file__))
+if _HERE_DIR not in sys.path:
+    sys.path.append(_HERE_DIR)
 import foundry_repo_registry as REG  # noqa: E402 — the frozen classifier/envelope/sink, consumed
 
 # ---------------------------------------------------------------------------------------------
@@ -103,6 +111,12 @@ SINK_ENV_REMOVED_VARS = (
 
 DEFAULT_FOREACH_TIMEOUT_SECONDS = 30.0
 DEFAULT_REVERSE_SCAN_MAX_DEPTH = 8
+# R6 (security review, PR #59): sync's --timeout previously defaulted to None -- unbounded network
+# egress on every clone/fetch. A declared default bounds it; --timeout still overrides. This is a
+# CLI-default only: the AC-WRV-10-pinned `reconcile(..., timeout: float | None = None)` signature
+# and default are unchanged, since a caller (the Wave-3 wizard included) may legitimately want an
+# unbounded reconcile and the pinned signature is not this residual's to alter.
+DEFAULT_SYNC_TIMEOUT_SECONDS = 600.0
 
 # AC-WRV-6: the closed reverse-scan exclusion set — exactly these three names, each for a distinct
 # reason (see the SKILL/doc prose): `.git` is the checkout's own marker, `.worktrees` is
@@ -190,6 +204,14 @@ def _sink_env(base_env=None):
     env["GIT_TERMINAL_PROMPT"] = "0"
     for var in SINK_ENV_REMOVED_VARS:
         env.pop(var, None)
+    # R1 (security review, PR #59): an additional, explicit over-removal beyond the
+    # spec-pinned SINK_ENV_REMOVED_VARS tuple (byte-identical to the leak-scan sink's own
+    # `_LS_REMOTE_SINK_ENV_REMOVED_VARS` and NOT extended here). An inherited GIT_ALLOW_PROTOCOL
+    # could narrow git's own protocol allow-list out from under this module's `-c
+    # protocol.*.allow=` hardening overrides; removing it is strictly additive safety and is not
+    # itself a Terminology-pinned member. Pending a spec Terminology amendment to fold it into the
+    # named sink-environment tuple.
+    env.pop("GIT_ALLOW_PROTOCOL", None)
     return env
 
 
@@ -332,6 +354,14 @@ def _process_reconcile_row(root_physical, row, timeout):
         if not _is_within(physical_path, root_physical):
             return _reconcile_row(key, declared_path, remote, "refuse", "n/a", True,
                                    "refused: resolved path escapes the physical workspace root")
+        git_marker = os.path.join(physical_path, ".git")
+        if not (os.path.isdir(git_marker) or os.path.isfile(git_marker)):
+            # R3 (security review, PR #59): a row can claim present/match without the path
+            # actually being a git checkout (a worktree's `.git` is a FILE, not a dir — both
+            # admitted). Re-derived here independently of the row's own classification, before
+            # any git command is spawned for it.
+            return _reconcile_row(key, declared_path, remote, "refuse", "n/a", True,
+                                   "refused: resolved path is not a git checkout (no .git)")
         argv = ["fetch", "--no-recurse-submodules", "--", remote]
         try:
             p = _git(argv, cwd=physical_path, timeout=timeout)
@@ -384,7 +414,9 @@ def reconcile(root: str, rows: list, *, timeout: float | None = None) -> dict:
         except Exception as e:  # never let one hostile/malformed row crash the whole reconcile
             key = row.get("key") if isinstance(row, dict) else None
             path = row.get("path") if isinstance(row, dict) else None
-            remote = row.get("declared_remote") or (row.get("remote") if isinstance(row, dict) else None)
+            remote = (row.get("declared_remote") if isinstance(row, dict) else None) or (
+                row.get("remote") if isinstance(row, dict) else None
+            )
             out_rows.append(_reconcile_row(
                 key, path, remote, "refuse", "n/a", True,
                 "refused: unexpected error processing row: %s" % e,
@@ -415,7 +447,18 @@ def _ahead_behind(physical_path, branch):
     upstream_ref = up.stdout.decode("utf-8", "replace").strip()
     if not upstream_ref:
         return "no-upstream"
-    r = _git_safe(["rev-list", "--left-right", "--count", "%s...%s" % (branch, upstream_ref)], cwd=physical_path)
+    # R4 (security review, PR #59): --end-of-options guards the revision-range positional so it
+    # cannot be mistaken for a flag by `git rev-list`; verified locally (git 2.43.0) to leave
+    # `--left-right --count` output byte-identical. The sibling `git rev-parse --abbrev-ref
+    # <branch>@{upstream}` call above deliberately does NOT get this treatment: verified locally
+    # that `git rev-parse --abbrev-ref --end-of-options <ref>` echoes a spurious
+    # "--end-of-options" line ahead of the resolved ref in this git's non-`--verify` rev-parse
+    # mode, corrupting `upstream_ref` — a functional rejection, not a syntax one, so that call is
+    # left unguarded and recorded as a residual rather than "fixed" incorrectly.
+    r = _git_safe(
+        ["rev-list", "--left-right", "--count", "--end-of-options", "%s...%s" % (branch, upstream_ref)],
+        cwd=physical_path,
+    )
     if r.returncode != 0:
         return "unknown"
     parts = r.stdout.decode("utf-8", "replace").split()
@@ -727,7 +770,8 @@ def build_parser():
     sy = sub.add_parser("sync", help="clone not-cloned rows, fetch present+match rows, report the rest")
     sy.add_argument("--root", required=True, help="workspace root to evaluate")
     sy.add_argument("--json", action="store_true", help="emit the {degraded, degraded_reason, rows} envelope")
-    sy.add_argument("--timeout", type=float, default=None, help="per-invocation git timeout in seconds")
+    sy.add_argument("--timeout", type=float, default=DEFAULT_SYNC_TIMEOUT_SECONDS,
+                     help="per-invocation git timeout in seconds (default %(default)s)")
 
     st = sub.add_parser("status", help="one line per repos.<key> entry: present/origin/branch/ahead-behind/dirty")
     st.add_argument("--root", required=True, help="workspace root to evaluate")
