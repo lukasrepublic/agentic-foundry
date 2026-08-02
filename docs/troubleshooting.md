@@ -5,7 +5,7 @@ the shipped CLI, that's a bug — file it.
 
 ## `/foundry:doctor` is RED
 
-The output names the failing probe. The five probes and their usual causes:
+The output names the failing probe. The six probes and their usual causes:
 
 | Probe | Usual cause | Fix |
 |---|---|---|
@@ -14,6 +14,33 @@ The output names the failing probe. The five probes and their usual causes:
 | `skills-frontmatter` | a locally-edited SKILL.md with broken YAML | revert the edit, or reinstall |
 | `stack-profile-lock` | `.foundry/stack-profile.lock` points at a profile not in `packs/` | re-run `/foundry:relock`, or remove the lock |
 | `operator-registry` | `.claude/foundry-operators.json` missing or invalid | re-run `/foundry:init`, then add yourself |
+| `control-plane` | session rooted in a hosted repo, or below the control plane, or a dangling `repos{}` path | see below |
+
+## `foundry doctor` reports `control-plane` RED
+
+You started the session in the wrong place, or `.claude/foundry-project.json` has a stale
+`repos{}` entry — the `control-plane` probe names exactly which:
+
+- **"session rooted in a HOSTED repo"** — you started Claude Code inside a repo an ancestor
+  `.claude/foundry-project.json` already names in its `repos{}` (the common case: `claude plugin
+  install` enables the plugin user-wide, so it loads there too, pointed at the wrong root). Exit,
+  `cd` to the named control plane, and start the session there instead — see
+  [multi-repo-control-plane.md](how-to/multi-repo-control-plane.md).
+- **"session rooted BELOW a control plane"** — same fix, one level more general: your session
+  root is a subdirectory of an ancestor control plane that does not itself name it as a hosted
+  repo (e.g. a scratch directory under the plane). `cd` to the named ancestor.
+- **"repos.\<key\>.path does not resolve to an existing directory"** — a `repos{}` entry in
+  *this* project's own manifest points nowhere. Fix the path, or clone the repo there; an
+  unresolved `target_repo` degrades five `/foundry:authorize` grounding floors to warnings (see
+  *Authorize printed `warn: … degraded` lines*, below).
+- **A deliberately independent adopter nested inside a hosted repo** is a legitimate layout —
+  `scripts/foundry_control_plane.py --override <dir>` exits `0` while still printing the finding,
+  for scripting around it once you've confirmed it's intentional.
+- **A git worktree** (`.git` is a file, not a directory) is never convicted by this check,
+  regardless of where it is nested — this factory's own worker-dispatch tooling relies on that.
+
+This check runs at every `--session-start` too, but only **warns** there and still exits `0` — the
+operator-invoked `/foundry:doctor` exit code is its only enforcement.
 
 ## `gh pr merge` was refused: "the PR being merged cannot be resolved unambiguously"
 

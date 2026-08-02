@@ -53,7 +53,30 @@ falling back to the working directory), and every piece of the factory lives at 
 center's root: the plugin wiring (`.claude/settings.json`), the operator registry, the `repos{}`
 manifest, your specs, and the governance hooks. Start a session inside `api/` and none of it
 loads — no `/foundry:*` verbs, no authorization, no git-discipline guard. It fails by **absence**
-rather than with an error, and no preflight check currently catches it.
+rather than with an error.
+
+**The control-plane preflight catches this — in the common case.** `/foundry:doctor`'s
+`control-plane` check (`scripts/foundry_control_plane.py`) walks upward from the session's
+project directory looking for an ancestor `.claude/foundry-project.json`; if one names your
+session root as a hosted repo (`repos{}` entry), or your session is merely rooted somewhere below
+one, it reports **RED**, naming the control plane and the remedy. `/foundry:init` also runs it as
+its first step, before writing anything. See
+[feat-foundry-control-plane-preflight](../../specs/features/foundry/adoption/control-plane-preflight/feat-foundry-control-plane-preflight.md)
+for the full contract — in particular, it is a **mistake-catcher for the operator, not a floor**:
+`--session-start` warns but still exits `0`, and the operator-invoked `/foundry:doctor` exit code
+is its only real enforcement.
+
+### The residual — when this cannot catch you
+
+These checks are reachable **whenever the plugin loads**, which is the common case: `claude
+plugin install` writes `enabledPlugins` to `~/.claude/settings.json` **user-wide**, so the plugin
+(and the doctor) load even from inside a hosted repo — pointed at the wrong root, which is exactly
+what the check convicts. The checks are **unreachable only** on a machine where the plugin was
+instead enabled **per-project**, in the control plane's own `.claude/settings.json` — there, a
+session started inside a hosted repo does not load the plugin at all, so it fails by absence and
+the doctor is never reached to convict it. This is a narrow residual, not a general claim that the
+mistake is undetectable — most adopters install the plugin the ordinary way (user-wide) and the
+check is live for them.
 
 You still *work on* code in the hosted repos — the factory dispatches workers into those working
 trees. You just drive it from one session, at the top.
