@@ -1,0 +1,132 @@
+# Acceptance contract — sibling of feat-foundry-control-plane-docs.md (v1.1).
+#
+# Code repo agentic-foundry. PURE-DOC atom plus two test modules: it ships the control-plane pattern
+# documentation a plugin-only adopter lacks, and makes the doc's ENFORCEMENT CLAIMS a derived claim
+# rather than a promise.
+#
+# THE FILE ALREADY EXISTS. The ER's "the plugin ships no multi-repo how-to" was surveyed against the
+# INSTALLED v0.28.0 plugin cache (whose docs/ tree carries no how-to/ directory); on main at v1.0.1
+# docs/how-to/multi-repo-control-plane.md is present and linked from docs/README.md + llms.txt. This
+# atom COMPLETES and LOCKS it — the missing pairing/ordering/registry/--add-dir content and the absent
+# honesty section — it does not create it.
+#
+# THE HONESTY SECTION IS THE POINT, AND IT IS DERIVED BEHAVIOURALLY. Verified against the shipped tree
+# this session: hooks/foundry-worktree-create.sh calls `foundry-wt bind-check` on the redirect path and
+# drops the dispatch fail-closed on mismatch (no worktree); foundry-wt resolve fails rc=3 on an unknown
+# key / non-existent path and rc=4 on a workspace-escaping path; foundry-authorize.py prints five
+# `warn: … degraded` / `SKIPPED` lines on an unresolvable venue and FREEZES ANYWAY (auth_seq = prior+1,
+# contract-local); foundry-doctor.py contains NO read of repos{} at all and `--session-start` exits 0
+# unconditionally; foundry_contract.contract_sha256 covers the contract-proper region above the trailer
+# sentinel, so target_repo is inside the frozen hash. The doc must not repeat SETUP.md's "fails closed
+# at authorization" error. AC-CPD-3 registers FOUR claims — one per mechanism, each with its own
+# make_mutated and negative-control conviction — over a CLOSED, pinned roster of `enforced`-section
+# labels, so an overclaim, an understatement OR a brand-new un-derived mechanism fails CI, and so
+# feat-foundry-control-plane-preflight landing (which flips the doctor + session-root claims) turns the
+# doc RED rather than silently stale. Two of the four derivations EXECUTE the real seam against a
+# hermetic tmp_path fixture workspace (CLAUDE_PROJECT_DIR + cwd redirected), never the real tree.
+#
+# MERGE ORDER IS A PRECONDITION: feat-foundry-control-plane-preflight is authorized (auth_seq 1) and
+# lands FIRST. Its AC-CPP-8 test over this same doc file is run here as this atom's own regression.
+#
+# SCOPE IS DELIBERATELY NARROW: scripts/**, hooks/**, schema/**, skills/** and .github/workflows/** are
+# denied, so no enforcement surface can move under cover of a docs change. Two test modules are in
+# scope because the repo ships two: tests/test_docs_claims.py (structural assertions, beside
+# test_relative_doc_links_resolve) and tests/test_doc_claims.py (the anti-doc-rot COVERED_CLAIMS
+# registry, whose derive/check/make_mutated + parametrized negative control supply the anti-tautology
+# machinery this atom's honesty AC needs).
+#
+# Live-seam: `python3 -m pytest tests/test_doc_claims.py tests/test_docs_claims.py -q` (plus the
+# sibling's `-k residual_is_declared_narrowly` regression).
+spec_ref: specs/features/foundry/onboarding/control-plane-docs/feat-foundry-control-plane-docs.md
+spec_sha256: "0000000000000000000000000000000000000000000000000000000000000000"  # /foundry:authorize fills this
+target_repo: agentic-foundry
+scope:
+  allowed_paths:
+    - "docs/how-to/multi-repo-control-plane.md"   # AC-CPD-1/-2/-3: the shipped doc itself
+    - "tests/test_docs_claims.py"                 # AC-CPD-1/-2: the structural presence + coverage lock
+    - "tests/test_doc_claims.py"                  # AC-CPD-3: FOUR derived claims + the pinned label
+                                                  #   roster, the pinned paraphrase denylist, and the
+                                                  #   four new EXPECTED_CLAIM_IDS entries
+    - "CHANGELOG.md"
+  denied_paths:
+    - "scripts/**"                                # the enforcement the doc DESCRIBES is untouched —
+                                                  #   this atom changes what is said, never what is
+                                                  #   done. AC-CPD-3(2)/(3)/(4) READ and EXECUTE these
+                                                  #   scripts (against tmp_path copies/fixtures); a
+                                                  #   read is not a write and the deny stands.
+    - "hooks/**"                                  # ditto — AC-CPD-3(1) READS the bind-check call site
+    - "schema/**"                                 # registry-field formalization is a separate atom
+    - "skills/**"
+    - ".github/workflows/**"                      # no new CI step — both modules ride `pytest tests/`
+    - "docs/README.md"                            # the index links already resolve; AC-CPD-1 LOCKS
+    - "llms.txt"                                  #   them, it does not edit them
+checkpoints:
+  # House `&& echo <TOKEN>` form; one checkpoint per named case.
+
+  # --- AC-CPD-1 — the doc ships (git-tracked) at the exact path the preflight contract references,
+  #     and both index documents link to it
+  - {ac_id: AC-CPD-1, surface: "file:docs/how-to/multi-repo-control-plane.md", locator: "sh -c 'python3 -m pytest tests/test_docs_claims.py -q -k control_plane_how_to_is_shipped_and_linked && echo CPD-1-SHIPPED-OK'", expect: {op: matches, value: "CPD-1-SHIPPED-OK", baseline: pre-change}}
+
+  # --- AC-CPD-2 — the six subjects are present AS PLACED SECTIONS (each pinned token inside its own
+  #     section body, not merely somewhere in the file)
+  - {ac_id: AC-CPD-2, surface: "file:docs/how-to/multi-repo-control-plane.md", locator: "sh -c 'python3 -m pytest tests/test_docs_claims.py -q -k control_plane_how_to_covers_the_pattern && echo CPD-2-PATTERN-OK'", expect: {op: matches, value: "CPD-2-PATTERN-OK", baseline: pre-change}}
+
+  # --- AC-CPD-3 — FOUR registered claims, one per mechanism. Each derivation reads or EXERCISES the
+  #     live seam (never a dispatch-table presence-grep), and each carries its own make_mutated so the
+  #     parametrized negative control convicts it individually.
+
+  # (1) the hook's LIVE bind-check invocation + foundry-wt's dispatched subcommands
+  - {ac_id: AC-CPD-3, surface: "file:docs/how-to/multi-repo-control-plane.md", locator: "sh -c 'python3 -m pytest tests/test_doc_claims.py -q -k control_plane_dispatch_enforcement && echo CPD-3-DISPATCH-OK'", expect: {op: matches, value: "CPD-3-DISPATCH-OK", baseline: pre-change}}
+
+  # (2) the authorize seam EXECUTED against a hermetic tmp_path fixture with an unresolvable
+  #     target_repo — the outcome triple (warnings emitted, exit status, written auth_seq) derives
+  #     BOTH halves of "warns AND proceeds"
+  - {ac_id: AC-CPD-3, surface: "file:docs/how-to/multi-repo-control-plane.md", locator: "sh -c 'python3 -m pytest tests/test_doc_claims.py -q -k control_plane_authorize_degrade && echo CPD-3-DEGRADE-OK'", expect: {op: matches, value: "CPD-3-DEGRADE-OK", baseline: pre-change}}
+
+  # (3) the doctor's repos{} silence + the EXECUTED --session-start unconditional exit-0 (the
+  #     fail-open half), which also governs the session-root rule's practice classification
+  - {ac_id: AC-CPD-3, surface: "file:docs/how-to/multi-repo-control-plane.md", locator: "sh -c 'python3 -m pytest tests/test_doc_claims.py -q -k control_plane_doctor_validation && echo CPD-3-DOCTOR-OK'", expect: {op: matches, value: "CPD-3-DOCTOR-OK", baseline: pre-change}}
+
+  # (4) target_repo lies inside the hash-covered contract-proper region — exercised through
+  #     foundry_contract.py's own hash seam, so "requires re-authorization" is derived, not asserted
+  - {ac_id: AC-CPD-3, surface: "file:docs/how-to/multi-repo-control-plane.md", locator: "sh -c 'python3 -m pytest tests/test_doc_claims.py -q -k control_plane_target_repo_freeze && echo CPD-3-FREEZE-OK'", expect: {op: matches, value: "CPD-3-FREEZE-OK", baseline: pre-change}}
+
+  # --- AC-CPD-3 THE CLOSED ROSTER — the labels parsed from the `enforced` section's own body equal
+  #     the pinned label->classification mapping exactly, so a NEW qualitative overclaim cannot ship
+  #     un-derived. Pinned against a hand-written expected copy (the DECLARED_EXTERNAL_REFS idiom).
+  - {ac_id: AC-CPD-3, surface: "file:docs/how-to/multi-repo-control-plane.md", locator: "sh -c 'python3 -m pytest tests/test_doc_claims.py -q -k control_plane_enforced_roster_is_closed && echo CPD-3-ROSTER-OK'", expect: {op: matches, value: "CPD-3-ROSTER-OK", baseline: pre-change}}
+
+  # --- AC-CPD-3 THE PRACTICE LABELS — each of the three rule names literally co-occurs with the
+  #     token `practice` inside that same section body
+  - {ac_id: AC-CPD-3, surface: "file:docs/how-to/multi-repo-control-plane.md", locator: "sh -c 'python3 -m pytest tests/test_doc_claims.py -q -k control_plane_practice_labels_co_occur && echo CPD-3-PRACTICE-OK'", expect: {op: matches, value: "CPD-3-PRACTICE-OK", baseline: pre-change}}
+
+  # --- AC-CPD-3 THE ANTI-TAUTOLOGY CONTROL — every registered claim's check() must RAISE against its
+  #     own mutated tree, naming its claim id. A check that cannot fail proves nothing. Parametrized
+  #     per claim id, so all FOUR new claims are convicted individually.
+  - {ac_id: AC-CPD-3, surface: "test:tests/test_doc_claims.py", locator: "sh -c 'python3 -m pytest tests/test_doc_claims.py -q -k negative_control_convicts_injected_drift && echo CPD-3-NEGCTRL-OK'", expect: {op: matches, value: "CPD-3-NEGCTRL-OK", baseline: pre-change}}
+
+  # --- AC-CPD-4 — both docs suites green, including the inherited floors this atom can break:
+  #     no unclassified count-bearing token in the doc, the pinned claim roster, live derivations,
+  #     relative-link resolution, and the narration lock
+  - {ac_id: AC-CPD-4, surface: "test:tests/test_docs_claims.py", locator: "sh -c 'python3 -m pytest tests/test_doc_claims.py tests/test_docs_claims.py -q && echo CPD-4-REGRESS-OK'", expect: {op: matches, value: "CPD-4-REGRESS-OK", baseline: pre-change}}
+
+  # --- AC-CPD-4 — the SIBLING atom's checkpoint over this same doc file. feat-foundry-control-plane-
+  #     preflight is authorized (auth_seq 1) and lands first; its AC-CPP-8 residual assertion must
+  #     survive this atom's rewrite of the section both paragraphs live in (R2). SURFACE is the DOC
+  #     (the artifact this atom changes and the sibling asserts over) — tests/test_control_plane_
+  #     preflight.py is the sibling's file, deliberately NOT in this atom's scope: it is read by the
+  #     locator, never written.
+  - {ac_id: AC-CPD-4, surface: "file:docs/how-to/multi-repo-control-plane.md", locator: "sh -c 'python3 -m pytest tests/test_control_plane_preflight.py -q -k residual_is_declared_narrowly && echo CPD-4-SIBLING-OK'", expect: {op: matches, value: "CPD-4-SIBLING-OK", baseline: none}}
+
+  # --- AC-CPD-4 — the plugin repo's own doctor is unmoved by a docs change
+  - {ac_id: AC-CPD-4, surface: "cli:foundry-doctor", locator: "sh -c 'python3 scripts/foundry-doctor.py | tail -1'", expect: {op: matches, value: "DOCTOR-GREEN", baseline: none}}
+# /foundry:authorize appends the signed `authorized:` trailer below a sentinel (excluded from contract_sha256).
+# === FOUNDRY-AUTHORIZED-TRAILER (excluded from contract_sha256) ===
+authorized:
+  operator_id: op_lukas
+  authorized_at: 2026-08-02T15:15:50Z
+  auth_seq: 1
+  supersedes: null
+  spec_sha256: 2a68ec8e234e85a8d7f8dfa271c59000fe5d7d2a7c668756de4e0f1827ff6e18
+  contract_sha256: 975e180e7a241755ed27772f179e4ff469981fab75d1b665ffbd554bb594ad6e
+  merge_autonomy_mode: lean
