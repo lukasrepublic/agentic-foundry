@@ -1312,6 +1312,30 @@ def _derive_doctor_validation(root: Path) -> dict:
     }
 
 
+import hashlib as _hashlib
+
+def _foundry_state_digest():
+    h=_hashlib.sha256()
+    d=REPO_ROOT / ".foundry"
+    if d.is_dir():
+        for p in sorted(d.rglob("*")):
+            if p.is_file():
+                h.update(str(p.relative_to(d)).encode()); h.update(p.read_bytes())
+    return h.hexdigest()
+
+import pytest as _pytest
+
+@_pytest.fixture(autouse=True)
+def _exec_seam_hermeticity_tripwire():
+    """Security review 2026-08-02 (R1): the derived claims EXECUTE foundry-authorize.py and
+    foundry-doctor.py against fixtures; if a future root-resolution refactor made either write
+    into the live tree, every pytest run would silently mutate .foundry/. Fail loudly instead."""
+    before=_foundry_state_digest()
+    yield
+    after=_foundry_state_digest()
+    assert before == after, ".foundry/ mutated during a doc-claims test — the exec seam escaped its fixture"
+
+
 def _check_doctor_validation(root: Path) -> None:
     derived = _derive_doctor_validation(root)
     section = _cp_enforced_section(root)
@@ -1864,10 +1888,10 @@ _CP_ENFORCED_ROSTER = {
     "dispatch bind-check": "machine-enforced",
     "target_repo freeze": "machine-enforced",
     "authorization venue floors": "not-enforced-today",
-    "doctor registry validation": "machine-enforced",
+    "doctor registry validation": "not-enforced-today",
     "pairing rule": "practice",
     "clone-before-register ordering": "practice",
-    "session-root rule": "machine-enforced",
+    "session-root rule": "not-enforced-today",
 }
 
 # Pinned literal expected copy, hand-synchronized (not derived from _CP_ENFORCED_ROSTER above).
@@ -1876,10 +1900,10 @@ _EXPECTED_CP_ENFORCED_ROSTER = {
     "dispatch bind-check": "machine-enforced",
     "target_repo freeze": "machine-enforced",
     "authorization venue floors": "not-enforced-today",
-    "doctor registry validation": "machine-enforced",
+    "doctor registry validation": "not-enforced-today",
     "pairing rule": "practice",
     "clone-before-register ordering": "practice",
-    "session-root rule": "machine-enforced",
+    "session-root rule": "not-enforced-today",
 }
 
 _CP_CLASSIFICATIONS = frozenset({"machine-enforced", "not-enforced-today", "practice"})
@@ -1906,22 +1930,16 @@ def test_control_plane_enforced_roster_is_closed():
 
 
 def test_control_plane_practice_labels_co_occur():
-    """Each rule name currently classified `practice` in the pinned roster literally co-occurs
-    with the token `practice` inside the `enforced` section's own body. `session-root rule` is
-    NOT asserted here: AC-CPD-3(3) derives it OUT of the practice classification once
-    feat-foundry-control-plane-preflight ships (control-plane-doctor-validation, above) — which
-    it already has on this tree (merge-order precondition, Clarifications) — so pinning it here
-    unconditionally would assert a claim this same registry's own derivation convicts."""
-    practice_labels = [label for label, cls in _CP_ENFORCED_ROSTER.items() if cls == "practice"]
-    assert practice_labels, "no label is classified practice in the pinned roster"
+    # Security review 2026-08-02 (R6): assert on the PARSED roster item, never a bare substring
+    # over the joined section (the vacuous shape this workspace has been burned by).
     section = _cp_enforced_section(REPO_ROOT)
-    for label in practice_labels:
-        idx = section.find(label)
-        assert idx != -1, f"practice label {label!r} does not occur in the enforced section body"
-        assert "practice" in section, (
-            f"the token 'practice' does not co-occur with {label!r} in the enforced section body"
+    items = dict(re.findall(r"\*\*([^*]+)\*\* \u2014 ([a-z-]+)", section))
+    practice = [label for label, tier in _CP_ENFORCED_ROSTER.items() if tier == "practice"]
+    assert practice, "roster lost its practice labels"
+    for label in practice:
+        assert items.get(label) == "practice", (
+            f"practice label {label!r} does not parse as tier 'practice' in the enforced section"
         )
-
 
 @pytest.mark.parametrize("claim_id", [e["claim_id"] for e in COVERED_CLAIMS])
 def test_negative_control_convicts_injected_drift(claim_id, tmp_path):

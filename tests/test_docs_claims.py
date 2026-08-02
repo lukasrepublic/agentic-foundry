@@ -265,3 +265,4 @@ def test_no_journey_narration_in_shipped_docs():
         if forbidden.search(_read(os.path.join(REPO_ROOT, rel))):
             offenders.append(rel)
     assert not offenders, f"journey narration reintroduced in: {offenders}"
+

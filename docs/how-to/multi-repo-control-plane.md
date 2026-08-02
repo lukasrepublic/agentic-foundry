@@ -64,10 +64,9 @@ reads.
 ```
 
 This example validates against the shipped `schema/foundry-project.schema.json` — its one
-required member is `schema_version`. Field ledger for the example above, inline against each
+required members are `schema_version` at the top level and `path` on every `repos.<key>` record. Field ledger for the example above, inline against each
 field: `path` is read, by `foundry-wt`'s resolver. `kind` and `role` are **inert** in this
-example — accepted only because the schema's own `additionalProperties: true` lets them
-through; no shipped code reads either one today (both are reserved for a future
+example — declared schema properties since the registry-formalization atom: `kind` stays free-form tech-shape prose, `role` is a **closed set** (`product`, `handbook`, `infra`, `app`, `workspace`) with prose belonging in `description`; no shipped code branches on either one today (readers arrive with a later
 registry-formalization atom).
 
 The key `workspace` is **not** a `repos{}` row you add yourself: `foundry-wt` resolves it
@@ -116,8 +115,7 @@ every hosted repo's working tree — that is its blast radius, not just the repo
 targets.** The control plane's own `.gitignore` *hides* those edits from the control plane's
 own `git status`; it does not confine them. A contract's `target_repo` and
 `scope.allowed_paths` bind the **jailed worker** dispatched into a worktree — never the root
-session itself, which can still touch anything on disk. If a hosted path must stay genuinely
-out of reach from the root session, the remedy is a `permissions.deny` rule for that path in
+session itself, which can still touch anything on disk. If a hosted path must stay out of reach from the file tools — and permission rules are per-tool, so pair the file-tool deny with the matching Bash shapes or a shell command still reaches the path from the root session, the remedy is a `permissions.deny` rule for that path in
 `.claude/settings.json`; the session-scope boundary described above is not that remedy.
 
 **The control-plane preflight catches the wrong-root mistake — in the common case.**
@@ -161,7 +159,7 @@ label below states this as a derived, machine-checked fact, not a promise.
 ## What is enforced, and what is practice
 
 Being honest about which of these rules a machine actually holds — and which rely on you — is
-the point of this section. Every label below is derived by exercising the shipped code, not
+the point of this section. Each machine-enforced and not-enforced-today label below is derived by exercising the shipped code; the practice labels are, by definition, derived by nothing, not
 asserted from memory; drift here fails this plugin's own test suite.
 
 - **repo-key resolution** — machine-enforced. `foundry-wt resolve` fails closed on an unknown
@@ -181,15 +179,15 @@ asserted from memory; drift here fails this plugin's own test suite.
   system-grounding, `allowed_paths` grounding, checkpoint-locator grounding) and **freezes
   anyway** — the venue floors *degrade to warnings* and the write proceeds regardless,
   incrementing `auth_seq` in the frozen `authorized:` trailer.
-- **doctor registry validation** — machine-enforced. The operator-invoked `/foundry:doctor`
+- **doctor registry validation** — not-enforced-today. The operator-invoked `/foundry:doctor`
   reads `repos{}` and exits non-zero on a dangling entry or on a wrongly-rooted session; the
   advisory `--session-start` cadence still exits zero regardless, on purpose, so it never wedges
   a session.
-- **pairing rule** — practice. Nothing machine-checks that a `.gitignore` entry and a `repos{}`
+- **pairing rule** — practice. The registry report (`scripts/foundry_repo_registry.py`) checks the pairing per row (`unpaired`/`unanchored`/`tracked`) — advisory, wired to no gate; nothing blocks a commit that skipped it. A `.gitignore` entry and a `repos{}`
   row were added together.
 - **clone-before-register ordering** — practice. Nothing machine-checks that the clone happened
   before the `repos{}` row was written.
-- **session-root rule** — machine-enforced. The operator-invoked doctor now catches a session
+- **session-root rule** — not-enforced-today. The operator-invoked doctor now catches a session
   rooted inside a hosted repo, or nested below the plane without being one itself (the residual
   above still applies) — this is a mistake-catcher for the operator, not a merge-blocking floor.
 
