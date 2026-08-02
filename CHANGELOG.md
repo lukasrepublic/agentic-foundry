@@ -8,6 +8,35 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## Unreleased
+
+### The project's own `boot_command` now wins certification's boot-recipe resolution (feat-foundry-boot-recipe-precedence, AC-BRP-1..8)
+
+- **`certify-local` is reachable from a clean install.** `repos.<key>.boot_command` in
+  `.claude/foundry-project.json` — already accepted by the schema but never read — is now the
+  **first-precedence** boot recipe: declare it and certification boots from it directly, no
+  `.foundry/stack-profile.lock` required. The active stack profile's
+  `app_exercise_binding.boot` remains the fallback, byte-for-byte unchanged, when the project
+  declares nothing usable. The precedence key follows the release's resolved venue exactly the
+  way `foundry_release._resolve_repo` resolves it: the literal `workspace` key for the
+  merge-gate sentinel / single-repo self-host default, `self_host_code_repo` when set, or the
+  explicit `target_repo` key.
+- **A malformed manifest degrades, never breaks.** An unreadable/invalid
+  `.claude/foundry-project.json` falls through to the profile path instead of raising, but is
+  reported on its own line — distinct from "declared nothing" — so a typo'd `boot_command` is
+  never silently indistinguishable from an absent one.
+- **The refusal names only reachable remedies.** With neither source yielding a recipe,
+  `certify-local` always names declaring `boot_command` (the one an adopter can always act on),
+  and names "activate a different stack profile" only when a lock already exists — until the
+  sibling atom (`feat-foundry-stack-profile-lock-create`) ships, nothing creates a lock, so
+  naming that remedy unconditionally would send the reader nowhere.
+- `docs/troubleshooting.md`'s "No boot recipe" entry is reconciled to the shipped precedence,
+  and its v1 known-limitation note is narrowed (not deleted): the profile path itself still
+  requires a lock nothing yet creates.
+
+**Security review:** not flagged — no auth, secrets, or supply-chain path in scope (this changes
+which already-executed declaration is consulted first, not whether a command is executed).
+
 ## v1.0.1 — 2026-08-01
 
 **Security fix for the git-discipline guard. Upgrade if you rely on it.** Two defects let the
