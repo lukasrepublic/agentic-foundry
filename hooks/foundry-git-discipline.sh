@@ -113,7 +113,11 @@ except Exception:
 # evaluator prints "BLOCK <reason>" or "ALLOW". Per the fail-closed boundary, any internal
 # error here (the python3 evaluator failing while a command IS recovered) => exit 2.
 # ----------------------------------------------------------------------------------------
-verdict="$(PROTECTED="$PROTECTED" STRICT_HISTORY="$STRICT_HISTORY" CMD="$cmd" python3 - <<'PY'
+# bash-3.2 parse compat: the heredoc lives INSIDE a function body, never inside `$(...)` —
+# bash 3.2's command-substitution scanner mis-tracks backquotes/quotes across heredoc content
+# (feat-foundry-bash32-parse-guard), so the substitution below contains only the function call.
+_git_discipline_eval() {
+  PROTECTED="$PROTECTED" STRICT_HISTORY="$STRICT_HISTORY" CMD="$cmd" python3 - <<'PY'
 import os, re, shlex, subprocess, sys
 
 cmd = os.environ.get("CMD", "")
@@ -666,7 +670,8 @@ for i, t in enumerate(low):
 
 allow()
 PY
-)"
+}
+verdict="$(_git_discipline_eval)"
 rc=$?
 
 # Fail-closed boundary: the evaluator MUST produce a verdict. If python3 failed (non-zero)
@@ -675,7 +680,10 @@ rc=$?
 # scan itself failed, so we fail closed conservatively.
 if [ "$rc" -ne 0 ] || [ -z "$verdict" ]; then
   echo "foundry-git-discipline: internal evaluator error while a command was recovered; fail-closed BLOCK." >&2
-  echo "  command: $cmd" >&2
+  # Security review 2026-08-02: never echo the raw command on the error path — an inline
+  # GH_TOKEN=<pat> or similar would leak verbatim into the transcript exactly when the
+  # evaluator (which knows how to handle it) has failed.
+  echo "  (command withheld: evaluator failed, raw echo could leak inline credentials)" >&2
   exit 2
 fi
 
