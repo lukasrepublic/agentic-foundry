@@ -23,7 +23,7 @@ All notable changes to Agentic Foundry are documented here (SemVer).
   `ask`; the absolute anti-patterns (`gh pr merge --admin`, `git push --force`,
   `tofu destroy -auto-approve`, `docker system prune`) are pinned `deny`.
 - **The map grants nothing by itself.** It is inert data — no hook, gate, authorization path, or
-  runtime reads it in this atom. Consent stays at the platform's workspace-trust dialog. The
+  runtime reads it in this atom. Consent stays at the platform's workspace-trust dialog. The `generated_for_plugin_version` updates at each release cut alongside the two manifests (convention; the field ships equal to the cut version).
   pre-session bootstrap CLI that applies it and the doctor drift check that watches it are
   separate, out-of-scope atoms.
 - **`tests/test_permission_floor_map.py`** derives its ground truth from the shipped tree at run

@@ -186,17 +186,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-doctor.py)",
       "tier": "allow",
-      "rationale": "bare invocation runs the thin 5-check health probe; read-only, fail-open"
-    },
-    {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-doctor.py --session-start:*)",
-      "tier": "allow",
-      "rationale": "advisory session-start cadence probe; fail-open, never wedges a session"
-    },
-    {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-doctor.py --repo:*)",
-      "tier": "allow",
-      "rationale": "back-compat accepted flag, unused by the probe itself"
+      "rationale": "bare invocation runs the thin 5-check health probe; read-only, fail-open; exact rule deliberately \u2014 flag-qualified forms fall through to a prompt so no allow-prefix can reach the --heal ceremony (security review 2026-08-02)."
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-doctor.py --heal:*)",
@@ -214,14 +204,9 @@
       "rationale": "read-only resolve of the already-locked stack-profile.lock"
     },
     {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-stack-profile.py --lock:*)",
-      "tier": "allow",
-      "rationale": "creates .foundry/stack-profile.lock for the named profile id(s); fail-closed, validate-before-write"
-    },
-    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-stack-profile.py --relock:*)",
       "tier": "ask",
-      "rationale": "pinned ceremony (AC-PFM-3): re-writes the lock in place; leading flag verified prefix-keyable"
+      "rationale": "pinned ceremony (AC-PFM-3): re-writes the lock in place; leading flag verified prefix-keyable; the split tier with --validate/--load is safe ONLY because main() checks those flags before --relock \u2014 a combined invocation runs the earlier-checked verb (security review 2026-08-02)."
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-authorize.py:*)",
