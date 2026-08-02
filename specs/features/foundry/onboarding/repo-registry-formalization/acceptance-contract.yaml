@@ -1,0 +1,221 @@
+# Acceptance contract — sibling of feat-foundry-repo-registry-formalization.md (v1.1).
+# Code repo agentic-foundry. Formalizes `.claude/foundry-project.json` `repos{}` against the
+# repo/meta/vcstool manifest consensus (a committed manifest declaring {path, remote, branch} per
+# repo; children are plain independent gitignored clones, never submodules) and ships the
+# registry-integrity report the consensus's second half requires: declare, then REPORT drift —
+# never reconcile silently (the ArgoCD registration rule).
+#
+# TWO SURFACES, ONE ATOM:
+#   1. schema/foundry-project.schema.json — `path` REQUIRED; `remote`/`default_branch`/`role`/
+#      `description` added as OPTIONAL; `role` closed to product|handbook|infra|app|workspace;
+#      plus a SHAPE FLOOR pattern (no leading `-`, no C0/C1 control chars) on the value fields;
+#      everything else stays additive (additionalProperties: true survives at all three levels).
+#   2. scripts/foundry_repo_registry.py — a NEW, read-only, independently invocable report:
+#      present / not-cloned / dangling / outside-workspace per entry (PHYSICAL path resolution),
+#      root-anchored gitignore pairing via `git check-ignore -v --no-index --` PLUS a
+#      `git ls-files --` tracked probe, and origin-vs-declared-remote match read from the RAW
+#      configured value, with ONE sanitizing emission sink over stdout + stderr + --json.
+#
+# ROLE IS THE ONLY NON-ADDITIVE ELEMENT, AND IT IS ORDER-PINNED. The closed `role` set breaks the
+# handbook's prose values; the prerequisite atom is `handbook-manifest-role-migration`
+# (target_repo: agentic-handbook) and the narrowing ships only in a release that migration already
+# precedes (spec R1). Operator-held sequencing — deliberately not a checkpoint here.
+#
+# TWO ORACLE CHOICES ARE LOAD-BEARING AND CITED (see spec AC-RRF-5 / Security posture):
+#   - origin is read with `git config --get remote.origin.url`, NEVER `git remote get-url`, which
+#     expands `url.*.insteadOf` from the AUDITED checkout's own config and would let that checkout
+#     forge a `match`. Precedent: _remote_url_raw at scripts/foundry-prepublication-leak-scan.py
+#     :591-602; the RRF-5-INSTEADOF-OK checkpoint mirrors that module's regression fixture
+#     tests/test_prepublication_leak_scan.py::test_insteadof_redirect_does_not_redirect_the_probe.
+#   - path confinement is PHYSICAL (symlinks resolved), mirroring foundry-wt's `cd && pwd -P`.
+#
+# THE ATOM SURFACES; IT NEVER FIXES. No clone, no fetch, no .gitignore edit, no manifest write.
+# AC-RRF-6(i) pins "writes nothing" as a checkpoint, not a promise in prose; AC-RRF-6(vi) pins the
+# git vocabulary to a closed, `--`-guarded, config-read-only plumbing set.
+#
+# NOT-CLONED vs DANGLING IS THE HEADLINE. Today both present as "the path isn't there", so an
+# operator cannot tell "clone it from <remote>" from "this entry is garbage". AC-RRF-3 is the
+# distinguishability checkpoint the ER named as the key gap.
+#
+# scripts/foundry-config.py IS DENIED ON PURPOSE. It is the schema's ONLY consumer in the plugin
+# (verified: the sole file naming foundry-project.schema.json), so denying it makes AC-RRF-2's
+# strongest claim STRUCTURAL — the tightened schema must flow into the existing drift checker with
+# NO code change. tests/test_config_drift.py is likewise unmodified and runs as regression.
+#
+# THE SIBLING VALIDATOR IS CITED, NOT DUPLICATED. feat-foundry-control-plane-preflight owns
+# CONVICTING a dangling path at doctor level; scripts/foundry-doctor.py is denied here and only
+# runs as an unchanged DOCTOR-GREEN regression.
+#
+# Live-seam: `python3 -m pytest tests/test_repo_registry.py -q` — the shipped schema validated with
+# jsonschema (requirements-dev.txt pins jsonschema==4.25.0) and the real report module driven over
+# materialized tmp_path fixtures (git init'd checkouts, real .gitignore files).
+spec_ref: specs/features/foundry/onboarding/repo-registry-formalization/feat-foundry-repo-registry-formalization.md
+spec_sha256: "0000000000000000000000000000000000000000000000000000000000000000"  # /foundry:authorize fills this
+target_repo: agentic-foundry
+scope:
+  allowed_paths:
+    - "schema/foundry-project.schema.json"      # AC-RRF-1/-2: the tightened, additive manifest schema
+    - "scripts/foundry_repo_registry.py"        # NEW — AC-RRF-3/-4/-5/-6: the read-only report + CLI
+    - "tests/test_repo_registry.py"             # NEW — named by every checkpoint below
+    - "CHANGELOG.md"
+  denied_paths:
+    - "scripts/foundry-config.py"               # the schema's ONLY consumer — must pick the
+                                                #   tightening up with NO code change (AC-RRF-2)
+    - "tests/test_config_drift.py"              # its regression value depends on being unmodified
+    - "scripts/foundry-doctor.py"               # the sibling validator's surface — no duplicate verdict
+    - "scripts/foundry-wt"                      # the dispatch resolver is untouched
+    - "scripts/foundry-authorize.py"            # no gate reads this schema or this report
+    - "scripts/foundry_authz.py"
+    - "hooks/**"                                # no new hook, no wiring re-pin
+    - ".github/workflows/**"
+    - "docs/how-to/multi-repo-control-plane.md" # owned by control-plane-pattern-docs + already in
+                                                #   the pending preflight atom's write scope
+checkpoints:
+  # House `&& echo <TOKEN>` form; one checkpoint per named case.
+
+  # --- AC-RRF-1 — ADDITIVE: every repos{} example this repo itself ships still validates.
+  #     The corpus asserted over: the how-to example (roles product/infra — already in the closed
+  #     set), the foundry-wt selftest manifest, the two hook selftest manifests, and
+  #     test_config_drift's GOOD_PROJ shape. All carry `path` and no prose `role`.
+  - {ac_id: AC-RRF-1, surface: "file:schema/foundry-project.schema.json", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k schema_accepts_shipped_manifest_corpus && echo RRF-1-COMPAT-OK'", expect: {op: matches, value: "RRF-1-COMPAT-OK", baseline: pre-change}}
+
+  # --- AC-RRF-1 — the four new fields are OPTIONAL, unknown keys still validate at all three
+  #     levels, packages.role stays an unconstrained string, and every new property carries a
+  #     non-empty description (the schema is the atom's only doc surface)
+  - {ac_id: AC-RRF-1, surface: "file:schema/foundry-project.schema.json", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k new_fields_are_optional_and_documented && echo RRF-1-OPTIONAL-OK'", expect: {op: matches, value: "RRF-1-OPTIONAL-OK", baseline: pre-change}}
+
+  # --- AC-RRF-1 — the UNMODIFIED drift checker + its unmodified suite stay green: proof the
+  #     tightening is additive against the one consumer that actually reads the schema
+  - {ac_id: AC-RRF-1, surface: "test:tests/test_config_drift.py", locator: "sh -c 'python3 -m pytest tests/test_config_drift.py tests/test_repo_registry.py -q && echo RRF-REGRESS-OK'", expect: {op: matches, value: "RRF-REGRESS-OK", baseline: pre-change}}
+
+  # --- AC-RRF-2 — a record with no `path` (or a non-string/empty one) FAILS validation, and the
+  #     error location names the offending repos.<key>
+  - {ac_id: AC-RRF-2, surface: "file:schema/foundry-project.schema.json", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k schema_rejects_entry_without_path && echo RRF-2-PATH-OK'", expect: {op: matches, value: "RRF-2-PATH-OK", baseline: pre-change}}
+
+  # --- AC-RRF-2 — the TYPE + EMPTY-STRING clauses, asserted in their own case so neither is
+  #     covered only incidentally: a non-string `path`/`remote`/`default_branch`/`description`
+  #     FAILS, and an empty string FAILS for `path`, `remote` and `default_branch` (parametrized
+  #     over the four fields x {non-string, empty}; the valid-value direction asserted too, so
+  #     the constraint is not vacuously satisfied by a schema that rejects everything)
+  - {ac_id: AC-RRF-2, surface: "file:schema/foundry-project.schema.json", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k schema_rejects_non_string_and_empty_values && echo RRF-2-TYPES-OK'", expect: {op: matches, value: "RRF-2-TYPES-OK", baseline: pre-change}}
+
+  # --- AC-RRF-2 — THE SHAPE FLOOR: a leading `-` FAILS for path/remote/default_branch and a
+  #     C0/C1 control character FAILS for remote/default_branch (argv + terminal hostility), while
+  #     a legitimate local path, ssh alias and git:// URL still VALIDATE — the floor is a shape
+  #     check, never a URL validator (spec Out-of-scope)
+  - {ac_id: AC-RRF-2, surface: "file:schema/foundry-project.schema.json", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k schema_shape_floor_rejects_dash_leading_and_control_chars && echo RRF-2-SHAPE-OK'", expect: {op: matches, value: "RRF-2-SHAPE-OK", baseline: pre-change}}
+
+  # --- AC-RRF-2 — a `role` outside product|handbook|infra|app|workspace FAILS; each of the five
+  #     in-set values PASSES (both directions, so the enum is not vacuous)
+  - {ac_id: AC-RRF-2, surface: "file:schema/foundry-project.schema.json", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k schema_rejects_role_outside_closed_set && echo RRF-2-ROLE-OK'", expect: {op: matches, value: "RRF-2-ROLE-OK", baseline: pre-change}}
+
+  # --- AC-RRF-2 — the tightening reaches the operator through the UNEDITED foundry-config.py:
+  #     `check --json` reports the violation and `adopt` refuses to baseline it
+  - {ac_id: AC-RRF-2, surface: "file:scripts/foundry-config.py", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k config_check_reports_registry_violations_unedited && echo RRF-2-FLOWTHROUGH-OK'", expect: {op: matches, value: "RRF-2-FLOWTHROUGH-OK", baseline: pre-change}}
+
+  # --- AC-RRF-3 THE KEY GAP — remote-declared+absent is `not-cloned`, no-remote+absent is
+  #     `dangling`, and the two carry DISTINCT remedy text (one fixture, both rows, so a
+  #     collapse of the distinction fails the case)
+  - {ac_id: AC-RRF-3, surface: "file:scripts/foundry_repo_registry.py", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k report_distinguishes_not_cloned_from_dangling && echo RRF-3-DISTINGUISH-OK'", expect: {op: matches, value: "RRF-3-DISTINGUISH-OK", baseline: pre-change}}
+
+  # --- AC-RRF-3 — `present` and `outside-workspace` are the other two states (no row is
+  #     unclassified, and an out-of-tree path is not miscalled dangling)
+  - {ac_id: AC-RRF-3, surface: "test:tests/test_repo_registry.py", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k report_classifies_present_and_outside_workspace && echo RRF-3-STATES-OK'", expect: {op: matches, value: "RRF-3-STATES-OK", baseline: pre-change}}
+
+  # --- AC-RRF-3 — PHYSICAL confinement: an entry whose declared path is a symlink pointing OUT of
+  #     the workspace root classifies `outside-workspace`, not `present` (fixture: a real symlink
+  #     to a tmp dir outside the root; mirrors foundry-wt's `cd && pwd -P` rc=4 confinement)
+  - {ac_id: AC-RRF-3, surface: "file:scripts/foundry_repo_registry.py", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k report_symlink_escape_is_outside_workspace && echo RRF-3-SYMLINK-OK'", expect: {op: matches, value: "RRF-3-SYMLINK-OK", baseline: pre-change}}
+
+  # --- AC-RRF-3 — the `not-cloned` remedy is LABELLED FIELDS, not a runnable command line: the
+  #     human output carries the remote and target path as separate labelled values and no
+  #     shell-runnable `git clone …` line (and if one is ever emitted, its values are quoted)
+  - {ac_id: AC-RRF-3, surface: "file:scripts/foundry_repo_registry.py", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k report_remedy_emits_fields_not_command_line && echo RRF-3-FIELDS-OK'", expect: {op: matches, value: "RRF-3-FIELDS-OK", baseline: pre-change}}
+
+  # --- AC-RRF-4 — an entry with no matching ignore rule is named `unpaired`, with the exact
+  #     root-anchored line to add; the self-entry (path ".") is `n/a`, never unpaired
+  - {ac_id: AC-RRF-4, surface: "file:scripts/foundry_repo_registry.py", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k report_names_unpaired_gitignore_entry && echo RRF-4-UNPAIRED-OK'", expect: {op: matches, value: "RRF-4-UNPAIRED-OK", baseline: pre-change}}
+
+  # --- AC-RRF-4 — anchoring is git's own pattern rule: `/app/` is ok, a bare `app/` that also
+  #     matches any depth is `unanchored` and is reported with its source:line:pattern
+  - {ac_id: AC-RRF-4, surface: "file:scripts/foundry_repo_registry.py", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k report_names_unanchored_gitignore_pattern && echo RRF-4-ANCHOR-OK'", expect: {op: matches, value: "RRF-4-ANCHOR-OK", baseline: pre-change}}
+
+  # --- AC-RRF-4 — REPORT, NEVER REPAIR: the fixture .gitignore is byte-identical after the run
+  - {ac_id: AC-RRF-4, surface: "file:scripts/foundry_repo_registry.py", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k report_never_edits_gitignore && echo RRF-4-NOFIX-OK'", expect: {op: matches, value: "RRF-4-NOFIX-OK", baseline: pre-change}}
+
+  # --- AC-RRF-4 THE TRACKED PROBE — a `present` child whose files are already in the control
+  #     plane's INDEX classifies `tracked` (a distinct finding row, precedence over ok/unanchored/
+  #     unpaired), even when a root-anchored ignore rule exists — the leak case this workspace
+  #     already hit. Fixture: `git add -f` the child, then run.
+  - {ac_id: AC-RRF-4, surface: "file:scripts/foundry_repo_registry.py", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k report_tracked_child_outranks_ignore_rule && echo RRF-4-TRACKED-OK'", expect: {op: matches, value: "RRF-4-TRACKED-OK", baseline: pre-change}}
+
+  # --- AC-RRF-5 — a real git checkout whose origin differs from the declared remote is
+  #     `mismatch` (both URLs printed); scp/ssh/https forms of the SAME repo are `match`
+  - {ac_id: AC-RRF-5, surface: "file:scripts/foundry_repo_registry.py", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k report_names_origin_mismatch_and_normalizes_url_forms && echo RRF-5-MISMATCH-OK'", expect: {op: matches, value: "RRF-5-MISMATCH-OK", baseline: pre-change}}
+
+  # --- AC-RRF-5 THE ORACLE CLAUSE — mirrors the leak scan's insteadOf regression fixture: the
+  #     child checkout's own config carries `url.http://attacker.example/.insteadOf
+  #     https://github.com/`; the case first asserts that `git remote get-url` WOULD be redirected
+  #     (the vulnerability is real in the fixture), then asserts the report classified from the RAW
+  #     configured origin — `match` against the honestly-declared remote, attacker host absent
+  #     from every emitted field. FAILS if the implementation uses `git remote get-url`.
+  - {ac_id: AC-RRF-5, surface: "file:scripts/foundry_repo_registry.py", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k report_origin_oracle_ignores_insteadof_redirect && echo RRF-5-INSTEADOF-OK'", expect: {op: matches, value: "RRF-5-INSTEADOF-OK", baseline: pre-change}}
+
+  # --- AC-RRF-7 THE SECURITY CLAUSE, PARAMETRIZED — over all THREE remote forms (https:// userinfo,
+  #     ssh:// userinfo, scp-form user:pass@host:path) x THREE runs (clean / findings / error) x
+  #     BOTH declared-remote and discovered-origin positions: the raw userinfo is absent from
+  #     stdout AND stderr AND --json, the placeholder is the fixed literal, and the `not-cloned`
+  #     row (which prints the declared remote with no checkout at all) is included.
+  - {ac_id: AC-RRF-7, surface: "file:scripts/foundry_repo_registry.py", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k report_redacts_every_remote_form_in_every_channel && echo RRF-7-REDACT-OK'", expect: {op: matches, value: "RRF-7-REDACT-OK", baseline: pre-change}}
+
+  # --- AC-RRF-7 THE SINK — hostile-value fixture (a repo KEY, a path, a remote and a
+  #     default_branch each carrying C0/C1 control chars, a CR/LF and an ANSI CSI sequence): the
+  #     run emits exactly ONE row per repos.<key> entry, no forged/injected line appears in stdout
+  #     or stderr, and no raw ESC/CR/LF survives inside any emitted field (key included).
+  - {ac_id: AC-RRF-7, surface: "file:scripts/foundry_repo_registry.py", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k report_sanitizes_hostile_fields_one_row_per_entry && echo RRF-7-SANITIZE-OK'", expect: {op: matches, value: "RRF-7-SANITIZE-OK", baseline: pre-change}}
+
+  # --- AC-RRF-6 — WRITES NOTHING: the fixture tree is identical before/after, for a clean run
+  #     and a findings run alike
+  - {ac_id: AC-RRF-6, surface: "file:scripts/foundry_repo_registry.py", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k report_writes_nothing && echo RRF-6-READONLY-OK'", expect: {op: matches, value: "RRF-6-READONLY-OK", baseline: pre-change}}
+
+  # --- AC-RRF-6 — the advisory tri-state exit contract: 0 clean / 2 findings / 1 unreadable
+  #     manifest, and the "no gate consumes this" statement is present in docstring + --help
+  - {ac_id: AC-RRF-6, surface: "file:scripts/foundry_repo_registry.py", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k report_exit_codes_are_advisory_tristate && echo RRF-6-EXIT-OK'", expect: {op: matches, value: "RRF-6-EXIT-OK", baseline: pre-change}}
+
+  # --- AC-RRF-6 — the TYPED contract Wave-2 verbs consume: every --json row carries
+  #     key/path/path_status/gitignore/origin with the AC-RRF-3/-4/-5 value vocabularies
+  - {ac_id: AC-RRF-6, surface: "file:scripts/foundry_repo_registry.py", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k report_json_rows_carry_typed_fields && echo RRF-6-JSON-OK'", expect: {op: matches, value: "RRF-6-JSON-OK", baseline: pre-change}}
+
+  # --- AC-RRF-6(iii) THE ENVELOPE — `--json` parses to an OBJECT with exactly the top-level keys
+  #     {degraded, degraded_reason, rows} (never a bare array), on a clean run, a findings run and
+  #     a degraded run alike; `degraded` is true with a non-empty reason exactly on the degraded run
+  - {ac_id: AC-RRF-6, surface: "file:scripts/foundry_repo_registry.py", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k report_json_is_an_envelope_not_bare_rows && echo RRF-6-ENVELOPE-OK'", expect: {op: matches, value: "RRF-6-ENVELOPE-OK", baseline: pre-change}}
+
+  # --- AC-RRF-6(v) — NO SILENT CLEAN EXIT: `repos` absent, `repos` empty, and `repos` non-object
+  #     each yield the named `no-repos` outcome in BOTH channels with rows: [] and exit 2 — never
+  #     exit 0, which is reserved for "every declared entry was checked and is clean"
+  - {ac_id: AC-RRF-6, surface: "file:scripts/foundry_repo_registry.py", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k report_no_repos_is_a_named_outcome_never_silent_zero && echo RRF-6-NOREPOS-OK'", expect: {op: matches, value: "RRF-6-NOREPOS-OK", baseline: pre-change}}
+
+  # --- AC-RRF-6(vi) — GIT INVOCATION HYGIENE, asserted on captured ARGV (not on output prose):
+  #     every git call is a fixed argv with shell=False, drawn only from the closed read-only set
+  #     (check-ignore / config --get / ls-files / rev-parse), and every manifest-derived value is
+  #     preceded by `--`; a fixture entry whose path is `--upload-pack=…` is passed as a pathspec
+  - {ac_id: AC-RRF-6, surface: "file:scripts/foundry_repo_registry.py", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k report_git_argv_is_read_only_and_dash_dash_guarded && echo RRF-6-ARGV-OK'", expect: {op: matches, value: "RRF-6-ARGV-OK", baseline: pre-change}}
+
+  # --- AC-RRF-6 — DEGRADED ORACLE: no git on PATH / not a work tree yields `unknown`, which is
+  #     NOT a finding (no false RED for a legitimately un-git'd root) and is stated in the output
+  - {ac_id: AC-RRF-6, surface: "file:scripts/foundry_repo_registry.py", locator: "sh -c 'python3 -m pytest tests/test_repo_registry.py -q -k report_degrades_to_unknown_without_git && echo RRF-6-DEGRADE-OK'", expect: {op: matches, value: "RRF-6-DEGRADE-OK", baseline: pre-change}}
+
+  # --- AC-RRF-6 — the shipped doctor is unchanged and this repo stays green (the atom adds a
+  #     report, not a verdict; conviction belongs to the sibling preflight atom)
+  - {ac_id: AC-RRF-6, surface: "cli:foundry-doctor", locator: "sh -c 'python3 scripts/foundry-doctor.py | tail -1'", expect: {op: matches, value: "DOCTOR-GREEN", baseline: none}}
+# /foundry:authorize appends the signed `authorized:` trailer below a sentinel (excluded from contract_sha256).
+# === FOUNDRY-AUTHORIZED-TRAILER (excluded from contract_sha256) ===
+authorized:
+  operator_id: op_lukas
+  authorized_at: 2026-08-02T15:15:49Z
+  auth_seq: 1
+  supersedes: null
+  spec_sha256: ade597e0a6836b5a3c648b306bf739da82e0287c008a5d64d715bf199af0dc99
+  contract_sha256: 29f024ccb913f40e24443677e9c438f9c23c90ea66391b2aa5b730726207178d
+  merge_autonomy_mode: lean

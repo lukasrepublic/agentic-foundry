@@ -367,6 +367,11 @@ def test_report_origin_oracle_ignores_insteadof_redirect(workspace):
 
 # ================================================================================== AC-RRF-7 ======
 REMOTE_FORMS_WITH_USERINFO = [
+    # Security review 2026-08-02: any-scheme + last-@ + bracketed-IPv6 coverage (Blocks 1-2, Risk 5)
+    ("git://secretuser:secretpass@example.com/o/r.git", "git://***@example.com/o/r.git"),
+    ("http://secrettoken@example.com/o/r.git", "http://***@example.com/o/r.git"),
+    ("https://a@user:secretpass@example.com/o/r.git", "https://***@example.com/o/r.git"),
+    ("secretuser:secretpass@[::1]:o/r.git", "***@[::1]:o/r.git"),
     ("https://secretuser:secretpass@github.com/o/r.git", "https://github.com/o/r"),
     ("ssh://secretuser:secretpass@github.com/o/r.git", "ssh://github.com/o/r"),
     ("secretuser:secretpass@github.com:o/r.git", "github.com:o/r"),
