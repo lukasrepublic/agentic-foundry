@@ -8,6 +8,22 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## Unreleased
+
+- **Control-plane preflight.** `/foundry:doctor` gains a sixth probe, `control-plane`: it catches
+  a session started in the wrong root — rooted directly IN a repo an ancestor
+  `.claude/foundry-project.json` already names as hosted (`repos{}`), rooted BELOW a control
+  plane without being its root, or carrying a dangling `repos{}` path in its own manifest. The
+  bounded ancestor walk (`scripts/foundry_control_plane.py`, new — shared by the doctor AND
+  `/foundry:init`, which now runs it as its scripted first step, before any write) deliberately
+  crosses ancestor `.git` and filesystem-mount boundaries rather than stopping at them, since the
+  hosted repo it must see past always carries its own `.git`. This is a MISTAKE-CATCHER for the
+  operator, not a floor: `--session-start` still fails open (a warning only), and the
+  operator-invoked exit code is the only enforcement — see
+  `specs/features/foundry/adoption/control-plane-preflight/feat-foundry-control-plane-preflight.md`
+  for the full contract, including the narrow residual (unreachable only when the plugin was
+  enabled strictly per-project, never the common user-wide install).
+
 ## v1.0.1 — 2026-08-01
 
 **Security fix for the git-discipline guard. Upgrade if you rely on it.** Two defects let the
