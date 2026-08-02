@@ -74,17 +74,30 @@ def _is_work_tree(path):
     if not _git_available():
         return False
     r = _git(["rev-parse", "--is-inside-work-tree"], cwd=path)
-    return r.returncode == 0 and r.stdout.strip() == "true"
+    if not (r.returncode == 0 and r.stdout.strip() == "true"):
+        return False
+    # Security review 2026-08-02 (Risk 4): git discovers ancestor .git dirs -- a plain directory
+    # inside the workspace answers true FROM THE OUTER REPO, and its origin would then be the
+    # workspace's own (a forged-match route). The child counts as a checkout only when its
+    # toplevel IS the child itself.
+    top = _git(["rev-parse", "--show-toplevel"], cwd=path)
+    if top.returncode != 0 or not top.stdout.strip():
+        return False
+    return os.path.realpath(top.stdout.strip()) == os.path.realpath(path)
 
 
 # ---------------------------------------------------------------------------------------------
 # AC-RRF-7: ONE sanitizing sink, applied at the emission boundary -- never per-call-site.
 _CSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 _C0_C1_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
-_HTTPS_SSH_USERINFO_RE = re.compile(r"(https|ssh)://([^/@\s]+)@")
+# Security review 2026-08-02 (PR #57 Blocks 1+2): ANY scheme (git://, http://, ftp:// -- not an
+# allow-list, this is redaction), and the userinfo runs to the LAST @ before the path, matching
+# git/curl's authority parsing -- a password containing @ (or a nested user:pass@) redacts whole.
+_SCHEME_USERINFO_RE = re.compile(r"([A-Za-z][A-Za-z0-9+.\-]*)://([^/\s]+)@")
 # scp-like `[user[:pass]@]host:path` -- placeholder chars ('*') never match the userinfo class
-# below, so a value already redacted by the https/ssh pass above cannot be double-processed here.
-_SCP_USERINFO_RE = re.compile(r"\b([A-Za-z0-9][\w.~%!$&'()*+,;=:-]*)@([A-Za-z0-9][A-Za-z0-9.-]*):")
+# below, so a value already redacted by the scheme pass above cannot be double-processed here.
+# Host admits bracketed IPv6 (Risk 5).
+_SCP_USERINFO_RE = re.compile(r"\b([^@\s/]+)@((?:[A-Za-z0-9][A-Za-z0-9.-]*|\[[0-9A-Fa-f:.]+\])):")
 
 
 def sanitize(value):
@@ -94,7 +107,7 @@ def sanitize(value):
     if value is None:
         return value
     text = value if isinstance(value, str) else str(value)
-    text = _HTTPS_SSH_USERINFO_RE.sub(lambda m: "%s://***@" % m.group(1), text)
+    text = _SCHEME_USERINFO_RE.sub(lambda m: "%s://***@" % m.group(1), text)
     text = _SCP_USERINFO_RE.sub(lambda m: "***@%s:" % m.group(2), text)
     text = _CSI_RE.sub("<CSI>", text)
     text = _C0_C1_RE.sub(lambda m: "\\x%02x" % ord(m.group(0)), text)
@@ -104,7 +117,13 @@ def sanitize(value):
 def _sanitize_row(row):
     """Sanitize every string-valued field of a row, for emission only -- callers must classify
     from the RAW (unsanitized) row, never this one."""
-    return {k: (sanitize(v) if isinstance(v, str) else v) for k, v in row.items()}
+    # Security review 2026-08-02 (Risk 3): non-string, non-scalar values are coerced and
+    # sanitized too -- a dict/list smuggled into `remote` must not bypass the sink.
+    return {
+        k: (v if v is None or isinstance(v, (bool, int, float))
+            else sanitize(v if isinstance(v, str) else str(v)))
+        for k, v in row.items()
+    }
 
 
 # ---------------------------------------------------------------------------------------------
@@ -409,10 +428,16 @@ def run(root, as_json, stdout=sys.stdout, stderr=sys.stderr):
         _emit_error("unexpected failure: %s" % traceback.format_exc().splitlines()[-1], stream=stderr)
         return EXIT_ERROR
 
-    if as_json:
-        print(json.dumps(_json_envelope(outcome, degraded, degraded_reason, rows), sort_keys=True), file=stdout)
-    else:
-        _print_human(outcome, degraded, degraded_reason, rows, stdout)
+    try:
+        if as_json:
+            print(json.dumps(_json_envelope(outcome, degraded, degraded_reason, rows), sort_keys=True), file=stdout)
+        else:
+            _print_human(outcome, degraded, degraded_reason, rows, stdout)
+    except Exception:  # Security review 2026-08-02 (Risk 6): an encode failure at emission time
+        # (e.g. an unpaired surrogate surviving json.loads + the C0/C1 class) must degrade to the
+        # sanitized error line, never a raw traceback.
+        _emit_error("unexpected failure at emission: %s" % traceback.format_exc().splitlines()[-1], stream=stderr)
+        return EXIT_ERROR
 
     if outcome == "no-repos":
         return EXIT_FINDINGS
