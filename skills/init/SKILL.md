@@ -17,12 +17,30 @@ standalone plugin repo) so the gates are live + fail-closed.
 
 ## Procedure (fail-closed at the end)
 
-1. **Plugin load.** Ensure the adopter loads the plugin (`claude --plugin-dir ./foundry`
+1. **Control-plane preflight — run this FIRST, before any step below writes anything.**
+   `/foundry:init` itself can be run from the wrong root (a hosted repo instead of the control
+   plane above it — see `docs/how-to/multi-repo-control-plane.md`), and every step after this
+   one writes a file. Run the scripted preflight and **STOP if it exits non-zero**: read the
+   finding, `cd` to the named control plane, and re-run `/foundry:init` there instead.
+
+   ```sh
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_control_plane.py" "$CLAUDE_PROJECT_DIR"
+   ```
+
+   A non-zero exit names the offending ancestor `.claude/foundry-project.json` and the one-line
+   remedy. Only pass `--override` (exits 0, still prints the finding) for a deliberately
+   independent adopter nested inside another repo's working tree — see the spec's residuals
+   (`feat-foundry-control-plane-preflight`, AC-CPP-4/-4b). **This step is a practice, not a
+   control** — `/foundry:init` is agent-driven prose, so nothing mechanically forces an agent to
+   run it; `/foundry:doctor`'s own `control-plane` check (step 10 below) is the fail-closed
+   backstop this step exists to make you hit early rather than late.
+
+2. **Plugin load.** Ensure the adopter loads the plugin (`claude --plugin-dir ./foundry`
    for local; a marketplace entry for installed). Confirm `/foundry:*` skills resolve.
-2. **Operator registry.** Create `.claude/foundry-operators.json` with ≥1 operator
+3. **Operator registry.** Create `.claude/foundry-operators.json` with ≥1 operator
    (committed — `/foundry:authorize` resolves `operator_id` against this registry and
    records it in the frozen `acceptance-contract.yaml`; absent registry fails closed).
-3. **GitHub identity isolation (multi-account machines).** `gh`'s active account is a
+4. **GitHub identity isolation (multi-account machines).** `gh`'s active account is a
    single GLOBAL setting, so on a machine with >1 authenticated account an adopter
    onboarded without declaring the repo-owning account silently runs `gh` (PR
    create/merge, API) as whatever account is globally active — invisibly, since `git
@@ -119,7 +137,7 @@ standalone plugin repo) so the gates are live + fail-closed.
      so on a first run that probe simply fails: on a **TTY** you are prompted for the name and email;
      without one the run exits **non-zero** naming the remedies. The resolved identity, once one is
      found, is written durably into `~/.config/git/identity-<account>`.
-4. **Branch-protection-as-code — RETIRED, Tier A pending a rebuild (since an earlier realignment release).** This step
+5. **Branch-protection-as-code — RETIRED, Tier A pending a rebuild (since an earlier realignment release).** This step
    used to run `foundry-branch-protection.sh apply/verify <owner/repo>` to PUT + verify a
    universal `foundry-merge-gate` required-status backstop. Both the applier script and the
    `branch-protection.json` config it pinned are deleted
@@ -132,18 +150,18 @@ standalone plugin repo) so the gates are live + fail-closed.
    **Tier A (a real server-enforced required status) is deferred**, to be rebuilt on GitHub's
    Rulesets API rather than the retired classic-branch-protection applier — do not re-introduce
    the deleted script/config to fill this gap.
-5. **App-exercise binding (the live-seam driver).** Declare the adopter's boot
+6. **App-exercise binding (the live-seam driver).** Declare the adopter's boot
    command (the generic analog of `make dev`) + the `surface → how-to-exercise` map
    (`ui:`/`api:`/`cli:`/`pipeline:`/`binary:`/…). A contract surface with no usable driver
    surfaces at certification time — `/foundry:certify-local` REFUSES naming it (the thin
    doctor carries no driver check).
-6. **Env/identity mapping.** Map the adopter's own vars onto `FOUNDRY_*` (Foundry owns
+7. **Env/identity mapping.** Map the adopter's own vars onto `FOUNDRY_*` (Foundry owns
    the `FOUNDRY_*` namespace; never bake a project-specific var into a primitive).
-7. **Mechanical-rename port (extraction only).** Copy the adopter's `.claude/` primitives
+8. **Mechanical-rename port (extraction only).** Copy the adopter's `.claude/` primitives
    into `foundry/` under their foundry names (the KEEP→rename bulk) by hand — the
    `foundry-migrate.py` helper this step originally named was retired and does not ship. Deeper prose
    generification is a separate review pass.
-8. **Stack-profile lock (opt-in adoption, `feat-foundry-stack-profile-lock-create`, AC-SPLC-7).**
+9. **Stack-profile lock (opt-in adoption, `feat-foundry-stack-profile-lock-create`, AC-SPLC-7).**
    Foundry ships four stack profiles under `packs/stack-profiles/` (`aws-eks-karpenter`, `node-web`,
    `python-uv-lib`, `python-uv-service`) — `/foundry:verify`, `/foundry:certify-local`, and the
    `id-*` lane's `infra_binding` all gate on an ACTIVE `.foundry/stack-profile.lock`. Offer the
@@ -164,11 +182,11 @@ standalone plugin repo) so the gates are live + fail-closed.
 
    If the operator selects no profile, skip this block entirely and move on — do not run `--lock`
    with an empty/placeholder id.
-9. **Run `/foundry:doctor`** — must be `DOCTOR-GREEN` before the adopter is live. Fail-closed.
+10. **Run `/foundry:doctor`** — must be `DOCTOR-GREEN` before the adopter is live. Fail-closed.
    (Retired: this step used to also pin the gate wiring via `foundry-wiring-hash.py`;
    that script no longer exists in this repo, and the current thin doctor —
    `skills/doctor/SKILL.md` — carries no wiring-hash check, so there is nothing left to pin.)
-10. **Status lines (opt-in, additive — isolation-first).** Offer to wire the isolation-first native
+11. **Status lines (opt-in, additive — isolation-first).** Offer to wire the isolation-first native
    `statusLine` + the `subagentStatusLine` fleet rows so the highest-value ambient signals are visible
    every prompt: *am I isolated (a linked worktree, green `⊞`) or on the main checkout (amber `⌂ main ⚠`)?
    what is this session doing right now (the native `⊙` task)? how close is auto-compact (the color-coded
@@ -236,10 +254,10 @@ standalone plugin repo) so the gates are live + fail-closed.
 
    - Opt-in extras (model / cost / ahead-behind) are OFF by default; the operator turns them on by setting
      the `FOUNDRY_STATUSLINE_EXTRAS` environment variable (truthy).
-11. **Native Bash sandbox (opt-in write-confinement hardening).** Offer to enable Claude Code's native
+12. **Native Bash sandbox (opt-in write-confinement hardening).** Offer to enable Claude Code's native
     OS-level Bash sandbox so a dispatched worker's Bash **writes** are kernel-confined to its
     worktree (macOS Seatbelt / Linux+WSL2 bubblewrap; subagent- + git-worktree-aware). Reuse the SAME
-    load-modify-write seam as the status-line step (step 10) over the adopter's project `.claude/settings.json`:
+    load-modify-write seam as the status-line step (step 11) over the adopter's project `.claude/settings.json`:
     - Read the adopter's `.claude/settings.json` (create it as `{}` if absent), as parsed JSON.
     - **If it has no `sandbox` key** → **enable the sandbox** by setting `sandbox.enabled` = `true`
       (the documented on-switch, whose default boundary confines Bash writes to the working directory +
@@ -256,7 +274,7 @@ standalone plugin repo) so the gates are live + fail-closed.
     to the whole machine), is native-Windows-unsupported, and can fall back to unsandboxed if OS deps are
     missing. (The companion `native-bash-sandbox` doctor check this line originally named was retired with the drop-in registry — the thin doctor carries no sandbox check.)
     when the sandbox is off.
-12. **Runtime-partition `.gitignore` (default-deny, leak-prevention).** Run `scripts/foundry-apply-runtime-gitignore.sh <repo-root>`
+13. **Runtime-partition `.gitignore` (default-deny, leak-prevention).** Run `scripts/foundry-apply-runtime-gitignore.sh <repo-root>`
     against the adopter repo. It installs the
     default-deny `.foundry/*` block (re-including only the small designed-tracked set:
     `README.md`, `build-provenance.yaml`, the `/foundry:relock` pin, `stack-profile.lock`) as an idempotent
@@ -273,7 +291,7 @@ standalone plugin repo) so the gates are live + fail-closed.
 ## Inputs / Outputs
 
 - In: the adopter repo + its boot command + surface map + operator id(s) + (multi-account machines) the repo-owning gh account.
-- Out: a wired, DOCTOR-GREEN adopter (registry + identity isolation + driver map; branch-protection Tier A is deferred — see step 4).
+- Out: a wired, DOCTOR-GREEN adopter (registry + identity isolation + driver map; branch-protection Tier A is deferred — see step 5).
 
 ## Anti-patterns
 
@@ -282,7 +300,7 @@ standalone plugin repo) so the gates are live + fail-closed.
   jail stays dormant and `gh` silently runs as the globally-active account (invisible until an
   admin-scoped call 404s). Single-account machines: correctly a no-op.
 - **Trusting `gh auth status` as proof of isolation** — it can read the shared keyring; prove the
-  jail with `gh api user` under `GH_CONFIG_DIR` (step 3's manual seed does exactly this).
+  jail with `gh api user` under `GH_CONFIG_DIR` (step 4's manual seed does exactly this).
 - **Baking a project-specific var** (`<PROJECT>_*`) into a foundry primitive — map onto `FOUNDRY_*`.
 - **Enabling non-local auto-merge at all** — no distinct-principal poster ships; there is no supported unattended-merge posture.
 - **Skipping the app-exercise binding** — without a live-seam driver the evidence floor is unrealizable for that adopter.

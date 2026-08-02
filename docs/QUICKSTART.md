@@ -52,7 +52,7 @@ claude plugin install foundry@agentic-foundry
 Confirm inside a session in your repo:
 
 ```
-/foundry:doctor        # → DOCTOR-GREEN (5 probes: manifest, hooks, skills, profile lock, operators)
+/foundry:doctor        # → DOCTOR-GREEN (6 probes: manifest, hooks, skills, profile lock, operators, control-plane)
 ```
 
 ## 1. Wire your repo (once)
