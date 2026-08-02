@@ -108,6 +108,7 @@ matter on day one, see the `## Start here` table in [README.md](../README.md).
 | Verb | What it produces |
 |---|---|
 | `/foundry:fleet` | Reports doctor status across every repo this operator has wired up |
+| `/foundry:repos` | Fleet verbs over the repos{} registry — sync (clone/fetch), status, foreach, validate |
 | `/foundry:learn-capture` | Records a learning surfaced during a session for later distillation |
 | `/foundry:learn-distill` | Turns captured learnings into a durable update to the shipped guidance |
 
