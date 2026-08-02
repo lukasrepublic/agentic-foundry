@@ -131,6 +131,72 @@ including the exception path (spec AC-RRF-7).
   practice-label-co-occurrence assertions. **`tests/test_docs_claims.py`** gains the structural
   presence-and-linking + section-placement lock.
 
+### `/foundry:repos` — the governed-repo fleet verbs over the registry (feat-foundry-workspace-repo-verbs, AC-WRV-1..12)
+
+- **The control plane's repos{} registry now has verbs that act, not just report.**
+  `scripts/foundry_repo_fleet.py` ships `sync` (idempotent reconcile: clone every `not-cloned` row
+  that declares a `remote`, fetch every `present` row whose `origin` is exactly `match`, report
+  everything else untouched), `status` (one line per entry: present · origin · branch ·
+  ahead/behind · dirty), `foreach` (shell-free argv fan-out over the present repos,
+  fail-collecting, child output captured and sanitized per line), and `validate` (the manifest ⟷
+  reality ⟷ gitignore round trip in **both** directions — including the reverse direction,
+  `undeclared-checkout`, that `feat-foundry-repo-registry-formalization` deferred by name).
+- **Clone and fetch are the entire mutation vocabulary.** No checkout, reset, merge, rebase, pull,
+  push, clean, stash, branch, remote or submodule command, and no `--force`/`--force-sync`, exists
+  in this tool — an existing checkout is never rewritten; drift is surfaced, never fixed. Every git
+  child, network-capable or not, carries the corpus's reviewed hardening set (`credential.helper=`,
+  `core.askPass=` with the askpass env removed, `core.fsmonitor=`,
+  `core.sshCommand=ssh -o BatchMode=yes` with `GIT_SSH_COMMAND` removed, `protocol.allow=never`
+  admitting only https/ssh/file, submodule recursion off) under the subtractive sink environment —
+  verified by absent observable side effects (a planted hostile `core.fsmonitor`/`core.sshCommand`
+  does not fire), per the standard `feat-foundry-leak-scan-ls-remote-sink` shipped.
+- **The boundary re-validates every row before any socket opens.** The admitted-remote-form
+  predicate is *loaded* from `scripts/foundry-prepublication-leak-scan.py`
+  (`url_is_allowed_form`/`_is_local_path_escape_hatch`) rather than re-implemented; the fetch
+  invocation names the **declared** remote, never the checkout's configured origin; and the
+  reconcile logic is exposed as an importable callable (`reconcile(root, rows, *, timeout=None)`)
+  the Wave-3 wizard's attach flow will call through the same code path.
+- **New skill `/foundry:repos`**, disambiguated from `/foundry:fleet` (the session roster, which
+  governs no repository). No promise that a cloned tree is inert — a cloned repo's `CLAUDE.md`,
+  `.claude/**` and `.mcp.json` become discoverable configuration inside a Claude Code root, stated
+  in both `--help` and the skill.
+
+**Security review:** the review confirmed the boundary re-validation is the sole runtime control
+(the schema shape floor is advisory only), the hardening set + sink environment are proven by
+absent side effects, submodule recursion is off on clone and fetch, and every emitted string
+(including captured `foreach` child output) passes through the registry module's single sink.
+
+**Security review (PR #59) — remediation disposition.** A separate-context review pass returned
+1 Block + 9 Risks. **Block B1** — `skills/repos/SKILL.md`'s blanket "every git child is
+hardened" claim overstated the boundary — is **fixed**: qualified to "every git child this tool
+itself invokes", with a stated residual that `foreach` children run under the ambient environment
+minus only `GIT_DIR`/`GIT_WORK_TREE` (AC-WRV-5, as authorized) and get **no** `-c` hardening at
+all, so a governed checkout's own `.git/config` can direct a `foreach -- git …` child; approving
+that at the ask tier is trusting the checkouts' own configs, not this tool's hardening. **Applied:**
+R3 — `sync`'s fetch leg now refuses (zero git spawns) a `present`/`match` row whose resolved path
+carries no `.git` entry, re-derived at the boundary independently of the row's own claim; R6 —
+`sync --timeout` now defaults to a declared `DEFAULT_SYNC_TIMEOUT_SECONDS = 600.0` rather than
+unbounded, `--timeout` still overrides (the AC-WRV-10-pinned `reconcile()` callable's own
+`timeout=None` default is untouched); R9 — the per-row `except` handler's fallback
+`declared_remote` lookup is now `isinstance(row, dict)`-guarded like its neighbors; R1 —
+`_sink_env()` now also removes `GIT_ALLOW_PROTOCOL` as an explicit additional over-removal (the
+spec-pinned `SINK_ENV_REMOVED_VARS` tuple itself is unchanged, pending a Terminology amendment);
+R8 — the module's own `sys.path` bootstrap is now a guarded, idempotent `append` rather than an
+unconditional `insert(0, …)`; R4 — `--end-of-options` now guards the revision-range positional on
+`git rev-list --left-right --count`, verified locally (git 2.43.0) to leave its output
+byte-identical. The sibling `git rev-parse --abbrev-ref <branch>@{upstream}` call is **left
+unguarded**: the same treatment there makes `rev-parse` echo a spurious `--end-of-options` line
+ahead of the resolved ref in this git's non-`--verify` mode, corrupting the parsed upstream value
+— a functional rejection, recorded as a residual rather than mis-applied. **Residuals recorded**
+(spec-amendment / follow-on-atom territory, not implemented here): R2 (`protocol.file.allow=always`
+→ `user` — the 11-entry hardening set is spec-pinned member-for-member); R5 (AC-WRV-11's
+`core.sshCommand` side-effect plant plus the vacuous `foreach` leg of the same marker run); R7
+(`envelope()`'s double-sanitize path escapes a preserved newline to the literal `\x0a` — an
+assert-on-wrong-layer risk); B1's mechanical half (spawning `foreach` children under `_sink_env()`
+needs its own AC-WRV-5 spec amendment before it can change — today's unhardened `foreach` children
+are what the authorized contract specifies); and the `git rev-parse …@{upstream}` leg of R4 above.
+
+
 ## v1.1.0 — 2026-08-02
 
 ### The project's own `boot_command` now wins certification's boot-recipe resolution (feat-foundry-boot-recipe-precedence, AC-BRP-1..8)
@@ -213,71 +279,6 @@ which already-executed declaration is consulted first, not whether a command is 
   last — every emitter (the primary JSON path and the python-failure fallback) now says plainly
   that the reflection runs **once per session, at the first qualifying idle**.
   (`feat-foundry-learnings-substance-gate-synthetic-turns`, auth_seq=1)
-
-### `/foundry:repos` — the governed-repo fleet verbs over the registry (feat-foundry-workspace-repo-verbs, AC-WRV-1..12)
-
-- **The control plane's repos{} registry now has verbs that act, not just report.**
-  `scripts/foundry_repo_fleet.py` ships `sync` (idempotent reconcile: clone every `not-cloned` row
-  that declares a `remote`, fetch every `present` row whose `origin` is exactly `match`, report
-  everything else untouched), `status` (one line per entry: present · origin · branch ·
-  ahead/behind · dirty), `foreach` (shell-free argv fan-out over the present repos,
-  fail-collecting, child output captured and sanitized per line), and `validate` (the manifest ⟷
-  reality ⟷ gitignore round trip in **both** directions — including the reverse direction,
-  `undeclared-checkout`, that `feat-foundry-repo-registry-formalization` deferred by name).
-- **Clone and fetch are the entire mutation vocabulary.** No checkout, reset, merge, rebase, pull,
-  push, clean, stash, branch, remote or submodule command, and no `--force`/`--force-sync`, exists
-  in this tool — an existing checkout is never rewritten; drift is surfaced, never fixed. Every git
-  child, network-capable or not, carries the corpus's reviewed hardening set (`credential.helper=`,
-  `core.askPass=` with the askpass env removed, `core.fsmonitor=`,
-  `core.sshCommand=ssh -o BatchMode=yes` with `GIT_SSH_COMMAND` removed, `protocol.allow=never`
-  admitting only https/ssh/file, submodule recursion off) under the subtractive sink environment —
-  verified by absent observable side effects (a planted hostile `core.fsmonitor`/`core.sshCommand`
-  does not fire), per the standard `feat-foundry-leak-scan-ls-remote-sink` shipped.
-- **The boundary re-validates every row before any socket opens.** The admitted-remote-form
-  predicate is *loaded* from `scripts/foundry-prepublication-leak-scan.py`
-  (`url_is_allowed_form`/`_is_local_path_escape_hatch`) rather than re-implemented; the fetch
-  invocation names the **declared** remote, never the checkout's configured origin; and the
-  reconcile logic is exposed as an importable callable (`reconcile(root, rows, *, timeout=None)`)
-  the Wave-3 wizard's attach flow will call through the same code path.
-- **New skill `/foundry:repos`**, disambiguated from `/foundry:fleet` (the session roster, which
-  governs no repository). No promise that a cloned tree is inert — a cloned repo's `CLAUDE.md`,
-  `.claude/**` and `.mcp.json` become discoverable configuration inside a Claude Code root, stated
-  in both `--help` and the skill.
-
-**Security review:** the review confirmed the boundary re-validation is the sole runtime control
-(the schema shape floor is advisory only), the hardening set + sink environment are proven by
-absent side effects, submodule recursion is off on clone and fetch, and every emitted string
-(including captured `foreach` child output) passes through the registry module's single sink.
-
-**Security review (PR #59) — remediation disposition.** A separate-context review pass returned
-1 Block + 9 Risks. **Block B1** — `skills/repos/SKILL.md`'s blanket "every git child is
-hardened" claim overstated the boundary — is **fixed**: qualified to "every git child this tool
-itself invokes", with a stated residual that `foreach` children run under the ambient environment
-minus only `GIT_DIR`/`GIT_WORK_TREE` (AC-WRV-5, as authorized) and get **no** `-c` hardening at
-all, so a governed checkout's own `.git/config` can direct a `foreach -- git …` child; approving
-that at the ask tier is trusting the checkouts' own configs, not this tool's hardening. **Applied:**
-R3 — `sync`'s fetch leg now refuses (zero git spawns) a `present`/`match` row whose resolved path
-carries no `.git` entry, re-derived at the boundary independently of the row's own claim; R6 —
-`sync --timeout` now defaults to a declared `DEFAULT_SYNC_TIMEOUT_SECONDS = 600.0` rather than
-unbounded, `--timeout` still overrides (the AC-WRV-10-pinned `reconcile()` callable's own
-`timeout=None` default is untouched); R9 — the per-row `except` handler's fallback
-`declared_remote` lookup is now `isinstance(row, dict)`-guarded like its neighbors; R1 —
-`_sink_env()` now also removes `GIT_ALLOW_PROTOCOL` as an explicit additional over-removal (the
-spec-pinned `SINK_ENV_REMOVED_VARS` tuple itself is unchanged, pending a Terminology amendment);
-R8 — the module's own `sys.path` bootstrap is now a guarded, idempotent `append` rather than an
-unconditional `insert(0, …)`; R4 — `--end-of-options` now guards the revision-range positional on
-`git rev-list --left-right --count`, verified locally (git 2.43.0) to leave its output
-byte-identical. The sibling `git rev-parse --abbrev-ref <branch>@{upstream}` call is **left
-unguarded**: the same treatment there makes `rev-parse` echo a spurious `--end-of-options` line
-ahead of the resolved ref in this git's non-`--verify` mode, corrupting the parsed upstream value
-— a functional rejection, recorded as a residual rather than mis-applied. **Residuals recorded**
-(spec-amendment / follow-on-atom territory, not implemented here): R2 (`protocol.file.allow=always`
-→ `user` — the 11-entry hardening set is spec-pinned member-for-member); R5 (AC-WRV-11's
-`core.sshCommand` side-effect plant plus the vacuous `foreach` leg of the same marker run); R7
-(`envelope()`'s double-sanitize path escapes a preserved newline to the literal `\x0a` — an
-assert-on-wrong-layer risk); B1's mechanical half (spawning `foreach` children under `_sink_env()`
-needs its own AC-WRV-5 spec amendment before it can change — today's unhardened `foreach` children
-are what the authorized contract specifies); and the `git rev-parse …@{upstream}` leg of R4 above.
 
 ## v1.0.1 — 2026-08-01
 
