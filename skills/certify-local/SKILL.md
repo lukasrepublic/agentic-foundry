@@ -38,11 +38,17 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/certify-local/certify_local.py" <release-i
    more than one. Then look for a `playwright.config.*` at that repo's root. **REFUSE** ("no
    journey suite") if none exists — journeys are declared but there is no Playwright suite to
    run them.
-4. **Resolve the active stack profile's boot recipe** — `app_exercise_binding.boot` — via the
-   SAME resolution `scripts/foundry-verify.py` uses (`foundry-stack-profile.py`'s
-   `read_lock`/`resolve_lock`, imported read-only, never redefined). **REFUSE** ("no boot
-   recipe") if there is no active `.foundry/stack-profile.lock`, the lock doesn't resolve, or the
-   resolved profile has no `app_exercise_binding` (e.g. `profile_kind: infra` — nothing to boot).
+4. **Resolve the boot recipe — project declaration first, the stack profile as fallback**
+   (feat-foundry-boot-recipe-precedence, AC-BRP-1..7). The release's resolved venue's
+   `repos.<key>.boot_command` in `.claude/foundry-project.json` **wins whenever it is a
+   non-empty string** — the active stack profile is not consulted at all. Otherwise, resolves
+   the **active stack profile's** `app_exercise_binding.boot` — via the SAME resolution
+   `scripts/foundry-verify.py` uses (`foundry-stack-profile.py`'s `read_lock`/`resolve_lock`,
+   imported read-only, never redefined). A malformed/unreadable manifest degrades to the profile
+   path (never raises) but is reported on its own line, distinct from "declared nothing"
+   (AC-BRP-4/5). **REFUSE** ("no boot recipe") if NEITHER source yields a recipe — naming
+   declaring `boot_command` as the always-actionable remedy, and "activate a different stack
+   profile" only when a `.foundry/stack-profile.lock` already exists (AC-BRP-3).
 5. **Deploy ONCE.** Launch the boot command as a single background process, cwd = the target
    repo root. This is the SAME `make dev`-analog every stack profile already declares — no new
    deploy mechanism.
@@ -61,9 +67,11 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/certify-local/certify_local.py" <release-i
 ## Inputs / Outputs
 
 - In: `<release-id>` (resolved via `CLAUDE_PROJECT_DIR/.foundry/releases/<id>/release.yaml`),
-  the active `.foundry/stack-profile.lock`, the target repo's `playwright.config.*` + journey
+  `.claude/foundry-project.json`'s `repos.<key>.boot_command` (first-precedence) / the active
+  `.foundry/stack-profile.lock` (fallback), the target repo's `playwright.config.*` + journey
   spec files.
 - Out: `{"verdict": "pass"|"fail", "release_id", "profile_id", "repo_root", "grep_pattern",
+  "boot_recipe": {"command", "provenance", "repos_key"},
   "playwright": {...the runner's own output...}, "atoms": {<id>: {"verdict", "tags"}}}`, or a
   `CertifyError` in one of two distinguishable message classes: **`REFUSED (nothing
   dispatched): …`** for every PRE-DISPATCH precondition above (no journey suite / no boot recipe
