@@ -42,3 +42,4 @@ per-atom (each carries its own `acceptance-contract.yaml` + `authorized:` record
 - **An "authorize the release once" shortcut** — there is none; per-atom authorization + per-atom merge re-check is invariant.
 - **Authorizing atoms whose contracts skipped the audit** without the explicit operator token.
 - **Self-confirming the batch** — the operator's review of the displayed checkpoints is the authority.
+- **On a harness denial** during batch authorization, see `docs/harness-denial-fallback.md` and STOP: hand back the exact denied per-atom invocation; never retry it — resolve it through settings, then resume the batch.
