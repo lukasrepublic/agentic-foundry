@@ -10,6 +10,32 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 
 ## Unreleased
 
+### `/foundry:doctor` gains a permission-floor drift check (feat-foundry-doctor-permission-floor-check, AC-DPF-1..8)
+
+- **The doctor's new `permission-floor` probe** (the seventh probe, taking the shipped tree from
+  six to seven) compares the workspace's EFFECTIVE permission configuration — the union of
+  `permissions.{allow,ask,deny}` read from BOTH `.claude/settings.json` **and**
+  `.claude/settings.local.json`, origin-tracked — against the shipped `docs/permission-floor.json`
+  and reports drift in eight ranked classes: `blanket-allow`, `ask-shadowed-ceremony`,
+  `ask-shadowed`, `deny-missing`, `settings-unreadable`, `stale-plugin-path`, and the informational
+  `allow-absent` / `unclassified`. This discharges R6 of the permission-floor map: the harness's
+  ask-to-allow persist option writes an `allow` into `.claude/settings.local.json` with no second
+  trust dialog, so the **permission-floor probe** is what notices when a front-authorization
+  ceremony has been silently shadowed.
+- **Report-only, never auto-fixed, and never RED on a mismatch** — a mismatch is a new fourth
+  doctor outcome, `advisory`, distinct from `ok`/`skip`/failure. RED (the only outcome that fails
+  the operator-invoked run) fires only on a schema-invalid `docs/permission-floor.json`.
+  `--session-start` stays fail-open and now also prints its `WARNING:` banner on an advisory-only
+  run, filtered to the actionable finding classes plus one informational count line.
+- **Read-only and non-disclosing.** `scripts/foundry_permission_floor.py` is a pure comparison
+  module: only `permissions.{allow,ask,deny}` are ever parsed, retained, or emitted; every other
+  settings key (`env`, `apiKeyHelper`, etc.) is untouched. An unreducible (`unclassified`) rule is
+  reported by tool-name prefix, origin file, and count — never by its body.
+- **`tests/test_permission_floor_check.py`** is the live seam: a materialized negative-control
+  fixture per finding class (including the live workspace's own shadow spelling), a fail-open
+  control per failure mode, and a cross-atom conformance table proving this module's `covers()`
+  agrees with the sibling map suite's `_subsumes()` on a shared table of rules.
+
 ### The plugin now ships a reviewed permission-floor declaration (feat-foundry-permission-floor-map, AC-PFM-1..7)
 
 - **`docs/permission-floor.json` is the canonical three-tier allow/ask/deny map** of every command

@@ -19,6 +19,13 @@ What this probe checks, every run, cheaply:
      hosted repo. A MISTAKE-CATCHER for the operator, not a floor — see
      `scripts/foundry_control_plane.py`'s module docstring. `--session-start` still fails open
      (AC-CPP-7); the operator-invoked exit code is this check's only enforcement.
+  7. Permission-floor drift (feat-foundry-doctor-permission-floor-check, AC-DPF-1..8): compares
+     the workspace's EFFECTIVE permission configuration (`.claude/settings.json` AND
+     `.claude/settings.local.json`, unioned) against the shipped `docs/permission-floor.json`.
+     ADVISORY-only — a mismatch never reddens the run — because the ask-to-allow harness persist
+     option writes into `.claude/settings.local.json` with no second trust dialog, and this is the
+     one probe that watches that file. See `scripts/foundry_permission_floor.py`'s module
+     docstring. RED only on a malformed `docs/permission-floor.json`.
 
 Fails CLOSED for the operator-invoked check (exit non-zero on any hard failure). The
 --session-start cadence is ADVISORY (exits 0 so it never wedges a session) — the real merge-side
@@ -43,6 +50,11 @@ import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.dirname(HERE)
+
+# AC-DPF-1: a fourth, non-failing outcome distinct from True/False/None. The shared renderer below
+# reads `ok is None` as `skip`, so reusing `None` would silently collapse an advisory into a skip;
+# `object()` guarantees `ADVISORY is not True and ADVISORY is not False and ADVISORY is not None`.
+ADVISORY = object()
 
 
 def _project_dir():
@@ -247,6 +259,43 @@ def check_control_plane(plugin_root=None, project_dir=None):
 
 
 # --------------------------------------------------------------------------------------- #
+# 7. permission-floor drift (feat-foundry-doctor-permission-floor-check, AC-DPF-1..8)
+# --------------------------------------------------------------------------------------- #
+def _load_permission_floor_module(plugin_root):
+    path = os.path.join(plugin_root, "scripts", "foundry_permission_floor.py")
+    if not os.path.isfile(path):
+        return None
+    scripts_dir = os.path.dirname(path)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import foundry_permission_floor as pf  # lazy import, mirrors check_control_plane above
+    return pf
+
+
+def check_permission_floor(plugin_root=None, project_dir=None, session_start=False):
+    root = plugin_root or PLUGIN_ROOT
+    pdir = project_dir or _project_dir()
+    try:
+        pf = _load_permission_floor_module(root)
+    except Exception as e:
+        return False, f"permission-floor module unimportable: {e}"
+    if pf is None:
+        return None, "permission-floor module absent (not applicable)"
+    try:
+        result = pf.run_check(root, pdir, for_session_start=session_start)
+    except pf.FloorMalformed as e:
+        return False, f"permission-floor.json malformed: {e}"
+    detail = result["summary"]
+    if result["lines"]:
+        detail = detail + "; " + "; ".join(result["lines"])
+    if result["outcome"] == "skip":
+        return None, detail
+    if result["outcome"] == "ok":
+        return True, detail
+    return ADVISORY, detail
+
+
+# --------------------------------------------------------------------------------------- #
 # main
 # --------------------------------------------------------------------------------------- #
 def main():
@@ -281,12 +330,25 @@ def main():
         _run("stack-profile-lock", check_stack_profile_lock, project_dir=project_dir),
         _run("operator-registry", check_operator_registry, project_dir),
         _run("control-plane", check_control_plane, project_dir=project_dir),
+        _run("permission-floor", check_permission_floor, project_dir=project_dir,
+             session_start=args.session_start),
     ]
 
     hard_fail = False
+    any_advisory = False
     out_lines = []
     for name, ok, detail in checks:
-        mark = "skip" if ok is None else ("ok " if ok else "XX ")
+        # AC-DPF-1: the advisory branch precedes the truthiness branch, and its mark is distinct
+        # from `ok `/`skip`/`XX ` and carries no `XX` substring (release-acceptance scrapes `[XX`).
+        if ok is None:
+            mark = "skip"
+        elif ok is ADVISORY:
+            mark = "adv "
+            any_advisory = True
+        elif ok:
+            mark = "ok "
+        else:
+            mark = "XX "
         if ok is False:
             hard_fail = True
         out_lines.append(f"  [{mark}] {name}: {detail}")
@@ -295,8 +357,10 @@ def main():
     body = header + "\n" + "\n".join(out_lines)
 
     if args.session_start:
-        # Fail-open: never wedge a session. Warn prominently if anything is off.
-        if hard_fail:
+        # Fail-open: never wedge a session. Warn prominently if anything is off — extended (never
+        # weakened) to also warn on an advisory-only run (AC-DPF-4): today's hard_fail-only banner
+        # would otherwise print nothing when the only signal is a permission-floor advisory.
+        if hard_fail or any_advisory:
             print("WARNING: foundry doctor found problems (advisory; the real merge-side floor "
                   "is ci.yml + btb-gates + hooks/foundry-git-discipline.sh):", file=sys.stderr)
             print(body, file=sys.stderr)

@@ -346,6 +346,10 @@
       "rationale": "pure decision library: no argparse/main()/__main__; exposes classify_gitops/decide_apply as pure functions (R5)"
     },
     {
+      "script": "foundry_permission_floor.py",
+      "rationale": "pure library: no argparse/main()/__main__; imported by scripts/foundry-doctor.py's permission-floor probe (feat-foundry-doctor-permission-floor-check), never in command position"
+    },
+    {
       "script": "foundry_plan_model.py",
       "rationale": "the shipped __main__ is a convenience CLI (parse a plan JSON on stdin); the shipped workflow only imports its parsers"
     },
