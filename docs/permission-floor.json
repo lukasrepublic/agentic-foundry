@@ -189,6 +189,16 @@
       "rationale": "read-only intake schema-defect / grounding checker over a project dir"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_repo_fleet.py status:*)",
+      "tier": "allow",
+      "rationale": "read-only per-repo status rows through the hardened choke point; no network, no mutation."
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_repo_fleet.py validate:*)",
+      "tier": "allow",
+      "rationale": "read-only manifest\u27f7reality\u27f7gitignore round-trip incl. the reverse scan; surfaces, never fixes."
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_repo_registry.py:*)",
       "tier": "allow",
       "rationale": "Read-only registry-integrity report (feat-foundry-repo-registry-formalization): physical-confinement + gitignore-pairing + origin-match rows over .claude/foundry-project.json; single read-only git choke point, sanitizing emission sink, writes nothing. Tiered at merge-reconciliation when the script landed after the map (the closed-world tripwire firing as designed)."
@@ -257,6 +267,16 @@
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_release.py accept:*)",
       "tier": "ask",
       "rationale": "ceremony: leading subcommand, appends a PRACTICE acceptance record"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_repo_fleet.py foreach:*)",
+      "tier": "ask",
+      "rationale": "foreach fans an operator-supplied command over every present repo \u2014 arbitrary exec from the agent's hands prompts; the operator's own in-terminal use is unaffected."
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_repo_fleet.py sync:*)",
+      "tier": "ask",
+      "rationale": "sync clones/fetches from manifest-declared remotes \u2014 the factory's first network egress; the manifest write is the standing consent, the ask is the per-run operator moment (feat-foundry-workspace-repo-verbs). Subcommand split is reach-disjoint: argparse positional subcommands, first token decides the verb."
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_tier_preflight.py:*)",
