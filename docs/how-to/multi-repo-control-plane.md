@@ -61,7 +61,7 @@ project directory looking for an ancestor `.claude/foundry-project.json`; if one
 session root as a hosted repo (`repos{}` entry), or your session is merely rooted somewhere below
 one, it reports **RED**, naming the control plane and the remedy. `/foundry:init` also runs it as
 its first step, before writing anything. See
-[feat-foundry-control-plane-preflight](../../specs/features/foundry/adoption/control-plane-preflight/feat-foundry-control-plane-preflight.md)
+`feat-foundry-control-plane-preflight`
 for the full contract — in particular, it is a **mistake-catcher for the operator, not a floor**:
 `--session-start` warns but still exits `0`, and the operator-invoked `/foundry:doctor` exit code
 is its only real enforcement.
