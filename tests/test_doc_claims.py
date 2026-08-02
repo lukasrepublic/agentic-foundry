@@ -28,15 +28,20 @@ spec-size ceiling) is independently covered via its sibling occurrence in a non-
 """
 from __future__ import annotations
 
+import importlib.util
+import json
 import math
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import uuid
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -1016,6 +1021,417 @@ def _mutate_bootstrap_emitted_refs(tmp_path_arg: Path) -> Path:
     return dest
 
 
+# ---- 20-23. feat-foundry-control-plane-docs (AC-CPD-3) --------------------------------------
+# Four claims, one per mechanism named in docs/how-to/multi-repo-control-plane.md's `enforced`
+# section. Each derivation reads or EXECUTES the live seam (never a dispatch-table presence-grep
+# alone) — spec Design/notes "why four claim ids, not one". Claims (control-plane-authorize-
+# degrade) and (control-plane-doctor-validation) EXECUTE real scripts against a hermetic fixture
+# workspace built fresh inside a real OS temp dir on every call (functionally the same throwaway-
+# directory idiom `tmp_path` gives a test, since `derive`/`check` only receive `root` — Design/
+# notes "the executed derivations must be hermetic"): CLAUDE_PROJECT_DIR and the subprocess cwd
+# are BOTH pointed at that fixture, so the real repo's tree, `.foundry/security-audit.jsonl` and
+# doctor state are never touched (Security posture disclosure).
+
+_CP_HOWTO_DOC = "docs/how-to/multi-repo-control-plane.md"
+
+_CP_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
+
+
+def _cp_section_body(text: str, keyword: str) -> str:
+    """Same idiom as tests/test_docs_claims.py's own `_cp_section_body` (duplicated, not
+    imported, so this module stays a self-contained registry — the existing house style here)."""
+    matches = list(_CP_HEADING_RE.finditer(text))
+    found = [i for i, m in enumerate(matches) if keyword.lower() in m.group(2).lower()]
+    if len(found) != 1:
+        raise AssertionError(
+            f"heading keyword {keyword!r} must occur in exactly one heading; found {len(found)}"
+        )
+    i = found[0]
+    level = len(matches[i].group(1))
+    body_start = matches[i].end()
+    body_end = len(text)
+    for j in range(i + 1, len(matches)):
+        if len(matches[j].group(1)) <= level:
+            body_end = matches[j].start()
+            break
+    return text[body_start:body_end]
+
+
+def _cp_enforced_section(root: Path) -> str:
+    text = read_doc_text(root, _CP_HOWTO_DOC)
+    return _cp_section_body(text, "enforced")
+
+
+def _import_module_from_path(path: Path, unique_name: str):
+    if not path.is_file():
+        raise MissingSourceError(f"missing derivation source: {path}")
+    spec = importlib.util.spec_from_file_location(unique_name, str(path))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+# ---- 20. control-plane-dispatch-enforcement --------------------------------------------------
+# Reads the hook's LIVE bind-check invocation (the hook is what actually calls it; a dispatch
+# table alone proves only that the subcommand exists) + foundry-wt's dispatched subcommands.
+
+_CP_HOOK_BIND_CHECK_LINE = '"$WTBIN" bind-check "$tr" "$cpath"'
+_CP_WT_BIND_CHECK_DISPATCH = "bind-check) shift; cmd_bind_check"
+
+
+def _derive_dispatch_enforcement(root: Path) -> dict:
+    hook_text = read_doc_text(root, "hooks/foundry-worktree-create.sh")
+    wt_text = read_doc_text(root, "scripts/foundry-wt")
+    return {
+        "hook_calls_bind_check": _CP_HOOK_BIND_CHECK_LINE in hook_text,
+        "wt_dispatches_bind_check": _CP_WT_BIND_CHECK_DISPATCH in wt_text,
+    }
+
+
+def _check_dispatch_enforcement(root: Path) -> None:
+    derived = _derive_dispatch_enforcement(root)
+    if not (derived["hook_calls_bind_check"] and derived["wt_dispatches_bind_check"]):
+        raise AssertionError(
+            f"[control-plane-dispatch-enforcement] the hook no longer calls bind-check on its "
+            f"redirect path, or foundry-wt no longer dispatches it (derived: {derived}) — the "
+            f"'dispatch bind-check' / 'repo-key resolution' enforced-section labels are no "
+            f"longer grounded"
+        )
+    section = _cp_enforced_section(root)
+    if "dispatch bind-check" not in section or "repo-key resolution" not in section:
+        raise AssertionError(
+            "[control-plane-dispatch-enforcement] the doc's enforced section no longer names "
+            "'dispatch bind-check' / 'repo-key resolution'"
+        )
+
+
+def _mutate_dispatch_enforcement(tmp_path_arg: Path) -> Path:
+    dest = _materialize(
+        REPO_ROOT, tmp_path_arg,
+        [_CP_HOWTO_DOC, "hooks/foundry-worktree-create.sh", "scripts/foundry-wt"],
+    )
+    p = dest / "hooks" / "foundry-worktree-create.sh"
+    text = p.read_text(encoding="utf-8")
+    original = '    if ! "$WTBIN" bind-check "$tr" "$cpath" >/dev/null 2>&1; then\n'
+    if original not in text:
+        raise MissingSourceError(
+            "hooks/foundry-worktree-create.sh: expected bind-check invocation line not found "
+            "(mutation target moved)"
+        )
+    p.write_text(text.replace(original, '    if false; then\n'), encoding="utf-8")
+    return dest
+
+
+# ---- 21. control-plane-authorize-degrade -----------------------------------------------------
+# EXECUTES scripts/foundry-authorize.py against a hermetic fixture with an unresolvable
+# target_repo — derives the outcome triple (degrade/warn output, exit status, written auth_seq).
+
+_CP_AUTHZ_DENYLIST = {
+    r"fails? closed at authoriz": "restates SETUP.md's inaccurate 'fails closed at authorization' claim",
+    r"\b(refus\w*|block\w*|reject\w*|prevent\w*)\b[^.\n]*\bauthoriz\w*\b"
+    r"|\bauthoriz\w*\b[^.\n]*\b(refus\w*|block\w*|reject\w*|prevent\w*)\b":
+        "implies the freeze is refused/blocked, contradicting the derived 'freezes anyway' fact",
+}
+_EXPECTED_CP_AUTHZ_DENYLIST = {
+    r"fails? closed at authoriz": "restates SETUP.md's inaccurate 'fails closed at authorization' claim",
+    r"\b(refus\w*|block\w*|reject\w*|prevent\w*)\b[^.\n]*\bauthoriz\w*\b"
+    r"|\bauthoriz\w*\b[^.\n]*\b(refus\w*|block\w*|reject\w*|prevent\w*)\b":
+        "implies the freeze is refused/blocked, contradicting the derived 'freezes anyway' fact",
+}
+
+
+def _run_authorize_degrade_fixture(script: Path) -> dict:
+    with tempfile.TemporaryDirectory(prefix="doc-claims-authz-") as td:
+        fixture = Path(td)
+        (fixture / ".claude").mkdir(parents=True)
+        (fixture / ".claude" / "foundry-operators.json").write_text(json.dumps({
+            "schema_version": 1,
+            "operators": {"op_doc_claims": {"name": "T", "github": "t", "added_at": "2026-01-01"}},
+        }), encoding="utf-8")
+        # target_repo names a key ABSENT from repos{} -> the venue root never resolves.
+        (fixture / ".claude" / "foundry-project.json").write_text(
+            json.dumps({"schema_version": 1, "repos": {}}), encoding="utf-8",
+        )
+        specs_dir = fixture / "specs"
+        specs_dir.mkdir()
+        spec_path = specs_dir / "doc-claims-probe.md"
+        contract_path = specs_dir / "doc-claims-probe.yaml"
+        spec_path.write_text(
+            "# Doc-claims probe (feat-doc-claims-probe)\n\n"
+            "<!-- normative -->\n## Acceptance criteria\n\n"
+            "- **AC-DCP-1**: the probe surface returns hi.\n"
+            "<!-- /normative -->\n",
+            encoding="utf-8",
+        )
+        contract_path.write_text(
+            "spec_ref: specs/doc-claims-probe.md\n"
+            'spec_sha256: "' + "0" * 64 + '"\n'
+            "target_repo: unresolvable-ghost-key\n"
+            "scope:\n  allowed_paths: [\"src/**\"]\n"
+            "checkpoints:\n"
+            "  - ac_id: AC-DCP-1\n"
+            "    surface: \"cli:test\"\n"
+            "    locator: \"echo hi\"\n"
+            "    expect: {op: matches, value: \"hi\", baseline: pre-change}\n",
+            encoding="utf-8",
+        )
+        env = dict(os.environ)
+        env["CLAUDE_PROJECT_DIR"] = str(fixture)
+        env["FOUNDRY_OPERATOR"] = "op_doc_claims"
+        proc = subprocess.run(
+            [sys.executable, str(script), "--spec", str(spec_path), "--contract", str(contract_path),
+             "--operator", "op_doc_claims", "--mode", "lean",
+             "--skip-audit-reason", "hermetic doc-claims fixture (AC-CPD-3(2))", "--yes"],
+            cwd=str(fixture), capture_output=True, text=True, timeout=60, env=env,
+        )
+        out = proc.stdout + proc.stderr
+        auth_seq = None
+        try:
+            doc = yaml.safe_load(contract_path.read_text(encoding="utf-8"))
+            auth_seq = ((doc or {}).get("authorized") or {}).get("auth_seq")
+        except Exception:
+            auth_seq = None
+        return {
+            "exit_code": proc.returncode,
+            "has_warn_token": "warn:" in out,
+            "has_degrade_token": "degrad" in out.lower(),
+            "has_skipped_token": "SKIPPED" in out,
+            "auth_seq": auth_seq,
+        }
+
+
+def _derive_authorize_degrade(root: Path) -> dict:
+    script = root / "scripts" / "foundry-authorize.py"
+    if not script.is_file():
+        raise MissingSourceError(f"missing derivation source: scripts/foundry-authorize.py under {root}")
+    return _run_authorize_degrade_fixture(script)
+
+
+def _check_authorize_degrade(root: Path) -> None:
+    derived = _derive_authorize_degrade(root)
+    if derived["exit_code"] != 0:
+        raise AssertionError(
+            f"[control-plane-authorize-degrade] authorize exited {derived['exit_code']} over the "
+            f"hermetic fixture (want 0 — the venue-degrade freeze no longer proceeds): {derived}"
+        )
+    if not (derived["has_warn_token"] and derived["has_degrade_token"] and derived["has_skipped_token"]):
+        raise AssertionError(
+            f"[control-plane-authorize-degrade] authorize did not emit the expected degrade/warn/"
+            f"SKIPPED output over the hermetic fixture: {derived}"
+        )
+    if not (isinstance(derived["auth_seq"], int) and derived["auth_seq"] >= 1):
+        raise AssertionError(
+            f"[control-plane-authorize-degrade] authorize wrote no positive auth_seq trailer over "
+            f"the hermetic fixture: {derived}"
+        )
+    section = _cp_enforced_section(root)
+    if "authorization venue floors" not in section:
+        raise AssertionError(
+            "[control-plane-authorize-degrade] the doc's enforced section no longer names "
+            "'authorization venue floors'"
+        )
+    for tok in ("degrade", "warn", "auth_seq"):
+        if tok not in section:
+            raise AssertionError(
+                f"[control-plane-authorize-degrade] the doc's enforced section is missing the "
+                f"literal token {tok!r}"
+            )
+    if "proceeds" not in section:
+        raise AssertionError(
+            "[control-plane-authorize-degrade] derivation shows the freeze PROCEEDS (exit 0, "
+            "auth_seq written) but the doc's enforced section carries no 'proceeds' wording"
+        )
+    for pattern, reason in _CP_AUTHZ_DENYLIST.items():
+        if re.search(pattern, section, re.I):
+            raise AssertionError(
+                f"[control-plane-authorize-degrade] the doc's enforced section matches the "
+                f"paraphrase denylist ({pattern!r}: {reason})"
+            )
+
+
+def _mutate_authorize_degrade(tmp_path_arg: Path) -> Path:
+    dest = _materialize(REPO_ROOT, tmp_path_arg, [_CP_HOWTO_DOC, "scripts"])
+    p = dest / "scripts" / "foundry-authorize.py"
+    text = p.read_text(encoding="utf-8")
+    original = (
+        '    if _venue_root is None:\n'
+        '        print(f"  warn: surface⊆scope check degraded — venue root for target_repo {_tr!r} not "\n'
+        '              "resolvable/cloned (ER #77 existence check skipped)")\n'
+    )
+    if original not in text:
+        raise MissingSourceError(
+            "scripts/foundry-authorize.py: expected venue-degrade branch text not found "
+            "(mutation target moved)"
+        )
+    mutated = '    if _venue_root is None:\n        return 1  # doc-claims negative control: harden the degrade\n'
+    p.write_text(text.replace(original, mutated), encoding="utf-8")
+    return dest
+
+
+# ---- 22. control-plane-doctor-validation -----------------------------------------------------
+# Derives (a)/(b) whether the doctor's `checks` list actually WIRES the control-plane probe (a
+# dispatch-table presence-grep would prove only that the FUNCTION exists, not that it runs), and
+# (c) — by EXECUTING foundry-doctor.py --session-start against a deliberately broken fixture —
+# that the advisory cadence exits zero regardless. (c) always runs, in BOTH regimes (spec
+# AC-CPD-3(3): "the fail-open half of that compound claim SHALL be derived in both regimes").
+
+_CP_DOCTOR_WIRING_LINE = '_run("control-plane", check_control_plane, project_dir=project_dir)'
+
+
+def _run_doctor_session_start_fixture(script: Path, plugin_root: Path) -> int:
+    with tempfile.TemporaryDirectory(prefix="doc-claims-doctor-") as td:
+        fixture = Path(td)
+        (fixture / ".claude").mkdir(parents=True)
+        (fixture / ".claude" / "foundry-operators.json").write_text(json.dumps({
+            "schema_version": 1,
+            "operators": {"op_doc_claims": {"name": "T", "github": "t", "added_at": "2026-01-01"}},
+        }), encoding="utf-8")
+        # deliberately broken: a repos{} entry whose path does not exist (AC-CPP-1 dangling case).
+        (fixture / ".claude" / "foundry-project.json").write_text(json.dumps({
+            "schema_version": 1,
+            "repos": {"ghost": {"path": "does-not-exist-anywhere"}},
+        }), encoding="utf-8")
+        env = dict(os.environ)
+        env["CLAUDE_PROJECT_DIR"] = str(fixture)
+        env["CLAUDE_PLUGIN_ROOT"] = str(plugin_root)
+        proc = subprocess.run(
+            [sys.executable, str(script), "--session-start"],
+            cwd=str(fixture), capture_output=True, text=True, timeout=30, env=env,
+        )
+        return proc.returncode
+
+
+def _derive_doctor_validation(root: Path) -> dict:
+    script = root / "scripts" / "foundry-doctor.py"
+    if not script.is_file():
+        raise MissingSourceError(f"missing derivation source: scripts/foundry-doctor.py under {root}")
+    doctor_text = read_doc_text(root, "scripts/foundry-doctor.py")
+    return {
+        "control_plane_wired": _CP_DOCTOR_WIRING_LINE in doctor_text,
+        "session_start_exit_zero": _run_doctor_session_start_fixture(script, root) == 0,
+    }
+
+
+def _check_doctor_validation(root: Path) -> None:
+    derived = _derive_doctor_validation(root)
+    section = _cp_enforced_section(root)
+    if "doctor registry validation" not in section:
+        raise AssertionError(
+            "[control-plane-doctor-validation] the doc's enforced section no longer names "
+            "'doctor registry validation'"
+        )
+    if not derived["session_start_exit_zero"]:
+        raise AssertionError(
+            f"[control-plane-doctor-validation] --session-start exited non-zero over a "
+            f"deliberately broken fixture (want 0, fail-open in both regimes): {derived}"
+        )
+    if derived["control_plane_wired"]:
+        # current regime (feat-foundry-control-plane-preflight has shipped): the doc must state
+        # the doctor NOW validates repos{}, never the stale "does not validate" wording, and
+        # 'session-root rule' must no longer read practice.
+        if "does not validate" in section.lower():
+            raise AssertionError(
+                "[control-plane-doctor-validation] the doctor now validates repos{} (wired in "
+                "its checks list) but the doc still carries the stale 'does not validate' wording"
+            )
+        m = re.search(r"\*\*session-root rule\*\*\s*—\s*([a-z-]+)", section, re.I)
+        if not m or m.group(1).strip().lower() == "practice":
+            raise AssertionError(
+                "[control-plane-doctor-validation] the doctor now validates repos{} but "
+                "'session-root rule' still reads 'practice' in the doc's enforced section"
+            )
+    else:
+        # pre-flip regime (a mutated tree with the wiring removed): the doc (unchanged, still
+        # describing the current shipped regime) must NOT match this mutated tree's facts.
+        if "does not validate" not in section.lower():
+            raise AssertionError(
+                "[control-plane-doctor-validation] the doctor no longer validates repos{} in "
+                "this tree, but the doc carries no 'does not validate' wording for it"
+            )
+
+
+def _mutate_doctor_validation(tmp_path_arg: Path) -> Path:
+    dest = _materialize(REPO_ROOT, tmp_path_arg, [_CP_HOWTO_DOC, "scripts"])
+    p = dest / "scripts" / "foundry-doctor.py"
+    text = p.read_text(encoding="utf-8")
+    original = '        _run("control-plane", check_control_plane, project_dir=project_dir),\n'
+    if original not in text:
+        raise MissingSourceError(
+            "scripts/foundry-doctor.py: expected control-plane wiring line not found "
+            "(mutation target moved)"
+        )
+    p.write_text(text.replace(original, ""), encoding="utf-8")
+    return dest
+
+
+# ---- 23. control-plane-target-repo-freeze ----------------------------------------------------
+# Exercises foundry_contract.py's OWN contract-hash seam over a synthetic contract differing
+# only in target_repo — derives whether contract_sha256 actually changes (i.e. target_repo lies
+# inside the hash-covered contract-proper region, above the trailer sentinel).
+
+_CP_TR_FREEZE_TEMPLATE = (
+    b"spec_ref: specs/x.md\n"
+    b'spec_sha256: "' + b"0" * 64 + b'"\n'
+    b"target_repo: __TR__\n"
+    b'scope:\n  allowed_paths: ["x/**"]\n'
+    b"checkpoints:\n"
+    b"  - ac_id: AC-X-1\n"
+    b'    surface: "cli:test"\n'
+    b'    locator: "echo hi"\n'
+    b'    expect: {op: matches, value: "hi", baseline: pre-change}\n'
+)
+
+
+def _derive_target_repo_freeze(root: Path) -> bool:
+    fc_path = root / "scripts" / "foundry_contract.py"
+    mod = _import_module_from_path(fc_path, f"_doc_claims_fc_{uuid.uuid4().hex}")
+    a = _CP_TR_FREEZE_TEMPLATE.replace(b"__TR__", b"app")
+    b = _CP_TR_FREEZE_TEMPLATE.replace(b"__TR__", b"infra")
+    return mod.contract_sha256_bytes(a) != mod.contract_sha256_bytes(b)
+
+
+def _check_target_repo_freeze(root: Path) -> None:
+    if not _derive_target_repo_freeze(root):
+        raise AssertionError(
+            "[control-plane-target-repo-freeze] contract_sha256 does not change when "
+            "target_repo changes — target_repo has fallen outside the hash-covered "
+            "contract-proper region"
+        )
+    section = _cp_enforced_section(root)
+    m = re.search(r"\*\*target_repo freeze\*\*\s*—\s*([a-z-]+)", section, re.I)
+    if not m or m.group(1).strip().lower() != "machine-enforced":
+        raise AssertionError(
+            "[control-plane-target-repo-freeze] the doc's enforced section does not classify "
+            "'target_repo freeze' as machine-enforced"
+        )
+
+
+def _mutate_target_repo_freeze(tmp_path_arg: Path) -> Path:
+    dest = _materialize(
+        REPO_ROOT, tmp_path_arg,
+        [_CP_HOWTO_DOC, "scripts/foundry_contract.py", "scripts/foundry_system_snapshot.py"],
+    )
+    p = dest / "scripts" / "foundry_contract.py"
+    text = p.read_text(encoding="utf-8")
+    original = (
+        'def contract_sha256_bytes(raw: bytes) -> str:\n'
+        '    """contract_sha256 over the contract-proper region (sentinel-excluded)."""\n'
+        '    proper, _ = split_contract_bytes(raw)\n'
+        '    return hashlib.sha256(proper).hexdigest()\n'
+    )
+    if original not in text:
+        raise MissingSourceError(
+            "scripts/foundry_contract.py: expected contract_sha256_bytes body not found "
+            "(mutation target moved)"
+        )
+    mutated = (
+        'def contract_sha256_bytes(raw: bytes) -> str:\n'
+        '    return hashlib.sha256(b"doc-claims-negative-control-constant").hexdigest()\n'
+    )
+    p.write_text(text.replace(original, mutated), encoding="utf-8")
+    return dest
+
+
 # ---------------------------------------------------------------------------
 # COVERED_CLAIMS — the single registry (AC-DRT-4)
 # ---------------------------------------------------------------------------
@@ -1179,6 +1595,42 @@ COVERED_CLAIMS = [
         "check": _check_bootstrap_emitted_refs,
         "make_mutated": _mutate_bootstrap_emitted_refs,
     },
+    {
+        "claim_id": "control-plane-dispatch-enforcement",
+        "doc": _CP_HOWTO_DOC,
+        "mutation_class": "remove-unit",
+        "tokens": frozenset(),
+        "derive": _derive_dispatch_enforcement,
+        "check": _check_dispatch_enforcement,
+        "make_mutated": _mutate_dispatch_enforcement,
+    },
+    {
+        "claim_id": "control-plane-authorize-degrade",
+        "doc": _CP_HOWTO_DOC,
+        "mutation_class": "remove-unit",
+        "tokens": frozenset(),
+        "derive": _derive_authorize_degrade,
+        "check": _check_authorize_degrade,
+        "make_mutated": _mutate_authorize_degrade,
+    },
+    {
+        "claim_id": "control-plane-doctor-validation",
+        "doc": _CP_HOWTO_DOC,
+        "mutation_class": "remove-unit",
+        "tokens": frozenset(),
+        "derive": _derive_doctor_validation,
+        "check": _check_doctor_validation,
+        "make_mutated": _mutate_doctor_validation,
+    },
+    {
+        "claim_id": "control-plane-target-repo-freeze",
+        "doc": _CP_HOWTO_DOC,
+        "mutation_class": "remove-unit",
+        "tokens": frozenset(),
+        "derive": _derive_target_repo_freeze,
+        "check": _check_target_repo_freeze,
+        "make_mutated": _mutate_target_repo_freeze,
+    },
 ]
 
 COVERED_CLAIMS_BY_ID = {e["claim_id"]: e for e in COVERED_CLAIMS}
@@ -1295,6 +1747,10 @@ EXPECTED_CLAIM_IDS = frozenset({
     "comparison-year-marker",
     "merge-floor-quickstart-step-ref",
     "bootstrap-emitted-refs",
+    "control-plane-dispatch-enforcement",
+    "control-plane-authorize-degrade",
+    "control-plane-doctor-validation",
+    "control-plane-target-repo-freeze",
 })
 
 
@@ -1373,6 +1829,98 @@ def test_test_count_claim_within_band():
 def test_documented_paths_exist():
     COVERED_CLAIMS_BY_ID["documented-paths-stack-profiles"]["check"](REPO_ROOT)
     COVERED_CLAIMS_BY_ID["documented-paths-git-discipline-hook"]["check"](REPO_ROOT)
+
+
+# ---------------------------------------------------------------------------
+# feat-foundry-control-plane-docs (AC-CPD-3) — named checkpoint tests
+# ---------------------------------------------------------------------------
+
+def test_control_plane_dispatch_enforcement():
+    COVERED_CLAIMS_BY_ID["control-plane-dispatch-enforcement"]["check"](REPO_ROOT)
+
+
+def test_control_plane_authorize_degrade():
+    COVERED_CLAIMS_BY_ID["control-plane-authorize-degrade"]["check"](REPO_ROOT)
+
+
+def test_control_plane_doctor_validation():
+    COVERED_CLAIMS_BY_ID["control-plane-doctor-validation"]["check"](REPO_ROOT)
+
+
+def test_control_plane_target_repo_freeze():
+    COVERED_CLAIMS_BY_ID["control-plane-target-repo-freeze"]["check"](REPO_ROOT)
+
+
+# The CLOSED roster (AC-CPD-3 chapeau): the labels parsed from the `enforced` section's own body
+# must equal this pinned label->classification mapping EXACTLY, so a new qualitative overclaim
+# cannot ship un-derived. Pinned against a hand-written expected copy (the DECLARED_EXTERNAL_REFS/
+# EXPECTED_EXTERNAL_REFS two-place-diff idiom above). Values are CURRENT-REGIME (spec AC-CPD-3
+# chapeau: "the roster's classifications are current-regime values") — feat-foundry-control-plane-
+# preflight has already shipped (merge-order precondition, Clarifications), so
+# 'doctor registry validation' and 'session-root rule' are pinned at their POST-flip values
+# (AC-CPD-3(3)) rather than the pre-flip values the spec's own illustrative chapeau text shows.
+_CP_ENFORCED_ROSTER = {
+    "repo-key resolution": "machine-enforced",
+    "dispatch bind-check": "machine-enforced",
+    "target_repo freeze": "machine-enforced",
+    "authorization venue floors": "not-enforced-today",
+    "doctor registry validation": "machine-enforced",
+    "pairing rule": "practice",
+    "clone-before-register ordering": "practice",
+    "session-root rule": "machine-enforced",
+}
+
+# Pinned literal expected copy, hand-synchronized (not derived from _CP_ENFORCED_ROSTER above).
+_EXPECTED_CP_ENFORCED_ROSTER = {
+    "repo-key resolution": "machine-enforced",
+    "dispatch bind-check": "machine-enforced",
+    "target_repo freeze": "machine-enforced",
+    "authorization venue floors": "not-enforced-today",
+    "doctor registry validation": "machine-enforced",
+    "pairing rule": "practice",
+    "clone-before-register ordering": "practice",
+    "session-root rule": "machine-enforced",
+}
+
+_CP_CLASSIFICATIONS = frozenset({"machine-enforced", "not-enforced-today", "practice"})
+_CP_LABEL_LIST_ITEM_RE = re.compile(r"^-\s+\*\*([^*]+)\*\*\s*—\s*([a-z-]+)\.", re.MULTILINE)
+
+
+def _parse_cp_enforced_labels(section: str) -> dict:
+    return {label.strip(): cls.strip() for label, cls in _CP_LABEL_LIST_ITEM_RE.findall(section)}
+
+
+def test_control_plane_enforced_roster_is_closed():
+    assert _CP_ENFORCED_ROSTER == _EXPECTED_CP_ENFORCED_ROSTER, (
+        f"_CP_ENFORCED_ROSTER drifted from its pinned _EXPECTED_CP_ENFORCED_ROSTER copy: "
+        f"{_CP_ENFORCED_ROSTER} != {_EXPECTED_CP_ENFORCED_ROSTER}"
+    )
+    assert set(_CP_ENFORCED_ROSTER.values()) <= _CP_CLASSIFICATIONS
+
+    section = _cp_enforced_section(REPO_ROOT)
+    parsed = _parse_cp_enforced_labels(section)
+    assert parsed == _CP_ENFORCED_ROSTER, (
+        f"labels parsed from the doc's enforced section do not equal the pinned roster exactly: "
+        f"parsed={parsed} pinned={_CP_ENFORCED_ROSTER}"
+    )
+
+
+def test_control_plane_practice_labels_co_occur():
+    """Each rule name currently classified `practice` in the pinned roster literally co-occurs
+    with the token `practice` inside the `enforced` section's own body. `session-root rule` is
+    NOT asserted here: AC-CPD-3(3) derives it OUT of the practice classification once
+    feat-foundry-control-plane-preflight ships (control-plane-doctor-validation, above) — which
+    it already has on this tree (merge-order precondition, Clarifications) — so pinning it here
+    unconditionally would assert a claim this same registry's own derivation convicts."""
+    practice_labels = [label for label, cls in _CP_ENFORCED_ROSTER.items() if cls == "practice"]
+    assert practice_labels, "no label is classified practice in the pinned roster"
+    section = _cp_enforced_section(REPO_ROOT)
+    for label in practice_labels:
+        idx = section.find(label)
+        assert idx != -1, f"practice label {label!r} does not occur in the enforced section body"
+        assert "practice" in section, (
+            f"the token 'practice' does not co-occur with {label!r} in the enforced section body"
+        )
 
 
 @pytest.mark.parametrize("claim_id", [e["claim_id"] for e in COVERED_CLAIMS])

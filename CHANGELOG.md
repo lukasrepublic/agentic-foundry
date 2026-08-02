@@ -32,6 +32,29 @@ All notable changes to Agentic Foundry are documented here (SemVer).
   no-silent-subsumption rule across tiers — with five materialized negative-control fixtures
   proving each fail-closed direction actually fires.
 
+### The multi-repo control-plane how-to is complete, and its enforcement claims are derived (feat-foundry-control-plane-docs, AC-CPD-1..4)
+
+- **`docs/how-to/multi-repo-control-plane.md`** now carries the full pattern in six placed
+  sections: gitignored-siblings-never-submodules, the `repos{}` registry (an example validated
+  against the shipped `schema/foundry-project.schema.json`, with the fields no shipped code
+  reads marked inert inline), the gitignore⟷registry pairing rule and clone-before-register
+  ordering (both failure directions — dangle and spill), the session rule (`--add-dir`, the
+  session's blast radius, and the `permissions.deny` remedy), and the `target_repo` ⟷
+  build-provenance binding.
+- **A closed, honestly-derived `enforced` roster replaces prose promises.** Every
+  `machine-enforced` / `not-enforced-today` / `practice` label is derived by exercising the
+  shipped code, never asserted from memory: the hook's live `bind-check` invocation, the
+  authorize seam's degrade-and-freeze-anyway behaviour (executed against a hermetic fixture
+  workspace), the doctor's `repos{}` validation (now machine-enforced —
+  `feat-foundry-control-plane-preflight` landed first, per the merge-order precondition), and
+  `target_repo`'s place inside the hash-covered contract region. A pinned semantic-class
+  denylist convicts any restatement of `SETUP.md`'s inaccurate "fails closed at authorization"
+  claim.
+- **`tests/test_doc_claims.py`** gains four new `COVERED_CLAIMS` entries — one per mechanism,
+  each with its own `make_mutated` and negative-control conviction — plus the closed-roster and
+  practice-label-co-occurrence assertions. **`tests/test_docs_claims.py`** gains the structural
+  presence-and-linking + section-placement lock.
+
 ## v1.1.0 — 2026-08-02
 
 ### The project's own `boot_command` now wins certification's boot-recipe resolution (feat-foundry-boot-recipe-precedence, AC-BRP-1..8)
