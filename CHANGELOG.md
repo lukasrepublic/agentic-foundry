@@ -10,6 +10,50 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 
 ## Unreleased
 
+### The pre-session bootstrap CLI: `npx create-agentic-workspace` (feat-foundry-bootstrap-cli, AC-BCL-1..11)
+
+- **`create-agentic-workspace` ships as a new, zero-dependency npm package rooted at `cli/`** — the
+  ER's finding is structural: `/foundry:init` can never scaffold its own permission floor (a model
+  editing its own confinement is classifier-denied), so the floor must be written **before a
+  session exists**, in the operator's own terminal. `npx create-agentic-workspace` walks
+  name/dir → greenfield-vs-existing → git/GitHub identity → stage mode → the permission
+  conversation, previews every file **and** every capability it will declare before the first
+  byte, then writes and stops.
+- **It declares; it never grants.** The plugin's reviewed three-tier `docs/permission-floor.json`
+  is emitted verbatim (bundled as a byte-identical mirror, `cli/permission-floor.json`) into the
+  new workspace's committed `.claude/settings.json`, alongside `extraKnownMarketplaces` and
+  `enabledPlugins` single-sourced from `cli/package.json`'s `foundry` pin block. The marketplace
+  entry is a pinned literal (`autoUpdate: false` — the floor's rules are version-wildcarded, so
+  auto-update would be a standing grant over unseen plugin versions); the written file's top-level
+  key set is closed, and `statusLine`/`sandbox`/`hooks`/`apiKeyHelper`/`env`/`mcpServers`/
+  `additionalDirectories` are never emitted at any nesting level. The CLI never runs `claude`,
+  never accepts the workspace trust dialog, and never writes under `$HOME/.claude/`; the exit line
+  explains the trust hand-off and directs the operator to `/foundry:doctor`'s permission-floor
+  check afterward — the one adopter-side check that compares against the **installed plugin's own**
+  copy of the map rather than the npm tarball's.
+- **Absorbs `foundry-bootstrap.sh`'s out-of-session identity wiring**, proved differentially equal
+  to the shipped script across four artifacts (global git config listing, the per-account include
+  file's path and bytes, the repo-local `useConfigOnly` line, and the `.claude/gh-identity`
+  marker). The optional `gh api user` probe is bounded (one call, timeout, its own `GH_CONFIG_DIR`
+  jail, five token/host variables stripped), discards on any login mismatch, and persists no probe
+  output beyond the confirmed name/email.
+- **Scaffolds a closed, seven-file, schema-valid workspace seed**, and re-running is a
+  **reconcile-with-drift-report** (the `terraform init` posture): a managed path that is absent is
+  created, one that matches is left untouched, and one that exists and differs is reported
+  `drifted` and **never overwritten** — never-clobber is unconditional, on every path and in every
+  mode, including `--existing` against a foreign, hand-authored `.claude/settings.json` (reported
+  drifted, never merged). The permission-drift half of the report reuses
+  `[[feat-foundry-doctor-permission-floor-check]]`'s eight-class vocabulary and its `covers()`
+  subsumption relation, kept in agreement with `tests/test_permission_floor_map.py::_subsumes` on
+  a shared row table so the two matchers cannot diverge silently.
+- **Supply-chain posture, stated honestly.** Zero third-party dependencies, `scripts` closed to
+  `{test}` (no lifecycle hook of any kind), every `import`/dynamic `import()` a `node:` builtin or
+  a relative path (statically decidable), and no network module anywhere in the import closure —
+  the only reachable egress is the one bounded `gh` probe. Every control here is a **build-time**
+  check over the source tree; it does not attest the published tarball. `tests/test_bootstrap_cli.py`
+  drives the package's own `node --test` suite as a subprocess (no CI workflow edit) plus fourteen
+  mutation negative controls, one per invariant class.
+
 ### The plugin now ships a reviewed permission-floor declaration (feat-foundry-permission-floor-map, AC-PFM-1..7)
 
 - **`docs/permission-floor.json` is the canonical three-tier allow/ask/deny map** of every command
