@@ -10,6 +10,39 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 
 ## Unreleased
 
+### `--verify-tag` resolves ssh-config host aliases before the `source.repo` cross-check (feat-foundry-verify-tag-ssh-alias-resolution, AC-VTA-1..5)
+
+- **The bug:** `tag_pin_coherence`'s `source.repo` cross-check stripped one of exactly three literal
+  prefixes (`git@github.com:`, `https://github.com/`, `ssh://git@github.com/`) before comparing to
+  the marketplace pin. An operator whose `origin` remote uses an ssh-config **host alias**
+  (`git@personal-github:owner/repo` — the shape the shipped identity-isolation practice produces)
+  matched none of the three, so a perfectly coherent release printed `TAG-PIN-INCOHERENT`.
+- **The fix:** for an **ssh-shaped origin** (transport `ssh`, host passing a conservative
+  `^[A-Za-z0-9._-]+$` charset gate), the host is resolved through `ssh -G <host>` — OpenSSH's own
+  config resolver, which prints the effective configuration and exits, contacting nothing — and
+  equivalence becomes *(resolved host, owner/repo path)* instead of the literal prefix strip. A
+  genuinely different repository still refuses (the negative control). The `https` path is
+  untouched and keeps today's case-sensitive prefix strip byte-for-byte (scoping this atom strictly
+  to the ssh-alias defect, not a general case-insensitivity widening).
+- **Strictly non-weakening / fail-closed.** Every resolver failure — `ssh` absent, non-zero exit,
+  timeout, no `hostname` line, an empty-valued `hostname`, or a charset-violating host (never handed
+  to `ssh` at all, closing an argv-injection shape by construction) — falls back to the shipped
+  strict comparison. The new resolve timeout is a named module constant,
+  `SSH_RESOLVE_TIMEOUT_SECONDS = 30`, mirroring the module's existing `git()` helper timeout and
+  bound by reference so a test can prove the real, unmocked `subprocess.run` path actually enforces
+  it against a deliberately slow fake `ssh`. A dependency-injected `resolver=` keyword-only seam on
+  `tag_pin_coherence` (defaulting to the real `ssh -G` implementation) follows the module's existing
+  `acceptance_fn` / `er_state_fn` / `suite_runner` convention; `main()`'s `--verify-tag` CLI path
+  injects no resolver, mirroring the existing never-inject guard on the `cut_release` path.
+- **No network call is added**, verified structurally over the module's parsed AST rather than over
+  source-text substrings: the literal argv-head strings passed to `subprocess.run` are unchanged
+  except for the one new `ssh` head, no call carries a truthy `shell=`, and no network-capable
+  symbol (`socket`, `urllib`, `http`, `requests`, `ssl`, `asyncio.open_connection`) is referenced.
+- **`tests/test_tag_pin_coherence.py`** carries the first coverage of the `source.repo` cross-check
+  in either direction (it had zero coverage before this atom), including the real, unmocked `ssh -G`
+  timeout case and a `HOME`-scoped `~/.ssh/config` end-to-end case that reports NOT-RUN rather than
+  passing vacuously when the local OpenSSH build or environment cannot support it.
+
 ### `/foundry:doctor` gains a permission-floor drift check (feat-foundry-doctor-permission-floor-check, AC-DPF-1..8)
 
 - **The doctor's new `permission-floor` probe** (the seventh probe, taking the shipped tree from
