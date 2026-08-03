@@ -1,0 +1,401 @@
+# Acceptance contract — sibling of feat-foundry-wizard-attach-repo-flow.md (v1.1).
+#
+# Code repo agentic-foundry; allowed_paths are relative to that repo root. Ships the WRITE HALF of the
+# governed-repo registry — the `mr register` / `nx import` shape — as the reusable flow module the
+# pre-session bootstrap CLI (feat-foundry-bootstrap-cli, specified in parallel) hosts:
+#   attach-existing — source (an admitted remote URL | an ABSOLUTE local path) -> local path DEFAULTED
+#                     from the repo name and CONFIRMED -> registry KEY (floored, defaulted, never
+#                     auto-transformed) -> role (the closed set) -> one-line description -> default
+#                     branch -> validate -> preview -> ORDERED ATOMIC pair write -> reconcile
+#   create-new      — CONFIRM "create repo <owner>/<name>" FIRST -> `gh repo create` (+ optional
+#                     --template, NEVER --clone) -> bind the canonical identity from gh's STRUCTURED
+#                     output -> FALL THROUGH into the attach path: one implementation writes the pair
+#
+# FOUR ORDERINGS ARE THE ATOM. (1) VALIDATE BEFORE ANY WRITE — the shape floor decided by the SHIPPED
+# schema and the LOADED leak-scan admitted-form predicate, never a re-implementation, over the WHOLE
+# PROSPECTIVE DOCUMENT under a MONOTONICITY rule (refuse any error the pre-image did not already
+# carry; report the pre-existing ones). (2) PREVIEW BEFORE ANY WRITE — the exact row, the exact
+# gitignore BYTES, and the reconcile plan in the callable's own clone/fetch/skip/refuse vocabulary,
+# then an explicit confirm. (3) CONFIRM BEFORE CREATING — the create branch names the repository it is
+# about to create and gets its own affirmative confirmation before `gh` runs at all; --dry-run
+# short-circuits before any gh invocation. (4) WRITE BEFORE RECONCILE — NEVER
+# clone-first-record-after; a checkout that exists before its row is an undeclared checkout, invisible
+# to every consumer until `validate` finds it.
+#
+# THE PAIR IS BOTH-OR-NEITHER *AND THE ORDER IS PINNED*, BECAUSE THE TWO HALVES ARE NOT SYMMETRICALLY
+# DANGEROUS. A row without the root-anchored gitignore line is the SPILL (the control plane's next
+# `git add -A` sweeps the child's whole history into the parent); a gitignore line with no row, before
+# any clone, names a path that does not exist and is INERT. No filesystem primitive commits two files
+# at once, so the atom says so honestly: per-file atomic replace (temp in the TARGET'S OWN DIRECTORY,
+# fsync of file AND directory, mode preserved, symlink target refused, POSIX rename(2)) + a
+# COMPENSATING rollback (the saga rule) + THE GITIGNORE LINE FIRST, THE ROW SECOND, rollback mirroring
+# it (row removed first). The only reachable partial state is therefore the BENIGN half — asserted.
+# The rollback's bound is asserted in the negative direction too: TWO UNCOMPENSATED EFFECTS (a
+# COMPLETED CLONE and a CREATED GITHUB REPOSITORY) are never undone, only NAMED in the report, and
+# nothing the flow did not itself write is touched.
+#
+# TOCTOU: the pre-image is re-read and hashed IMMEDIATELY BEFORE THE WRITE (never a preview-time
+# cache) and re-verified before EVERY rename and EVERY rollback restore — a concurrent writer is
+# reported, never clobbered.
+#
+# THIS MODULE EXECUTES NO GIT COMMAND, EVER. Reconcile happens ONLY by calling the imported function
+# object `foundry_repo_fleet.reconcile` (feat-foundry-workspace-repo-verbs AC-WRV-10, authorized) —
+# asserted by IDENTITY, so a forked second reconcile path fails the case — with `rows` equal to
+# EXACTLY ONE ROW, the newly-written row READ BACK FROM DISK. The rollback trigger is pinned to
+# REFUSE/failed/timeout/spawn-failed (and an exception), NOT to the row's `finding` flag: a
+# skip-with-finding row is the `mr register` case and its pair PERSISTS. scripts/foundry_repo_fleet.py
+# is DENIED here: this atom cannot weaken AC-WRV-3's boundary re-validation, AC-WRV-11's hardening set
+# or AC-WRV-12's egress bound, and cannot fork them.
+#
+# NO TRUST SELF-ACCEPTANCE. AC-WRV-10 states the callable re-validates EVERY row regardless of the
+# caller's claim and returns UNSANITIZED structured values. This flow is not a trusted caller: it
+# validates first (so a bad row is never committed), it marks nothing as pre-approved, and it renders
+# every returned value through the registry module's single sink (AC-RRF-7) — which is DENIED here and
+# asserted as that module's own function object. Its own additions to the floor (a floored registry
+# key, a refused password-bearing userinfo, C0/C1 refused in `path` AND `description`, confinement
+# against EVERY governed root, a duplicate path, a `tracked` target) are NARROWINGS, never widenings.
+#
+# THE SECURITY POSTURE IS THE CONSENT MOMENT. feat-foundry-workspace-repo-verbs resolves its
+# first-clone question by declaring that WRITE ACCESS TO .claude/foundry-project.json IS EGRESS
+# AUTHORITY. That assumption is only reviewable if the write is deliberate — this flow IS that
+# deliberation (every field confirmed, the whole grant previewed), and AC-WAF-7 requires the surface to
+# SAY SO in the docstring and --help, in THREE VERBATIM PINNED SENTENCES, together with the
+# cloned-tree inertness NON-promise. And because the manifest is a COMMITTED file, a source whose
+# userinfo carries a password/token component is REFUSED rather than double-confirmed: redaction at the
+# emission boundary does not help a secret that has entered git history.
+#
+# MERGE ORDER IS A PRECONDITION (spec R1): feat-foundry-repo-registry-formalization ->
+# feat-foundry-workspace-repo-verbs -> this atom. Neither scripts/foundry_repo_registry.py nor
+# scripts/foundry_repo_fleet.py exists on disk yet and every AC consumes one or both.
+# feat-foundry-bootstrap-cli may land in either order. Operator-held sequencing, not a checkpoint.
+#
+# TWO OBLIGATIONS DELIBERATELY OUTSIDE THIS CONTRACT (spec R5, R7): the `gh` row in the workspace's
+# docs/standing-versions.md is OWED BEFORE SHIP (that file lives in the workspace, not this
+# target_repo), and expressing the registry key floor as a schema `propertyNames` constraint is a
+# named follow-on on feat-foundry-repo-registry-formalization (schema/** is denied here).
+#
+# NO NEW VERB: this is a flow module the CLI hosts, not a typed /foundry: verb — so no skills/
+# directory, no VERBS-QUICK-REF row, no README skill-count claim, and no fourth writer on
+# docs/how-to/multi-repo-control-plane.md (three atoms already write it).
+#
+# Live-seam: `python3 -m pytest tests/test_repo_attach.py -q` — the real module driven over
+# materialized tmp_path workspaces (a real .claude/foundry-project.json, a real .gitignore with
+# pre-existing unrelated lines, local bare-repo remotes, a fake `gh` on PATH with captured argv and
+# scripted --json output, byte-level before/after comparison of both files).
+spec_ref: specs/features/foundry/onboarding/wizard-attach-repo-flow/feat-foundry-wizard-attach-repo-flow.md
+spec_sha256: "0000000000000000000000000000000000000000000000000000000000000000"  # /foundry:authorize fills this
+target_repo: agentic-foundry
+mandatory_review:
+  - review: security
+    required: true
+    rationale: >-
+      This atom is the CONSENT MOMENT for the control plane's network egress: it writes the manifest row
+      that feat-foundry-workspace-repo-verbs treats as standing egress authority, and it makes one
+      network write of its own (`gh repo create`) — the workspace floor's security-review trigger
+      (CLAUDE.md, both-modes floor #3). The review must confirm (1) validation precedes every write, is
+      decided by the SHIPPED schema plus the LOADED leak-scan admitted-form predicate rather than a
+      re-implementation that could widen the floor, runs over the WHOLE PROSPECTIVE DOCUMENT under the
+      monotonicity rule, and that this flow's own additions are narrowings — a floored registry key, a
+      reserved-key refusal, C0/C1 refused in `path` AND `description` (so a newline can never become a
+      second gitignore line), absolute-only local sources, duplicate-path and every-governed-root
+      confinement, and a `tracked` target (AC-WAF-2); (2) a source whose userinfo carries a password
+      component is REFUSED, since the manifest is committed and redaction cannot un-commit a secret
+      (AC-WAF-2d, AC-WAF-3); (3) the preview shows the complete grant — row, the exact gitignore BYTES,
+      the reconcile plan, and any pre-existing schema defect — states where its own rendering differs
+      from what would be written, and an explicit confirm gates the write, with --dry-run and a declined
+      confirm both leaving both files byte-identical (AC-WAF-3); (4) the pair is both-or-neither with the
+      GITIGNORE LINE FIRST and the rollback mirroring it, so the only reachable partial state is the
+      benign half, with temp-in-target-dir + fsync of file and directory, mode preserved, symlink target
+      refused, and a pre-image hash re-verified before every rename and every restore so a concurrent
+      writer is never clobbered (AC-WAF-4); (5) rollback is bounded exactly as stated — the two edits,
+      never a completed clone, never a created repository, both NAMED as uncompensated, never anything
+      the flow did not write (AC-WAF-5); (6) create-new confirms the creation BEFORE `gh` runs,
+      short-circuits under --dry-run before any gh invocation, floors the repository and --template
+      arguments directly as well as guarding them with `--`, omits --clone, binds the row from gh's
+      STRUCTURED output with divergence re-confirmed, and is the ONLY network-capable subprocess this
+      flow spawns (AC-WAF-6); (7) the write strictly precedes a reconcile that is the imported callable
+      called with exactly the new row read back from disk, with the rollback trigger pinned to refusal
+      and failure result values rather than the `finding` flag (AC-WAF-8); and (8) no credential is read,
+      stored, printed or passed, and every emitted string — preview, refusal, reconcile report, rollback
+      report, exception path — passes through the registry module's single sink, since the callable
+      returns UNSANITIZED values by contract (AC-WAF-3).
+scope:
+  allowed_paths:
+    - "scripts/foundry_repo_attach.py"   # NEW — AC-WAF-1..9: the attach-existing / create-new flow
+                                         #   module (importable by the bootstrap CLI; underscored
+                                         #   because it must `import foundry_repo_fleet`) + its CLI
+    - "tests/test_repo_attach.py"        # NEW — named by every checkpoint below
+    - "CHANGELOG.md"                     # AC-WAF-9: named in the TOPMOST release section
+  denied_paths:
+    - "scripts/foundry_repo_fleet.py"    # the AC-WRV-10 reconcile callable + its boundary
+                                         #   re-validation, hardening set and egress bound: CALLED
+                                         #   unmodified, never forked (AC-WAF-8)
+    - "tests/test_repo_fleet.py"         # its regression value depends on being unmodified
+    - "scripts/foundry_repo_registry.py" # the classifier + envelope + the ONE redaction sink:
+                                         #   consumed unmodified (AC-WAF-3), and the source of the
+                                         #   `tracked` classification AC-WAF-2h refuses on
+    - "tests/test_repo_registry.py"
+    - "schema/**"                        # the shape floor is VALIDATED AGAINST, never widened here
+                                         #   (AC-WAF-2) — the schema is the sibling atom's, and the
+                                         #   key-floor `propertyNames` follow-on is deferred (spec R7)
+    - "scripts/foundry-prepublication-leak-scan.py"  # the reviewed admitted-remote-form predicate:
+                                         #   LOADED unmodified (AC-WAF-2) — it is also what makes a
+                                         #   local source ABSOLUTE-only
+    - "tests/test_prepublication_leak_scan.py"       # an edit in either leak-scan suite would be
+    - "tests/test_leak_scan_remote_forms.py"         #   loosening the borrowed floor
+    - "scripts/foundry-config.py"        # the schema's advisory drift checker is untouched
+    - "scripts/foundry-doctor.py"        # conviction is feat-foundry-control-plane-preflight's; this
+                                         #   flow only runs doctor as an unchanged regression
+    - "scripts/foundry-wt"               # the dispatch resolver reads the manifest this flow writes —
+                                         #   read, never written
+    - "scripts/foundry-bootstrap.sh"     # the out-of-session writes belong to feat-foundry-bootstrap-cli
+    - "scripts/foundry-authorize.py"     # no gate reads this flow or its exit code
+    - "scripts/foundry_authz.py"
+    - "skills/**"                        # NO new verb: this is a flow module the CLI hosts
+    - "docs/VERBS-QUICK-REF.md"          # unmoved — nothing is added to the verb bijection
+    - "README.md"                        # unmoved — the derived skill-count claim does not change
+    - "docs/how-to/multi-repo-control-plane.md"  # three atoms already write it; the attach-flow
+                                         #   section belongs with feat-foundry-bootstrap-cli's docs
+    - "hooks/**"                         # no new hook, no wiring re-pin
+    - ".github/workflows/**"             # no new CI step — the module rides `pytest tests/`
+checkpoints:
+  # House `&& echo <TOKEN>` form; one checkpoint per named case. Every locator runs from the
+  # agentic-foundry repo root.
+
+  # --- AC-WAF-1 THE ORDERED, DEFAULTED, CONFIRMED ROW: the six fields are collected in the pinned
+  #     order; the local path is DEFAULTED from the source's final segment with a trailing `.git`
+  #     stripped (asserted for an https URL, an scp-form remote and an ABSOLUTE local path alike),
+  #     presented as an overridable default and CONFIRMED; the REGISTRY KEY defaults to that same
+  #     derived name when it satisfies the key floor and is offered with NO default when it does not
+  #     (asserted on a source whose derived name starts with `.` — the flow must NOT silently
+  #     transform it); the role is offered as the closed set; and for a local-path source the row's
+  #     `remote` carries the operator-supplied ABSOLUTE path VERBATIM (byte equality, not normalized).
+  - {ac_id: AC-WAF-1, surface: "file:scripts/foundry_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k attach_collects_ordered_fields_with_a_confirmed_path_and_floored_key && echo WAF-1-COLLECT-OK'", expect: {op: matches, value: "WAF-1-COLLECT-OK", baseline: pre-change}}
+
+  # --- AC-WAF-1 NON-INTERACTIVE PARITY (clig.dev: never require a prompt): every field — source,
+  #     path, KEY, role, description, default branch — has a flag twin, and a fully-flagged `--yes`
+  #     run completes with ZERO reads from stdin (asserted with stdin closed, so a prompt would raise
+  #     rather than hang); under `--yes` a required value that no flag supplied is a NAMED REFUSAL —
+  #     never silently defaulted and never prompted for.
+  - {ac_id: AC-WAF-1, surface: "test:tests/test_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k every_prompt_has_a_flag_twin_and_yes_never_reads_stdin && echo WAF-1-FLAGS-OK'", expect: {op: matches, value: "WAF-1-FLAGS-OK", baseline: pre-change}}
+
+  # --- AC-WAF-2 NOTHING IS WRITTEN ON A BAD VALUE, parametrized: empty path, leading `-` path, a
+  #     role outside the closed set, a C0/C1-bearing remote, a C0/C1-bearing PATH, a C0/C1-bearing
+  #     DESCRIPTION, a path containing U+000A (which must be ONE refusal, never two gitignore lines —
+  #     asserted on the untouched .gitignore bytes), a dash-leading remote, a UUID-GENERATED transport
+  #     helper `<name>::rest` (the sibling suites' genericity device — absent from every source, so no
+  #     enumeration pre-satisfies it), `git://`, `http://`, `file://`, a RELATIVE local path (the
+  #     shipped escape hatch admits absolute paths only), a key failing ^[A-Za-z0-9][A-Za-z0-9._-]*$,
+  #     the RESERVED key `workspace`, and an ALREADY-USED repos.<key>. Each: a named refusal
+  #     identifying the field AND rendered through the registry sink, .claude/foundry-project.json AND
+  #     .gitignore BYTE-IDENTICAL to pre-run, zero `gh` invocations, and the reconcile callable never
+  #     entered (asserted on a patched callable that records entry).
+  - {ac_id: AC-WAF-2, surface: "file:scripts/foundry_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k invalid_input_refuses_before_any_byte_is_written && echo WAF-2-REFUSE-OK'", expect: {op: matches, value: "WAF-2-REFUSE-OK", baseline: pre-change}}
+
+  # --- AC-WAF-2 THE FLOOR IS THE SHIPPED ONE, NOT A COPY: the shape decision validates against the
+  #     shipped schema/foundry-project.schema.json (asserted on the file actually loaded) and the
+  #     admitted-form decision is the LOADED leak-scan predicate (asserted on the module object's
+  #     origin path) — a local re-implementation of either fails the case. Positive direction in the
+  #     same case so the refusal set is not vacuously "refuse all": a well-formed row with an https,
+  #     an scp-form and an absolute-local-path source each VALIDATES and proceeds to preview.
+  - {ac_id: AC-WAF-2, surface: "test:tests/test_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k floor_is_the_shipped_schema_and_the_loaded_predicate && echo WAF-2-FLOOR-OK'", expect: {op: matches, value: "WAF-2-FLOOR-OK", baseline: pre-change}}
+
+  # --- AC-WAF-2a THE VALIDATION TARGET IS THE WHOLE PROSPECTIVE DOCUMENT, UNDER MONOTONICITY: over a
+  #     manifest that is ALREADY schema-invalid for an unrelated pre-existing reason (the registry
+  #     sibling's R1 shape: a string value where repos.<key> must be an object), a well-formed new row
+  #     still WRITES, and the pre-existing defect appears as a named pre-existing-defect line in the
+  #     preview; over the same manifest a new row that introduces ANY error the pre-image did not
+  #     carry is REFUSED with both files byte-identical. The error sets are compared structurally
+  #     (locations, not joined prose).
+  - {ac_id: AC-WAF-2, surface: "file:scripts/foundry_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k prospective_document_is_validated_under_the_monotonicity_rule && echo WAF-2-DOCVALID-OK'", expect: {op: matches, value: "WAF-2-DOCVALID-OK", baseline: pre-change}}
+
+  # --- AC-WAF-2d NO CREDENTIAL CAN ENTER A COMMITTED FILE: a source whose userinfo carries a password
+  #     component is a NAMED REFUSAL, parametrized over https://user:pw@host/o/r,
+  #     ssh://user:pw@host/o/r and the scp-form user:pw@host:o/r — nothing written, no gh, no
+  #     callable, and the refusal text itself carries no raw secret (the sink's fixed placeholder).
+  #     Negative control in the same case: the ordinary scp-form `git@host:o/r` and
+  #     `https://user@host/o/r` (single component, no password) are still ADMITTED, so the cut is at
+  #     the password component and not at userinfo as such.
+  - {ac_id: AC-WAF-2, surface: "test:tests/test_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k password_bearing_userinfo_is_refused_and_scp_form_still_admitted && echo WAF-2-CRED-OK'", expect: {op: matches, value: "WAF-2-CRED-OK", baseline: pre-change}}
+
+  # --- AC-WAF-2 f/g/h CONFINEMENT IS AGAINST EVERY GOVERNED ROOT, NOT JUST THE WORKSPACE ROOT:
+  #     parametrized refusals for a target whose PHYSICAL resolution escapes the workspace root
+  #     (symlinked parent), a target INSIDE an already-declared repo's path, a target that CONTAINS an
+  #     already-declared repo's path, a target whose declared path EQUALS an existing row's path, and
+  #     a target the registry report classifies `tracked` (materialized by actually `git add`-ing the
+  #     directory, then asserting the refusal — not by stubbing the classifier). Positive control: a
+  #     sibling directory beside an existing governed repo is ACCEPTED. Each refusal: both files
+  #     byte-identical, no gh, no callable.
+  - {ac_id: AC-WAF-2, surface: "file:scripts/foundry_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k target_is_confined_against_every_governed_root_and_never_tracked && echo WAF-2-CONFINE-OK'", expect: {op: matches, value: "WAF-2-CONFINE-OK", baseline: pre-change}}
+
+  # --- AC-WAF-3 PREVIEW-BEFORE-WRITE, ALL FOUR PARTS: the preview carries the EXACT serialized
+  #     repos.<key> object, the EXACT gitignore line AS BYTES, the reconcile plan rendered in the
+  #     callable's own clone/fetch/skip/refuse vocabulary (asserted against the callable's returned
+  #     action for the same row, not against hardcoded prose), and any pre-existing-defect line. The
+  #     previewed gitignore bytes are asserted EQUAL to the bytes a real run then appends (dry-run
+  #     preview captured, real run performed, byte comparison) — parametrized over a path containing
+  #     `*`, `?`, `[`, `]`, `!`, `#`, `\` and a trailing space, each of which must appear ESCAPED, and
+  #     over a nested path `vendor/app` whose internal `/` must NOT be escaped. Declining the confirm,
+  #     and a `--dry-run` run, EACH leave both files byte-identical, invoke neither `gh` nor the
+  #     callable, and exit with a named non-writing outcome.
+  - {ac_id: AC-WAF-3, surface: "file:scripts/foundry_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k preview_shows_row_gitignore_bytes_and_plan_then_gates_the_write && echo WAF-3-PREVIEW-OK'", expect: {op: matches, value: "WAF-3-PREVIEW-OK", baseline: pre-change}}
+
+  # --- AC-WAF-3 THE PREVIEW NEVER LIES ABOUT ITS OWN RENDERING: for a source carrying a
+  #     single-component userinfo, the preview shows the sink-redacted value AND, at that value,
+  #     states that the UNREDACTED value is what would be written — asserted structurally (the
+  #     statement is attached to the redacted field, not merely present somewhere in the output) —
+  #     plus the named advisory that .claude/foundry-project.json is a COMMITTED file; and the value
+  #     actually written to the manifest is the unredacted one (read back from disk).
+  - {ac_id: AC-WAF-3, surface: "test:tests/test_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k preview_states_where_its_rendering_differs_from_the_written_bytes && echo WAF-3-DISPLAY-OK'", expect: {op: matches, value: "WAF-3-DISPLAY-OK", baseline: pre-change}}
+
+  # --- AC-WAF-3 THE INHERITED SINK ON EVERY CHANNEL (the callable returns UNSANITIZED values BY
+  #     CONTRACT, so rendering is this atom's duty): parametrized over the three admitted remote forms
+  #     carrying userinfo (https://, ssh://, scp-form) x {preview, refusal, reconcile report, rollback
+  #     report, uncaught-exception path} x {stdout, stderr, --json} — raw userinfo is ABSENT
+  #     everywhere, the placeholder is the fixed literal, the exception path emits a sanitized line
+  #     rather than a traceback, and the sink IS scripts/foundry_repo_registry.py's own function
+  #     object (imported, not re-implemented).
+  - {ac_id: AC-WAF-3, surface: "test:tests/test_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k every_channel_renders_through_the_registry_sink && echo WAF-3-REDACT-OK'", expect: {op: matches, value: "WAF-3-REDACT-OK", baseline: pre-change}}
+
+  # --- AC-WAF-4 BOTH-OR-NEITHER, AND THE ORDER IS THE PROPERTY: on success BOTH halves exist — the
+  #     row is present AND the appended line is ROOT-ANCHORED (verified by feeding the result to the
+  #     registry report, which must classify the pairing `ok`, not merely by matching a string). With
+  #     a fault injected BETWEEN the two writes, the surviving state is the BENIGN half — the
+  #     gitignore line present, NO row — and the DANGEROUS half (a row with no line) is asserted
+  #     UNREACHABLE across the parametrized fault points (before write 1, between, before the row
+  #     rename, inside the rollback). The write order itself is asserted by observation (the two
+  #     renames' sequence), not inferred from the end state.
+  - {ac_id: AC-WAF-4, surface: "file:scripts/foundry_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k the_pair_lands_atomically_with_the_gitignore_line_first && echo WAF-4-ATOMIC-OK'", expect: {op: matches, value: "WAF-4-ATOMIC-OK", baseline: pre-change}}
+
+  # --- AC-WAF-4 THE REPLACE IS THE STANDARD DURABLE RECIPE: each replaced file's temp is created in
+  #     THAT FILE'S OWN DIRECTORY (asserted on observed paths, so a /tmp staging + cross-device copy
+  #     fails), fsync is called on the temp file AND on the containing directory after the rename
+  #     (asserted on captured fsync targets), the replaced file's MODE is preserved (0640 pre-set,
+  #     re-read after), and a target that is a SYMLINK is a named refusal rather than a followed
+  #     write. Same case: a .gitignore not ending in U+000A gains exactly one before the append (never
+  #     joining onto the last line), the result ends with exactly one, a SECOND run appends NOTHING
+  #     (idempotent no-op), and the manifest write preserves every other key, every `"//"` comment
+  #     entry and the file's formatting — asserted by diffing the parsed document and the surrounding
+  #     bytes, not by a substring probe.
+  - {ac_id: AC-WAF-4, surface: "test:tests/test_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k replace_is_temp_in_target_dir_fsynced_mode_preserved_symlink_refused && echo WAF-4-DURABLE-OK'", expect: {op: matches, value: "WAF-4-DURABLE-OK", baseline: pre-change}}
+
+  # --- AC-WAF-4 / AC-WAF-5 TOCTOU: a CONCURRENT WRITER IS NEVER CLOBBERED. Parametrized over both
+  #     files x {mutated after the preview but before the write, mutated between the pre-image hash
+  #     and the rename, mutated after this flow's own write but before a rollback restore}: the run
+  #     ends in a NAMED refusal or a named partial-state report, the concurrent writer's bytes SURVIVE
+  #     (byte comparison against what the other writer wrote — never against the pre-image), and the
+  #     baseline used for any restore is the re-read-immediately-before-write image, asserted by
+  #     mutating the file between preview and write and observing that the preview-time bytes are
+  #     never restored.
+  - {ac_id: AC-WAF-4, surface: "file:scripts/foundry_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k a_concurrent_writer_is_refused_and_never_clobbered && echo WAF-4-TOCTOU-OK'", expect: {op: matches, value: "WAF-4-TOCTOU-OK", baseline: pre-change}}
+
+  # --- AC-WAF-5 ROLLBACK RESTORES THE PAIR BYTE-FOR-BYTE, AND ITS TRIGGER SET IS PINNED:
+  #     parametrized over each post-write failure — the callable returns action `refuse`, and result
+  #     `failed` / `timeout` / `spawn-failed`, and the flow raises. Each: .claude/foundry-project.json
+  #     AND .gitignore are byte-identical to pre-run — including a pre-existing unrelated comment
+  #     line, the surrounding entries and the trailing newline — the failure is reported with its
+  #     cause THROUGH THE SINK, and the restore order is observed to MIRROR the write order (the ROW
+  #     is removed FIRST), so no instant of the rollback exposes the dangerous half.
+  - {ac_id: AC-WAF-5, surface: "file:scripts/foundry_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k post_write_failure_restores_both_files_byte_for_byte_row_first && echo WAF-5-ROLLBACK-OK'", expect: {op: matches, value: "WAF-5-ROLLBACK-OK", baseline: pre-change}}
+
+  # --- AC-WAF-5 THE ROLLBACK BOUND, IN THE HARD COMBINED CASE AND IN THE NEGATIVE DIRECTION: ONE run
+  #     in which the clone COMPLETES and the NEXT step then fails must end with ALL THREE true
+  #     together — the pair RESTORED byte-for-byte, the cloned tree STILL ON DISK (its .git and its
+  #     working files intact), and that tree NAMED in the report with the undeclared-checkout remedy.
+  #     A rollback that deletes it, or that leaves the pair behind, fails the case. Same case: every
+  #     OTHER repos.<key> entry, every other .gitignore line, and every file the flow did not write
+  #     are unchanged (whole-tree hash before and after, excluding the two files and the clone target).
+  - {ac_id: AC-WAF-5, surface: "test:tests/test_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k a_completed_clone_survives_rollback_and_is_named_in_one_run && echo WAF-5-BOUNDS-OK'", expect: {op: matches, value: "WAF-5-BOUNDS-OK", baseline: pre-change}}
+
+  # --- AC-WAF-5 THE SECOND UNCOMPENSATED EFFECT: after `gh repo create` SUCCEEDS, each of {the
+  #     operator declines the pair confirmation, a post-creation refusal fires, a post-write failure
+  #     triggers rollback} ends with the created repository NAMED in the report as an orphan with no
+  #     local row, and with NO `gh repo delete` (or any other destructive gh subcommand) in the
+  #     captured argv of any child — asserted over the fake `gh`'s full invocation log.
+  - {ac_id: AC-WAF-5, surface: "file:scripts/foundry_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k a_created_repo_is_named_as_an_orphan_and_never_deleted && echo WAF-5-ORPHAN-OK'", expect: {op: matches, value: "WAF-5-ORPHAN-OK", baseline: pre-change}}
+
+  # --- AC-WAF-6 CONSENT PRECEDES CREATION: the create branch emits a confirmation line naming
+  #     `create repo <owner>/<name>` (and `from template <owner>/<name>` when requested) together with
+  #     the cloned-tree inertness NON-promise AT THAT CHOICE, and requires an affirmative answer
+  #     BEFORE any child is spawned — asserted by ordering (the fake `gh`'s invocation log is EMPTY at
+  #     the moment the prompt is read). Declining: zero gh invocations, both files byte-identical. A
+  #     `--dry-run` create-new run: zero gh invocations, both files byte-identical, named non-writing
+  #     outcome.
+  - {ac_id: AC-WAF-6, surface: "file:scripts/foundry_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k creation_is_confirmed_before_gh_runs_and_dry_run_short_circuits && echo WAF-6-CONSENT-OK'", expect: {op: matches, value: "WAF-6-CONSENT-OK", baseline: pre-change}}
+
+  # --- AC-WAF-6 ONE CODE PATH, WITH THE ARGUMENTS FLOORED DIRECTLY: `gh repo create` is invoked as
+  #     fixed argv with NO shell, `--` before every operator-supplied positional, `--template` carried
+  #     when requested and `--clone` ABSENT (asserted on the captured argv of a fake `gh` on PATH) —
+  #     and the repository argument and the `--template` value are each REFUSED BEFORE INVOCATION when
+  #     they fail their own floors (parametrized: a leading `-`, a URL passed as the repo argument, a
+  #     bare single-segment template, an embedded space, a C0-bearing value), with zero gh
+  #     invocations. On success the flow enters the SAME attach code path, asserted by call capture on
+  #     the shared function, not by output prose. If `gh repo create` fails, is missing from PATH, or
+  #     reports unauthenticated, the run is a named refusal and both files are byte-identical.
+  - {ac_id: AC-WAF-6, surface: "test:tests/test_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k create_new_floors_its_argv_then_falls_through_to_the_attach_path && echo WAF-6-FALLTHROUGH-OK'", expect: {op: matches, value: "WAF-6-FALLTHROUGH-OK", baseline: pre-change}}
+
+  # --- AC-WAF-6 THE ROW BINDS WHAT GH SAYS EXISTS, NOT WHAT WAS TYPED: with the fake `gh` scripted to
+  #     report a canonical identity DIFFERING from the requested one (an owner case-change and a
+  #     rename), the run surfaces a NAMED divergence line and requires a re-confirmation before the
+  #     pair is written; declining leaves both files byte-identical; accepting writes a row whose
+  #     `remote` is gh's CANONICAL clone URL (read from the structured --json output, asserted by
+  #     value) and never the operator-typed argument.
+  - {ac_id: AC-WAF-6, surface: "file:scripts/foundry_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k the_row_binds_ghs_canonical_identity_and_divergence_is_reconfirmed && echo WAF-6-CANON-OK'", expect: {op: matches, value: "WAF-6-CANON-OK", baseline: pre-change}}
+
+  # --- AC-WAF-6 THE ONE NETWORK WRITE IS BOUNDED AND NAMED: over a full create-new run with the
+  #     reconcile callable stubbed, `gh` is the ONLY network-capable subprocess spawned (captured
+  #     argv over every child) and `gh repo create` is invoked EXACTLY ONCE; and BELT-AND-BRACES, with
+  #     outbound sockets denied at the process boundary, this module itself attempts no connection — a
+  #     run that quietly reached the network fails here even if its argv looked clean.
+  - {ac_id: AC-WAF-6, surface: "test:tests/test_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k gh_is_the_only_network_subprocess_with_sockets_denied && echo WAF-6-ONENET-OK'", expect: {op: matches, value: "WAF-6-ONENET-OK", baseline: pre-change}}
+
+  # --- AC-WAF-7 THE SURFACE STATES THE AUTHORITY IT EXERCISES: the module imports under its
+  #     underscored name and runs as a CLI over an explicit --root; the docstring AND `--help` each
+  #     carry all THREE pinned sentences VERBATIM, each matched as a whole line (exact string
+  #     containment, not a keyword probe): the egress-authority sentence, the confirm-before-write
+  #     sentence, and the cloned-tree inertness NON-promise naming CLAUDE.md, .claude/** and .mcp.json.
+  - {ac_id: AC-WAF-7, surface: "file:scripts/foundry_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k docstring_and_help_carry_the_three_pinned_sentences_verbatim && echo WAF-7-DISCLOSE-OK'", expect: {op: matches, value: "WAF-7-DISCLOSE-OK", baseline: pre-change}}
+
+  # --- AC-WAF-8 NEVER CLONE-FIRST-RECORD-AFTER: with the reconcile callable wrapped to snapshot the
+  #     workspace at entry, the row AND the gitignore line are already durably on disk when the
+  #     callable is entered (both renames returned, both directory fsyncs observed) — an
+  #     implementation that reconciles first fails the case. Same case: over the whole run this module
+  #     spawns NO `git` subprocess of its own (captured argv over every child; the only git is inside
+  #     the callable), so no checkout can precede the row that declares it.
+  - {ac_id: AC-WAF-8, surface: "test:tests/test_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k write_strictly_precedes_reconcile_and_this_module_runs_no_git && echo WAF-8-ORDER-OK'", expect: {op: matches, value: "WAF-8-ORDER-OK", baseline: pre-change}}
+
+  # --- AC-WAF-8 THE SEAM IS THE SIBLING'S FUNCTION OBJECT, asserted by IDENTITY: `import
+  #     foundry_repo_fleet` resolves, the flow calls `foundry_repo_fleet.reconcile` itself (identity
+  #     check on the called object, not a name match), with the sibling's pinned signature (`rows`
+  #     positional, `timeout` keyword-only). A forked second reconcile implementation, and a
+  #     subprocess shell-out to the sync CLI, each fail the case.
+  - {ac_id: AC-WAF-8, surface: "file:scripts/foundry_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k reconcile_is_the_imported_fleet_callable_by_identity && echo WAF-8-SEAM-OK'", expect: {op: matches, value: "WAF-8-SEAM-OK", baseline: pre-change}}
+
+  # --- AC-WAF-8 THE ROWS ARGUMENT IS EXACTLY THE NEW ROW, READ BACK FROM DISK, AND `finding` IS NOT A
+  #     ROLLBACK TRIGGER: the captured `rows` argument has LENGTH 1 and its content EQUALS the row as
+  #     serialized in the manifest on disk (asserted by value against the file, with a pre-existing
+  #     second row present that must NOT appear, and with the collected in-memory dict deliberately
+  #     mutated after the write so an implementation passing its own values fails). Same case: a
+  #     callable returning action `skip`, result `ok`, `finding: true` (the `mr register`
+  #     existing-checkout case) leaves the PAIR IN PLACE and reports the finding — a rollback here
+  #     fails the case — while action `refuse` on the same fixture DOES roll back.
+  - {ac_id: AC-WAF-8, surface: "test:tests/test_repo_attach.py", locator: "sh -c 'python3 -m pytest tests/test_repo_attach.py -q -k reconcile_receives_exactly_the_new_row_from_disk_and_finding_is_not_a_trigger && echo WAF-8-ROWSCOPE-OK'", expect: {op: matches, value: "WAF-8-ROWSCOPE-OK", baseline: pre-change}}
+
+  # --- AC-WAF-9 — the release note names the attach flow IN THE TOPMOST RELEASE SECTION (the plugin
+  #     is version-keyed: an adopter receives only what the current section carries). awk emits only
+  #     the text from the first `## v` heading up to the next one, so a mention anywhere else in the
+  #     file — including an older release — does NOT satisfy this.
+  - {ac_id: AC-WAF-9, surface: "file:CHANGELOG.md", locator: "sh -c \"awk '/^## v/{n++} n==1' CHANGELOG.md | grep -q 'attach' && echo WAF-9-CHANGELOG-OK\"", expect: {op: matches, value: "WAF-9-CHANGELOG-OK", baseline: pre-change}}
+
+  # --- AC-WAF-9 — the plugin repo's own doctor is unmoved by the new module
+  - {ac_id: AC-WAF-9, surface: "cli:foundry-doctor", locator: "sh -c 'python3 scripts/foundry-doctor.py | tail -1'", expect: {op: matches, value: "DOCTOR-GREEN", baseline: none}}
+# DRAFT — pending /foundry:authorize (spec_sha256 + contract_sha256 + the signed authorized: trailer).
+# === FOUNDRY-AUTHORIZED-TRAILER (excluded from contract_sha256) ===
+authorized:
+  operator_id: op_lukas
+  authorized_at: 2026-08-03T02:15:25Z
+  auth_seq: 1
+  supersedes: null
+  spec_sha256: 44ac886119dff0650beaae1d758dd513293ffb9f2955b14ec06f0c73fd0b2079
+  contract_sha256: 6ff78315b7f20567bfcf5c9422897c4433df3d84e880ca391d18f90cc3096f3c
+  merge_autonomy_mode: lean
