@@ -51,11 +51,16 @@ INTERPRETER_WORDS = frozenset({"python3", "python", "bash", "sh"})
 _BASH_RULE_RE = re.compile(r"^Bash\((.+)\)$", re.DOTALL)
 _PLUGIN_CACHE_FOLD_RE = re.compile(r"plugins/cache/[^/\s]+/foundry/[^/\s]+/")
 _SCRIPTS_BASENAME_RE = re.compile(r"scripts/([^\s:)]+)")
-_TOOL_PREFIX_VALID_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+_TOOL_PREFIX_VALID_RE = re.compile(r"\A[A-Za-z0-9_-]{1,32}\Z")
 
 # AC-ROST-5 render floor (control/ANSI), extended per AC-DPF-8 to zero-width/bidi code points.
+# AC-DPF-8's normative text is a floor ("extended to ... U+200B-U+200F, U+202A-U+202E,
+# U+2066-U+2069, U+FEFF") \u2014 R4 (PR #60 review) widens this superset-only with the Arabic Letter
+# Mark (U+061C, also bidi-class-affecting) and the Unicode line/paragraph separators (U+2028,
+# U+2029), which are equally render-hostile and were not in the originally enumerated set. Strictly
+# additive: every rule the AC-DPF-8 spec text requires stripped is still stripped.
 _CTRL_RE = re.compile(r"(\x1b\[[0-9;]*[A-Za-z]|\x1b[@-Z\\-_]|[\x00-\x1f\x7f-\x9f])")
-_ZW_BIDI_RE = re.compile("[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]")
+_ZW_BIDI_RE = re.compile("[\u061C\u200B-\u200F\u2028\u2029\u202A-\u202E\u2066-\u2069\uFEFF]")
 _LINE_CAP = 200
 _MAX_LINES_PER_CLASS = 50
 
@@ -321,8 +326,13 @@ def is_ceremony_entry(map_entry):
 
 
 def _tool_prefix(rule):
+    # R2 (PR #60 review): a paren-less rule (e.g. a secret-shaped bare token) must NEVER be
+    # emitted as a "tool prefix" — with no "(" there is no tool name to extract, so it is
+    # unconditionally unclassified-body-withheld.
     idx = rule.find("(")
-    prefix = rule[:idx] if idx != -1 else rule
+    if idx == -1:
+        return "?"
+    prefix = rule[:idx]
     if not _TOOL_PREFIX_VALID_RE.match(prefix):
         return "?"
     return prefix
@@ -382,8 +392,13 @@ def _classify(floor_doc, effective, unreadable_labels, home):
         swallowed = ask_entries + deny_entries
         names = "; ".join(sanitize(e["rule"]) for e in swallowed)
         for c in blanket:
+            # R1 (PR #60 review): render the canonicalized/folded form, not the raw settings-file
+            # text — the raw text can carry an arbitrary free-text prefix ahead of the
+            # plugins/cache segment that the fold discards; the folded form is the same short
+            # reach the blanket decision was actually made on (mirrors the ask-shadowed render
+            # below).
             lines_by_class["blanket-allow"].append(
-                f"blanket-allow: {sanitize(c['raw'])!r} ({c['_origin']['label']}) blankets "
+                f"blanket-allow: Bash({sanitize(c['folded'])}) ({c['_origin']['label']}) blankets "
                 f"ask/deny: {names} — narrow this rule."
             )
             counts["blanket-allow"] += 1

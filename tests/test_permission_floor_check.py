@@ -267,6 +267,14 @@ def test_no_settings_derived_string_escapes(tmp_path):
     assert any(l.startswith("unclassified:") for l in result["lines"])
 
 
+def test_sanitize_strips_the_widened_zero_width_bidi_set(tmp_path):
+    """R4 (PR #60 review): the AC-DPF-8 zero-width/bidi floor is widened, superset-only, to also
+    neutralize the Arabic Letter Mark (U+061C) and the Unicode line/paragraph separators
+    (U+2028/U+2029) — every code point AC-DPF-8's normative text enumerates is still stripped."""
+    dirty = "a" + "\u061c" + "b" + "\u200b" + "c" + "\ufeff" + "d"
+    assert pf.sanitize(dirty) == "abcd"
+
+
 def test_the_module_never_writes(tmp_path):
     proj = _project_dir(
         tmp_path / "proj", settings=_perms(allow=["Bash(x:*)"]), settings_local=_perms(ask=["Bash(y:*)"])
@@ -365,6 +373,26 @@ def test_blanket_grants_are_detected():
     assert pf.is_blanket_rule("Bash(gh pr merge:*)") is False
 
 
+def test_blanket_allow_line_renders_the_folded_form_not_the_raw_prefix(tmp_path):
+    """R1 (PR #60 review): an arbitrary free-text prefix ahead of the plugins/cache segment is
+    reachable via the fold — the emitted blanket-allow line must carry the folded/canonicalized
+    form, never the raw settings-file text (which could carry that free-text prefix verbatim)."""
+    home = str(tmp_path / "home")
+    G = DEFAULT_GLOB
+    arbitrary_prefix = "ARBITRARY-FREE-TEXT-PREFIX-DO-NOT-LEAK"
+    raw_rule = f"Bash({arbitrary_prefix} {home}/.claude/plugins/cache/agentic-foundry/foundry/1.0.0/*)"
+    plugin_root = _plugin_root(
+        tmp_path / "plugin",
+        [{"rule": f"Bash({G}/scripts/foundry-authorize.py:*)", "tier": "ask", "rationale": "r"}],
+        glob_pat=G,
+    )
+    proj = _project_dir(tmp_path / "proj", settings=_perms(allow=[raw_rule]))
+    result = pf.run_check(plugin_root, proj, home=home)
+    blanket_lines = [l for l in result["lines"] if l.startswith("blanket-allow:")]
+    assert len(blanket_lines) == 1
+    assert arbitrary_prefix not in blanket_lines[0]
+
+
 def test_deny_coverage_requires_exact_reach_equality():
     map_deny = "Bash(gh pr merge --admin:*)"
     assert pf.deny_covers("Bash(gh pr merge --admin:*)", map_deny) is True
@@ -414,17 +442,45 @@ def test_the_finding_classes_are_reported_with_every_covering_origin(tmp_path):
 
 def test_the_unclassified_bucket_redacts_rule_bodies(tmp_path):
     home = str(tmp_path / "home")
-    secret_rule = "Read(ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789)"
+    # R9 (PR #60 review): credential-shaped-but-not-scanner-matching — 20 chars after `ghp_`
+    # (a real GitHub PAT scanner rule is `ghp_[0-9A-Za-z]{36}`) so this fixture stays
+    # credential-shaped for the test's purpose without exact-matching gitleaks/trufflehog (which
+    # would otherwise fire on this repo's own prepublication leak scan at the GO-PUBLIC flip).
+    secret_rule = "Read(ghp_ABCDEFGHIJKLMNOPQRST)"
     proj = _project_dir(tmp_path / "proj", settings=_perms(allow=[secret_rule]))
     plugin_root = _plugin_root(tmp_path / "plugin", [{"rule": "Bash(x:*)", "tier": "allow", "rationale": "r"}])
     result = pf.run_check(plugin_root, proj, home=home)
     unclassified_lines = [l for l in result["lines"] if l.startswith("unclassified:")]
     assert len(unclassified_lines) == 1
     line = unclassified_lines[0]
-    assert "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" not in line
+    assert "ghp_ABCDEFGHIJKLMNOPQRST" not in line
     assert "Read" in line
     assert ".claude/settings.json" in line
     assert "1" in line
+
+
+def test_tool_prefix_never_emits_a_paren_less_secret_shaped_rule_body(tmp_path):
+    """R2 (PR #60 review): a paren-less rule (e.g. an AWS-key-ID-shaped bare token) must not be
+    emitted verbatim as a "tool prefix" — with no "(" there is nothing to extract, so it must
+    always render as the withheld marker "?"."""
+    home = str(tmp_path / "home")
+    secret_body = "AKIAABCDEFGHIJKLMNOP"  # 20-char alnum, no "(" anywhere in the rule
+    assert pf._tool_prefix(secret_body) == "?"
+    proj = _project_dir(tmp_path / "proj", settings=_perms(allow=[secret_body]))
+    plugin_root = _plugin_root(tmp_path / "plugin", [{"rule": "Bash(x:*)", "tier": "allow", "rationale": "r"}])
+    result = pf.run_check(plugin_root, proj, home=home)
+    unclassified_lines = [l for l in result["lines"] if l.startswith("unclassified:")]
+    assert len(unclassified_lines) == 1
+    assert secret_body not in unclassified_lines[0]
+    assert "tool '?'" in unclassified_lines[0]
+
+
+def test_tool_prefix_valid_re_rejects_a_trailing_newline():
+    """R2 (PR #60 review): the anchor was widened from `$` to `\\Z` so a trailing newline can't
+    smuggle a rule body past the tool-prefix validator."""
+    assert pf._TOOL_PREFIX_VALID_RE.match("Bash") is not None
+    assert pf._TOOL_PREFIX_VALID_RE.match("Bash\n") is None
+    assert pf._TOOL_PREFIX_VALID_RE.match("Bash\nrm -rf /") is None
 
 
 def test_the_summary_line_ranks_ceremony_shadowing_first(tmp_path):

@@ -44,12 +44,33 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import sys
 
 import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.dirname(HERE)
+
+# R3 (PR #60 review): the render floor (AC-ROST-5 pattern) applied to this probe's own exception
+# details — an unhandled/malformed-input exception's `str(e)` can carry attacker-reachable text
+# (e.g. a crafted settings-file path or JSON payload) straight into the report untouched. A local
+# duplicate rather than an import from foundry_permission_floor (which may itself be the thing
+# that failed to import) — mirrors the local-render-floor pattern already used by
+# foundry-fleet-roster.py / foundry-fleet-session-machinery.py / foundry-fleet-session-registry.py.
+_DOCTOR_CTRL_RE = re.compile(r"(\x1b\[[0-9;]*[A-Za-z]|\x1b[@-Z\\-_]|[\x00-\x1f\x7f-\x9f])")
+_DOCTOR_DETAIL_CAP = 200
+
+
+def _sanitize_detail(s, cap=_DOCTOR_DETAIL_CAP):
+    """Length-cap + control/ANSI-neutralize a probe-exception detail string before it is returned
+    for rendering (R3, PR #60 review)."""
+    if not isinstance(s, str):
+        return s
+    s = _DOCTOR_CTRL_RE.sub("", s)
+    if len(s) > cap:
+        s = s[:cap]
+    return s
 
 # AC-DPF-1: a fourth, non-failing outcome distinct from True/False/None. The shared renderer below
 # reads `ok is None` as `skip`, so reusing `None` would silently collapse an advisory into a skip;
@@ -278,13 +299,13 @@ def check_permission_floor(plugin_root=None, project_dir=None, session_start=Fal
     try:
         pf = _load_permission_floor_module(root)
     except Exception as e:
-        return False, f"permission-floor module unimportable: {e}"
+        return False, _sanitize_detail(f"permission-floor module unimportable: {e}")
     if pf is None:
         return None, "permission-floor module absent (not applicable)"
     try:
         result = pf.run_check(root, pdir, for_session_start=session_start)
     except pf.FloorMalformed as e:
-        return False, f"permission-floor.json malformed: {e}"
+        return False, _sanitize_detail(f"permission-floor.json malformed: {e}")
     detail = result["summary"]
     if result["lines"]:
         detail = detail + "; " + "; ".join(result["lines"])
@@ -320,7 +341,7 @@ def main():
         try:
             ok, detail = fn(*a, **kw)
         except Exception as e:  # noqa: BLE001 — deliberate: a probe crash is itself the finding
-            ok, detail = False, f"probe crashed: {type(e).__name__}: {e}"
+            ok, detail = False, _sanitize_detail(f"probe crashed: {type(e).__name__}: {e}")
         return (name, ok, detail)
 
     checks = [
