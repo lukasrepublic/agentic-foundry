@@ -288,7 +288,7 @@ def test_the_module_never_writes(tmp_path):
         if event == "open" and len(args) >= 2:
             mode = args[1]
             path_arg = args[0]
-            if isinstance(mode, str) and any(ch in mode for ch in "wax+") and str(path_arg).startswith(str(tmp_path)):
+            if isinstance(mode, str) and any(ch in mode for ch in ("w", "a", "x", "+")) and str(path_arg).startswith(str(tmp_path)):
                 write_events.append((event, args))
         elif event in ("os.rename", "os.remove", "os.mkdir", "os.rmdir", "shutil.copyfile", "shutil.move", "shutil.rmtree"):
             if args and str(args[0]).startswith(str(tmp_path)):
