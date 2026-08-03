@@ -23,9 +23,85 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
+# --- feat-foundry-verify-tag-ssh-alias-resolution: the resolve timeout is a NAMED module constant,
+# mirroring the timeout=30 tag_pin_coherence's own git() helper already uses, and is passed to
+# subprocess.run BY REFERENCE (never as an inline literal) so a test can monkeypatch it small
+# without mocking the subprocess call itself.
+SSH_RESOLVE_TIMEOUT_SECONDS = 30
+
+# a host component that does not match this is NEVER handed to `ssh` -- the check falls back to
+# the strict comparison instead. Removes option-injection shapes (a leading `-`) by construction.
+_HOST_CHARSET_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
 
 class CutReleaseError(Exception):
     pass
+
+
+def _url_triple(origin):
+    """Decompose an origin URL into (transport, host, path), or None if it decomposes into neither
+    recognized shape.
+
+    scp-like ([user@]host:path, i.e. no '://') => transport 'ssh'. url-like
+    (<scheme>://[user@]host[:port]/path) => transport <scheme>, LOWERCASED (so 'SSH://' and 'ssh://'
+    are the same transport). `path` has any trailing '.git' removed in both shapes.
+    """
+    if "://" in origin:
+        scheme, _, rest = origin.partition("://")
+        if not scheme or "/" not in rest:
+            return None
+        hostport, _, path = rest.partition("/")
+        if "@" in hostport:
+            hostport = hostport.rsplit("@", 1)[1]
+        host = hostport.split(":", 1)[0]
+        if not host or not path:
+            return None
+        path = path[:-4] if path.endswith(".git") else path
+        return (scheme.lower(), host, path)
+    if ":" in origin:
+        userhost, _, path = origin.partition(":")
+        host = userhost.rsplit("@", 1)[1] if "@" in userhost else userhost
+        if not host or not path:
+            return None
+        path = path[:-4] if path.endswith(".git") else path
+        return ("ssh", host, path)
+    return None
+
+
+def _real_ssh_resolve(host):
+    """(rc, stdout) for `ssh -G host` -- the real, unmocked resolver. rc=-1 means ssh could not be
+    RUN at all, mirroring tag_pin_coherence's own git() helper convention (never conflated with a
+    clean non-zero exit). `timeout=` is bound BY REFERENCE to SSH_RESOLVE_TIMEOUT_SECONDS, evaluated
+    at call time, so a test can monkeypatch the module constant small without mocking subprocess.run.
+    argv is a list, never a shell string -- `host` is repository-controlled data (from `git remote
+    get-url origin`) and is passed as a single argv element."""
+    try:
+        r = subprocess.run(["ssh", "-G", host], capture_output=True, text=True,
+                           timeout=SSH_RESOLVE_TIMEOUT_SECONDS)
+    except Exception:
+        return -1, ""
+    return r.returncode, (r.stdout or "")
+
+
+def _resolve_ssh_host(host, resolver):
+    """The resolved host (lowercased) for an ssh-shaped `host`, or None on ANY resolver failure:
+    the resolver raised, could not run (rc=-1), exited non-zero, its stdout carries no line whose
+    first whitespace-delimited token is exactly 'hostname', or that line's value is empty or
+    whitespace-only. `resolver` is `(host) -> (rc, stdout)`, mirroring tag_pin_coherence's git()
+    helper -- None selects the real `ssh -G` implementation."""
+    fn = resolver if resolver is not None else _real_ssh_resolve
+    try:
+        rc, stdout = fn(host)
+    except Exception:
+        return None
+    if rc != 0:
+        return None
+    for line in (stdout or "").splitlines():
+        parts = line.split(None, 1)
+        if parts and parts[0] == "hostname":
+            value = parts[1].strip() if len(parts) > 1 else ""
+            return value.lower() if value else None
+    return None
 
 
 def _load_acceptance():
@@ -210,7 +286,7 @@ def _failing_summary(out):
     return shown + (f" (+{len(names) - 5} more)" if len(names) > 5 else "")
 
 
-def tag_pin_coherence(tree, version):
+def tag_pin_coherence(tree, version, *, resolver=None):
     """(ok, detail) for AC-TPC-1/-2/-4/-5: when tag vTARGET already exists, the marketplace.json
     reachable AT THAT TAG must pin a COMMIT (never an annotated-tag object) that is inside the
     released history and whose plugin.json version is TARGET.
@@ -220,6 +296,12 @@ def tag_pin_coherence(tree, version):
     and an install by ref delivered the previous version's code. That shipped twice (v1.0.0 and
     v1.0.1) before being caught. Absent tag => not applicable (a first cut cannot be coherent yet;
     the re-pin has not happened).
+
+    `resolver` (feat-foundry-verify-tag-ssh-alias-resolution) is an OPTIONAL keyword-only injection
+    seam for the source.repo cross-check's ssh-host resolution -- `(host) -> (rc, stdout)`, mirroring
+    the shipped `acceptance_fn` / `er_state_fn` / `suite_runner` convention. Defaults to the real
+    `ssh -G` resolver. `main()`'s `--verify-tag` branch passes NO resolver argument, mirroring the
+    existing never-inject guard on the `cut_release` CLI path.
     """
     tag = f"v{version}"
 
@@ -319,18 +401,43 @@ def tag_pin_coherence(tree, version):
     # --- source.repo cross-check. The gate resolves the sha against the LOCAL repo, which is only
     # meaningful if the local repo IS source.repo. Refuse on a definite mismatch; when origin is
     # unresolvable say so in the detail rather than implying the check ran.
+    #
+    # feat-foundry-verify-tag-ssh-alias-resolution: for an ssh-shaped origin (transport "ssh" AND a
+    # host passing the charset gate) whose `ssh -G` resolution SUCCEEDS, equivalence is (resolved
+    # host, owner/repo path) instead of the literal three-prefix strip -- an ssh-config host alias
+    # (`git@personal-github:owner/repo`) now resolves through the SAME tool that resolves it for
+    # `git` itself. EVERY resolver failure -- ssh absent, non-zero exit, timeout, no `hostname` line,
+    # an empty-valued `hostname`, a charset-violating host (never handed to ssh at all), or a
+    # non-ssh / undecomposable origin -- falls back to the STRICT comparison below, byte-identical to
+    # what ships on main today. There is exactly one non-fallback answer (the resolved-host path);
+    # the strict comparison is retained only as its fallback, never applied in parallel.
     rc, origin = git("remote", "get-url", "origin")
     note = ""
     if rc == 0 and origin and repo:
-        norm = origin.rstrip("/")
-        for pre in ("git@github.com:", "https://github.com/", "ssh://git@github.com/"):
-            if norm.startswith(pre):
-                norm = norm[len(pre):]
-        norm = norm[:-4] if norm.endswith(".git") else norm
-        if norm.lower() != str(repo).lower():
-            return False, (f"source.repo at {tag} is {repo!r} but origin resolves to {norm!r}. The "
-                           f"pin was verified against THIS repo's objects; an install by ref would "
-                           f"fetch from {repo!r}, which was not checked.")
+        norm_origin = origin.rstrip("/")
+        triple = _url_triple(norm_origin)
+        ssh_shaped = bool(triple) and triple[0] == "ssh" and _HOST_CHARSET_RE.fullmatch(triple[1] or "")
+        resolved_host = _resolve_ssh_host(triple[1], resolver) if ssh_shaped else None
+        if resolved_host is not None:
+            # AC-VTA-2: an ssh-shaped origin whose resolution succeeded -- resolved host + path only.
+            path = triple[2]
+            if not (resolved_host == "github.com" and path.lower() == str(repo).lower()):
+                return False, (f"source.repo at {tag} is {repo!r} but the resolved ssh origin (host "
+                               f"{resolved_host!r}, path {path!r}) does not match. The pin was "
+                               f"verified against THIS repo's objects; an install by ref would fetch "
+                               f"from {repo!r}, which was not checked.")
+        else:
+            # AC-VTA-3: no URL triple, a non-ssh transport, or ANY resolver failure -- fall back to
+            # the STRICT comparison, unchanged from main.
+            norm = norm_origin
+            for pre in ("git@github.com:", "https://github.com/", "ssh://git@github.com/"):
+                if norm.startswith(pre):
+                    norm = norm[len(pre):]
+            norm = norm[:-4] if norm.endswith(".git") else norm
+            if norm.lower() != str(repo).lower():
+                return False, (f"source.repo at {tag} is {repo!r} but origin resolves to {norm!r}. The "
+                               f"pin was verified against THIS repo's objects; an install by ref would "
+                               f"fetch from {repo!r}, which was not checked.")
     elif repo:
         note = f"; source.repo {repo!r} NOT cross-checked (no resolvable origin remote)"
     return True, (f"install pin at {tag} resolves {sha[:12]}… (version {version}, "
