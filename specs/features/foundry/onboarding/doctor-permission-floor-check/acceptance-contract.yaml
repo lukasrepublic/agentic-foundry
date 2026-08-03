@@ -1,0 +1,218 @@
+# Acceptance contract — sibling of feat-foundry-doctor-permission-floor-check.md (v1.1).
+# Code repo agentic-foundry; allowed_paths are relative to that repo root. Realizes ER atom 4 of
+# intake/er-onboarding-wizard-and-permission-floor.md and discharges R6 of the AUTHORIZED sibling
+# feat-foundry-permission-floor-map (the ask->allow decay writes an `allow` into
+# .claude/settings.local.json with no second trust dialog, so a drift check reading only
+# .claude/settings.json watches the one file the decay does not touch).
+#
+# The atom adds ONE doctor probe — `permission-floor`, registered as _run("permission-floor", ...) — taking
+# the shipped tree from SIX probes (manifest, hooks, skills-frontmatter, stack-profile-lock,
+# operator-registry, control-plane; verified 2026-08-02) to SEVEN. It compares the workspace's EFFECTIVE
+# permission configuration — BOTH .claude/settings.json and .claude/settings.local.json, unioned and
+# origin-tracked — against the shipped docs/permission-floor.json, reporting eight classes in a fixed
+# severity rank: blanket-allow | ask-shadowed-ceremony | ask-shadowed | deny-missing | settings-unreadable |
+# stale-plugin-path | allow-absent (informational) | unclassified (informational), so no rule is silently
+# dropped. Subsumption REUSES the map's AC-PFM-6 modulo-`:*` prefix rule over canonicalized rule strings
+# (interpreter token dropped, ~/$HOME expanded, plugin-cache segments folded) — the live workspace spells the
+# same rule `Bash(python3 /home/.../foundry/*/scripts/*)`, which a naive compare would miss. The reuse is
+# PROVED, not claimed: AC-DPF-5's shared 8-row table runs against BOTH the map suite's `_subsumes` and this
+# module's `covers`. The `deny` direction deliberately refuses the fold (exact reach equality).
+#
+# REPORT-ONLY, NEVER AUTO-FIXED, and read-only asserted at the OUTCOME level (fixture-tree byte identity with
+# the settings files explicitly hashed + a sys.addaudithook write-event witness + no subprocess/network
+# import) rather than by enumerating forbidden call shapes. Non-disclosure is VALUE-scoped: no settings-derived
+# string reaches output except a canonicalized rule that COVERED a map entry, its origin file, and its tier
+# key — the `unclassified` bucket emits tool-name prefix + origin + tier + count and NEVER a rule body. ONLY
+# permissions.{allow,ask,deny} are consumed (an adopter's `env`/`apiKeyHelper` block is never parsed,
+# retained, or printed). Every emitted line is C0/C1/ANSI/zero-width/bidi sanitized (the shipped AC-ROST-5
+# render floor) and length-capped.
+#
+# TIER, STATED HONESTLY: a permission MISMATCH is ADVISORY (a fourth outcome carried by a sentinel that is
+# NOT True/False/None — the shipped renderer reads `ok is None` as `skip`) — it never sets hard_fail and never
+# reddens. RED (operator-invoked exit non-zero) ONLY on a MALFORMED floor: schema-validation failure of
+# docs/permission-floor.json, including plugin_root_glob failing its runtime validation (pinned cache prefix,
+# no `..`, no `**`, <=2 `*`, 256-match expansion cap). The floor file's ABSENCE is `skip` (it belongs to the
+# map atom). --session-start stays fail-open (AC-CPP-7) and is EXTENDED, never weakened: the WARNING banner
+# also prints on an advisory run (today it prints only on hard_fail), filtered to the actionable ranks plus
+# one informational count line.
+#
+# No hook, schema, workflow, or authorization file is touched => NO wiring re-pin, no meta-regress, no new
+# exec seam. The one reach into docs/permission-floor.json is bounded by AC-DPF-7 to a SINGLE `not_invoked`
+# row for the new library module (the map's AC-PFM-2 closed world otherwise goes RED the moment
+# scripts/foundry_permission_floor.py exists, and the map atom cannot pre-add a row for an absent file) — and
+# `entries` is proved untouched by a canonical-serialization SHA-256 snapshot. FLAGGED for operator
+# confirmation at authorize.
+#
+# BUILD ORDER: feat-foundry-permission-floor-map lands FIRST (AC-DPF-5's conformance table imports its suite;
+# AC-DPF-7 asserts against its shipped file).
+#
+# Live seam: pytest tests/test_permission_floor_check.py (fixture-driven; a negative control per finding
+# class, a fail-open control per failure mode, and the cross-atom matcher conformance table) +
+# tests/test_doc_claims.py::test_doctor_probe_claims + tests/test_permission_floor_map.py + a DOCTOR-GREEN
+# regression.
+spec_ref: specs/features/foundry/onboarding/doctor-permission-floor-check/feat-foundry-doctor-permission-floor-check.md
+spec_sha256: "0000000000000000000000000000000000000000000000000000000000000000"  # /foundry:authorize fills this
+target_repo: agentic-foundry
+scope:
+  allowed_paths:
+    - "scripts/foundry-doctor.py"              # the 7th probe registration + the advisory outcome class (AC-DPF-1, -4)
+    - "scripts/foundry_permission_floor.py"    # NEW — the pure comparison module (AC-DPF-2, -3, -8)
+    - "tests/test_permission_floor_check.py"   # NEW — the live seam + every control set (AC-DPF-5)
+    - "docs/permission-floor.json"             # BOUNDED to one `not_invoked` row for the new module (AC-DPF-7)
+    - "docs/QUICKSTART.md"                     # the probe-count/label claim stays bijective, 6 -> 7 (AC-DPF-6)
+    - "docs/troubleshooting.md"                # the advisory tier documented at the point of confusion (AC-DPF-6)
+    - "CHANGELOG.md"
+  denied_paths:
+    - "hooks/**"                               # advisory probe only: no hook, no wiring change, no re-pin
+    - "schema/**"
+    - ".github/workflows/**"                   # no new CI job/step, no security-path widening here (R6)
+    - "scripts/foundry-authorize.py"           # the probe REPORTS on the authorize ceremony; it never edits it
+    - "scripts/foundry_authz.py"
+    - "scripts/foundry-release-acceptance.py"  # the `[XX` scrape is a CONSTRAINT on this atom, not a target
+    - "tests/test_permission_floor_map.py"     # the sibling suite is IMPORTED for conformance, never edited
+    - "skills/**"
+checkpoints:
+  # House `&& echo <TOKEN>` form; one checkpoint per named case. Every allowed_paths entry is surfaced.
+
+  # --- AC-DPF-1 — the probe is registered in the form test_doc_claims parses, and `advisory` is a fourth,
+  #     non-failing outcome whose mark contains no `XX` (release-acceptance scrapes `[XX`)
+  - {ac_id: AC-DPF-1, surface: "file:scripts/foundry-doctor.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k probe_is_registered_and_advisory_is_a_distinct_outcome && echo DPF-1-PROBE-OK'", expect: {op: matches, value: "DPF-1-PROBE-OK", baseline: pre-change}}
+
+  # --- AC-DPF-1 — every PRE-EXISTING probe's registration literal, outcome value and rendered mark is
+  #     unchanged, and none returns the advisory sentinel (the shared-renderer blast radius, R5)
+  - {ac_id: AC-DPF-1, surface: "file:scripts/foundry-doctor.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k existing_probes_are_unchanged && echo DPF-1-UNCHANGED-OK'", expect: {op: matches, value: "DPF-1-UNCHANGED-OK", baseline: pre-change}}
+
+  # --- AC-DPF-1 THE SENTINEL NEGATIVE CONTROL — an advisory result never renders as `skip` (the `ok is None`
+  #     overload) and never as `ok`; the sentinel is not True/False/None
+  - {ac_id: AC-DPF-1, surface: "file:scripts/foundry-doctor.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k advisory_never_collapses_into_skip_or_ok && echo DPF-1-SENTINEL-OK'", expect: {op: matches, value: "DPF-1-SENTINEL-OK", baseline: pre-change}}
+
+  # --- AC-DPF-2 — effective config = union of BOTH settings files, origin-tracked (file + tier key)
+  - {ac_id: AC-DPF-2, surface: "file:scripts/foundry_permission_floor.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k effective_config_unions_both_settings_files && echo DPF-2-EFFECTIVE-OK'", expect: {op: matches, value: "DPF-2-EFFECTIVE-OK", baseline: pre-change}}
+
+  # --- AC-DPF-2 — ONLY permissions.{allow,ask,deny} are consumed: no other settings key (env, apiKeyHelper,
+  #     enabledPlugins, hooks, MCP) is retained in the model or emitted in any line
+  - {ac_id: AC-DPF-2, surface: "file:scripts/foundry_permission_floor.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k only_the_permissions_keys_are_consumed && echo DPF-2-KEYS-OK'", expect: {op: matches, value: "DPF-2-KEYS-OK", baseline: pre-change}}
+
+  # --- AC-DPF-2(c) VALUE-SCOPED NON-DISCLOSURE — a credential-shaped rule body and an ANSI-bearing rule body
+  #     both land in `unclassified`; neither body nor any escape byte reaches stdout or stderr
+  - {ac_id: AC-DPF-2, surface: "file:scripts/foundry_permission_floor.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k no_settings_derived_string_escapes && echo DPF-2-NONDISCLOSURE-OK'", expect: {op: matches, value: "DPF-2-NONDISCLOSURE-OK", baseline: pre-change}}
+
+  # --- AC-DPF-2(d) READ-ONLY AT THE OUTCOME LEVEL — fixture tree byte-identical after the run (settings files
+  #     explicitly hashed), no path added/removed, sys.addaudithook records zero in-tree write events, and the
+  #     import closure carries no subprocess/socket/http/urllib/requests
+  - {ac_id: AC-DPF-2, surface: "file:scripts/foundry_permission_floor.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k the_module_never_writes && echo DPF-2-READONLY-OK'", expect: {op: matches, value: "DPF-2-READONLY-OK", baseline: pre-change}}
+
+  # --- AC-DPF-2(a)/(b) — an ABSENT settings file is tolerated (no raise), and one that EXISTS but fails
+  #     parse/shape validation yields `settings-unreadable` rather than an exception or a silent `ok`
+  - {ac_id: AC-DPF-2, surface: "file:scripts/foundry_permission_floor.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k absent_or_unreadable_settings_are_tolerated && echo DPF-2-TOLERATED-OK'", expect: {op: matches, value: "DPF-2-TOLERATED-OK", baseline: pre-change}}
+
+  # --- AC-DPF-3 — canonicalization folds the LIVE spellings (interpreter token, ~/$HOME,
+  #     plugins/cache/<seg>/foundry/<seg>/, trailing `:*` / ` *` / `/*` prefix markers)
+  - {ac_id: AC-DPF-3, surface: "file:scripts/foundry_permission_floor.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k canonicalization_folds_the_live_spellings && echo DPF-3-CANON-OK'", expect: {op: matches, value: "DPF-3-CANON-OK", baseline: pre-change}}
+
+  # --- AC-DPF-3(a) — a prefix rule whose reach prefix reduces to empty IS a blanket grant covering everything
+  #     (the previously-silent class): Bash(*), Bash(python3 *), Bash(python3:*)
+  - {ac_id: AC-DPF-3, surface: "file:scripts/foundry_permission_floor.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k blanket_grants_are_detected && echo DPF-3-BLANKET-OK'", expect: {op: matches, value: "DPF-3-BLANKET-OK", baseline: pre-change}}
+
+  # --- AC-DPF-3(b) — the deny direction REFUSES the fold: coverage requires reach-prefix EQUALITY, so a
+  #     broader effective deny still reports deny-missing (fail-safe noise, never silence)
+  - {ac_id: AC-DPF-3, surface: "file:scripts/foundry_permission_floor.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k deny_coverage_requires_exact_reach_equality && echo DPF-3-DENY-OK'", expect: {op: matches, value: "DPF-3-DENY-OK", baseline: pre-change}}
+
+  # --- AC-DPF-8 — the eight classes in rank order, each line naming class, map rule, covering/absent effective
+  #     rule, origin file + tier key and a remedy; a map entry covered by rules in BOTH files is reported ONCE
+  #     citing EVERY distinct covering origin
+  - {ac_id: AC-DPF-8, surface: "file:scripts/foundry_permission_floor.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k the_finding_classes_are_reported_with_every_covering_origin && echo DPF-8-FINDINGS-OK'", expect: {op: matches, value: "DPF-8-FINDINGS-OK", baseline: pre-change}}
+
+  # --- AC-DPF-8 THE UNCLASSIFIED BUCKET — tool-name prefix + origin file + tier key + count ONLY; the rule
+  #     body is never emitted, and every line is sanitized (C0/C1/ANSI/zero-width/bidi) and length-capped
+  - {ac_id: AC-DPF-8, surface: "file:scripts/foundry_permission_floor.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k the_unclassified_bucket_redacts_rule_bodies && echo DPF-8-UNCLASSIFIED-OK'", expect: {op: matches, value: "DPF-8-UNCLASSIFIED-OK", baseline: pre-change}}
+
+  # --- AC-DPF-8 THE SUMMARY LINE — per-class counts in rank order, and whenever ANY ceremony entry is shadowed
+  #     (by a blanket rule or a narrower one) the line LEADS with it and carries the literal
+  #     `the front-authorization prompt is not firing`
+  - {ac_id: AC-DPF-8, surface: "file:scripts/foundry_permission_floor.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k the_summary_line_ranks_ceremony_shadowing_first && echo DPF-8-SUMMARY-OK'", expect: {op: matches, value: "DPF-8-SUMMARY-OK", baseline: pre-change}}
+
+  # --- AC-DPF-4 — the tier: advisory on any finding (incl. no configuration at all), ok when clean, skip when
+  #     the floor file is absent, RED *only* on a schema-validation failure of a present floor file
+  - {ac_id: AC-DPF-4, surface: "file:scripts/foundry-doctor.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k outcome_tiering_is_advisory_except_a_malformed_floor && echo DPF-4-TIER-OK'", expect: {op: matches, value: "DPF-4-TIER-OK", baseline: pre-change}}
+
+  # --- AC-DPF-4 — plugin_root_glob is VALIDATED BEFORE EXPANSION (pinned `~/.claude/plugins/cache/` prefix,
+  #     no `..`, no `**`, <=2 `*`, non-recursive expansion capped at 256 matches); a violation is RED, not stale
+  - {ac_id: AC-DPF-4, surface: "file:scripts/foundry_permission_floor.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k plugin_root_glob_is_validated_before_expansion && echo DPF-4-GLOB-OK'", expect: {op: matches, value: "DPF-4-GLOB-OK", baseline: pre-change}}
+
+  # --- AC-DPF-4 — --session-start exits 0 in EVERY case, the malformed-floor case INCLUDED (mandatory input),
+  #     with the WARNING banner extended to fire on an advisory-only run (AC-CPP-7 unweakened)
+  - {ac_id: AC-DPF-4, surface: "cli:foundry-doctor", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k session_start_stays_fail_open && echo DPF-4-FAILOPEN-OK'", expect: {op: matches, value: "DPF-4-FAILOPEN-OK", baseline: pre-change}}
+
+  # --- AC-DPF-4 — at --session-start only the ACTIONABLE ranks (1-6) print as lines; allow-absent and
+  #     unclassified collapse into exactly one count line (the full payload is operator-invoked only)
+  - {ac_id: AC-DPF-4, surface: "cli:foundry-doctor", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k session_start_prints_only_the_actionable_lines && echo DPF-4-SESSIONFILTER-OK'", expect: {op: matches, value: "DPF-4-SESSIONFILTER-OK", baseline: pre-change}}
+
+  # --- AC-DPF-4 — DOCTOR-GREEN regression on this repo: an advisory finding never reddens the verdict.
+  #     (baseline: none — DOCTOR-GREEN is the merge-base state too, so no attributable RED->GREEN flip exists;
+  #     the checkpoint's job is the NON-REGRESSION proof that adding a 7th probe with a new outcome class kept
+  #     the verdict green, which the pre-change form could not express.)
+  - {ac_id: AC-DPF-4, surface: "cli:foundry-doctor", locator: "sh -c 'python3 scripts/foundry-doctor.py | tail -1'", expect: {op: matches, value: "DOCTOR-GREEN", baseline: none}}
+
+  # --- AC-DPF-5(a) THE CLASS NEGATIVE CONTROLS — eleven materialized fixtures: (a) the live shadow spelling
+  #     (python3 + absolute home path + globbed version segment + trailing bare `*`), (b) missing deny,
+  #     (c) absent allow, (d) glob expanding to nothing, (e) malformed floor => RED, (f) clean => ok,
+  #     (g) Bash(*), (h) Bash(python3 *), (i) Bash(python3:*) => blanket-allow naming the swallowed ceremonies,
+  #     (j) credential-shaped + ANSI-bearing bodies => unclassified with nothing echoed, (k) both files cover
+  #     the same entry => one line, both origins cited
+  - {ac_id: AC-DPF-5, surface: "test:tests/test_permission_floor_check.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k negative_controls_all_fire && echo DPF-5-CONTROLS-OK'", expect: {op: matches, value: "DPF-5-CONTROLS-OK", baseline: pre-change}}
+
+  # --- AC-DPF-5(b) THE FAIL-OPEN CONTROLS — deep-recursion JSON, permissions.allow as string/dict/null, an int
+  #     tier element, PermissionError, a FIFO path, a symlink to a non-regular file, invalid UTF-8, and the
+  #     MANDATORY malformed-floor case: each asserts --session-start exit 0 AND completion within 5s wall clock
+  - {ac_id: AC-DPF-5, surface: "test:tests/test_permission_floor_check.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k fail_open_negative_controls_all_exit_zero && echo DPF-5-FAILOPEN-CONTROLS-OK'", expect: {op: matches, value: "DPF-5-FAILOPEN-CONTROLS-OK", baseline: pre-change}}
+
+  # --- AC-DPF-5(c) CROSS-ATOM MATCHER CONFORMANCE — the spec's 8-row shared table evaluated against BOTH
+  #     tests/test_permission_floor_map.py::_subsumes AND this module's covers(), identical verdicts asserted;
+  #     an un-importable sibling FAILS the test (never skips). This is what replaces "agree by construction".
+  - {ac_id: AC-DPF-5, surface: "test:tests/test_permission_floor_check.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k covers_agrees_with_the_map_suite_on_the_shared_table && echo DPF-5-CONFORMANCE-OK'", expect: {op: matches, value: "DPF-5-CONFORMANCE-OK", baseline: pre-change}}
+
+  # --- AC-DPF-5 — the whole module green (every AC case + every control, no skip/xfail)
+  - {ac_id: AC-DPF-5, surface: "test:tests/test_permission_floor_check.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q && echo DPF-5-SUITE-OK'", expect: {op: matches, value: "DPF-5-SUITE-OK", baseline: pre-change}}
+
+  # --- AC-DPF-6 — QUICKSTART's `DOCTOR-GREEN (<N> probes: <labels>)` claim stays a bijection onto the
+  #     registrations derived from the shipped doctor (N read from the tree — 6 today, 7 with this atom —
+  #     never assumed).
+  #     (baseline: none — this claim test is GREEN on the merge base too, so there is no attributable
+  #     RED->GREEN flip; the checkpoint is the non-regression proof that the 6->7 count/label edit kept the
+  #     bijection. A pre-change baseline here would be vacuous.)
+  - {ac_id: AC-DPF-6, surface: "file:docs/QUICKSTART.md", locator: "sh -c 'python3 -m pytest tests/test_doc_claims.py -q -k test_doctor_probe_claims && echo DPF-6-CLAIMS-OK'", expect: {op: matches, value: "DPF-6-CLAIMS-OK", baseline: none}}
+
+  # --- AC-DPF-6 — troubleshooting section carries the literals `permission-floor`, `advisory`,
+  #     `.claude/settings.local.json` and the remedy
+  - {ac_id: AC-DPF-6, surface: "file:docs/troubleshooting.md", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k troubleshooting_documents_the_advisory_tier && echo DPF-6-DOC-OK'", expect: {op: matches, value: "DPF-6-DOC-OK", baseline: pre-change}}
+
+  # --- AC-DPF-6 — CHANGELOG entry names the probe. The literal is `permission-floor probe`, NOT the bare
+  #     `permission-floor`, which the map atom's own entry already carries via docs/permission-floor.json
+  #     (a bare grep would be GREEN on the merge base and the pre-change baseline would be vacuous)
+  - {ac_id: AC-DPF-6, surface: "file:CHANGELOG.md", locator: "sh -c 'grep -q \"permission-floor probe\" CHANGELOG.md && echo DPF-6-CHANGELOG-OK'", expect: {op: matches, value: "DPF-6-CHANGELOG-OK", baseline: pre-change}}
+
+  # --- AC-DPF-7 — the map records the new library module as `not_invoked` (exactly one row added)
+  - {ac_id: AC-DPF-7, surface: "file:docs/permission-floor.json", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k the_map_records_the_new_module_as_not_invoked && echo DPF-7-NOTINVOKED-OK'", expect: {op: matches, value: "DPF-7-NOTINVOKED-OK", baseline: pre-change}}
+
+  # --- AC-DPF-7 THE SNAPSHOT — `entries` is byte-identical to the merge base: SHA-256 over
+  #     json.dumps(entries, sort_keys=True, separators=(",",":"), ensure_ascii=False) equals the digest literal
+  #     declared in the test module. Independent of the not_invoked addition; catches add/remove/re-tier/reorder.
+  - {ac_id: AC-DPF-7, surface: "file:docs/permission-floor.json", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_check.py -q -k the_map_entries_array_is_unchanged && echo DPF-7-ENTRIES-OK'", expect: {op: matches, value: "DPF-7-ENTRIES-OK", baseline: pre-change}}
+
+  # --- AC-DPF-7 — the authorized sibling's own suite stays green (AC-PFM-2's closed world, reverse-direction
+  #     and command-position checks included) with this atom applied.
+  #     (baseline: none — the map suite is GREEN on the merge base by construction, so the pre-change form is
+  #     vacuous; this is a NON-REGRESSION guard proving the new scripts/*.py file did not break the closed
+  #     world, and its RED->GREEN partner is DPF-7-NOTINVOKED-OK above.)
+  - {ac_id: AC-DPF-7, surface: "test:tests/test_permission_floor_map.py", locator: "sh -c 'python3 -m pytest tests/test_permission_floor_map.py -q && echo DPF-7-MAP-OK'", expect: {op: matches, value: "DPF-7-MAP-OK", baseline: none}}
+# DRAFT — pending /foundry:authorize (spec_sha256 + contract_sha256 + the signed authorized: trailer).
+# === FOUNDRY-AUTHORIZED-TRAILER (excluded from contract_sha256) ===
+authorized:
+  operator_id: op_lukas
+  authorized_at: 2026-08-02T21:41:37Z
+  auth_seq: 1
+  supersedes: null
+  spec_sha256: bea620e254035569f24b129d9936f4956fcb8176ba90054c204990a11fd42333
+  contract_sha256: ab6c644c2b0cd1ebd92072253e48e666dd0051885766f988c1cf77dc22dd4dd6
+  merge_autonomy_mode: lean
