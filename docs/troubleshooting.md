@@ -5,7 +5,7 @@ the shipped CLI, that's a bug — file it.
 
 ## `/foundry:doctor` is RED
 
-The output names the failing probe. The six probes and their usual causes:
+The output names the failing probe. The seven probes and their usual causes:
 
 | Probe | Usual cause | Fix |
 |---|---|---|
@@ -15,6 +15,31 @@ The output names the failing probe. The six probes and their usual causes:
 | `stack-profile-lock` | `.foundry/stack-profile.lock` points at a profile not in `packs/` | re-run `/foundry:relock`, or remove the lock |
 | `operator-registry` | `.claude/foundry-operators.json` missing or invalid | re-run `/foundry:init`, then add yourself |
 | `control-plane` | session rooted in a hosted repo, or below the control plane, or a dangling `repos{}` path | see below |
+| `permission-floor` | a malformed `docs/permission-floor.json` in the plugin tree (the ONLY case that reddens this probe — see below) | reinstall/update the plugin |
+
+## `foundry doctor` reports `permission-floor` as `[adv ]` (advisory)
+
+`permission-floor` compares the workspace's EFFECTIVE permission configuration — BOTH
+`.claude/settings.json` **and** `.claude/settings.local.json` — against the plugin's shipped
+`docs/permission-floor.json`. A mismatch here is **advisory, never RED, and never auto-fixed**:
+local divergence from the shipped floor is frequently a deliberate operator choice, so the doctor
+reports it and stops rather than reddening a legitimate local grant. The one case that DOES redden
+this probe (`[XX ]`) is a `docs/permission-floor.json` that fails schema validation — a broken
+plugin install, not a configuration mismatch.
+
+The finding that matters most is **`ask-shadowed-ceremony`**: an `ask` rule the map ships as a
+front-authorization ceremony (e.g. `foundry-authorize.py`) that is now covered by a broader
+`allow` rule. This is exactly what happens when you accept the harness's "always allow" persist
+option on a ceremony prompt — it writes the new `allow` into **`.claude/settings.local.json`**
+with no second trust dialog, and that file is easy to forget is even consulted. The summary line
+leads with **"the front-authorization prompt is not firing"** whenever this fires. Remedy: open
+`.claude/settings.local.json`, find the overly-broad `allow` rule the finding names, and narrow or
+remove it so the ceremony prompt fires again.
+
+Other findings (`deny-missing`, `stale-plugin-path`, and the informational `allow-absent` /
+`unclassified` buckets) are named on their own finding line with a one-line remedy; run
+`/foundry:doctor` (not `--session-start`) for the full report — `--session-start` only shows the
+actionable lines plus one count of the informational ones.
 
 ## `foundry doctor` reports `control-plane` RED
 
