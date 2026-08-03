@@ -10,6 +10,45 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 
 ## Unreleased
 
+### The governed-repo attach flow ships: attach-existing and create-new (feat-foundry-wizard-attach-repo-flow, AC-WAF-1..9)
+
+- **`scripts/foundry_repo_attach.py` is the write half of the registry** — the `mr register` /
+  `nx import` shape, as a reusable flow module the pre-session bootstrap CLI hosts. Every field
+  (source, local path, registry key, role, description, default branch) is collected in a pinned
+  order, defaulted where derivable, and **confirmed before anything is written**; every field
+  carries a flag twin so a fully-flagged `--yes` run completes with zero stdin reads, and a
+  required value with no flag is a named refusal under `--yes` — never a silent default.
+- **Validation runs before any byte is written**, decided by the **shipped**
+  `schema/foundry-project.schema.json` and the **loaded** `foundry-prepublication-leak-scan.py`
+  admitted-remote-form predicate — never a re-implementation — over the whole prospective document
+  under a **monotonicity** rule (a pre-existing schema defect is reported, never blocking; any
+  *new* error refuses). This flow's own narrowings: a floored + never-auto-transformed registry
+  key, a refused password-bearing source (the manifest is a **committed** file), C0/C1 refused in
+  `path` **and** `description`, confinement against every governed root (duplicate path, nested
+  inside, or containing an existing repo), and a `tracked` target.
+- **The preview shows the exact row, the exact gitignore bytes, and the reconcile plan** before
+  the write, rendered through the registry's own sink; a declined confirmation and `--dry-run`
+  each leave both files byte-identical.
+- **The pair lands atomically, gitignore line first, row second** — temp-in-target-directory +
+  `fsync` of file and directory, mode preserved, symlink target refused, a pre-image hash
+  re-verified immediately before every rename so a concurrent writer is reported, never clobbered.
+  Rollback (triggered by a reconcile failure outcome or an exception, never by a `finding` alone)
+  mirrors the order, restoring the row first; a completed clone and a `gh repo create`d repository
+  are the two **uncompensated** effects, always named as an orphan/undeclared checkout in the
+  report, never deleted.
+- **`create-new` confirms the creation first**, then runs `gh repo create` (create-then-view,
+  never `--clone`), binds the row from `gh`'s **structured** `repo view --json` output rather than
+  the typed argument, and falls through into the same attach path — one implementation writes the
+  pair. `gh` is the only network-capable subprocess this module spawns.
+- **Reconcile happens only through the sibling's imported callable** (`foundry_repo_fleet.reconcile`,
+  called by identity), entered only after the pair is durably on disk, with `rows` equal to exactly
+  the new row **read back from the manifest file on disk** — never the in-memory values this flow
+  collected. This module executes no `git` command of its own.
+- `tests/test_repo_attach.py` drives the real module over materialized `tmp_path` workspaces:
+  local bare-repo remotes, a fake `gh` on PATH with captured argv and scripted `--json` output,
+  fault-injected atomic-replace/TOCTOU scenarios, and byte-level before/after comparison of both
+  files.
+
 ### The plugin now ships a reviewed permission-floor declaration (feat-foundry-permission-floor-map, AC-PFM-1..7)
 
 - **`docs/permission-floor.json` is the canonical three-tier allow/ask/deny map** of every command
