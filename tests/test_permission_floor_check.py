@@ -156,10 +156,25 @@ def _import_map_suite():
     return mod
 
 
-# the merge-base (pre-atom) canonical-serialization SHA-256 of docs/permission-floor.json's
-# `entries` array (AC-DPF-7's R8 tripwire). This atom touches ONLY `not_invoked`; a legitimate
-# future change to `entries` MUST update this literal in the same reviewed diff.
-MERGE_BASE_ENTRIES_DIGEST = "0eebd58fcfa142e2abb3f23e69b4d50d4646f6f4944f0ebaef6d8fa1d0b2c71b"
+# the canonical-serialization SHA-256 of docs/permission-floor.json's `entries` array (AC-DPF-7's
+# R8 tripwire). A legitimate change to `entries` MUST update this literal in the same reviewed diff
+# — which is what this edit is.
+#
+# UPDATED for feat-foundry-wizard-attach-repo-flow (coordinator reconciliation, PR #62). The map
+# grew by exactly TWO rows and lost none; the delta was enumerated entry-by-entry against
+# origin/main before this digest was re-pinned (60 -> 62 entries):
+#
+#   + Bash(.../foundry_repo_attach.py attach:*)   tier `ask`
+#   + Bash(.../foundry_repo_attach.py create:*)   tier `ask`
+#
+# `ask`, not `allow`, for both: attach writes the manifest + gitignore pairing and hands the new row
+# to reconcile (clone/fetch egress), and create invokes `gh repo create` under the operator's
+# identity — a workspace mutation with network reach and a remote-resource creation respectively, so
+# each prompts per run and the preview is the consent surface. Nothing was removed and nothing
+# re-tiered. `docs/permission-floor.json` is contract-DENIED to the atom's implementer (a model may
+# not edit its own confinement), so both the map rows and this re-pin are coordinator work, the same
+# shape as PR #59's `c3406e5`.
+MERGE_BASE_ENTRIES_DIGEST = "32be6c67caf2c85288c68bdcd303bc25c935d941a5ae602a91a951c1ddad5dbd"
 
 
 # ================================================================================================ #
