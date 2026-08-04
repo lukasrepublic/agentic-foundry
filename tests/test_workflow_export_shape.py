@@ -331,15 +331,18 @@ def _resolve_base_text():
     `RWS_BASE` env var (a path to the blob `git show`'d by the checkpoint locator) is always
     preferred and used as-is when present — this is the AC-RWS-1 checkpoint's own exact mechanism,
     unchanged. When `RWS_BASE` is absent (a bare `pytest tests/ -q` run, e.g. AC-RWS-4's
-    full-suite checkpoint / this repo's own pre-push floor, run in a FULL-HISTORY checkout — the
-    dispatched worktree, never CI's default shallow `actions/checkout`), this falls back to
-    resolving the same `git merge-base HEAD origin/main` blob directly, so the general suite stays
-    green without requiring every caller to know about `RWS_BASE`. Either path FAILS (never
-    skips) the moment a baseline cannot be produced — a missing/unreadable/unresolvable baseline
-    is RED, never a silent pass, exactly as AC-RWS-1 requires. A shallow checkout (ci.yml's
-    default) cannot resolve `origin/main` locally and hits this same fail-closed path — the
-    documented reason `ci.yml`'s own `node --check` step, not this suite, remains the CI-hosted
-    parse floor for that job."""
+    full-suite checkpoint / this repo's own pre-push floor), this falls back to resolving the same
+    `git merge-base HEAD origin/main` blob directly, so the general suite stays green without
+    requiring every caller to know about `RWS_BASE`. Either path FAILS (never skips) the moment a
+    baseline cannot be produced — a missing/unreadable/unresolvable baseline is RED, never a silent
+    pass, exactly as AC-RWS-1 requires.
+
+    The fallback needs a full-history checkout, which it now has everywhere it runs: the dispatched
+    worktree always had one, and `ci.yml`'s selftests job takes `fetch-depth: 0` in this same change
+    (it previously used the default depth-1 clone, where `origin/main` does not exist as a
+    remote-tracking ref and this case therefore went red for want of history rather than for a real
+    delta). Under a shallow checkout the fail-closed path still applies — red, never a silent
+    pass — so the assertion degrades safely rather than vacuously if that ever regresses."""
     base_path = os.environ.get("RWS_BASE")
     if base_path:
         if not os.path.isfile(base_path):
