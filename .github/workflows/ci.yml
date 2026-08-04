@@ -17,15 +17,21 @@ jobs:
         with:
           # FULL history (not the default shallow depth-1), matching the secret-scan job below,
           # which already checks out this way; release-acceptance stays shallow (it needs none).
-          # The suite carries a history-dependent
-          # assertion: tests/test_workflow_export_shape.py's merge-base byte-identity check falls
-          # back to `git merge-base HEAD origin/main` when its locator-supplied RWS_BASE is absent,
-          # and that case FAILS CLOSED (never skips) when no baseline can be produced — by design,
-          # so a missing baseline is RED rather than a silent pass. Under depth-1 there is no
-          # `origin/main` remote-tracking ref at all, so the case failed for want of history rather
-          # than for a real delta and took the whole job red with it. `fetch-depth: 0` is
-          # actions/checkout's own documented remedy for history-needing jobs — it fetches every
-          # branch, which is what makes `origin/main` resolvable here. Cheap at this repo's size.
+          # The suite carries history-dependent assertions that compare a shipped file against its
+          # MERGE-BASE blob, falling back to `git merge-base HEAD origin/main` when no checkpoint
+          # locator supplied the baseline. Those cases FAIL CLOSED (never skip) when no baseline can
+          # be produced — by design, so a missing baseline is RED rather than a silent pass. Under
+          # depth-1 there is no `origin/main` remote-tracking ref at all, so they failed for want of
+          # history rather than for a real delta and took the whole job red with it.
+          # `fetch-depth: 0` is actions/checkout's own documented remedy for history-needing jobs —
+          # it fetches every branch, which is what makes `origin/main` resolvable here. Cheap at
+          # this repo's size.
+          #
+          # This hunk is intentionally byte-identical across the three atoms landing it in this wave
+          # (release-wave-workflow-syntax, init-slimming, docs-truth-reconciliation) so they merge in
+          # any order; it names no single test, because the citing tests do not all exist on every
+          # one of those branches. It is inert on a branch that has none of them, and required by the
+          # first one that lands.
           fetch-depth: 0
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
