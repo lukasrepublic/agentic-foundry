@@ -14,6 +14,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # FULL history (not the default shallow depth-1), matching the secret-scan job below,
+          # which already checks out this way; release-acceptance stays shallow (it needs none).
+          # The suite carries a history-dependent
+          # assertion: tests/test_workflow_export_shape.py's merge-base byte-identity check falls
+          # back to `git merge-base HEAD origin/main` when its locator-supplied RWS_BASE is absent,
+          # and that case FAILS CLOSED (never skips) when no baseline can be produced — by design,
+          # so a missing baseline is RED rather than a silent pass. Under depth-1 there is no
+          # `origin/main` remote-tracking ref at all, so the case failed for want of history rather
+          # than for a real delta and took the whole job red with it. `fetch-depth: 0` is
+          # actions/checkout's own documented remedy for history-needing jobs — it fetches every
+          # branch, which is what makes `origin/main` resolvable here. Cheap at this repo's size.
+          fetch-depth: 0
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
@@ -30,7 +43,19 @@ jobs:
         # and claims no coverage rather than passing vacuously.
         env:
           FOUNDRY_LEAK_DENYLIST: ${{ secrets.FOUNDRY_LEAK_DENYLIST }}
-        run: python3 -m pytest tests/ -q
+        # AC-INS-5's byte-identity case takes its baseline from INIT_SLIMMING_BASE and FAILS (never
+        # skips) when that is unset — deliberate, so a missing baseline is RED rather than a silent
+        # pass. Its frozen contract supplies the var from the CHECKPOINT LOCATOR; the bare
+        # `pytest tests/ -q` here has no locator, so the job must resolve the same blob itself.
+        # `set -e` makes an unresolvable merge-base abort the step rather than run the suite with a
+        # bogus baseline — the same fail-closed posture as the assertion it feeds. Depends on the
+        # full-history checkout above.
+        run: |
+          set -e
+          INIT_SLIMMING_BASE="$(mktemp)"
+          git show "$(git merge-base HEAD origin/main):skills/init/SKILL.md" > "$INIT_SLIMMING_BASE"
+          export INIT_SLIMMING_BASE
+          python3 -m pytest tests/ -q
       - name: Graph builder selftest
         run: python3 scripts/foundry-build-citation-graph.py --selftest
       - name: Graph MCP selftest
