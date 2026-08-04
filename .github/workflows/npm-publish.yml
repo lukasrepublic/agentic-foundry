@@ -1,0 +1,116 @@
+# Publishes `cli/` (create-agentic-workspace) to npm via TRUSTED PUBLISHING (OIDC).
+#
+# WHY OIDC AND NOT A TOKEN. The bootstrap-CLI spec's R9 obligation says `npm publish --provenance`,
+# which implies a long-lived NPM_TOKEN in repository secrets. That was the 2024 way. Since
+# 2025-07-31 npm's trusted publishing with OIDC is GA and is the recommended path: no stored
+# credential to leak or rotate, the repository→package binding is enforced by npm rather than by
+# whoever holds a token, and provenance is generated AUTOMATICALLY (the `--provenance` flag is
+# redundant under OIDC). Researched 2026-08-04 against npm's own docs + the GitHub changelog; see
+# the workspace ER `intake/er-npm-publish-trusted-publishing.md` for sources.
+#
+# PREREQUISITES THAT DO NOT LIVE IN THIS FILE — all three must be true or the run fails closed:
+#   1. A trusted publisher configured on npmjs.com for this package naming: owner `lukasrepublic`,
+#      repository `agentic-foundry`, workflow filename `npm-publish.yml`, environment `npm-publish`.
+#   2. `cli/package.json` carries a `repository` field matching this repo CASE-SENSITIVELY. npm
+#      refuses provenance otherwise.
+#   3. The repository is PUBLIC. npm does not generate provenance for packages published from
+#      private repositories, regardless of the package's own visibility — a documented platform
+#      limitation, and the reason this workflow is GP-3-ordered rather than independent.
+#
+# SUBTLETY WORTH KEEPING: npm authorizes the workflow that INITIATES the run, not a reusable
+# workflow it calls. If this is ever factored into a reusable workflow, the CALLER is what must be
+# registered on npmjs.com. Do not refactor this into `workflow_call` without re-registering.
+
+name: npm-publish
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Pack and verify only — do not publish"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04          # cloud-hosted runner REQUIRED; self-hosted is unsupported for OIDC
+    environment: npm-publish        # gives the operator an approval gate on the publish itself
+    permissions:
+      contents: read
+      id-token: write               # the OIDC exchange; without this trusted publishing cannot work
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Assert the npm CLI supports trusted publishing
+        # Trusted publishing needs npm >= 11.5.1. Node 24 ships an npm 11.x, but "ships with" is an
+        # upstream detail that can move under us, so this asserts rather than assumes — a silent
+        # fallback to token-shaped publishing is exactly what must not happen.
+        run: |
+          set -euo pipefail
+          have="$(npm --version)"
+          need="11.5.1"
+          printf 'npm %s (need >= %s)\n' "$have" "$need"
+          [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -1)" = "$need" ] || {
+            echo "::error::npm $have is below the $need floor required for trusted publishing"; exit 1; }
+
+      - name: Test
+        working-directory: cli
+        run: npm test
+
+      - name: Pack and show exactly what would publish
+        working-directory: cli
+        run: |
+          set -euo pipefail
+          npm pack --dry-run
+          echo "--- tarball contents ---"
+          npm pack --pack-destination "$RUNNER_TEMP" >/dev/null
+          tar -tzf "$RUNNER_TEMP"/create-agentic-workspace-*.tgz | sed 's|^package/||' | sort
+
+      - name: Skip if this version is already on the registry
+        id: gate
+        working-directory: cli
+        run: |
+          set -euo pipefail
+          name="$(node -p 'require("./package.json").name')"
+          ver="$(node -p 'require("./package.json").version')"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          # A `v*` tag ships the PLUGIN, whose version is independent of this CLI's. Most plugin
+          # releases will not bump the CLI, so "already published" is the normal case, not an error.
+          if npm view "$name@$ver" version >/dev/null 2>&1; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "$name@$ver is already published — nothing to do."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "$name@$ver is not on the registry — will publish."
+          fi
+
+      - name: Publish (OIDC trusted publishing; provenance is automatic)
+        if: steps.gate.outputs.publish == 'true' && inputs.dry_run != true
+        working-directory: cli
+        run: npm publish
+
+      - name: Verify the attestation actually landed
+        # R9 named this, and it is the ONLY step that checks the attestation exists rather than
+        # assuming the publish implied one. A publish that silently produced no provenance is the
+        # failure this catches.
+        if: steps.gate.outputs.publish == 'true' && inputs.dry_run != true
+        working-directory: cli
+        run: |
+          set -euo pipefail
+          npm audit signatures
+          npm view "${{ steps.gate.outputs.name }}@${{ steps.gate.outputs.version }}" dist.attestations
