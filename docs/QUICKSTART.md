@@ -12,7 +12,7 @@ What you'll produce, artifact by artifact:
  /foundry:init            ──▶  .claude/foundry-operators.json   (who may authorize)
                                .claude/foundry-project.json     (project config)
 
- /foundry:intake "…"      ──▶  specs/features/<domain>/<cap>/
+ /foundry:intake "…"      ──▶  specs/features/<product>/<domain>/<cap>/
                                  ├─ feat-<cap>.md               (atomic spec, stable AC-IDs)
                                  └─ acceptance-contract.yaml    (observable checkpoints)
 
@@ -93,7 +93,7 @@ Specs are capped — hard — at 14 acceptance criteria / 8,000 words; oversize 
 there is no override flag.
 
 ```
-/foundry:spec-review specs/features/export/csv/feat-export-csv.md
+/foundry:spec-review specs/features/app/export/csv/feat-export-csv.md
 ```
 
 Deterministic pre-lints first (size ceiling, reference closure — zero tokens), then three
@@ -103,7 +103,7 @@ remediation round, and the review is recorded content-bound to the spec's hash.
 ## 3. Authorize (the front gate)
 
 ```
-/foundry:authorize specs/features/export/csv/feat-export-csv.md
+/foundry:authorize specs/features/app/export/csv/feat-export-csv.md
 ```
 
 You see every checkpoint; you confirm; the spec + contract hashes are frozen and signed with
@@ -215,7 +215,8 @@ runbook is in **[troubleshooting.md](troubleshooting.md)**, symptom-first.
 
 | Artifact | Path |
 |---|---|
-| Specs + contracts | `specs/features/<domain>/<capability>/` |
+| Specs + contracts | `specs/features/<product>/<domain>/<capability>/` |
 | Operator registry / project config | `.claude/foundry-operators.json` / `.claude/foundry-project.json` |
 | Review + release records | `.foundry/` (gitignored evidence) + your git history (the ledger) |
 | Stack profiles | `packs/stack-profiles/` (node-web, aws-eks-karpenter, python-uv-lib, python-uv-service) |
+| `foundry-fleet-doctor`'s adopter-registry lookup root | default `~/.claude/plugins` (holds `installed_plugins.json`); override with `FOUNDRY_PLUGINS_DIR` |

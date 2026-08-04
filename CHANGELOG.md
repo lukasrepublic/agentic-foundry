@@ -10,6 +10,30 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 
 ## Unreleased
 
+### Docs-truth reconciliation: an overstated enforcement claim, a misattributed env var, and the spec-path shape (feat-foundry-docs-truth-reconciliation, AC-DTR-1..5)
+
+- **`skills/id-sync/SKILL.md` no longer claims never-force-sync is MACHINE-enforced** — nothing in
+  the tree observes a `--force`/`--prune` past the realization read (`force`/`prune` do not occur in
+  `foundry_realization.py`). The frontmatter `description`, the `never-force-sync-blindly` heading,
+  and its anti-pattern bullet now say plainly it is **not machine-enforced**, and name what actually
+  is: `derive_realization_verdict` computes a **machine-derived** verdict over evidence `id-sync`
+  itself **records** — an observation + incident trigger, **not a merge block** — matching the house
+  form `skills/id-promote/SKILL.md` and `skills/id-impact/SKILL.md` already ship.
+- **`docs/troubleshooting.md` no longer credits `FOUNDRY_PLUGINS_DIR` with moving the plugin cache.**
+  It is read in exactly one shipped file, `scripts/foundry-fleet-doctor.py`, only to choose where
+  **fleet-doctor** looks up `installed_plugins.json`. The false parenthetical beside
+  `rm -rf ~/.claude/plugins/cache/` is removed (the command itself is unchanged); `docs/QUICKSTART.md`
+  gains the missing honest note in its "Where things live" table.
+- **Eleven spec-path mentions across `README.md`, `docs/QUICKSTART.md`, and two how-to guides now
+  carry the `<product>` segment** the shipped `derive_area` projection actually indexes
+  (`specs/features/<product>/<domain>/<capability>/`), matching the shape `context/feat-spec-template.md`
+  and `skills/intake/SKILL.md` already document.
+- **`tests/test_docs_claims.py`** gains structural (never substring-in-joined-text) pins for both
+  corrections plus the path shape, each with a negative control proving the check convicts a
+  reintroduced claim, a de-scoped env-var mention, a shortened path, and a slice-scoping bypass —
+  and an additive-only guard proving every pre-existing case in the module is still defined with a
+  byte-identical body.
+
 ### `release-wave.js` honours the Workflow-runtime script contract (feat-foundry-release-wave-workflow-syntax, AC-RWS-1..4)
 
 - **Fixed a Workflow-runtime SyntaxError.** The native Workflow runtime extracts `export const

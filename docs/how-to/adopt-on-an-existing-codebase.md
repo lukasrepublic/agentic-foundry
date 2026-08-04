@@ -7,7 +7,7 @@ extract it into a spec, and run the loop on it — the rest of the codebase does
  your existing repo                       after the first loop
  ──────────────────                       ───────────────────
   src/…  (untouched)                       src/…  (one governed change merged)
-  tests/… (untouched)                      specs/features/<domain>/<cap>/
+  tests/… (untouched)                      specs/features/<product>/<domain>/<cap>/
                                              ├─ feat-<cap>.md
         /foundry:extract-spec  ───────▶      └─ acceptance-contract.yaml (frozen)
 ```
