@@ -150,6 +150,15 @@ template.
 
 ## Quickstart
 
+Starting from nothing? `npx create-agentic-workspace` is the pre-session bootstrap wizard — it
+previews and writes the permission floor **before** a session exists, then hands off:
+
+```bash
+npx create-agentic-workspace --dir my-workspace
+```
+
+Already have a repo?
+
 ```bash
 claude plugin marketplace add lukasrepublic/agentic-foundry#v1.1.0
 claude plugin install foundry@agentic-foundry

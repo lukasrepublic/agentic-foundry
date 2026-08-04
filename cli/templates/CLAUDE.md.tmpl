@@ -1,0 +1,16 @@
+# {{PROJECT_NAME}} — an Agentic Foundry workspace
+
+This workspace was scaffolded by `npx create-agentic-workspace`. The Agentic Foundry plugin's
+verbs are `/foundry:*`; run `/foundry:init` inside a trusted Claude Code session to finish the
+logical wiring (operator registry, project config), then `/foundry:doctor` to confirm
+`DOCTOR-GREEN`.
+
+## Stage mode
+
+Stage mode: {{STAGE_MODE}}
+
+`lean` favors the direct loop with lighter ceremony; `scale` enforces the full gates.
+
+## Conventions
+
+Specs are atomic: `specs/features/<domain>/<capability>/feat-<capability>.md`, each with stable AC-IDs, a delimited `<!-- normative -->` region, and a sibling `acceptance-contract.yaml`.

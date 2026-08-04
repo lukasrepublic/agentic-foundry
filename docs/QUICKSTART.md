@@ -44,6 +44,15 @@ the hook layer, the merge-floor tiers, certification detail — is covered after
 
 ## 0. Install
 
+Scaffolding a brand-new workspace? Start with the pre-session bootstrap wizard — it writes the
+permission floor **before** a session exists, then hands off:
+
+```bash
+npx create-agentic-workspace --dir my-workspace
+```
+
+Already have a repo? Wire the plugin into it directly:
+
 ```bash
 claude plugin marketplace add lukasrepublic/agentic-foundry#v1.1.0
 claude plugin install foundry@agentic-foundry
