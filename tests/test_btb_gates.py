@@ -94,24 +94,42 @@ def test_every_gate_job_states_its_tier_and_labels_tier_b_advisory(tmp_path):
     job_names = list(doc["jobs"].keys())
     assert set(job_names) == {"spec-link", "security-path", "shell-parse-bash32"}, job_names
 
-    # Drive each real job's step body once, over a row that reaches its normal PASS path, and
-    # assert the emitted step summary states its enforcement tier and (since it is Tier B) the
-    # word "advisory" — a reader of the check output should not need to consult the spec to learn
-    # this is a report, not a server-enforced control.
-    proc1, summary1 = _run_step_body(
-        "spec-link", tmp_path,
-        pr_body="Spec: specs/features/foundry/x/feat-x.md\n", labels=[], files=["a.py"],
+    # Each job must STATE its enforcement tier, and state it DERIVED from the live protection
+    # state rather than as a literal. The literal is what this test used to assert, and it is
+    # exactly how the workflow came to print "tier: B (advisory) — private repo, Free plan" from a
+    # public repo with enforcing branch protection: a wrong, public claim about our own merge floor
+    # that no test could catch, because the test asserted the literal too.
+    #
+    # So drive each job's real step body three times over the same PASS row, varying only what the
+    # branch endpoint reports, and require all three readings to differ correctly.
+    rows = [
+        ('{"name":"main","protected":true}',  "tier: A (enforced)",  "server-protected"),
+        ('{"name":"main","protected":false}', "tier: B (advisory)",  "advisory"),
+        ("",                                  "tier: UNKNOWN",       "advisory"),   # unreadable -> fail safe
+    ]
+    cases = (
+        ("spec-link",     dict(pr_body="Spec: specs/features/foundry/x/feat-x.md\n", labels=[], files=["a.py"])),
+        ("security-path", dict(pr_body="", labels=[], files=["docs/readme.md"])),
     )
-    assert proc1.returncode == 0, proc1.stdout + proc1.stderr
-    proc2, summary2 = _run_step_body(
-        "security-path", tmp_path,
-        pr_body="", labels=[], files=["docs/readme.md"],
-    )
-    assert proc2.returncode == 0, proc2.stdout + proc2.stderr
-
-    for job_name, summary in (("spec-link", summary1), ("security-path", summary2)):
-        assert "tier: B" in summary, f"{job_name} step summary missing its tier statement:\n{summary}"
-        assert "advisory" in summary, f"{job_name} step summary missing the honest 'advisory' label:\n{summary}"
+    for job_name, kwargs in cases:
+        seen = set()
+        for branch_body, expected_tier, expected_word in rows:
+            proc, summary = _run_step_body(
+                job_name, tmp_path,
+                extra_env={"GH_STUB_BRANCH_BODY": branch_body, "BASE": "main"},
+                **kwargs,
+            )
+            assert proc.returncode == 0, proc.stdout + proc.stderr
+            assert expected_tier in summary, (
+                f"{job_name} did not derive {expected_tier!r} when the branch endpoint returned "
+                f"{branch_body!r}:\n{summary}")
+            assert expected_word in summary, (
+                f"{job_name} summary missing {expected_word!r}:\n{summary}")
+            seen.add(expected_tier)
+        # The three readings must be genuinely distinct — a helper that hardcoded any single
+        # verdict would satisfy one row and fail the others, but a helper that echoed a constant
+        # containing all three substrings would slip through without this.
+        assert len(seen) == 3, f"{job_name} did not produce three distinct tier readings: {seen}"
 
 
 # ==================================================================== AC-SCW-12 (security-path) =

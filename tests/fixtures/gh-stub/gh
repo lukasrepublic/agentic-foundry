@@ -112,6 +112,26 @@ case "${1:-}" in
       printf '[%s]\n' "$items"
       if [ -n "${GH_STUB_RULESETS_STDERR:-}" ]; then printf '%s\n' "${GH_STUB_RULESETS_STDERR}" >&2; fi
       exit "${GH_STUB_RULESETS_EXIT:-0}"
+    elif [[ "$api_path" =~ ^repos/[^/]+/[^/]+/branches/[^/]+$ ]]; then
+      # Bare `repos/{owner}/{repo}/branches/{branch}` — the CLASSIC-branch-protection disambiguation
+      # (`.protected`). Read-only, unlike the admin-only `/protection` sub-resource. Defaults to
+      # EMPTY so every pre-existing row is unaffected: an empty body parses to no `protected` key,
+      # the CLI reads False, and the historical `no-ruleset` verdict is unchanged.
+      # Honour `-q .protected` the way real `gh` does. btb-gates.yml's tier() helper asks for the
+      # single field, not the whole object; a stub that ignored -q would hand it a JSON blob, the
+      # helper would match neither `true` nor `false`, and every row would read UNKNOWN — a stub
+      # artefact that looks exactly like a real bug in the derivation.
+      if printf '%s\n' "$*" | grep -q -- '-q .protected'; then
+        case "${GH_STUB_BRANCH_BODY:-}" in
+          *'"protected":true'*|*'"protected": true'*)   printf 'true\n' ;;
+          *'"protected":false'*|*'"protected": false'*) printf 'false\n' ;;
+          *) : ;;   # unreadable/empty body -> emit nothing, so the caller falls to UNKNOWN
+        esac
+      else
+        printf '%s\n' "${GH_STUB_BRANCH_BODY:-}"
+      fi
+      if [ -n "${GH_STUB_BRANCH_STDERR:-}" ]; then printf '%s\n' "${GH_STUB_BRANCH_STDERR}" >&2; fi
+      exit "${GH_STUB_BRANCH_EXIT:-0}"
     elif [[ "$api_path" =~ ^repos/[^/]+/[^/]+/pulls/[^/]+/files$ ]]; then
       # Shipped arm, PRESERVED VERBATIM (AC-TARC-13 non-regression).
       printf '%s\n' "${GH_STUB_PR_FILES:-}"
