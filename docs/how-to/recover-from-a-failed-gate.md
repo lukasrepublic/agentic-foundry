@@ -33,7 +33,7 @@ fix the reference or remove the claim.
 A code diff reached CI with no lane signal. Add one line to the PR body:
 
 ```
-Spec: specs/features/<domain>/<capability>/feat-<capability>.md
+Spec: specs/features/<product>/<domain>/<capability>/feat-<capability>.md
 ```
 
 Docs-only diffs pass automatically as not-applicable.

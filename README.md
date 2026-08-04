@@ -23,9 +23,9 @@ you can install was itself specced, authorized, floor-gated, and certified throu
       │  "rate-limit the public API"
       ▼
  ┌──────────┐    ┌──────────────────────┐
- │  intake  │───▶│ atomic spec + accept- │        specs/features/api/rate-limit/
- └──────────┘    │ ance contract drafted │          ├─ feat-api-rate-limit.md
-      │          └──────────────────────┘          └─ acceptance-contract.yaml
+ │  intake  │───▶│ atomic spec + accept- │        specs/features/<product>/api/rate-limit/
+ └──────────┘    │ ance contract drafted │                    ├─ feat-api-rate-limit.md
+      │          └──────────────────────┘                    └─ acceptance-contract.yaml
       ▼
  ┌──────────────┐ ┌─────────────────────┐
  │ spec-review  │▶│ 3 fresh-context     │
@@ -72,14 +72,14 @@ The core loop, as you'd actually type it:
 
 ```text
 > /foundry:intake "rate-limit the public API"
-  … interactive discovery → writes specs/features/api/rate-limit/feat-api-rate-limit.md
+  … interactive discovery → writes specs/features/<product>/api/rate-limit/feat-api-rate-limit.md
     + acceptance-contract.yaml (stable AC-IDs, observable checkpoints)
 
-> /foundry:spec-review specs/features/api/rate-limit/feat-api-rate-limit.md
+> /foundry:spec-review specs/features/<product>/api/rate-limit/feat-api-rate-limit.md
   … deterministic pre-lints → 3 fresh-context reviewer questions (prior-art,
     steel-man+adversarial, per-AC rubric) → one remediation round → review recorded
 
-> /foundry:authorize specs/features/api/rate-limit/feat-api-rate-limit.md
+> /foundry:authorize specs/features/<product>/api/rate-limit/feat-api-rate-limit.md
   … shows you the contract's checkpoints → you confirm → spec+contract hashes frozen
 
 > /foundry:dispatch feat-api-rate-limit
@@ -98,7 +98,7 @@ The core loop, as you'd actually type it:
 And the artifact the whole loop pivots on — an acceptance contract you can read:
 
 ```yaml
-spec_ref: specs/features/api/rate-limit/feat-api-rate-limit.md
+spec_ref: specs/features/<product>/api/rate-limit/feat-api-rate-limit.md
 scope:
   allowed_paths: ["src/api/**"]
 checkpoints:
