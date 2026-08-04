@@ -49,6 +49,96 @@ All notable changes to Agentic Foundry are documented here (SemVer).
   fault-injected atomic-replace/TOCTOU scenarios, and byte-level before/after comparison of both
   files.
 
+### `--verify-tag` resolves ssh-config host aliases before the `source.repo` cross-check (feat-foundry-verify-tag-ssh-alias-resolution, AC-VTA-1..5)
+
+- **The bug:** `tag_pin_coherence`'s `source.repo` cross-check stripped one of exactly three literal
+  prefixes (`git@github.com:`, `https://github.com/`, `ssh://git@github.com/`) before comparing to
+  the marketplace pin. An operator whose `origin` remote uses an ssh-config **host alias**
+  (`git@personal-github:owner/repo` — the shape the shipped identity-isolation practice produces)
+  matched none of the three, so a perfectly coherent release printed `TAG-PIN-INCOHERENT`.
+- **The fix:** for an **ssh-shaped origin** (transport `ssh`, host passing a conservative
+  `^[A-Za-z0-9._-]+$` charset gate), the host is resolved through `ssh -G <host>` — OpenSSH's own
+  config resolver, which prints the effective configuration and exits, contacting nothing — and
+  equivalence becomes *(resolved host, owner/repo path)* instead of the literal prefix strip. A
+  genuinely different repository still refuses (the negative control). The `https` path is
+  untouched and keeps today's case-sensitive prefix strip byte-for-byte (scoping this atom strictly
+  to the ssh-alias defect, not a general case-insensitivity widening).
+- **Strictly non-weakening / fail-closed.** Every resolver failure — `ssh` absent, non-zero exit,
+  timeout, no `hostname` line, an empty-valued `hostname`, or a charset-violating host (never handed
+  to `ssh` at all, closing an argv-injection shape by construction) — falls back to the shipped
+  strict comparison. The new resolve timeout is a named module constant,
+  `SSH_RESOLVE_TIMEOUT_SECONDS = 30`, mirroring the module's existing `git()` helper timeout and
+  bound by reference so a test can prove the real, unmocked `subprocess.run` path actually enforces
+  it against a deliberately slow fake `ssh`. A dependency-injected `resolver=` keyword-only seam on
+  `tag_pin_coherence` (defaulting to the real `ssh -G` implementation) follows the module's existing
+  `acceptance_fn` / `er_state_fn` / `suite_runner` convention; `main()`'s `--verify-tag` CLI path
+  injects no resolver, mirroring the existing never-inject guard on the `cut_release` path.
+- **No network call is added**, verified structurally over the module's parsed AST rather than over
+  source-text substrings: the literal argv-head strings passed to `subprocess.run` are unchanged
+  except for the one new `ssh` head, no call carries a truthy `shell=`, and no network-capable
+  symbol (`socket`, `urllib`, `http`, `requests`, `ssl`, `asyncio.open_connection`) is referenced.
+- **`tests/test_tag_pin_coherence.py`** carries the first coverage of the `source.repo` cross-check
+  in either direction (it had zero coverage before this atom), including the real, unmocked `ssh -G`
+  timeout case and a `HOME`-scoped `~/.ssh/config` end-to-end case that reports NOT-RUN rather than
+  passing vacuously when the local OpenSSH build or environment cannot support it.
+
+### `/foundry:doctor` gains a permission-floor drift check (feat-foundry-doctor-permission-floor-check, AC-DPF-1..8)
+
+- **The doctor's new `permission-floor` probe** (the seventh probe, taking the shipped tree from
+  six to seven) compares the workspace's EFFECTIVE permission configuration — the union of
+  `permissions.{allow,ask,deny}` read from BOTH `.claude/settings.json` **and**
+  `.claude/settings.local.json`, origin-tracked — against the shipped `docs/permission-floor.json`
+  and reports drift in eight ranked classes: `blanket-allow`, `ask-shadowed-ceremony`,
+  `ask-shadowed`, `deny-missing`, `settings-unreadable`, `stale-plugin-path`, and the informational
+  `allow-absent` / `unclassified`. This discharges R6 of the permission-floor map: the harness's
+  ask-to-allow persist option writes an `allow` into `.claude/settings.local.json` with no second
+  trust dialog, so the **permission-floor probe** is what notices when a front-authorization
+  ceremony has been silently shadowed.
+- **Report-only, never auto-fixed, and never RED on a mismatch** — a mismatch is a new fourth
+  doctor outcome, `advisory`, distinct from `ok`/`skip`/failure. RED (the only outcome that fails
+  the operator-invoked run) fires only on a schema-invalid `docs/permission-floor.json`.
+  `--session-start` stays fail-open and now also prints its `WARNING:` banner on an advisory-only
+  run, filtered to the actionable finding classes plus one informational count line.
+- **Read-only and non-disclosing.** `scripts/foundry_permission_floor.py` is a pure comparison
+  module: only `permissions.{allow,ask,deny}` are ever parsed, retained, or emitted; every other
+  settings key (`env`, `apiKeyHelper`, etc.) is untouched. An unreducible (`unclassified`) rule is
+  reported by tool-name prefix, origin file, and count — never by its body.
+- **`tests/test_permission_floor_check.py`** is the live seam: a materialized negative-control
+  fixture per finding class (including the live workspace's own shadow spelling), a fail-open
+  control per failure mode, and a cross-atom conformance table proving this module's `covers()`
+  agrees with the sibling map suite's `_subsumes()` on a shared table of rules.
+
+**Security review (PR #60) — remediation disposition.** A separate-context review pass returned
+0 Blocks + 9 Risks. **Applied:** R1 — the `blanket-allow` finding line now renders the
+folded/canonicalized rule, not the raw settings-file text, closing a path where an arbitrary
+free-text prefix ahead of the plugins/cache segment (which the fold otherwise discards) would
+have been emitted verbatim; R2 — `_tool_prefix` no longer falls back to the entire rule body when
+a rule carries no `(`, so a paren-less secret-shaped rule (an AWS-key-ID-shaped bare token, say)
+can no longer be reported as a "tool prefix" — it renders `?` — and `_TOOL_PREFIX_VALID_RE`'s `$`
+anchor is now `\Z` so a trailing newline can't smuggle a body past the validator; R3 — the
+doctor's three probe-exception detail strings (module-unimportable, floor-malformed, probe-crashed)
+now pass through a length-cap + control/ANSI-neutralize floor before they're returned, mirroring
+the AC-ROST-5 pattern already applied to every settings-derived string; R4 — the zero-width/bidi
+render floor is widened, superset-only, to also neutralize the Arabic Letter Mark (U+061C) and the
+Unicode line/paragraph separators (U+2028/U+2029), leaving AC-DPF-8's own enumerated set intact;
+R9 — the `ghp_`-prefixed test fixture is shortened to 20 characters after the prefix so it stays
+credential-shaped without exact-matching the `ghp_[0-9A-Za-z]{36}` GitHub-PAT scanner rule (which
+would otherwise fire gitleaks/trufflehog and this repo's own prepublication leak scan at the
+GO-PUBLIC flip); the other credential-shaped fixtures the review named (`sk-…` bodies) were
+checked and do not exact-match a canonical scanner pattern (none are the 48-char OpenAI-key
+length), so they are unchanged. **Residuals (accepted, not fixed):** R5 — the session-start
+cadence's fail-open guarantee rests on each probe's individually enumerated `try/except` rather
+than one structural top-level `try/except` wrapping the whole render; R6 — the first import of
+`foundry_permission_floor`/`foundry-doctor` writes a `__pycache__` bytecode file into the plugin
+tree, a pre-existing shape of the lazy-import loader this atom reuses, not introduced by it; R7 —
+the glob-expansion cap (`_GLOB_EXPANSION_CAP = 256`) bounds the reported output, not the `glob.glob`
+work itself — a plugin-cache tree with a very large fan-out still pays the full expansion cost
+before the cap is applied; R8 — the `--session-start` payload is bounded per-class (50 lines) and
+per-line (200 chars) but not by total bytes, so a maximally adversarial settings file could still
+push the payload to roughly 60 KB; a tighter total-byte budget is deferred. None of the residuals
+are exploitable beyond a denial-of-legibility/availability nuisance at the advisory-only,
+fail-open probe this already is.
+
 ### The plugin now ships a reviewed permission-floor declaration (feat-foundry-permission-floor-map, AC-PFM-1..7)
 
 - **`docs/permission-floor.json` is the canonical three-tier allow/ask/deny map** of every command
