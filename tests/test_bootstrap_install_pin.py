@@ -38,7 +38,16 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 BOOTSTRAP = REPO_ROOT / "scripts" / "foundry-bootstrap.sh"
 MANIFEST_RELPATH = ".claude-plugin/marketplace.json"
 
-DOC_FILES_EXCLUDED_DIRS = ("docs/archive/",)
+DOC_FILES_EXCLUDED_DIRS = (
+    "docs/archive/",
+    # atomic specs quote command literals (e.g. `claude plugin marketplace add`) inside AC prose
+    # to name a checkpoint's locator/surface text, not to give an adopter a live install
+    # instruction — same rationale as CHANGELOG.md's exclusion below (a record of what a checkpoint
+    # says, not a documented install path). feat-foundry-bootstrap-cli's own AC-BCL-11 clause is
+    # the concrete trip: it names `claude plugin marketplace add` in prose with no version literal,
+    # since AC-BCL-11 governs docs/QUICKSTART.md's *ordering*, not a second pinned command.
+    "specs/",
+)
 DOC_FILES_EXCLUDED_NAMES = ("CHANGELOG.md",)
 
 MARKETPLACE_ADD_RE = re.compile(r"claude plugin marketplace add")
