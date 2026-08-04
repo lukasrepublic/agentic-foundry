@@ -17,6 +17,18 @@ The output names the failing probe. The seven probes and their usual causes:
 | `control-plane` | session rooted in a hosted repo, or below the control plane, or a dangling `repos{}` path | see below |
 | `permission-floor` | a malformed `docs/permission-floor.json` in the plugin tree (the ONLY case that reddens this probe — see below) | reinstall/update the plugin |
 
+## `/foundry:init` reports a status line, sandbox, or gh-jail finding instead of wiring it
+
+That's expected, not a bug. `/foundry:init` only **verifies and reports** on the
+`statusLine`/`subagentStatusLine` wiring, the native Bash sandbox enable, the `gh` jail's
+authentication, and the `GH_CONFIG_DIR` session-env carrier — it never writes any of them.
+There is **no shipped writer** for any of those four artifacts today (a plugin cannot edit its
+own session's confinement), so init's job there is to name what it found and, when nothing is
+wired, point at the by-hand remedy. See
+[QUICKSTART.md → Before your first session](QUICKSTART.md#before-your-first-session)
+for the exact commands and the two `gh` jail caveats (plaintext token at rest; a local logout does
+not revoke server-side).
+
 ## `foundry doctor` reports `permission-floor` as `[adv ]` (advisory)
 
 `permission-floor` compares the workspace's EFFECTIVE permission configuration — BOTH

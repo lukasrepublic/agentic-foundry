@@ -35,108 +35,66 @@ standalone plugin repo) so the gates are live + fail-closed.
    run it; `/foundry:doctor`'s own `control-plane` check (step 10 below) is the fail-closed
    backstop this step exists to make you hit early rather than late.
 
-2. **Plugin load.** Ensure the adopter loads the plugin (`claude --plugin-dir ./foundry`
-   for local; a marketplace entry for installed). Confirm `/foundry:*` skills resolve.
+2. **Plugin/marketplace enablement — VERIFY-ONLY.**
+
+   <!-- foundry:init-verify-only:plugin-enablement v1 -->
+   VERIFY-ONLY. init does not write the plugin/marketplace enablement — a plugin cannot install
+   or enable itself into the session already running it (the harness classifier denies a
+   self-confinement edit; this is the ER's empirical finding, not new policy here). This step
+   only reads and reports.
+
+   - **Present** — confirm `/foundry:*` skills resolve (this very step running is the evidence).
+     Report the verdict and continue.
+   - **Absent or drifted** — **REFUSE**: report the finding and stop this step, pointing at the
+     pre-session bootstrap's own doc — `${CLAUDE_PLUGIN_ROOT}/docs/QUICKSTART.md` (or, before
+     install, `https://github.com/lukasrepublic/agentic-foundry/blob/main/docs/QUICKSTART.md`) —
+     the shipped writer of this artifact ([[feat-foundry-bootstrap-cli]] AC-BCL-4(b)).
+   <!-- /foundry:init-verify-only:plugin-enablement -->
 3. **Operator registry.** Create `.claude/foundry-operators.json` with ≥1 operator
    (committed — `/foundry:authorize` resolves `operator_id` against this registry and
    records it in the frozen `acceptance-contract.yaml`; absent registry fails closed).
-4. **GitHub identity isolation (multi-account machines).** `gh`'s active account is a
-   single GLOBAL setting, so on a machine with >1 authenticated account an adopter
-   onboarded without declaring the repo-owning account silently runs `gh` (PR
-   create/merge, API) as whatever account is globally active — invisibly, since `git
-   push` can still succeed via an SSH alias, until an admin-scoped call 404s. Engage the
-   per-project jail. **Inspect `gh auth status`:**
+4. **GitHub identity isolation (multi-account machines) — VERIFY-ONLY.** `gh`'s active account
+   is a single GLOBAL setting, so on a machine with >1 authenticated account an adopter
+   onboarded without declaring the repo-owning account silently runs `gh` (PR create/merge,
+   API) as whatever account is globally active — invisibly, since `git push` can still succeed
+   via an SSH host alias, until an admin-scoped call 404s. **Inspect `gh auth status`:**
    - **Single account → no-op** — leave `.claude/gh-identity` absent; the guard stays
      dormant (preserves the opt-in contract; single-account adopters are unaffected).
-   - **>1 account →** prompt for the repo-owning account, then:
-     (a) write `.claude/gh-identity` (one line — the account handle);
-     (b) seed an isolated `~/.config/gh-<account>` jail by hand: `GH_CONFIG_DIR=~/.config/gh-<account>
-     gh auth login --insecure-storage` (inline token storage, so the jail is real and not
-     keyring-shared), then PROVE it via `GH_CONFIG_DIR=~/.config/gh-<account> gh api user --jq .login`
-     and compare the printed login against the declared handle by hand
-     (NOT `gh auth status`, which can read the shared keyring and would print something even for a
-     stale ambient credential). The seed-and-prove sequence above does not authenticate the jail
-     beyond these two manual commands — nothing else in this step does more. `--insecure-storage`
-     keeps the token inline rather than keyring-shared; the trade is a plaintext token at rest, and
-     `0700` on its own defends the wrong adversary here — it stops OTHER Unix accounts, not the
-     realistic same-UID readers on a dev box (your own agent's Bash tool, MCP servers, npm/pip
-     postinstall hooks, editor extensions). `gh` does not create the directory at `0700` by default,
-     so set it explicitly right after `gh auth login`: `chmod 0700 ~/.config/gh-<account>` (check a
-     pre-existing directory first — it may already be looser). `~/.config` is also a common
-     dotfiles/backup sync root, so exclude the jail from any sync/backup tool; to revoke, run
-     `GH_CONFIG_DIR=~/.config/gh-<account> gh auth logout` **and** revoke the token server-side
-     (github.com → Settings → Developer settings) — local logout alone does not invalidate an
-     already-issued token.
-     (c) set `GH_CONFIG_DIR=~/.config/gh-<account>` in the gitignored
-     `.claude/settings.local.json` env so Claude Code sessions inherit the jail.
-     (d) wire commit-identity isolation by hand: write `user.name`/`user.email` into
-     `~/.config/git/identity-<account>` (`git config --file ~/.config/git/identity-<account>
-     user.name "Name"` / `... user.email "you@example.com"`), point a global `includeIf` at it —
-     `git config --global includeIf.gitdir:<abs-project-path>/.path
-     ~/.config/git/identity-<account>` — and set repo-local `git config user.useConfigOnly true` so a
-     *missing* identity fails the commit instead of silently falling back to `~/.gitconfig`. The
-     trailing slash on the `gitdir:` pattern matches the WHOLE SUBTREE beneath `<abs-project-path>`
-     (git auto-appends `**`), not just this one repo — verified empirically: an unrelated repo cloned
-     or nested underneath the project inherits the same identity — so `useConfigOnly` cannot catch
-     that: it only fires when NO identity resolves, and here a *wrong* one does.
+   - **>1 account →** the verify-only region below reports the jail state; it does not seed one.
+
+   <!-- foundry:init-verify-only:git-identity v1 -->
+   VERIFY-ONLY. init does not write any part of the per-account jail. `scripts/foundry-bootstrap.sh`
+   is the shipped script the pre-session bootstrap invokes — see its own doc,
+   `${CLAUDE_PLUGIN_ROOT}/docs/QUICKSTART.md` (or, before install,
+   `https://github.com/lukasrepublic/agentic-foundry/blob/main/docs/QUICKSTART.md`) — for the
+   commands. This step only verifies, read-only:
+
+   ```sh
+   GH_CONFIG_DIR=~/.config/gh-<account> gh api user --jq .login   # compare against the declared handle
+   git -C <target> config user.email                              # read back the resolved commit identity
+   ```
+
+   (NOT `gh auth status` — it can read the shared keyring and would print something even for a
+   stale ambient credential.)
+
+   **Disposition, one row per artifact — none of the three is written by this step:**
+
+   | Artifact | Disposition | Owner / remedy |
+   |---|---|---|
+   | Commit identity — the global `includeIf` binding, the per-account include file, repo-local `useConfigOnly`, and the `.claude/gh-identity` marker | **REFUSE** | pre-session bootstrap owns it ([[feat-foundry-bootstrap-cli]] AC-BCL-7) |
+   | The `gh` jail's **authentication** | **REPORT-ONLY** — no shipped writer | out of scope of the pre-session bootstrap's own Clarifications; `scripts/foundry-bootstrap.sh` never authenticates it |
+   | The `GH_CONFIG_DIR` session-env carrier | **REPORT-ONLY** — no shipped writer | the pre-session bootstrap is forbidden from writing the gitignored local session-settings file (AC-BCL-4(d)); see `docs/identity-isolation.md` |
+
+   **Absent or drifted** → the row's disposition above. **Present and matching** → report the
+   verdict and continue.
+   <!-- /foundry:init-verify-only:git-identity -->
+
    - **Two layers.** Identity isolation has a gh-token layer (above) AND a git-transport
      layer: the repo's git remote must use that account's **SSH host alias**
      (`git@<alias>:owner/repo.git`), never a bare `github.com` URL, or pushes use the
      default key. **Cross-account/private template:** if the workspace was seeded from a
      private template owned by a *different* account, `gh repo create --template` 403s —
-     use the local-seed path. (A fuller identity-isolation guide ships with the upcoming
-     `agentic-handbook` template — see the README roadmap.)
-   - **Automated prelude — `scripts/foundry-bootstrap.sh`.** A shipped bootstrap script covers
-     sub-step (a) only, plus the commit-identity wiring of (d) above — it does **not** touch (b) or
-     (c), which stay manual: `scripts/foundry-bootstrap.sh --gh-account <name>` is a one-command
-     physical **prelude** that runs **before** and **outside** the Claude Code session in which
-     `/foundry:init` runs (clone the `--template` workspace — default `lukasrepublic/agentic-handbook`
-     — over your **ambient default SSH key**, before any identity isolation exists → install the
-     plugin from `--marketplace`, default `lukasrepublic/agentic-foundry`, at whatever the
-     marketplace's current HEAD is, with **no ref/version pin** — pass your own pinned tag or commit
-     if you need one; an unpinned install is exactly the drift this workspace's own
-     "every pin explicit" standing-versions rule exists to prevent → seed the operator → write the
-     files below), then hands off to `claude` → `/foundry:init`. If you are reading this step
-     **mid-session** — while already inside a running `/foundry:init` session, which is the only way
-     step three is ever actually read — do not try to invoke it here: finish the manual sub-steps
-     (a)–(d) above now, and use the script as the prelude on your next project (or exit this session
-     and run it there — pass `--existing` if the target directory is non-empty, otherwise the script
-     refuses to clone over it — and re-run `/foundry:init`).
-
-     Under `--gh-account <name>` it writes `.claude/gh-identity` (the account handle) and an `.envrc`
-     that exports `GH_CONFIG_DIR` (plus `FOUNDRY_OPERATOR` when `--operator` was also given) —
-     **with `--existing` this OVERWRITES any `.envrc` already at the target** (it is written with a
-     plain redirect, not merged), silently dropping whatever else lived there (`AWS_PROFILE`, other
-     secrets paths, …); back it up first if one exists. Neither `.envrc` nor `.claude/gh-identity` is
-     added to `.gitignore` by the script — decide your project's policy: the account handle in
-     `.claude/gh-identity` is not a secret and is normally fine to commit, `.envrc` is a local
-     execution-trust file and most direnv users keep it out of version control. Separately, it wires
-     the commit-identity half of (d): a global `includeIf` on the canonicalized project gitdir — the
-     **trailing slash makes the match cover the whole subtree beneath the project directory**, not
-     only this one repo, so a repo cloned or nested underneath (a shape this workspace's own
-     recommended layout uses) inherits the same identity too — pointing at a per-account include file
-     `~/.config/git/identity-<account>` carrying `user.name`/`user.email`, plus repo-local
-     `user.useConfigOnly` so a **missing** identity fails the commit closed (`useConfigOnly` does not
-     catch a *wrong*-but-present one, e.g. from that subtree overlap). That `.envrc` only takes effect
-     if **direnv** is installed, hooked into your shell, and you have run `direnv allow` here;
-     otherwise it is **inert** and `GH_CONFIG_DIR` is never exported — which is why sub-step (c) above
-     (`.claude/settings.local.json`) stays the carrier Claude Code sessions inherit.
-   - **Commit identity — pass `--git-author "Name <email>"`.** It is the explicit, recommended source
-     of the identity written into the include file above, and passing it makes the result
-     **deterministic** — but it also gives up the only cross-check the script has: only the
-     `Name <email>` grammar is validated, nothing confirms the email actually belongs to the declared
-     account, and the result is written durably into the global include file. Verify it yourself once
-     the run finishes: `git -C <target> config user.email` should read back what you intended, and
-     `GH_CONFIG_DIR=~/.config/gh-<account> gh api user --jq .login` should equal the declared account.
-     Without `--git-author` the script runs one `gh api user` probe **scoped to the declared**
-     account's own jail (not the ambient `gh` account) — that check pins the login but not the host
-     (an enterprise namesake with a matching login would still pass), and proxy/CA-trust variables
-     are not stripped from the probe's environment — and adopts the answer only if the returned login
-     matches the declared account — a login **mismatch** discards both the name and the email.
-     Because the script never runs `gh auth login`, a freshly-scaffolded jail is **unauthenticated**,
-     so on a first run that probe simply fails: on a **TTY** you are prompted for the name and email;
-     without one the run exits **non-zero** naming the remedies. The resolved identity, once one is
-     found, is written durably into `~/.config/git/identity-<account>`.
+     use the local-seed path.
 5. **Branch-protection-as-code — RETIRED, Tier A pending a rebuild (since an earlier realignment release).** This step
    used to run `foundry-branch-protection.sh apply/verify <owner/repo>` to PUT + verify a
    universal `foundry-merge-gate` required-status backstop. Both the applier script and the
@@ -186,94 +144,57 @@ standalone plugin repo) so the gates are live + fail-closed.
    (Retired: this step used to also pin the gate wiring via `foundry-wiring-hash.py`;
    that script no longer exists in this repo, and the current thin doctor —
    `skills/doctor/SKILL.md` — carries no wiring-hash check, so there is nothing left to pin.)
-11. **Status lines (opt-in, additive — isolation-first).** Offer to wire the isolation-first native
-   `statusLine` + the `subagentStatusLine` fleet rows so the highest-value ambient signals are visible
-   every prompt: *am I isolated (a linked worktree, green `⊞`) or on the main checkout (amber `⌂ main ⚠`)?
-   what is this session doing right now (the native `⊙` task)? how close is auto-compact (the color-coded
-   `ctx` bar)?* — plus one row per dispatched worker. Both are fail-open (any error drops a segment, never
-   breaks a session); this step is optional and does not affect `DOCTOR-GREEN`.
+11. **Status lines (opt-in, additive — isolation-first) — VERIFY-ONLY.** A wired native
+   `statusLine` + `subagentStatusLine` fleet surfaces the highest-value ambient signals every
+   prompt (isolation state, current task, context-window headroom, one row per dispatched
+   worker) — both are fail-open and opt-in, and this step's verdict does not affect
+   `DOCTOR-GREEN`.
 
-   **Why a self-resolving wrapper, NOT the direct plugin path.** A `statusLine.command` is a project/user
-   setting, not owned by a plugin — the plugin-root hook path-placeholder (`${CLAUDE_PLUGIN_ROOT}`) is
-   **hook-scoped and does NOT expand in a `statusLine` command** (the statusline docs inject only
-   `COLUMNS`/`LINES`), so the legacy direct wiring
-   `bash "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-statusline.sh"` resolves to a broken literal path → the
-   renderer never runs → no status line. Even if it expanded, the cache path is version-segmented and would
-   break every release. The fix is **shell indirection through a stable, installed wrapper** that
-   self-resolves the newest installed renderer by a cache version-glob, wired through the one placeholder
-   confirmed to expand in a `statusLine` command — **`$CLAUDE_PROJECT_DIR`**. The shipped
-   `scripts/foundry-statusline-wrapper.sh` / `scripts/foundry-subagent-statusline-wrapper.sh` are those
-   wrappers (version-agnostic, upgrade/retire-resilient, fail-open).
+   <!-- foundry:init-verify-only:statusline v1 -->
+   VERIFY-ONLY. init does not write the `statusLine`/`subagentStatusLine` wiring — no shipped
+   writer owns this artifact today ([[feat-foundry-bootstrap-cli]] AC-BCL-4(c) forbids the
+   pre-session bootstrap from emitting it, at any nesting level, and states it is not relocated
+   to another writer). This step only reads and reports.
 
-   **Fresh wiring — no existing `statusLine`/`subagentStatusLine` key.** INSTALL the shipped wrappers into
-   the adopter repo at `.claude/hooks/foundry-statusline.sh` (resp.
-   `.claude/hooks/foundry-subagent-statusline.sh`), `chmod 0755`, then via a single load-modify-write over
-   the PARSED `.claude/settings.json` (create it as `{}` if absent; preserve ALL other keys — never a
-   textual patch) set `statusLine.command` (type `command`) and `subagentStatusLine.command` to the
-   EXPANDABLE `$CLAUDE_PROJECT_DIR` form. This is the prescribed install/wiring command:
+   - **Present** — read `.claude/settings.json`. A local `.claude/hooks/foundry-statusline.sh`
+     carrying the `feat-foundry-init-statusline-wrapper` marker, with a `statusLine.command`
+     value in the `$CLAUDE_PROJECT_DIR` form, is the recognized wired shape — report it. Any
+     other value is reported as-is (foreign or stale); it is never touched.
+   - **Absent or drifted** — **REPORT-ONLY**: report that no shipped writer wires this today and
+     point at the pre-session bootstrap's own doc — `${CLAUDE_PLUGIN_ROOT}/docs/QUICKSTART.md`
+     (or, before install, `https://github.com/lukasrepublic/agentic-foundry/blob/main/docs/QUICKSTART.md`)
+     — for the by-hand remedy, then continue; absence here is a fully-supported, non-blocking
+     state, not a defect.
 
-   <!-- foundry:statusline-prescribed-wiring (AC-SLW-2 anchor — the prescribed command lives in THIS block) -->
-   ```sh
-   # 1. Install the shipped self-resolving wrappers into the adopter repo (chmod 0755).
-   install -m 0755 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-statusline-wrapper.sh" \
-     "$CLAUDE_PROJECT_DIR/.claude/hooks/foundry-statusline.sh"
-   install -m 0755 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-subagent-statusline-wrapper.sh" \
-     "$CLAUDE_PROJECT_DIR/.claude/hooks/foundry-subagent-statusline.sh"
-   # 2. Then, via load-modify-write over the PARSED .claude/settings.json (preserve all other keys), set:
-   #      statusLine.command          = "$CLAUDE_PROJECT_DIR/.claude/hooks/foundry-statusline.sh"           (type: command)
-   #      subagentStatusLine.command  = "$CLAUDE_PROJECT_DIR/.claude/hooks/foundry-subagent-statusline.sh"  (type: command)
-   ```
-   The init body **NO LONGER** prescribes `bash "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-statusline.sh"` as
-   the wiring (the unexpandable direct path is removed from the recommended procedure; it survives below
-   ONLY as the recognized migrate-FROM shape).
+   The shipped `scripts/foundry-statusline-wrapper.sh` / `scripts/foundry-subagent-statusline-wrapper.sh`
+   remain the wrappers to install by hand if you opt in — QUICKSTART carries the exact commands
+   and why the `$CLAUDE_PROJECT_DIR` indirection is required (`${CLAUDE_PLUGIN_ROOT}` does not
+   expand inside a `statusLine` command).
+   <!-- /foundry:init-verify-only:statusline -->
+12. **Native Bash sandbox (opt-in write-confinement hardening) — VERIFY-ONLY.** Enabling
+    Claude Code's native OS-level Bash sandbox kernel-confines a dispatched worker's Bash
+    **writes** to its worktree (macOS Seatbelt / Linux+WSL2 bubblewrap; subagent- +
+    git-worktree-aware) — opt-in, advisory, and this step's verdict does not affect
+    `DOCTOR-GREEN` either.
 
-   **Existing `statusLine`/`subagentStatusLine` — the conservative migration classifier.** Init no longer
-   blindly never-clobbers a foundry-OWNED-but-stale wiring (the re-run repair gap). Classify the existing
-   command (resp. the subagent one) **foundry-owned-and-stale** iff EITHER:
-   - **(a)** the command STRING is the EXACT recognized stale direct shape — a bare
-     `bash "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-statusline.sh"` (resp. `…/foundry-subagent-statusline.sh`),
-     **or**
-   - **(b)** the command points at a LOCAL `.claude/` script whose **file CONTENT** resolves/`exec`s
-     `foundry-statusline.sh`/`foundry-subagent-statusline.sh` **or** invokes the **RETIRED** macro-engine
-     `…state.py --statusline` pointer helper (removed in the macro-workflow-engine retirement), AND is
-     **not already** the current canonical wrapper (the upstream canonical shape — the staleness lives INSIDE the
-     pointed-to wrapper file, not in the command string).
+    <!-- foundry:init-verify-only:sandbox v1 -->
+    VERIFY-ONLY. init does not write the native OS-level Bash sandbox enable — no shipped writer
+    owns this artifact today ([[feat-foundry-bootstrap-cli]] AC-BCL-4(c) forbids the pre-session
+    bootstrap from emitting `sandbox.enabled` too, and states it is not relocated to another
+    writer). This step only reads and reports.
 
-   Branch on the classification:
-   - **foundry-owned-and-stale → MIGRATE** — install/refresh the canonical wrapper at
-     `.claude/hooks/foundry-statusline.sh` (resp. subagent) and repoint the command to the
-     `$CLAUDE_PROJECT_DIR` form above; **inform the operator**.
-   - **current canonical wrapper** (a local `.claude/hooks/foundry-statusline.sh` whose content carries the
-     `feat-foundry-init-statusline-wrapper` foundry marker) → **no-op** (already correct; content-recognizable
-     so a future atom stays able to migrate it).
-   - **FOREIGN → LEAVE UNTOUCHED + inform** (the never-clobber contract). Foreign is: no foundry marker, a
-     non-local command, OR a foundry-rooted command **DECORATED** with extra env/flags/args (e.g.
-     `FOUNDRY_STATUSLINE_EXTRAS=1 bash "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-statusline.sh" --x`) — its
-     env/flags carry operator intent that must not be silently dropped. Migration is **byte-conservative:
-     ONLY an EXACT recognized shape is rewritten.**
+    - **Present** — read `.claude/settings.json`'s `sandbox` key. Report whether it is present
+      and its value (`sandbox.enabled` is the on/off signal; `sandbox.filesystem` only
+      widens/narrows an already-enabled scope).
+    - **Absent or drifted** — **REPORT-ONLY**: report that no shipped writer enables it today and
+      point at the pre-session bootstrap's own doc — `${CLAUDE_PLUGIN_ROOT}/docs/QUICKSTART.md`
+      (or, before install, `https://github.com/lukasrepublic/agentic-foundry/blob/main/docs/QUICKSTART.md`)
+      — for the by-hand remedy, then continue; absence here is a fully-supported, non-blocking
+      state (reads default to the whole machine either way, sandboxed or not).
 
-   - Opt-in extras (model / cost / ahead-behind) are OFF by default; the operator turns them on by setting
-     the `FOUNDRY_STATUSLINE_EXTRAS` environment variable (truthy).
-12. **Native Bash sandbox (opt-in write-confinement hardening).** Offer to enable Claude Code's native
-    OS-level Bash sandbox so a dispatched worker's Bash **writes** are kernel-confined to its
-    worktree (macOS Seatbelt / Linux+WSL2 bubblewrap; subagent- + git-worktree-aware). Reuse the SAME
-    load-modify-write seam as the status-line step (step 11) over the adopter's project `.claude/settings.json`:
-    - Read the adopter's `.claude/settings.json` (create it as `{}` if absent), as parsed JSON.
-    - **If it has no `sandbox` key** → **enable the sandbox** by setting `sandbox.enabled` = `true`
-      (the documented on-switch, whose default boundary confines Bash writes to the working directory +
-      session temp dir), **preserving all other keys** (load-modify-write the parsed JSON, not a textual
-      patch). Inform the operator the native Bash sandbox is now ON (worker writes OS-confined to the
-      worktree). Note: `sandbox.enabled: true` is the enable signal — `sandbox.filesystem`
-      (`allowWrite`/`denyRead`/…) only widens/narrows that scope, it is NOT the on-switch.
-    - **If a `sandbox` key already exists** → **leave it untouched and inform the operator** (never
-      clobber/compose an operator's existing sandbox config; the operator tunes it manually).
-    - Grounding for the exact key shape: the official Claude Code sandboxing docs
-      (`code.claude.com/docs/en/sandboxing`).
-    This is **opt-in hardening, advisory — not a both-modes floor**: it is additive / fail-open and does
-    NOT affect `DOCTOR-GREEN` (matching the status-line step). It confines **writes only** (reads default
-    to the whole machine), is native-Windows-unsupported, and can fall back to unsandboxed if OS deps are
-    missing. (The companion `native-bash-sandbox` doctor check this line originally named was retired with the drop-in registry — the thin doctor carries no sandbox check.)
-    when the sandbox is off.
+    Grounding for the exact key shape: the official Claude Code sandboxing docs
+    (`code.claude.com/docs/en/sandboxing`).
+    <!-- /foundry:init-verify-only:sandbox -->
 13. **Runtime-partition `.gitignore` (default-deny, leak-prevention).** Run `scripts/foundry-apply-runtime-gitignore.sh <repo-root>`
     against the adopter repo. It installs the
     default-deny `.foundry/*` block (re-including only the small designed-tracked set:
@@ -288,6 +209,51 @@ standalone plugin repo) so the gates are live + fail-closed.
     (working tree, full history, tracked `.foundry/` state, and a remote direct-SHA probe) to run
     clean; see the script's own `--help` for its remote/known-bad-SHA options.
 
+14. **Guided first atom (the hello-loop).** Close onboarding by walking the operator through
+    ONE small, throwaway atom end-to-end, so the first real run of the loop happens before you
+    need it for something that matters:
+
+    - **`/foundry:intake`** — describe one trivial capability (e.g. "print a greeting") and let
+      it produce a spec + acceptance contract under `specs/**`.
+    - **`/foundry:spec-review`** — get that spec reviewed and recorded.
+    - **`/foundry:authorize`** — this is the one-keypress ask: a native confirmation prompt
+      fires here, and the operator answers it. Explain it as it fires — it is the front gate. This
+      session never answers it on the operator's behalf; only a human keypress can.
+    - **`/foundry:dispatch`** — an implementer builds the toy atom on its own branch.
+    - **merge** — the operator merges the resulting change through their own normal review flow.
+
+    **Cleanup.** The whole walk lives on a scratch branch carrying a throwaway spec under
+    `specs/**` — once the operator has seen the loop end to end, delete it: remove the scratch
+    branch and its spec files rather than leaving toy content behind.
+
+## What init verifies — and what it no longer does
+
+Init is not purely conversational — it still writes three artifacts (the closing line below).
+What changed is the five surfaces below: init used to prescribe writing four of them; now it
+only verifies and reports on all five, and names the real owner for each.
+
+- **status lines** — verifies: whether `statusLine`/`subagentStatusLine` are wired, and to what.
+  no longer does: install the wrapper scripts or set the `.claude/settings.json` keys. owner:
+  no shipped writer — wire them by hand, see QUICKSTART's "Before your first session".
+- **native Bash sandbox** — verifies: whether `sandbox.enabled` is set, and its value.
+  no longer does: enable the sandbox. owner: no shipped writer — enable it by hand, see
+  QUICKSTART's "Before your first session".
+- **git identity** — verifies: the per-account jail's authentication (the read-only `gh api
+  user` proof) and the resolved commit identity. no longer does: seed the jail, wire the global
+  `includeIf`, or write `.claude/gh-identity`. owner: pre-session bootstrap
+  (`scripts/foundry-bootstrap.sh` owns the commit-identity half; see step 4's verify-only
+  region for the two sub-artifacts that have no shipped writer at all).
+- **plugin enablement** — verifies: that `/foundry:*` skills resolve. no longer does: install
+  or enable the plugin/marketplace. owner: pre-session bootstrap.
+- **permission floor** — verifies: reports what `/foundry:doctor`'s `permission-floor` probe
+  finds today (a degraded form until a sibling probe lands — see the probe's own output).
+  no longer does: write or repair `.claude/settings.json`'s `permissions` key.
+  owner: pre-session bootstrap.
+
+**init still writes** three artifacts, unaffected by anything above: `.claude/foundry-operators.json`
+(step 3), `.foundry/stack-profile.lock` via the scripted `--lock` path (step 9), and the
+`.gitignore` managed block via the shipped applier (step 13).
+
 ## Inputs / Outputs
 
 - In: the adopter repo + its boot command + surface map + operator id(s) + (multi-account machines) the repo-owning gh account.
@@ -300,10 +266,10 @@ standalone plugin repo) so the gates are live + fail-closed.
   jail stays dormant and `gh` silently runs as the globally-active account (invisible until an
   admin-scoped call 404s). Single-account machines: correctly a no-op.
 - **Trusting `gh auth status` as proof of isolation** — it can read the shared keyring; prove the
-  jail with `gh api user` under `GH_CONFIG_DIR` (step 4's manual seed does exactly this).
+  jail with `gh api user` under `GH_CONFIG_DIR` (step 4's verify-only region does exactly this).
 - **Baking a project-specific var** (`<PROJECT>_*`) into a foundry primitive — map onto `FOUNDRY_*`.
 - **Enabling non-local auto-merge at all** — no distinct-principal poster ships; there is no supported unattended-merge posture.
 - **Skipping the app-exercise binding** — without a live-seam driver the evidence floor is unrealizable for that adopter.
 - **Hand-writing `.foundry/stack-profile.lock` in prose** — always the scripted `--lock` path (step
-  8); a hand-written lock skips the trusted-resolve guardrails and can fail the very first
+  9); a hand-written lock skips the trusted-resolve guardrails and can fail the very first
   `/foundry:doctor`/`resolve_lock()` check it is supposed to pass.
