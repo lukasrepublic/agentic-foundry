@@ -111,6 +111,27 @@ def _iter_mjs_files(root=CLI_DIR):
     return sorted(root.rglob("*.mjs"))
 
 
+def _extract_function_body(text, name):
+    """Return the body of `function <name>(...) { ... }` by BALANCED-BRACE scan, or None if the
+    function is not present. A brace scan rather than a regex because a regex over raw text cannot
+    find the matching close brace, and a body that stops early would silently shrink what an
+    assertion covers — the failure mode being guarded against here is exactly a check that looks
+    strict and inspects less than it claims."""
+    match = re.search(r"\bfunction\s+" + re.escape(name) + r"\s*\(", text)
+    if match is None:
+        return None
+    open_idx = text.index("{", match.end())
+    depth = 0
+    for i in range(open_idx, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_idx : i + 1]
+    raise AssertionError(f"unbalanced braces scanning {name}")
+
+
 def _collect_import_violations(root=CLI_DIR, banned=None):
     """Returns (violations, all_specs) for every static/dynamic import under `root`."""
     violations = []
@@ -199,8 +220,20 @@ def _assert_settings_bijection(settings, map_data):
         assert actual == expected, (tier, actual ^ expected)
 
 
-def _assert_marketplace_pinned_literal(entry, marketplace_repo):
-    assert entry == {"source": {"source": "github", "repo": marketplace_repo}, "autoUpdate": False}
+def _assert_marketplace_pinned_literal(entry, marketplace_repo, plugin_version):
+    """AC-BCL-4(b), contract v1.2. `source.ref` is the PIN — an entry carrying only {source, repo}
+    floats the adopter's first marketplace resolution to the default branch, which under the
+    floor's version-wildcarded allow rules turns one trust acceptance into a standing grant over
+    whatever that resolution delivered. Asserted as a whole-object equality so a DROPPED ref is
+    caught, not just a wrong one."""
+    assert entry == {
+        "source": {
+            "source": "github",
+            "repo": marketplace_repo,
+            "ref": f"v{plugin_version}",
+        },
+        "autoUpdate": False,
+    }
 
 
 def _assert_settings_key_set_closed(settings):
@@ -417,10 +450,11 @@ def test_the_marketplace_entry_is_the_pinned_literal(tmp_path):
     pkg = load_pkg()
     pins = pkg["foundry"]
     entry = settings["extraKnownMarketplaces"][pins["marketplace_name"]]
-    _assert_marketplace_pinned_literal(entry, pins["marketplace_repo"])
+    _assert_marketplace_pinned_literal(entry, pins["marketplace_repo"], pins["plugin_version"])
     assert set(entry.keys()) == {"source", "autoUpdate"}
-    assert set(entry["source"].keys()) == {"source", "repo"}
+    assert set(entry["source"].keys()) == {"source", "repo", "ref"}
     assert entry["source"]["source"] == "github"
+    assert entry["source"]["ref"] == f"v{pins['plugin_version']}"
     assert entry["autoUpdate"] is False
 
 
@@ -538,11 +572,34 @@ def test_every_runtime_asset_is_packaged():
     for rel in runtime_paths:
         assert matched(str(rel)), f"{rel} is not matched by package.json's files array"
 
-    # never reads a plugin cache path, never downloads
+    # The plugin cache is READ, and only read (PR #61 security review Risk 4). The prior assertion
+    # here — `"plugins/cache" not in text or "plugin_root_glob" in text or "map." in text` — could
+    # not fail for the one file it guarded: the third arm matches the substring "map." which any
+    # module doing a dict/Map access carries, so the disjunction was unfalsifiable and the claim
+    # "reads no plugin-cache path" was neither true (run.mjs stats the cache to derive the advisory
+    # `stale-plugin-path` finding) nor tested. Assert the property that is actually true and
+    # actually load-bearing: every filesystem call inside the cache-walking function is READ-ONLY.
+    # Structural — the function body is extracted by balanced-brace scan and each `fs.<method>`
+    # call inside it checked against a read-only allowlist, so a write introduced there fails even
+    # if it is spelled in a way no substring search anticipated.
+    read_only_fs = {"existsSync", "statSync", "lstatSync", "readdirSync", "readFileSync", "realpathSync"}
+    cache_readers = []
     for f in _iter_mjs_files(CLI_DIR / "src") + _iter_mjs_files(CLI_DIR / "bin"):
         text = f.read_text()
-        assert "plugins/cache" not in text or "plugin_root_glob" in text or "map." in text
-        assert "fetch(" not in text
+        assert "fetch(" not in text, f"{f.name} carries a fetch() call"
+        if "plugins/cache" not in text:
+            continue
+        cache_readers.append(f.name)
+        body = _extract_function_body(text, "expandPluginRootGlob")
+        assert body is not None, f"{f.name} references plugins/cache outside expandPluginRootGlob"
+        calls = set(re.findall(r"\bfs\.(\w+)\s*\(", body))
+        assert calls, f"expandPluginRootGlob in {f.name} makes no fs call — did it move?"
+        assert calls <= read_only_fs, (
+            f"expandPluginRootGlob in {f.name} makes non-read-only fs calls: {sorted(calls - read_only_fs)}"
+        )
+    # Pin the reader set: a NEW file touching the plugin cache must come here and be justified,
+    # rather than inheriting a guard written for run.mjs.
+    assert cache_readers == ["run.mjs"], f"unexpected plugin-cache readers: {cache_readers}"
 
 
 # ── AC-BCL-6 ─────────────────────────────────────────────────────────────────────────────────────
@@ -1006,14 +1063,62 @@ console.log(JSON.stringify({refused}));
 
     # (i) autoUpdate flipped true -> the REAL pinned-literal helper fires
     pkg_i = load_pkg()
-    good_entry = {"source": {"source": "github", "repo": pkg_i["foundry"]["marketplace_repo"]}, "autoUpdate": False}
-    _assert_marketplace_pinned_literal(good_entry, pkg_i["foundry"]["marketplace_repo"])  # sanity
+    repo_i = pkg_i["foundry"]["marketplace_repo"]
+    ver_i = pkg_i["foundry"]["plugin_version"]
+    good_entry = {
+        "source": {"source": "github", "repo": repo_i, "ref": f"v{ver_i}"},
+        "autoUpdate": False,
+    }
+    _assert_marketplace_pinned_literal(good_entry, repo_i, ver_i)  # sanity
     bad_entry = {**good_entry, "autoUpdate": True}
     try:
-        _assert_marketplace_pinned_literal(bad_entry, pkg_i["foundry"]["marketplace_repo"])
+        _assert_marketplace_pinned_literal(bad_entry, repo_i, ver_i)
         results["i_autoupdate_true_detected"] = False
     except AssertionError:
         results["i_autoupdate_true_detected"] = True
+
+    # (o) THE FLOATING PIN — `source.ref` dropped entirely, and (o2) present but pointing at the
+    #     wrong version. Both must redden. This is the control the atom shipped WITHOUT: the
+    #     original assertions pinned the ref-less shape, so the checkpoint was green precisely
+    #     BECAUSE the pin was missing, and adding it would have turned three assertions red
+    #     (PR #61 security review Block 1). A dropped pin is the dangerous case — it is what an
+    #     ordinary refactor produces — so it gets its own control rather than riding on (i).
+    unpinned_entry = {"source": {"source": "github", "repo": repo_i}, "autoUpdate": False}
+    try:
+        _assert_marketplace_pinned_literal(unpinned_entry, repo_i, ver_i)
+        results["o_dropped_ref_detected"] = False
+    except AssertionError:
+        results["o_dropped_ref_detected"] = True
+
+    wrong_ref_entry = {
+        "source": {"source": "github", "repo": repo_i, "ref": "main"},
+        "autoUpdate": False,
+    }
+    try:
+        _assert_marketplace_pinned_literal(wrong_ref_entry, repo_i, ver_i)
+        results["o2_wrong_ref_detected"] = False
+    except AssertionError:
+        results["o2_wrong_ref_detected"] = True
+
+    # (p) THE DANGLING-SYMLINK ESCAPE (PR #61 security review Block 2). A managed path that is a
+    #     symlink to a NONEXISTENT target outside the root: existsSync FOLLOWS symlinks and so
+    #     reported `false`, the row was classified `create`, and writeFileSync followed the link
+    #     and wrote OUTSIDE the physically-resolved target root — reachable at
+    #     $HOME/.claude/settings.json, which no trust dialog gates. Asserted at the OUTCOME level,
+    #     the only level that matters: nothing may appear at the link target, and the run must not
+    #     report success. Note the pre-existing confinement test could not catch this — it
+    #     enumerates `p.is_file()`, and a symlink to a nonexistent path is not a file.
+    home_p = tmp_path / "home-p"
+    home_p.mkdir()
+    target_p = tmp_path / "ws-p"
+    (target_p / ".claude").mkdir(parents=True)
+    outside_p = tmp_path / "outside-p" / "settings.json"
+    outside_p.parent.mkdir(parents=True)
+    (target_p / ".claude" / "settings.json").symlink_to(outside_p)
+    proc_p = run_cli(["--dir", str(target_p), "--yes", "--existing"], home=home_p)
+    results["p_dangling_symlink_never_written_through"] = (
+        not outside_p.exists() and proc_p.returncode != 0
+    )
 
     # (j) a foreign hand-authored settings.json under --existing --yes -> drifted, never merged
     home_j = tmp_path / "home-j"

@@ -32,7 +32,14 @@ const STRIPPED_ENV_VARS = ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'G
  * WHOLE on any mismatch, parse failure, timeout, or absent `gh` — never a partial adopt. No probe
  * output (in whole or in part) is ever written to a file, logged, or printed by this function. */
 export async function probeGhIdentity(slug, { homeDir, timeoutMs = 5000, env = process.env } = {}) {
-  const gh = env.FOUNDRY_TEST_GH_BIN || 'gh';
+  // A STRING LITERAL, never an env-supplied name (PR #61 security review Risk 1). This previously
+  // read `env.FOUNDRY_TEST_GH_BIN || 'gh'`, which made the spec's "the child-process set is closed
+  // to {git, gh}, so `claude` is never spawned" literally false: anything able to set that variable
+  // — a direnv .envrc in a freshly cloned repo, an exported var, CI — chose the binary this line
+  // spawns, `claude` included. It was also DEAD: the only reference in the tree was its own
+  // definition, since the test suites inject their `gh` stub via PATH. Removed rather than guarded;
+  // an unused escape hatch is all cost.
+  const gh = 'gh';
   const jail = path.join(homeDir, '.config', `gh-${slug}`);
   fs.mkdirSync(jail, { recursive: true });
   const childEnv = { ...env, GH_CONFIG_DIR: jail };

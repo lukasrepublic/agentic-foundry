@@ -61,10 +61,18 @@ function expandPluginRootGlob(glob, homeDir) {
     const next = [];
     for (const d of dirs) {
       if (part === '*') {
-        if (fs.existsSync(d) && fs.statSync(d).isDirectory()) {
+        // statSync via throwIfNoEntry:false, never a bare statSync (PR #61 security review Risk 4).
+        // This walk runs AFTER applyPlan, over the operator's own home directory, purely to derive
+        // the ADVISORY `stale-plugin-path` finding. A broken symlink inside the plugin cache — not
+        // the CLI's business and not something it can prevent — made the bare statSync throw into
+        // run.mjs's catch-all and turned a SUCCESSFUL scaffold into exit 1 plus a stack trace. An
+        // advisory probe must never be able to fail the run that already did its work.
+        const dStat = fs.statSync(d, { throwIfNoEntry: false });
+        if (dStat && dStat.isDirectory()) {
           for (const child of fs.readdirSync(d)) {
             const full = path.join(d, child);
-            if (fs.statSync(full).isDirectory()) next.push(full);
+            const childStat = fs.statSync(full, { throwIfNoEntry: false });
+            if (childStat && childStat.isDirectory()) next.push(full);
           }
         }
       } else {

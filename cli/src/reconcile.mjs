@@ -24,7 +24,18 @@ export function applyPlan(plan) {
   for (const f of plan) {
     if (f.action !== 'create') continue;
     ensureDirFor(f.absPath);
-    fs.writeFileSync(f.absPath, f.bytes);
+    // O_EXCL ('wx'), not a plain write (PR #61 security review Block 2, defence in depth). The
+    // plan already refuses to emit `create` for any path that exists — including a dangling
+    // symlink, since fileBytesEqual lstats rather than existsSync's. 'wx' makes the WRITE itself
+    // refuse a target that came into existence between plan and apply, so the never-clobber
+    // guarantee does not rest on the plan/apply window being atomic. A plain write would follow a
+    // symlink planted in that window; this one fails with EEXIST instead.
+    const fd = fs.openSync(f.absPath, 'wx');
+    try {
+      fs.writeFileSync(fd, f.bytes);
+    } finally {
+      fs.closeSync(fd);
+    }
   }
   return plan;
 }

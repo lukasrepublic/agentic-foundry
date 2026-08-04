@@ -73,8 +73,17 @@ export function buildSettings(map, pins) {
   for (const e of map.entries) {
     byTier[e.tier].push(e.rule);
   }
+  // THE PINNED LITERAL (AC-BCL-4(b), contract v1.2 — PR #61 security review Block 1). `ref` is
+  // load-bearing, not decoration: without it the adopter's FIRST marketplace resolution floats to
+  // whatever the default branch points at, and because the floor's allow rules are
+  // version-wildcarded (`cache/*/foundry/*/scripts/...`), the operator's single trust acceptance
+  // becomes a standing grant over whatever code that resolution delivered. That is the same
+  // floating-pin defect `autoUpdate: false` guards the LATER fetches against, left open on the
+  // first one — and strictly weaker than the manual path docs/QUICKSTART.md documents
+  // (`claude plugin marketplace add lukasrepublic/agentic-foundry#v1.1.0`). Single-sourced from
+  // the `foundry` pin block, so it cannot drift from the marketplace manifest.
   const marketplaceEntry = {
-    source: { source: 'github', repo: pins.marketplace_repo },
+    source: { source: 'github', repo: pins.marketplace_repo, ref: `v${pins.plugin_version}` },
     autoUpdate: false,
   };
   return {
