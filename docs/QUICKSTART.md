@@ -1,6 +1,6 @@
 # Quickstart — zero to your first governed merge
 
-Every command below is copy-paste-runnable against **v1.1.0**. If a command here ever
+Every command below is copy-paste-runnable against **v1.2.0**. If a command here ever
 drifts from the shipped CLI, that's a bug — file it (a CI doc-drift test locks the pins
 on our side).
 
@@ -100,7 +100,7 @@ npx create-agentic-workspace --dir my-workspace
 Already have a repo? Wire the plugin into it directly:
 
 ```bash
-claude plugin marketplace add lukasrepublic/agentic-foundry#v1.1.0
+claude plugin marketplace add lukasrepublic/agentic-foundry#v1.2.0
 claude plugin install foundry@agentic-foundry
 ```
 

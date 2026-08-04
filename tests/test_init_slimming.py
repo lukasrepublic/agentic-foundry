@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 
 import pytest
 
@@ -349,11 +350,62 @@ def test_inherited_grep_locks_survive_and_the_antipattern_cites_step_nine():
     assert m.group(1) == "9", f"anti-pattern still cites the stale step {m.group(1)}, expected step 9"
 
 
-def test_untouched_steps_are_byte_identical_to_the_merge_base():
+def _resolve_ins_base_text():
+    """Baseline for the AC-INS-5 minimal-diff comparison. Prefers the checkpoint locator's
+    INIT_SLIMMING_BASE; falls back to resolving `git merge-base HEAD origin/main` itself so a bare
+    `pytest tests/ -q` works. FAILS (never skips) when NEITHER source resolves — a missing baseline
+    stays RED, never a silent pass, exactly as AC-INS-5 requires."""
     base_path = os.environ.get("INIT_SLIMMING_BASE")
-    assert base_path, "INIT_SLIMMING_BASE is unset — this case must FAIL, never skip (AC-INS-5)"
-    assert os.path.isfile(base_path), f"INIT_SLIMMING_BASE={base_path!r} does not resolve to a readable file"
-    base_text = _read(base_path)
+    if base_path:
+        assert os.path.isfile(base_path), (
+            f"INIT_SLIMMING_BASE={base_path!r} does not resolve to a readable file"
+        )
+        return _read(base_path)
+
+    mb = subprocess.run(["git", "merge-base", "HEAD", "origin/main"], cwd=REPO_ROOT,
+                        capture_output=True, text=True, timeout=30)
+    assert mb.returncode == 0 and mb.stdout.strip(), (
+        "INIT_SLIMMING_BASE is unset, and `git merge-base HEAD origin/main` could not resolve one "
+        f"either (needs a full-history checkout): {mb.stderr.strip()}"
+    )
+    blob = subprocess.run(["git", "show", f"{mb.stdout.strip()}:skills/init/SKILL.md"],
+                          cwd=REPO_ROOT, capture_output=True, text=True, timeout=30)
+    assert blob.returncode == 0, (
+        f"INIT_SLIMMING_BASE is unset, and reading the merge-base blob failed: {blob.stderr.strip()}"
+    )
+    return blob.stdout
+
+
+def test_untouched_steps_are_byte_identical_to_the_merge_base():
+    """AC-INS-5's minimal-diff guarantee, in TWO REGIMES decided structurally from the baseline —
+    never by a skip.
+
+    A merge-base-anchored minimal-diff check is inherently atom-scoped: it can only compare against
+    a baseline that still predates the atom. Once this atom lands, every later branch's merge base
+    IS post-slimming main, so the comparison would be text-against-itself — passing while proving
+    nothing. (Its sibling in tests/test_workflow_export_shape.py hit the harsher form of this and
+    turned main red on merge; same root cause, handled the same way here.)
+
+      PRE-LANDING  (baseline has no verify-only regions)
+          -> the original claim: the nine untouched step slices are byte-identical to the baseline.
+      POST-LANDING (baseline already carries them)
+          -> the minimal diff is history; assert the OUTCOME still holds — every one of the four
+             regions is still present and still verify-only, and the nine untouched steps still
+             carry their inherited literals (the checks the sibling cases below own).
+    """
+    base_text = _resolve_ins_base_text()
+
+    if "<!-- foundry:init-verify-only:" in base_text:
+        current = _skill_text()
+        for slug in REGION_SLUGS:
+            assert f"<!-- foundry:init-verify-only:{slug} v1 -->" in current, (
+                f"post-landing regression: the {slug!r} verify-only region is gone from "
+                "skills/init/SKILL.md"
+            )
+        for lit in INHERITED_LOCKS:
+            assert lit in current, f"post-landing regression: lost the inherited literal {lit!r}"
+        return
+
     check_untouched_steps_match(_skill_text(), base_text)
 
 
