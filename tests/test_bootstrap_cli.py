@@ -296,6 +296,31 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
     assert pins["plugin_version"] == marketplace["plugins"][0]["version"]
     assert re.match(r"^\d{4}-\d{2}-\d{2}$", pins["pins_researched"]), pins["pins_researched"]
 
+    # The TARBALL's own version must move whenever the pin it embeds does (PR #68 security review,
+    # Risk 4). npm versions are IMMUTABLE: if `create-agentic-workspace@X` is ever published
+    # carrying plugin_version 1.1.0, that same X can never be republished with 1.2.0 — and since the
+    # documented install is an UNPINNED `npx create-agentic-workspace` (the `latest` dist-tag), every
+    # adopter would keep scaffolding workspaces whose emitted marketplace ref points at the previous
+    # release. That is precisely the compensating control the bootstrap-cli spec leans on to justify
+    # the unpinned npx line ("the tarball's own version is pinned by foundry.plugin_version"), and it
+    # only holds if a NEW tarball actually ships when the pin moves.
+    #
+    # Asserted as a MAPPING keyed by plugin_version, so a bump to one without the other is caught in
+    # the release diff rather than after publish, when it is unfixable. Add a row per release cut.
+    TARBALL_VERSION_BY_PLUGIN_PIN = {
+        "1.1.0": "0.1.0",
+        "1.2.0": "0.2.0",
+    }
+    expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
+    assert expected_tarball is not None, (
+        f"plugin_version {pins['plugin_version']!r} has no recorded cli/package.json version. A "
+        "release cut that moves the pin must also bump the tarball version and add its row here."
+    )
+    assert pkg["version"] == expected_tarball, (
+        f"cli/package.json version is {pkg['version']!r} but plugin_version {pins['plugin_version']!r} "
+        f"expects {expected_tarball!r} — bump the tarball, or npm can never ship this pin"
+    )
+
 
 # ── AC-BCL-2 ─────────────────────────────────────────────────────────────────────────────────────
 
