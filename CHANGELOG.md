@@ -10,6 +10,22 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 
 ## v1.2.0 — 2026-08-04
 
+### `--verify-tag` accepts GitHub's port-443 SSH host (fix, found by dogfooding the cut)
+
+- **The defect, one release after its own atom shipped.** `feat-foundry-verify-tag-ssh-alias-resolution`
+  taught the tag-pin coherence check to resolve ssh-config **host aliases** through `ssh -G`, then
+  compared the result against the single literal `github.com`. So it resolved the alias correctly and
+  then rejected the answer: an operator whose `~/.ssh/config` points at **`ssh.github.com`** — GitHub's
+  own SSH endpoint on port 443, and the configuration GitHub's documentation *recommends* for networks
+  that block port 22 — had every coherent release convicted as `TAG-PIN-INCOHERENT`. Found by running
+  the check on this very release cut.
+- **The fix** compares against a **closed two-element set** `{github.com, ssh.github.com}`, verified
+  against GitHub's own "Using SSH over the HTTPS port" documentation (2026-08-04). Deliberately not a
+  `.github.com` suffix match — that would admit an attacker-shaped `evil.github.com` if DNS or ssh
+  config were ever hostile, and confirming the pin was verified against the repo an install actually
+  fetches from is the whole purpose of the check. A negative control asserts three lookalike hosts stay
+  refused, and the positive case reddens against the pre-fix comparison.
+
 **The onboarding wave.** Twelve atoms realizing
 `intake/er-onboarding-wizard-and-permission-floor.md` end to end, plus the light-lane fixes that
 rode with them. The wave's organizing finding is structural: **`/foundry:init` can never scaffold
