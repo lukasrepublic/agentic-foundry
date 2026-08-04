@@ -33,6 +33,23 @@ SSH_RESOLVE_TIMEOUT_SECONDS = 30
 # the strict comparison instead. Removes option-injection shapes (a leading `-`) by construction.
 _HOST_CHARSET_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
+# The GitHub SSH endpoints, per GitHub's own documentation ("Using SSH over the HTTPS port",
+# docs.github.com, verified 2026-08-04). `ssh.github.com` is not a third-party mirror or a user
+# convention — it is GitHub's official SSH host on port 443, and the doc's RECOMMENDED ~/.ssh/config
+# is literally `Host github.com / Hostname ssh.github.com / Port 443`, which is what an operator
+# behind a firewall that blocks port 22 will have.
+#
+# feat-foundry-verify-tag-ssh-alias-resolution taught this check to resolve host ALIASES through
+# `ssh -G`, then compared the result to the single literal "github.com" — so it resolved the alias
+# correctly and rejected the answer, convicting a perfectly coherent release whose operator follows
+# GitHub's documented setup. Found by dogfooding the atom on the very next release cut (v1.2.0).
+#
+# Deliberately a CLOSED two-element set, not a suffix match: `endswith(".github.com")` would admit
+# any attacker-controlled `evil.github.com`-shaped host if DNS or ssh config were ever hostile, and
+# the whole point of this check is to confirm the pin was verified against the repo an install would
+# actually fetch from.
+_GITHUB_SSH_HOSTS = frozenset({"github.com", "ssh.github.com"})
+
 
 class CutReleaseError(Exception):
     pass
@@ -421,7 +438,7 @@ def tag_pin_coherence(tree, version, *, resolver=None):
         if resolved_host is not None:
             # AC-VTA-2: an ssh-shaped origin whose resolution succeeded -- resolved host + path only.
             path = triple[2]
-            if not (resolved_host == "github.com" and path.lower() == str(repo).lower()):
+            if not (resolved_host.lower() in _GITHUB_SSH_HOSTS and path.lower() == str(repo).lower()):
                 return False, (f"source.repo at {tag} is {repo!r} but the resolved ssh origin (host "
                                f"{resolved_host!r}, path {path!r}) does not match. The pin was "
                                f"verified against THIS repo's objects; an install by ref would fetch "
