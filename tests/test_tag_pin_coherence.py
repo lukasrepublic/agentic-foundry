@@ -382,6 +382,36 @@ def test_ssh_alias_origin_resolves_to_github_and_is_coherent(repo):
     assert ok, f"an aliased ssh origin that resolves to github.com was refused: {detail}"
 
 
+def test_ssh_alias_resolving_to_the_port_443_host_is_coherent(repo):
+    """`ssh.github.com` is GitHub's OFFICIAL SSH endpoint on port 443 — its own documentation
+    ("Using SSH over the HTTPS port") recommends exactly `Host github.com / Hostname
+    ssh.github.com / Port 443`, which is what an operator behind a port-22-blocking firewall will
+    have. Resolving the alias and then comparing to the single literal "github.com" got the
+    resolution right and the verdict wrong: a coherent release was convicted because its operator
+    followed GitHub's documented setup. Found by dogfooding this check on the v1.2.0 cut, one
+    release after the alias-resolution atom shipped."""
+    git(repo, "remote", "add", "origin", "git@personal-github:lukasrepublic/agentic-foundry")
+    cut_v101_with_source_repo(repo, "lukasrepublic/agentic-foundry")
+    fake = _fake_resolver({"personal-github": "ssh.github.com"})
+    ok, detail = cr.tag_pin_coherence(str(repo), "1.0.1", resolver=fake)
+    assert ok, f"an alias resolving to GitHub's port-443 SSH host was refused: {detail}"
+
+
+def test_a_lookalike_github_host_is_still_refused(repo):
+    """The negative control that keeps the widening honest. The accepted set is CLOSED and
+    two-element, never a `.github.com` suffix match — a suffix rule would admit any
+    attacker-shaped `evil.github.com` if DNS or ssh config were hostile, and the entire purpose of
+    this check is to confirm the pin was verified against the repo an install would really fetch
+    from."""
+    git(repo, "remote", "add", "origin", "git@personal-github:lukasrepublic/agentic-foundry")
+    cut_v101_with_source_repo(repo, "lukasrepublic/agentic-foundry")
+    for hostile in ("evil.github.com", "github.com.evil.test", "notgithub.com"):
+        fake = _fake_resolver({"personal-github": hostile})
+        ok, detail = cr.tag_pin_coherence(str(repo), "1.0.1", resolver=fake)
+        assert not ok, f"a lookalike host {hostile!r} was ACCEPTED — the set must stay closed"
+        assert hostile in detail, f"the refusal should name the resolved host; got: {detail}"
+
+
 def test_https_origin_never_invokes_the_ssh_resolver(repo):
     """AC-VTA-1 / R7: a non-ssh transport is adjudicated by the strict comparison ALONE -- the
     resolver is never consulted. Asserted by a call counter, never by scraping output text."""
