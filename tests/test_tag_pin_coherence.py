@@ -10,9 +10,11 @@ These tests build real git fixture repos and drive the shipped `tag_pin_coherenc
 them: a coherent cut, the defective ordering, a tag-object pin, an out-of-history pin, and the
 first-cut (no tag yet) case.
 """
+import ast
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 
 import pytest
@@ -32,13 +34,17 @@ def git(repo, *args, check=True):
     return r.stdout.strip()
 
 
-def _write_manifests(repo, version, sha="0" * 40):
+def _write_manifests(repo, version, sha="0" * 40, source_repo=None):
+    """`source_repo`, when given, populates `source.repo` -- the field the ssh-alias-resolution
+    cross-check exercises. Omitted by default, matching every pre-existing fixture."""
     os.makedirs(os.path.join(repo, ".claude-plugin"), exist_ok=True)
     with open(os.path.join(repo, ".claude-plugin", "plugin.json"), "w") as f:
         json.dump({"name": "foundry", "version": version}, f)
+    source = {"ref": f"v{version}", "sha": sha}
+    if source_repo is not None:
+        source["repo"] = source_repo
     with open(os.path.join(repo, ".claude-plugin", "marketplace.json"), "w") as f:
-        json.dump({"plugins": [{"name": "foundry",
-                                "source": {"ref": f"v{version}", "sha": sha}}]}, f)
+        json.dump({"plugins": [{"name": "foundry", "source": source}]}, f)
 
 
 @pytest.fixture
@@ -72,6 +78,20 @@ def cut_v101(repo, order):
         _write_manifests(str(repo), "1.0.1", sha=content)          # re-pin FIRST — the fix
         git(repo, "add", "-A"); git(repo, "commit", "-qm", "re-pin v1.0.1")
         git(repo, "tag", "-a", "v1.0.1", "-m", "v1.0.1")
+    return content
+
+
+def cut_v101_with_source_repo(repo, source_repo):
+    """A CORRECTLY-ordered v1.0.1 cut whose marketplace.json carries `source.repo` -- the shape the
+    ssh-alias-resolution cross-check exercises. The pre-existing `repo` fixture's manifests never set
+    `source.repo` (grep-verified 2026-08-02: the cross-check has zero coverage on the base tree)."""
+    _write_manifests(str(repo), "1.0.1", sha=git(repo, "rev-parse", "v1.0.0^{commit}"),
+                     source_repo=source_repo)
+    git(repo, "add", "-A"); git(repo, "commit", "-qm", "v1.0.1 content")
+    content = git(repo, "rev-parse", "HEAD")
+    _write_manifests(str(repo), "1.0.1", sha=content, source_repo=source_repo)
+    git(repo, "add", "-A"); git(repo, "commit", "-qm", "re-pin v1.0.1")
+    git(repo, "tag", "-a", "v1.0.1", "-m", "v1.0.1")
     return content
 
 
@@ -314,3 +334,252 @@ def test_cut_release_executes_nothing(repo):
     assert git(repo, "show-ref") == before_refs, "building the plan mutated refs"
     assert git(repo, "rev-parse", "HEAD") == before_head, "building the plan moved HEAD"
     assert git(repo, "status", "--porcelain") == "", "building the plan dirtied the tree"
+
+
+# =========================================================== feat-foundry-verify-tag-ssh-alias-resolution
+#
+# `_write_manifests`/`repo` never set an `origin` remote or a `source.repo` field, so the
+# source.repo cross-check has ZERO coverage above this line (grep-verified 2026-08-02). Every case
+# below sets BOTH, through `cut_v101_with_source_repo`, and is therefore the FIRST coverage of that
+# branch in either direction -- not merely of the ssh-alias fix.
+
+def _fake_resolver(mapping, calls=None):
+    """A resolver(host) -> (rc, stdout) stub, mirroring `ssh -G`'s own output shape: one
+    'key value' line per option, the target line 'hostname <value>'. `host` not in `mapping` =>
+    (1, '') -- a clean non-zero exit, one of the resolver-failure shapes. `calls`, when given, is
+    appended with every `host` the stub is invoked for -- the CALL COUNTER AC-VTA-1/-5 require,
+    read off the fake rather than scraped from output text."""
+    def resolver(host):
+        if calls is not None:
+            calls.append(host)
+        if host not in mapping:
+            return 1, ""
+        return 0, f"hostname {mapping[host]}\n"
+    return resolver
+
+
+def _raising_resolver(host):
+    raise RuntimeError("ssh unreachable (simulated)")
+
+
+def _no_hostname_line_resolver(host):
+    return 0, "user git\nport 22\n"                            # a real ssh -G shape, no hostname key
+
+
+def _empty_hostname_resolver(host):
+    return 0, "hostname \n"                                    # the key is present, the value is not
+
+
+# --------------------------------------------------------------------------------- AC-VTA-1 / AC-VTA-2
+def test_ssh_alias_origin_resolves_to_github_and_is_coherent(repo):
+    """THE DEFECT, inverted. `git@personal-github:...` matches none of the three literal prefixes on
+    main, so `norm` stays the whole URL and the coherent release is refused. Resolving the alias
+    through `ssh -G` (here, its injected stand-in) recovers the correct verdict."""
+    git(repo, "remote", "add", "origin", "git@personal-github:lukasrepublic/agentic-foundry")
+    cut_v101_with_source_repo(repo, "lukasrepublic/agentic-foundry")
+    fake = _fake_resolver({"personal-github": "github.com"})
+    ok, detail = cr.tag_pin_coherence(str(repo), "1.0.1", resolver=fake)
+    assert ok, f"an aliased ssh origin that resolves to github.com was refused: {detail}"
+
+
+def test_https_origin_never_invokes_the_ssh_resolver(repo):
+    """AC-VTA-1 / R7: a non-ssh transport is adjudicated by the strict comparison ALONE -- the
+    resolver is never consulted. Asserted by a call counter, never by scraping output text."""
+    git(repo, "remote", "add", "origin", "https://github.com/lukasrepublic/agentic-foundry")
+    cut_v101_with_source_repo(repo, "lukasrepublic/agentic-foundry")
+    calls = []
+    fake = _fake_resolver({"github.com": "github.com"}, calls=calls)
+    ok, detail = cr.tag_pin_coherence(str(repo), "1.0.1", resolver=fake)
+    assert ok, f"a coherent https origin was refused: {detail}"
+    assert calls == [], f"the ssh resolver must never be invoked for an https origin: {calls}"
+
+
+def test_charset_violating_host_never_reaches_ssh_and_is_refused(repo):
+    """AC-VTA-1's charset gate (review B1): a leading-`-` argv-injection shape must (i) never reach
+    `ssh` in ANY position -- the same call counter -- and (ii) still REFUSE via the strict-comparison
+    fallback the charset-gate member of "a resolver failure" triggers."""
+    git(repo, "remote", "add", "origin", "git@-oProxyCommand=x:owner/repo")
+    cut_v101_with_source_repo(repo, "owner/repo")
+    calls = []
+    fake = _fake_resolver({}, calls=calls)
+    ok, detail = cr.tag_pin_coherence(str(repo), "1.0.1", resolver=fake)
+    assert not ok, f"a charset-violating argv-injection host was accepted: {detail}"
+    assert calls == [], f"ssh must never be invoked for a charset-violating host: {calls}"
+
+
+def test_unmocked_resolver_times_out_and_falls_back(repo, tmp_path, monkeypatch):
+    """AC-VTA-1's real timeout (review B2). NO injection seam -- drives the real, UNMOCKED
+    `subprocess.run` path against a deliberately slow fake `ssh` placed first on PATH, with the
+    module constant `SSH_RESOLVE_TIMEOUT_SECONDS` monkeypatched small. Proves `timeout=` is actually
+    wired to the constant BY REFERENCE: expiry raises TimeoutExpired, is caught as a resolver
+    failure, and yields refusal rather than hanging every --verify-tag on a Match-exec config.
+    Reports NOT-RUN (never a pass) when there is no /bin/sh to drive the fake `ssh` script."""
+    if not os.path.exists("/bin/sh") or not os.access("/bin/sh", os.X_OK):
+        pytest.skip("NOT-RUN: no executable /bin/sh to drive the slow fake ssh fixture")
+    fakebin = tmp_path / "fakebin"
+    fakebin.mkdir()
+    fake_ssh = fakebin / "ssh"
+    fake_ssh.write_text("#!/bin/sh\nsleep 5\n")
+    fake_ssh.chmod(0o755)
+    git(repo, "remote", "add", "origin", "git@personal-github:lukasrepublic/agentic-foundry")
+    cut_v101_with_source_repo(repo, "lukasrepublic/agentic-foundry")
+    monkeypatch.setenv("PATH", str(fakebin) + os.pathsep + os.environ.get("PATH", ""))
+    monkeypatch.setattr(cr, "SSH_RESOLVE_TIMEOUT_SECONDS", 0.2)
+    ok, detail = cr.tag_pin_coherence(str(repo), "1.0.1")           # NO resolver= -- the real path
+    assert not ok, f"a resolver timeout must fall back to the strict comparison and refuse: {detail}"
+
+
+def test_real_ssh_resolves_home_scoped_alias_config(repo, tmp_path, monkeypatch):
+    """AC-VTA-5's end-to-end proof: the real, UNMOCKED `ssh -G` reading a HOME-scoped
+    `~/.ssh/config` Host-alias block, with a UNIQUE alias name (never `personal-github`, which
+    collides with THIS OPERATOR'S OWN real config — grep-verified present on this very machine, the
+    identity-isolation practice `CLAUDE.md`/`skills/init/SKILL.md` document) and a self-probe that
+    proves the HOME override actually took effect before trusting it. Reports NOT-RUN (never a
+    pass), claiming no coverage, when there is no real `ssh` binary on PATH OR when this OpenSSH
+    build resolves the default per-user config file via the passwd-database home directory rather
+    than honouring a `HOME` env-var override (empirically the case on some OpenSSH builds/platforms)
+    — the injected-seam cases above already carry every branch assertion, so no guarantee is lost,
+    only the end-to-end proof, and this case says so rather than asserting against live operator
+    config it does not own."""
+    if shutil.which("ssh") is None:
+        pytest.skip("NOT-RUN: no ssh binary on PATH to drive the real HOME-scoped config fixture")
+    home = tmp_path / "home"
+    ssh_dir = home / ".ssh"
+    ssh_dir.mkdir(parents=True)
+    alias = "foundry-vta-fixture-alias-2f9c1e"
+    (ssh_dir / "config").write_text(f"Host {alias}\n    HostName github.com\n    User git\n")
+    os.chmod(ssh_dir, 0o700)
+    os.chmod(ssh_dir / "config", 0o600)
+    monkeypatch.setenv("HOME", str(home))
+    probe = subprocess.run(["ssh", "-G", alias], capture_output=True, text=True, timeout=10)
+    probe_host = None
+    for line in probe.stdout.splitlines():
+        parts = line.split(None, 1)
+        if parts and parts[0] == "hostname" and len(parts) > 1:
+            probe_host = parts[1].strip().lower()
+            break
+    if probe.returncode != 0 or probe_host != "github.com":
+        pytest.skip("NOT-RUN: this OpenSSH build does not honor a HOME env-var override for "
+                    "~/.ssh/config -- claiming no end-to-end coverage; the injected-seam cases "
+                    "above already cover every resolution branch")
+    git(repo, "remote", "add", "origin", f"git@{alias}:lukasrepublic/agentic-foundry")
+    cut_v101_with_source_repo(repo, "lukasrepublic/agentic-foundry")
+    ok, detail = cr.tag_pin_coherence(str(repo), "1.0.1")           # NO resolver= -- the real ssh -G
+    assert ok, f"the real ssh -G resolver did not resolve the HOME-scoped alias: {detail}"
+
+
+# --------------------------------------------------------------------------------- AC-VTA-2
+def test_aliased_origin_naming_a_different_repo_is_refused(repo):
+    """THE NEGATIVE CONTROL. Same alias, same resolved host, a DIFFERENT owner/repo path -- still
+    refused. Without this, the coherent-alias case above would prove only that the check got
+    looser, not that it stayed correct."""
+    git(repo, "remote", "add", "origin", "git@personal-github:lukasrepublic/agentic-foundry")
+    cut_v101_with_source_repo(repo, "someoneelse/other-repo")
+    fake = _fake_resolver({"personal-github": "github.com"})
+    ok, detail = cr.tag_pin_coherence(str(repo), "1.0.1", resolver=fake)
+    assert not ok, f"an aliased origin naming a DIFFERENT repo must still refuse: {detail}"
+
+
+def test_repo_mismatch_detail_names_both_values(repo):
+    """The refusal detail must name BOTH source.repo and the resolved path -- the inherited
+    "name both values" convention this suite's test_refusal_names_both_values establishes."""
+    git(repo, "remote", "add", "origin", "git@personal-github:lukasrepublic/agentic-foundry")
+    cut_v101_with_source_repo(repo, "someoneelse/other-repo")
+    fake = _fake_resolver({"personal-github": "github.com"})
+    _ok, detail = cr.tag_pin_coherence(str(repo), "1.0.1", resolver=fake)
+    assert "someoneelse/other-repo" in detail, f"refusal does not name source.repo: {detail}"
+    assert "lukasrepublic/agentic-foundry" in detail, f"refusal does not name the compared path: {detail}"
+
+
+# --------------------------------------------------------------------------------- AC-VTA-3
+@pytest.mark.parametrize("fake_resolver,label", [
+    (_raising_resolver, "raises"),
+    (_no_hostname_line_resolver, "no hostname line"),
+    (_empty_hostname_resolver, "empty-valued hostname"),
+])
+def test_resolver_failure_falls_back_to_the_strict_comparison(repo, fake_resolver, label):
+    """FAIL-CLOSED, never fail-open. Every shape of resolver failure lands on the SHIPPED strict
+    comparison, whose verdict for the aliased URL is refusal -- there is no path on which a failed
+    resolve is treated as coherent."""
+    git(repo, "remote", "add", "origin", "git@personal-github:lukasrepublic/agentic-foundry")
+    cut_v101_with_source_repo(repo, "lukasrepublic/agentic-foundry")
+    ok, detail = cr.tag_pin_coherence(str(repo), "1.0.1", resolver=fake_resolver)
+    assert not ok, f"a resolver failure ({label}) must fall back to the strict comparison and refuse: {detail}"
+
+
+def test_absent_origin_remote_still_reports_not_cross_checked(repo):
+    """The pre-existing 'no resolvable origin remote' branch (today's `note`) survives unchanged:
+    when `git remote get-url origin` itself fails, the function still reports (True, ...) and says
+    source.repo was NOT cross-checked."""
+    cut_v101_with_source_repo(repo, "lukasrepublic/agentic-foundry")     # no `git remote add` at all
+    ok, detail = cr.tag_pin_coherence(str(repo), "1.0.1")
+    assert ok, f"an absent origin remote must not itself cause a refusal: {detail}"
+    assert "NOT cross-checked" in detail, detail
+
+
+# --------------------------------------------------------------------------------- AC-VTA-4
+def test_cut_release_module_adds_no_network_call():
+    """STRUCTURAL, over the module's parsed AST -- never over substrings of its source text.
+
+    (i) every literal argv-head string passed to `subprocess.run` is a member of {"git", "gh",
+    "ssh"} -- "git" and "gh" pre-exist this atom ("gh" is `_gh_er_state`'s own documented "ONLY
+    network touchpoint", untouched here); "ssh" is the one new process THIS atom adds, and no
+    OTHER literal head (curl, wget, nc, ...) is introduced. (ii) no call passes a truthy `shell=`
+    keyword. (iii) no imported/referenced name belongs to the network-capable set
+    {socket, urllib, http, httplib, requests, ssl} nor is `asyncio.open_connection` referenced.
+    """
+    src = open(CUT, encoding="utf-8").read()
+    tree = ast.parse(src, filename=CUT)
+
+    argv_heads = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        is_run = (isinstance(func, ast.Attribute) and func.attr == "run") or \
+                 (isinstance(func, ast.Name) and func.id == "run")
+        if not is_run:
+            continue
+        if node.args:
+            first = node.args[0]
+            if isinstance(first, (ast.List, ast.Tuple)) and first.elts:
+                head = first.elts[0]
+                if isinstance(head, ast.Constant) and isinstance(head.value, str):
+                    argv_heads.add(head.value)
+        for kw in node.keywords:
+            if kw.arg == "shell":
+                truthy = isinstance(kw.value, ast.Constant) and bool(kw.value.value)
+                assert not truthy, "subprocess.run must never be called with a truthy shell="
+
+    assert argv_heads, "no subprocess.run argv-head literals were found -- the AST walk is broken"
+    assert argv_heads <= {"git", "gh", "ssh"}, (
+        f"an unexpected external process was introduced: {argv_heads - {'git', 'gh', 'ssh'}}")
+    assert "ssh" in argv_heads, "this atom must add ssh -G as a literal argv head"
+
+    banned = {"socket", "urllib", "http", "httplib", "requests", "ssl"}
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported.add(node.module.split(".")[0])
+    assert not (imported & banned), f"a network-capable module is imported: {imported & banned}"
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == "open_connection":
+            raise AssertionError("asyncio.open_connection is referenced")
+
+
+def test_cli_path_never_injects_a_host_resolver():
+    """The CLI never injects the resolver: main()'s --verify-tag branch calls tag_pin_coherence
+    with NO resolver keyword -- mirrors the shipped test_cli_path_never_injects_a_suite_runner
+    guard on the cut_release path. Asserted structurally, over the AST call node, not by substring."""
+    src = open(CUT, encoding="utf-8").read()
+    tree = ast.parse(src, filename=CUT)
+    main_def = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "main")
+    calls = [n for n in ast.walk(main_def)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "tag_pin_coherence"]
+    assert calls, "main() no longer calls tag_pin_coherence at all"
+    for call in calls:
+        kw_names = {kw.arg for kw in call.keywords}
+        assert "resolver" not in kw_names, "main()'s CLI path must never inject a resolver"
