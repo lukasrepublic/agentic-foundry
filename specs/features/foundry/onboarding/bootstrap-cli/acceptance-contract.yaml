@@ -1,0 +1,283 @@
+# Acceptance contract — sibling of feat-foundry-bootstrap-cli.md (v1.1).
+# Code repo agentic-foundry; allowed_paths are relative to that repo root.
+#
+# Realizes ER atom 1 of intake/er-onboarding-wizard-and-permission-floor.md: the PRE-SESSION bootstrap
+# wizard. The ER's structural finding is that /foundry:init can never scaffold its own permission floor
+# (a model editing its own confinement is classifier-denied — confirmed live 2026-08-01), so the floor
+# must be written in the operator's own terminal, before a session exists.
+#
+# Ships `create-agentic-workspace` as a NEW, self-contained npm package rooted at cli/ (no root
+# package.json, no npm workspace — one package, published by the release cut). ZERO runtime
+# dependencies, `scripts` closed to {test} so NO lifecycle hook exists, every import a node: builtin or
+# a relative path. Invoked `npx create-agentic-workspace`.
+#
+# THE CLI DECLARES; IT NEVER GRANTS. It emits the plugin's reviewed three-tier map (bundled as the
+# byte-identical mirror cli/permission-floor.json) verbatim into the new workspace's committed
+# .claude/settings.json, plus extraKnownMarketplaces + enabledPlugins single-sourced from
+# .claude-plugin/marketplace.json. The written settings file's TOP-LEVEL KEY SET IS CLOSED to
+# {permissions, extraKnownMarketplaces, enabledPlugins} (+ named //-comment keys) and permissions' own
+# keys to {allow, ask, deny}: no statusLine, hooks, sandbox, apiKeyHelper, env, mcpServers or
+# additionalDirectories is emitted AT ALL (the ER's atom-1 absorption list is amended — spec v1.1).
+# The marketplace entry is a PINNED LITERAL with autoUpdate:false (the floor's rules are
+# version-wildcarded, so auto-update would be a standing grant). It NEVER spawns `claude`, NEVER writes
+# under $HOME/.claude/, NEVER writes settings.local.json, and NEVER accepts the workspace trust dialog —
+# the platform's dialog is the consent ceremony and the run's exit line explains exactly what accepting
+# it grants AND directs the operator to /foundry:doctor's floor check afterwards.
+#
+# SUPPLY-CHAIN HONESTY (spec Security posture + R9): every control asserted below is BUILD-TIME over the
+# source tree and does NOT survive a compromise of the npm publish path. The adopter's two independent
+# checks are the trust dialog (blind to DROPPED deny/ask rules; 40 allow rows) and the doctor floor check
+# against the CACHE-installed plugin's own map, which did not travel through npm. `npm publish
+# --provenance` + `npm audit signatures` are assigned to the release cut, not to this atom.
+#
+# Bounds asserted at the OUTCOME level: every write lands inside the physically-resolved target root
+# except THREE enumerated machine-scope artifacts (AC-BCL-7: the two global includeIf keys + the
+# per-account include file at $HOME/.config/git/identity-<slug>, absorbed from
+# scripts/foundry-bootstrap.sh and proved EQUAL to it byte-for-byte across FOUR artifacts); the
+# child-process set is closed to {git, gh}; the import closure carries no network module (dns included);
+# no telemetry; NEVER-CLOBBER IS UNCONDITIONAL and a foreign .claude/settings.json is reported `drifted`,
+# never merged.
+#
+# Live seam: the package's own `node --test cli/test/` suite, driven from tests/test_bootstrap_cli.py by
+# subprocess, so the shipped `python3 -m pytest tests/ -q` CI step runs it with NO workflow edit
+# (.github/workflows/** is contract-denied). Fails, never skips, when node is absent or below the floor.
+# FOURTEEN mutation negative controls keep the invariants non-vacuous — every behavioural AC (1..9) has
+# at least one. Plus a DOCTOR-GREEN regression and the existing doc-claims suite.
+spec_ref: specs/features/foundry/onboarding/bootstrap-cli/feat-foundry-bootstrap-cli.md
+spec_sha256: "0000000000000000000000000000000000000000000000000000000000000000"  # /foundry:authorize fills this
+target_repo: agentic-foundry
+scope:
+  allowed_paths:
+    - "cli/package.json"                       # NEW — name/bin/engines/files/foundry-pin block; no deps, no lifecycle scripts (AC-BCL-1)
+    - "cli/README.md"                          # NEW — the npm registry page; carries the `no telemetry` statement (AC-BCL-9)
+    - "cli/bin/create-agentic-workspace.mjs"   # NEW — the npx entrypoint: argv parse + --help, derived from the one question table (AC-BCL-2)
+    - "cli/src/**"                             # NEW — question table, preview, settings writer, scaffolder, identity wiring, reconcile + covers()
+    - "cli/templates/**"                       # NEW — the bundled workspace seed (CLAUDE.md router, .gitignore, manifest, README stubs)
+    - "cli/permission-floor.json"              # NEW — the byte-identical mirror of docs/permission-floor.json (AC-BCL-5)
+    - "cli/test/**"                            # NEW — the node:test suite + its mutation fixtures (AC-BCL-10)
+    - "tests/test_bootstrap_cli.py"            # NEW — the pytest shim that makes the Node suite CI-runnable unchanged
+    - "docs/QUICKSTART.md"                     # the npx line ahead of the marketplace-add line; NO new version literal (AC-BCL-11)
+    - "README.md"                              # names create-agentic-workspace on the install path
+    - "CHANGELOG.md"                           # topmost release section names create-agentic-workspace
+  denied_paths:
+    - "docs/permission-floor.json"             # the map is MIRRORED, never edited — the authorized map atom owns it
+    - "scripts/**"                             # foundry-bootstrap.sh keeps its identity path; the CLI is proved EQUAL to it, never edits it
+    - "hooks/**"                               # no wiring re-pin, no meta-regress, no new exec seam
+    - "schema/**"                              # the seeded manifest is VALIDATED against the shipped schema, never changes it
+    - "skills/**"
+    - ".claude-plugin/**"                      # marketplace/plugin pins are READ and mirrored into cli/package.json, never rewritten
+    - ".github/workflows/**"                   # the Node suite reaches CI through pytest precisely so no workflow edit is needed (spec R5)
+checkpoints:
+  # House `&& echo <TOKEN>` form; one checkpoint per named case. Every allowed path is surfaced below.
+
+  # --- AC-BCL-1 — packaging: no deps, no lifecycle hook (scripts closed to {test}), engines >=22.0.0, bin, files
+  - {ac_id: AC-BCL-1, surface: "file:cli/package.json", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k package_manifest_has_no_lifecycle_scripts_and_no_deps >/dev/null 2>&1 && echo BCL-1-PKG-OK'", expect: {op: matches, value: "BCL-1-PKG-OK", baseline: pre-change}}
+
+  # --- AC-BCL-1 — zero-dependency proved STRUCTURALLY. ASSERTION SCOPE: every `cli/**/*.mjs` file (bin +
+  #     src + test), not just the entrypoint surfaced here — each static import AND each dynamic import()
+  #     (whose specifier must be a STRING LITERAL, else forbidden) is a node: builtin or a ./ ../ relative
+  #     path. Surfaced at the exact entrypoint path because ER #77 (surface subset-of scope) and ER #179
+  #     (allowed_paths grounding) both string-match a surface against allowed_paths; `file:cli/**/*.mjs`
+  #     matches no allowed entry and would leave cli/bin/create-agentic-workspace.mjs unsurfaced.
+  - {ac_id: AC-BCL-1, surface: "file:cli/bin/create-agentic-workspace.mjs", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k every_import_is_a_node_builtin_or_relative >/dev/null 2>&1 && echo BCL-1-IMPORTS-OK'", expect: {op: matches, value: "BCL-1-IMPORTS-OK", baseline: pre-change}}
+
+  # --- AC-BCL-1 — cli/package.json's `foundry` pin block equals .claude-plugin/marketplace.json at the NAMED
+  #     paths: marketplace_name<-name, marketplace_repo<-plugins[0].source.repo, plugin_name<-plugins[0].name,
+  #     plugin_version<-plugins[0].version (the v1.0 "corresponding value" was undefined; v1.1 pins it)
+  - {ac_id: AC-BCL-1, surface: "file:cli/package.json", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k the_plugin_pin_block_matches_the_marketplace_manifest >/dev/null 2>&1 && echo BCL-1-PIN-OK'", expect: {op: matches, value: "BCL-1-PIN-OK", baseline: pre-change}}
+
+  # --- AC-BCL-2 — three-way equality: question-table flags == argv-accepted flags == --help lines (clig.dev parity)
+  - {ac_id: AC-BCL-2, surface: "cli:create-agentic-workspace --help", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k prompts_and_flags_are_a_bijection >/dev/null 2>&1 && echo BCL-2-PARITY-OK'", expect: {op: matches, value: "BCL-2-PARITY-OK", baseline: pre-change}}
+
+  # --- AC-BCL-2 — --yes (and a non-TTY stdin) emits ZERO prompts and completes on declared defaults
+  - {ac_id: AC-BCL-2, surface: "cli:create-agentic-workspace --yes", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k yes_mode_completes_without_a_prompt >/dev/null 2>&1 && echo BCL-2-YES-OK'", expect: {op: matches, value: "BCL-2-YES-OK", baseline: pre-change}}
+
+  # --- AC-BCL-2 — a required question with no flag under --yes REFUSES, naming the flag, writing nothing;
+  #     an out-of-`choices` value (the optional closed-vocabulary field) refuses the same way (exit 1)
+  - {ac_id: AC-BCL-2, surface: "cli:create-agentic-workspace --yes", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k yes_mode_refuses_naming_the_missing_flag >/dev/null 2>&1 && echo BCL-2-REFUSE-OK'", expect: {op: matches, value: "BCL-2-REFUSE-OK", baseline: pre-change}}
+
+  # --- AC-BCL-3 — preview covers BOTH halves before the first byte: every managed path + action, every
+  #     machine-scope write, and one line per map entry with its tier + plain-language rationale
+  - {ac_id: AC-BCL-3, surface: "cli:create-agentic-workspace (preview)", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k preview_lists_every_file_and_every_capability >/dev/null 2>&1 && echo BCL-3-PREVIEW-OK'", expect: {op: matches, value: "BCL-3-PREVIEW-OK", baseline: pre-change}}
+
+  # --- AC-BCL-3 — --dry-run at the OUTCOME level, proved over a POPULATED (already-scaffolded, then
+  #     edited) target so the preview carries >=1 `create` AND >=1 `drifted` row — an empty dir cannot
+  #     distinguish "wrote nothing" from "had nothing to overwrite": per-file sha256 unchanged, no path
+  #     added/removed, `git config --global --list` byte-identical, ZERO child processes spawned
+  - {ac_id: AC-BCL-3, surface: "cli:create-agentic-workspace --dry-run", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k dry_run_writes_nothing_and_spawns_nothing >/dev/null 2>&1 && echo BCL-3-DRYRUN-OK'", expect: {op: matches, value: "BCL-3-DRYRUN-OK", baseline: pre-change}}
+
+  # --- AC-BCL-4 — the written permissions.{allow,ask,deny} are a SET BIJECTION onto the bundled map's
+  #     entries by tier: no rule invented, none dropped, none re-tiered
+  - {ac_id: AC-BCL-4, surface: "file:cli/src/**", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k settings_permissions_are_a_bijection_onto_the_map >/dev/null 2>&1 && echo BCL-4-BIJECTION-OK'", expect: {op: matches, value: "BCL-4-BIJECTION-OK", baseline: pre-change}}
+
+  # --- AC-BCL-4 — extraKnownMarketplaces + enabledPlugins (<plugin>@<marketplace> -> true) derived solely
+  #     from cli/package.json's foundry block; no hand-copied literal
+  - {ac_id: AC-BCL-4, surface: "file:cli/src/**", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k marketplace_and_plugin_are_single_sourced >/dev/null 2>&1 && echo BCL-4-PLUGINPIN-OK'", expect: {op: matches, value: "BCL-4-PLUGINPIN-OK", baseline: pre-change}}
+
+  # --- AC-BCL-4(b) — THE PINNED LITERAL: extraKnownMarketplaces[<name>] key set is exactly
+  #     {source, autoUpdate}, source's key set exactly {source, repo}, source.source === "github" (every
+  #     other value forbidden), NO installLocation, and autoUpdate === false. Grounded in CLAUDE.md's
+  #     no-floating-pins rule + the floor's version-wildcarded cache rules (auto-update = standing grant).
+  #     Negative control (i) flips autoUpdate to true and must redden.
+  - {ac_id: AC-BCL-4, surface: "file:cli/src/**", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k the_marketplace_entry_is_the_pinned_literal >/dev/null 2>&1 && echo BCL-4-MKTLITERAL-OK'", expect: {op: matches, value: "BCL-4-MKTLITERAL-OK", baseline: pre-change}}
+
+  # --- AC-BCL-4(c) — THE CLOSED SHAPE: written settings top-level keys == {permissions,
+  #     extraKnownMarketplaces, enabledPlugins} (+ named //-comment keys only); permissions keys ==
+  #     {allow, ask, deny} (no defaultMode); and NO statusLine/hooks/sandbox/apiKeyHelper/env/mcpServers/
+  #     additionalDirectories at any nesting level. Negative control (h) adds hooks + statusLine.
+  - {ac_id: AC-BCL-4, surface: "file:cli/src/**", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k settings_json_key_set_is_closed >/dev/null 2>&1 && echo BCL-4-KEYSET-OK'", expect: {op: matches, value: "BCL-4-KEYSET-OK", baseline: pre-change}}
+
+  # --- AC-BCL-4 — THE TRUST INVARIANT: child processes drawn only from {git, gh}; `claude` never spawned;
+  #     nothing written under $HOME/.claude/; .claude/settings.local.json never written
+  - {ac_id: AC-BCL-4, surface: "cli:create-agentic-workspace (process/write witness)", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k the_cli_never_spawns_claude_or_writes_home_claude >/dev/null 2>&1 && echo BCL-4-NOTRUST-OK'", expect: {op: matches, value: "BCL-4-NOTRUST-OK", baseline: pre-change}}
+
+  # --- AC-BCL-4 — the exit line: `trust dialog`, `cd `, `claude`, `/foundry:init`, the sentence that the
+  #     allow rules take effect ONLY after the operator accepts the dialog that lists them, AND the
+  #     `/foundry:doctor` directive to run the floor check post-install (the one adopter-side check that
+  #     compares against the cache-installed plugin's own map rather than the npm tarball's copy — R9)
+  - {ac_id: AC-BCL-4, surface: "cli:create-agentic-workspace (final output)", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k the_exit_line_explains_the_trust_gate >/dev/null 2>&1 && echo BCL-4-EXITLINE-OK'", expect: {op: matches, value: "BCL-4-EXITLINE-OK", baseline: pre-change}}
+
+  # --- AC-BCL-5 — cli/permission-floor.json is BYTE-IDENTICAL to docs/permission-floor.json (spec R1's tripwire)
+  - {ac_id: AC-BCL-5, surface: "file:cli/permission-floor.json", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k the_bundled_map_mirrors_the_shipped_map_byte_for_byte >/dev/null 2>&1 && echo BCL-5-MIRROR-OK'", expect: {op: matches, value: "BCL-5-MIRROR-OK", baseline: pre-change}}
+
+  # --- AC-BCL-5 — the bundled .gitignore template's FOUNDRY-RUNTIME-GITIGNORE managed block interior is
+  #     byte-identical to scripts/foundry-runtime.gitignore (the shipped applier cannot diverge)
+  - {ac_id: AC-BCL-5, surface: "file:cli/templates/**", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k the_gitignore_template_carries_the_shipped_runtime_block >/dev/null 2>&1 && echo BCL-5-RTBLOCK-OK'", expect: {op: matches, value: "BCL-5-RTBLOCK-OK", baseline: pre-change}}
+
+  # --- AC-BCL-5 — offline: every runtime-read asset resolves inside the package dir AND is matched by
+  #     package.json `files`; no plugin-cache read, no download
+  - {ac_id: AC-BCL-5, surface: "file:cli/package.json", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k every_runtime_asset_is_packaged >/dev/null 2>&1 && echo BCL-5-PACKAGED-OK'", expect: {op: matches, value: "BCL-5-PACKAGED-OK", baseline: pre-change}}
+
+  # --- AC-BCL-6 — the created path set is EXACTLY the seven declared paths (closed set, nothing else)
+  - {ac_id: AC-BCL-6, surface: "file:cli/templates/**", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k the_created_path_set_is_exactly_the_declared_set >/dev/null 2>&1 && echo BCL-6-PATHSET-OK'", expect: {op: matches, value: "BCL-6-PATHSET-OK", baseline: pre-change}}
+
+  # --- AC-BCL-6 — the seeded .claude/foundry-project.json (schema_version 1, one `workspace`-keyed repos
+  #     entry with path ".") validates against the SHIPPED schema/foundry-project.schema.json read from the
+  #     tree at test time. POST-RRF and VERIFIED on agentic-foundry main 2026-08-02: repos.<key> carries
+  #     required:["path"] AND `role` is a CLOSED enum ["product","handbook","infra","app","workspace"] whose
+  #     own description names `workspace` as "the self-entry a freshly seeded manifest may carry". This
+  #     comment was correct as written; the review's two role-related findings are refuted (spec v1.1).
+  - {ac_id: AC-BCL-6, surface: "file:cli/templates/**", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k the_seeded_manifest_validates_against_the_shipped_schema >/dev/null 2>&1 && echo BCL-6-SCHEMA-OK'", expect: {op: matches, value: "BCL-6-SCHEMA-OK", baseline: pre-change}}
+
+  # --- AC-BCL-6 — CLAUDE.md carries exactly ONE stage-mode declaration, equal to the selected mode
+  - {ac_id: AC-BCL-6, surface: "file:cli/templates/**", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k claude_md_carries_one_stage_mode_line >/dev/null 2>&1 && echo BCL-6-MODE-OK'", expect: {op: matches, value: "BCL-6-MODE-OK", baseline: pre-change}}
+
+  # --- AC-BCL-6 — CLAUDE.md carries the atomic-spec convention line naming specs/features/, the delimited
+  #     <!-- normative --> region and acceptance-contract.yaml (a v1.0 normative clause with no checkpoint)
+  - {ac_id: AC-BCL-6, surface: "file:cli/templates/**", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k claude_md_carries_the_atomic_spec_convention_line >/dev/null 2>&1 && echo BCL-6-CONVENTION-OK'", expect: {op: matches, value: "BCL-6-CONVENTION-OK", baseline: pre-change}}
+
+  # --- AC-BCL-6 — every .gitignore line the seed writes for a governed path is ROOT-ANCHORED (contains a
+  #     `/` at a non-final position, per git's own pattern rule) — the second v1.0 uncovered clause
+  - {ac_id: AC-BCL-6, surface: "file:cli/templates/**", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k gitignore_lines_are_root_anchored >/dev/null 2>&1 && echo BCL-6-ANCHORED-OK'", expect: {op: matches, value: "BCL-6-ANCHORED-OK", baseline: pre-change}}
+
+  # --- AC-BCL-7 — DIFFERENTIAL EQUALITY over FOUR artifacts (v1.1 widened from two): over a throwaway HOME
+  #     + target, the CLI's (i) `git config --global --list` output, (ii) include-file PATH
+  #     ($HOME/.config/git/identity-<slug>) *and* bytes, (iii) repo-local .git/config `user.useConfigOnly`
+  #     line, and (iv) `.claude/gh-identity` marker CONTENT all EQUAL those of bash
+  #     scripts/foundry-bootstrap.sh for the same inputs. Also asserts every git-config write goes through
+  #     `git config` argv (never templated text) and that a `--gh-account` outside ^[A-Za-z0-9._-]+$ (or
+  #     `.`/`..`) is refused. Negative control (k) flips one byte of the wiring and must redden.
+  - {ac_id: AC-BCL-7, surface: "file:cli/src/**", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k identity_wiring_matches_the_shipped_bootstrap_byte_for_byte >/dev/null 2>&1 && echo BCL-7-DIFF-OK'", expect: {op: matches, value: "BCL-7-DIFF-OK", baseline: pre-change}}
+
+  # --- AC-BCL-7 — THE BOUNDED PROBE: at most ONE `gh api user` invocation, timeout-bounded, run under
+  #     GH_CONFIG_DIR=$HOME/.config/gh-<slug> with GH_TOKEN/GITHUB_TOKEN/GH_ENTERPRISE_TOKEN/
+  #     GITHUB_ENTERPRISE_TOKEN/GH_HOST stripped from the child env; the returned .login is compared
+  #     against the declared account and a mismatch discards the probe WHOLE (never a partial adopt);
+  #     ONLY name+email are retained and NO probe output is persisted, logged or echoed; failure/timeout/
+  #     absent gh degrades to the prompt (or a --yes refusal) with no further network call
+  - {ac_id: AC-BCL-7, surface: "cli:create-agentic-workspace --gh-account", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k the_gh_probe_is_bounded_and_degrades >/dev/null 2>&1 && echo BCL-7-GHPROBE-OK'", expect: {op: matches, value: "BCL-7-GHPROBE-OK", baseline: pre-change}}
+
+  # --- AC-BCL-7 — no --gh-account => NO machine-scope write at all; global git config byte-identical
+  - {ac_id: AC-BCL-7, surface: "cli:create-agentic-workspace (no --gh-account)", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k no_account_means_no_machine_scope_write >/dev/null 2>&1 && echo BCL-7-NOGLOBAL-OK'", expect: {op: matches, value: "BCL-7-NOGLOBAL-OK", baseline: pre-change}}
+
+  # --- AC-BCL-8 — idempotence, asserted as the CHECKABLE claim (v1.1 replaces the un-observable "zero
+  #     bytes"): across a second run over an unchanged target, every path under the target root keeps its
+  #     BYTES, its INODE and its MTIME — so a rewrite with identical content is caught — adds/removes ZERO
+  #     paths, reports every managed path `unchanged`, exits 0 (terraform-init reconcile shape).
+  #     EXIT MATRIX (total): 0 when nothing is `drifted` regardless of `create` rows; 2 when >=1 is
+  #     `drifted`; 1 on any refusal. Permission-floor findings are ADVISORY and exit-code-neutral.
+  - {ac_id: AC-BCL-8, surface: "cli:create-agentic-workspace (re-run)", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k a_second_run_writes_nothing >/dev/null 2>&1 && echo BCL-8-IDEMPOTENT-OK'", expect: {op: matches, value: "BCL-8-IDEMPOTENT-OK", baseline: pre-change}}
+
+  # --- AC-BCL-8 — an operator-edited managed file is reported `drifted`, left BYTE-IDENTICAL, exit 2
+  #     (surfaced, never fixed — the id-drift posture)
+  - {ac_id: AC-BCL-8, surface: "cli:create-agentic-workspace (re-run)", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k an_edited_managed_file_is_reported_not_overwritten >/dev/null 2>&1 && echo BCL-8-NOCLOBBER-OK'", expect: {op: matches, value: "BCL-8-NOCLOBBER-OK", baseline: pre-change}}
+
+  # --- AC-BCL-8 — the permission-drift report emits EXACTLY the AC-DPF-8 class names in AC-DPF-8's rank
+  #     (blanket-allow, ask-shadowed-ceremony, ask-shadowed, deny-missing, settings-unreadable,
+  #      stale-plugin-path, allow-absent, unclassified) and no other class name
+  - {ac_id: AC-BCL-8, surface: "file:cli/src/**", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k drift_classes_are_exactly_the_dpf_vocabulary >/dev/null 2>&1 && echo BCL-8-VOCAB-OK'", expect: {op: matches, value: "BCL-8-VOCAB-OK", baseline: pre-change}}
+
+  # --- AC-BCL-8 — CROSS-ATOM CONFORMANCE: the CLI's covers() agrees with
+  #     tests/test_permission_floor_map.py::_subsumes on every row of the shared 8-row table; an
+  #     un-importable sibling FAILS (never skips), so a third matcher cannot diverge silently
+  - {ac_id: AC-BCL-8, surface: "test:tests/test_bootstrap_cli.py", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k covers_agrees_with_the_map_suite_on_the_shared_table >/dev/null 2>&1 && echo BCL-8-COVERS-OK'", expect: {op: matches, value: "BCL-8-COVERS-OK", baseline: pre-change}}
+
+  # --- AC-BCL-9 — confinement: every write resolves physically inside the target root, except the THREE
+  #     enumerated AC-BCL-7 machine-scope artifacts (the two global includeIf keys + the include FILE at
+  #     $HOME/.config/git/identity-<slug>; v1.0 said two and missed the include file itself)
+  - {ac_id: AC-BCL-9, surface: "cli:create-agentic-workspace (write witness)", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k writes_are_confined_to_the_target_root >/dev/null 2>&1 && echo BCL-9-CONFINED-OK'", expect: {op: matches, value: "BCL-9-CONFINED-OK", baseline: pre-change}}
+
+  # --- AC-BCL-9 — a template entry that is absolute, carries `..`, or resolves through a symlinked
+  #     ancestor is REFUSED, naming the entry, writing nothing
+  - {ac_id: AC-BCL-9, surface: "file:cli/templates/**", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k a_traversing_template_path_is_refused >/dev/null 2>&1 && echo BCL-9-TRAVERSAL-OK'", expect: {op: matches, value: "BCL-9-TRAVERSAL-OK", baseline: pre-change}}
+
+  # --- AC-BCL-9 — a non-empty target is refused without --existing; interactively a typed basename is
+  #     also required (exit 1 on refusal)
+  - {ac_id: AC-BCL-9, surface: "cli:create-agentic-workspace --existing", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k a_non_empty_target_is_refused_without_existing >/dev/null 2>&1 && echo BCL-9-EXISTING-OK'", expect: {op: matches, value: "BCL-9-EXISTING-OK", baseline: pre-change}}
+
+  # --- AC-BCL-9 — NEVER-CLOBBER IS UNCONDITIONAL (v1.1): over a foreign tree carrying a hand-authored
+  #     .claude/settings.json, run with --existing --yes, the written set is restricted to ABSENT managed
+  #     paths; every existing path is reported unchanged/drifted and left byte-identical; the foreign
+  #     settings file is NEVER merged, unioned or key-wise patched (merge = floor-widening, out of scope —
+  #     the drift report is the remedy). Negative control (j) is this fixture.
+  - {ac_id: AC-BCL-9, surface: "cli:create-agentic-workspace --existing --yes", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k an_existing_tree_is_never_clobbered_or_merged >/dev/null 2>&1 && echo BCL-9-NOMERGE-OK'", expect: {op: matches, value: "BCL-9-NOMERGE-OK", baseline: pre-change}}
+
+  # --- AC-BCL-9 — no network: the cli/** import closure carries no http/https/net/tls/dgram/dns/
+  #     dns-promises/worker_threads import and no fetch call, so the only reachable egress is AC-BCL-7's
+  #     bounded gh probe
+  - {ac_id: AC-BCL-9, surface: "file:cli/src/**", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k the_import_closure_carries_no_network_module >/dev/null 2>&1 && echo BCL-9-NONET-OK'", expect: {op: matches, value: "BCL-9-NONET-OK", baseline: pre-change}}
+
+  # --- AC-BCL-9 — the `no telemetry` sentence is present in BOTH cli/README.md and --help
+  - {ac_id: AC-BCL-9, surface: "file:cli/README.md", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k the_no_telemetry_statement_is_present >/dev/null 2>&1 && echo BCL-9-NOTELEM-OK'", expect: {op: matches, value: "BCL-9-NOTELEM-OK", baseline: pre-change}}
+
+  # --- AC-BCL-10 — the pytest shim drives `node --test cli/test/` as a subprocess and FAILS (never skips)
+  #     when node is absent or below cli/package.json's declared engines.node major floor
+  - {ac_id: AC-BCL-10, surface: "test:cli/test/**", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k the_node_suite_runs_under_pytest_and_never_skips >/dev/null 2>&1 && echo BCL-10-HARNESS-OK'", expect: {op: matches, value: "BCL-10-HARNESS-OK", baseline: pre-change}}
+
+  # --- AC-BCL-10 — THE META-TEST: all FOURTEEN mutation fixtures fire — (a) map rule deleted,
+  #     (b) postinstall added, (c) bare import added, (d) `..` template path, (e) edited managed file,
+  #     (f) re-tiered rule, (g) flipped table row, (h) hooks+statusLine key in written settings,
+  #     (i) autoUpdate flipped true, (j) foreign hand-authored settings.json under --existing --yes,
+  #     (k) flipped byte in the identity wiring (the differential must redden), (l) an EIGHTH file written
+  #     under the target, (m) a flag accepted by argv but absent from the question table, (n) a managed
+  #     path omitted from the preview. Every behavioural AC (1..9) now carries >=1 control — none exempt.
+  - {ac_id: AC-BCL-10, surface: "test:cli/test/**", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k negative_controls_all_fire >/dev/null 2>&1 && echo BCL-10-CONTROLS-OK'", expect: {op: matches, value: "BCL-10-CONTROLS-OK", baseline: pre-change}}
+
+  # --- AC-BCL-10 — the whole shim module green (every AC case + every control, no skip/xfail)
+  - {ac_id: AC-BCL-10, surface: "test:tests/test_bootstrap_cli.py", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q >/dev/null 2>&1 && echo BCL-10-SUITE-OK'", expect: {op: matches, value: "BCL-10-SUITE-OK", baseline: pre-change}}
+
+  # --- AC-BCL-11 — docs/QUICKSTART.md carries `npx create-agentic-workspace` ahead of the marketplace-add
+  #     line and introduces NO new version literal (so the doc-claims pins stay true)
+  - {ac_id: AC-BCL-11, surface: "file:docs/QUICKSTART.md", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k quickstart_leads_with_the_npx_line >/dev/null 2>&1 && echo BCL-11-QUICKSTART-OK'", expect: {op: matches, value: "BCL-11-QUICKSTART-OK", baseline: pre-change}}
+
+  # --- AC-BCL-11 — README.md names the CLI on its install path; CHANGELOG.md's TOPMOST release section
+  #     carries the literal `create-agentic-workspace` (a version-keyed plugin ships only what a section says)
+  - {ac_id: AC-BCL-11, surface: "file:README.md", locator: "sh -c 'python3 -m pytest tests/test_bootstrap_cli.py -q -k readme_and_changelog_name_the_cli >/dev/null 2>&1 && echo BCL-11-README-OK'", expect: {op: matches, value: "BCL-11-README-OK", baseline: pre-change}}
+
+  # --- AC-BCL-11 — the shipped derived-doc-claims suite stays green over the edited README/QUICKSTART
+  #     (surface: CHANGELOG.md is edited in the same change; this is its regression)
+  - {ac_id: AC-BCL-11, surface: "file:CHANGELOG.md", locator: "sh -c 'python3 -m pytest tests/test_doc_claims.py -q >/dev/null 2>&1 && echo BCL-11-DOCCLAIMS-OK'", expect: {op: matches, value: "BCL-11-DOCCLAIMS-OK", baseline: pre-change}}
+
+  # --- AC-BCL-11 — DOCTOR-GREEN regression. baseline: none — the doctor's verdict is an absolute
+  #     post-condition on the changed tree, not a pre/post comparison (this atom registers no probe).
+  - {ac_id: AC-BCL-11, surface: "cli:foundry-doctor", locator: "sh -c 'python3 scripts/foundry-doctor.py | tail -1'", expect: {op: matches, value: "DOCTOR-GREEN", baseline: none}}
+# DRAFT — pending /foundry:authorize (spec_sha256 + contract_sha256 + the signed authorized: trailer).
+# === FOUNDRY-AUTHORIZED-TRAILER (excluded from contract_sha256) ===
+authorized:
+  operator_id: op_lukas
+  authorized_at: 2026-08-03T00:13:32Z
+  auth_seq: 1
+  supersedes: null
+  spec_sha256: 3cf62be5a80c298de3cb66b0c5ed52e97327d267de785a1963022c69e2b8accd
+  contract_sha256: b5b0f697dacb4db1bd0b70fae36f3d7db1e873d053c16e6a51472724624d3a66
+  merge_autonomy_mode: lean
