@@ -10,6 +10,34 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 
 ## Unreleased
 
+### `release-wave.js` honours the Workflow-runtime script contract (feat-foundry-release-wave-workflow-syntax, AC-RWS-1..4)
+
+- **Fixed a Workflow-runtime SyntaxError.** The native Workflow runtime extracts `export const
+  meta` and wraps the REMAINING script body in an async function, which makes an `export`
+  **declaration** inside that body a SyntaxError (top-level `return` statements stay legal — they
+  become ordinary function returns once wrapped). `workflows/release-wave.js` carried four stray
+  `export function` declarations (`normalizeEvidence`, `dedupKey`, `consolidateFindings`,
+  `assembleReviewResult`, inside the RFH-PURE block) alongside `export const meta`; the sibling
+  `workflows/spec-audit.js` has zero and runs fine. The fix drops the `export` keyword from those
+  four declarations — file-private now, called only from inside the same file — with every body,
+  parameter list, comment, and in-file call site byte-identical to the merge base.
+- **Two new locks in `tests/test_workflow_export_shape.py`.** A **wrapper-simulation oracle**
+  reproduces the runtime's own transform (excises the meta declaration by a balanced-brace scan
+  over an elided view, embeds the remainder in `(async () => { ... })`) and checks the transformed
+  artifact under a real parser (`node --check --input-type=module`), asserting on exit status
+  only — `workflows/spec-audit.js` is the untouched positive control, proving the oracle tests the
+  export rule and not merely rejecting every workflow file. A **Node-free structural sole-export
+  scan** computes the same elided view, collects every whole-word `export` token by position, and
+  asserts the collected list is exactly `[export const meta]` — six negative controls (four must
+  FAIL, two must PASS, including a quote-bearing regex-literal control) prove the scan is not
+  vacuous. The oracle's two cases are `pytest.mark.skipif`-gated on `node` per function; the
+  structural scan is never skip-gated, so it runs on a Node-less machine too.
+- **`ci.yml:41`'s existing `node --check` step is unchanged and is not the fix** — it exits 0 on
+  the defective file today (measured), which is exactly why the wrapper-simulation oracle exists as
+  a separate, stronger lock. `tests/test_review_fanout.py`'s docstrings are reconciled to no
+  longer describe the four functions as *exported* (they are file-private after this atom); its
+  own assertions and RFH-PURE-block extraction are unchanged.
+
 ### The governed-repo attach flow ships: attach-existing and create-new (feat-foundry-wizard-attach-repo-flow, AC-WAF-1..9)
 
 - **`scripts/foundry_repo_attach.py` is the write half of the registry** — the `mr register` /
