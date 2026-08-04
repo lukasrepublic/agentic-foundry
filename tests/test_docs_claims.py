@@ -41,6 +41,26 @@ def test_manifests_agree():
     assert mp["source"]["ref"] == "v" + _plugin_version(), "marketplace ref must be vVERSION"
 
 
+def test_permission_floor_names_the_shipped_plugin_version():
+    """`generated_for_plugin_version` ships equal to the cut version — the convention CHANGELOG's
+    v1.2.0 section states in prose. It was the ONE release binding with no machine check, and it
+    duly drifted: the v1.2.0 cut bumped six version bindings and left this one at 1.1.0, so the
+    release would have shipped notes describing a convention the same release broke (found by the
+    PR #68 security review, Risk 1).
+
+    It matters beyond tidiness: this field is the only signal a scaffolded workspace has for "did
+    the floor change under an already-trusted workspace?" — a stale value misreports the floor's
+    generation for the whole lifetime of the release.
+
+    Both copies are checked. The bundled `cli/` mirror must equal the shipped map byte-for-byte
+    (AC-BCL-5), so they can only ever move together."""
+    want = _plugin_version()
+    for rel in ("docs/permission-floor.json", "cli/permission-floor.json"):
+        with open(os.path.join(REPO_ROOT, rel), encoding="utf-8") as fh:
+            got = json.load(fh)["generated_for_plugin_version"]
+        assert got == want, f"{rel} says {got!r}, plugin.json ships {want!r}"
+
+
 def test_every_install_pin_matches_the_manifests():
     """Every `marketplace add …#vX.Y.Z` snippet in user-facing docs pins the shipped version.
     The exact drift that shipped once: README pinning one version while claiming another."""

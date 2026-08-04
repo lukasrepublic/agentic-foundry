@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "plugin_root_glob": "~/.claude/plugins/cache/*/foundry/*",
-  "generated_for_plugin_version": "1.1.0",
+  "generated_for_plugin_version": "1.2.0",
   "entries": [
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-acceptance-contract-validate.py:*)",
