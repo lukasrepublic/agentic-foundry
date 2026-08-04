@@ -7,8 +7,10 @@ consolidation + verdict-assembly logic cannot be factored into an importable sib
 stays inline and this test extracts it instead).
 
 Each test slices the extracted block out of the real shipped file, appends a small per-test JS
-harness epilogue that calls the exported pure functions and prints their result as JSON, runs it
-under `node`, and asserts on the COMPUTED result — never on the mere presence of a marker string.
+harness epilogue that calls the block's pure functions (file-private `function` declarations —
+see feat-foundry-release-wave-workflow-syntax; only `export const meta` is exported from the
+file itself) and prints their result as JSON, runs it under `node`, and asserts on the COMPUTED
+result — never on the mere presence of a marker string.
 This module is `pytest.mark.skipif`-gated on `node` being on PATH (Clarification §2: a Node-less
 dev box still runs the rest of the suite green; CI already provisions Node 22 and already runs
 `node --check` on this file).
@@ -54,8 +56,8 @@ def _extract_pure_block():
 
 def run_harness(epilogue: str):
     """Slice the RFH-PURE block out of the real shipped file, append `epilogue` (JS that calls the
-    exported pure functions and does `console.log(JSON.stringify(<result>))`), run it under node,
-    and return the parsed JSON."""
+    block's pure functions — file-private, not exported — and does
+    `console.log(JSON.stringify(<result>))`), run it under node, and return the parsed JSON."""
     block = _extract_pure_block()
     script = block + "\n\n" + epilogue + "\n"
     with tempfile.NamedTemporaryFile(mode="w", suffix=".mjs", delete=False) as f:

@@ -74,7 +74,7 @@ const VERDICT_SCHEMA = {
 // ends, then collapses every maximal interior run of whitespace to one U+0020 SPACE. Every other
 // character (including case) is preserved verbatim. Returns null when the input is not a usable
 // string (absent, non-string, or normalizes to empty) — the sentinel `dedupKey` below checks for.
-export function normalizeEvidence(s) {
+function normalizeEvidence(s) {
   if (typeof s !== 'string') return null
   const trimmed = s.trim()
   if (!trimmed) return null
@@ -111,7 +111,7 @@ function isBlockingSeverity(sev) {
 // absent/non-string/normalizes empty, OR file path is undeducible/empty, OR category is
 // absent/non-string/empty-after-trim. `consolidateFindings` groups ONLY over non-null keys — the
 // structural enforcement of "unkeyable never merges", not a scattered guard.
-export function dedupKey(finding) {
+function dedupKey(finding) {
   if (!finding || typeof finding !== 'object') return null
   const evidence = normalizeEvidence(finding.evidence)
   if (evidence === null) return null
@@ -163,7 +163,7 @@ function buildConsolidatedFinding(contributors, dispatchKey) {
 // Unkeyable findings (dedupKey === null) NEVER merge with anything — each gets its own singleton
 // group, keyed by a synthetic-but-stable dispatch id so AC-RFH-14 still has a unique join target
 // even though its true dedup key is absent.
-export function consolidateFindings(findings) {
+function consolidateFindings(findings) {
   const list = Array.isArray(findings) ? findings : []
   const order = []
   const byKey = new Map()
@@ -201,7 +201,7 @@ function isWellFormedRefutation(v) {
 // plain object are both accepted. AC-RFH-14 (verdict scope) holds structurally: each consolidated
 // finding looks up ONLY its own `dedupKey` in `verifications`, so a verdict dispatched for one key
 // can never be applied under another.
-export function assembleReviewResult(consolidated, verifications) {
+function assembleReviewResult(consolidated, verifications) {
   const list = Array.isArray(consolidated) ? consolidated : []
   const verMap = verifications instanceof Map ? verifications : new Map(Object.entries(verifications || {}))
   const blocking = []
