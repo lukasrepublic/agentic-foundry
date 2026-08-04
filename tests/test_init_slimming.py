@@ -17,8 +17,10 @@ machinery only (spec Design note).
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
+import subprocess
 
 import pytest
 
@@ -65,6 +67,13 @@ POINTER_TRIPLE = [
 
 TIERING_KEYS = ("status lines", "native Bash sandbox", "git identity", "plugin enablement", "permission floor")
 UNTOUCHED_STEPS = (1, 3, 5, 6, 7, 8, 9, 10, 13)
+
+# SHA-256 over the nine untouched step slices, each prefixed by `--<n>--`. The POST-LANDING half of
+# AC-INS-5's byte-identity guarantee (see test_untouched_steps_are_byte_identical_to_the_merge_base):
+# once this atom is in the merge base, comparing against that base is comparing text to itself, so
+# the standing anchor becomes this literal. A legitimate edit to any of the nine steps MUST update
+# it in the SAME reviewed diff — the MERGE_BASE_ENTRIES_DIGEST convention, applied here.
+UNTOUCHED_STEPS_DIGEST = "40c04e3ed00ffe48980c6964e1a4cf9eb209bb4a3b0542fc202776d4458fc3ea"
 
 BYPASS_TOKENS = ["--yes", "--dangerously", "bypassPermissions", "acceptEdits", "auto-approve", "allow rule"]
 HELLO_VERBS_IN_ORDER = ["/foundry:intake", "/foundry:spec-review", "/foundry:authorize", "/foundry:dispatch", "merge"]
@@ -349,11 +358,78 @@ def test_inherited_grep_locks_survive_and_the_antipattern_cites_step_nine():
     assert m.group(1) == "9", f"anti-pattern still cites the stale step {m.group(1)}, expected step 9"
 
 
-def test_untouched_steps_are_byte_identical_to_the_merge_base():
+def _resolve_ins_base_text():
+    """Baseline for the AC-INS-5 minimal-diff comparison. Prefers the checkpoint locator's
+    INIT_SLIMMING_BASE; falls back to resolving `git merge-base HEAD origin/main` itself so a bare
+    `pytest tests/ -q` works. FAILS (never skips) when NEITHER source resolves — a missing baseline
+    stays RED, never a silent pass, exactly as AC-INS-5 requires."""
     base_path = os.environ.get("INIT_SLIMMING_BASE")
-    assert base_path, "INIT_SLIMMING_BASE is unset — this case must FAIL, never skip (AC-INS-5)"
-    assert os.path.isfile(base_path), f"INIT_SLIMMING_BASE={base_path!r} does not resolve to a readable file"
-    base_text = _read(base_path)
+    if base_path:
+        assert os.path.isfile(base_path), (
+            f"INIT_SLIMMING_BASE={base_path!r} does not resolve to a readable file"
+        )
+        return _read(base_path)
+
+    mb = subprocess.run(["git", "merge-base", "HEAD", "origin/main"], cwd=REPO_ROOT,
+                        capture_output=True, text=True, timeout=30)
+    assert mb.returncode == 0 and mb.stdout.strip(), (
+        "INIT_SLIMMING_BASE is unset, and `git merge-base HEAD origin/main` could not resolve one "
+        f"either (needs a full-history checkout): {mb.stderr.strip()}"
+    )
+    blob = subprocess.run(["git", "show", f"{mb.stdout.strip()}:skills/init/SKILL.md"],
+                          cwd=REPO_ROOT, capture_output=True, text=True, timeout=30)
+    assert blob.returncode == 0, (
+        f"INIT_SLIMMING_BASE is unset, and reading the merge-base blob failed: {blob.stderr.strip()}"
+    )
+    return blob.stdout
+
+
+def test_untouched_steps_are_byte_identical_to_the_merge_base():
+    """AC-INS-5's minimal-diff guarantee, in TWO REGIMES decided structurally from the baseline —
+    never by a skip.
+
+    A merge-base-anchored minimal-diff check is inherently atom-scoped: it can only compare against
+    a baseline that still predates the atom. Once this atom lands, every later branch's merge base
+    IS post-slimming main, so the comparison would be text-against-itself — passing while proving
+    nothing. (Its sibling in tests/test_workflow_export_shape.py hit the harsher form of this and
+    turned main red on merge; same root cause, handled the same way here.)
+
+      PRE-LANDING  (baseline has no verify-only regions)
+          -> the original claim: the nine untouched step slices are byte-identical to the baseline.
+      POST-LANDING (baseline already carries them)
+          -> the minimal diff is history; assert the OUTCOME still holds — every one of the four
+             regions is still present and still verify-only, and the nine untouched steps still
+             carry their inherited literals (the checks the sibling cases below own).
+    """
+    base_text = _resolve_ins_base_text()
+
+    if "<!-- foundry:init-verify-only:" in base_text:
+        # A FROZEN DIGEST of the same nine slices, not a re-assertion of checks the module already
+        # makes elsewhere (PR #68 security review, Risk 3). The first version of this branch
+        # asserted the four regions and the inherited literals — both already covered verbatim by
+        # sibling cases — which left steps 3, 5, 6, 7 and 8 with NO surviving assertion at all once
+        # the atom landed. Their content could then be rewritten arbitrarily, including
+        # reintroducing write prescriptions outside the four delimited regions (the W-literal check
+        # is region-scoped; only the six F-literals are file-scoped), with the module still green.
+        #
+        # The digest turns a DECAYING merge-base comparison into a STANDING one: the same coverage,
+        # anchored to a literal instead of to history. Same shape as
+        # tests/test_permission_floor_check.py's MERGE_BASE_ENTRIES_DIGEST, and the same rule — a
+        # legitimate edit to any of the nine steps MUST update this literal in the SAME reviewed
+        # diff, which is exactly the review moment the check exists to force.
+        current_slices = _step_slices(_skill_text())
+        h = hashlib.sha256()
+        for n in UNTOUCHED_STEPS:
+            assert n in current_slices, f"post-landing regression: step {n} is gone"
+            h.update(f"--{n}--".encode())
+            h.update(current_slices[n].encode())
+        assert h.hexdigest() == UNTOUCHED_STEPS_DIGEST, (
+            "the untouched step slices {1,3,5,6,7,8,9,10,13} changed. If that is a legitimate edit, "
+            "update UNTOUCHED_STEPS_DIGEST in the SAME reviewed diff; if it is not, this is the "
+            f"regression the check exists for. got={h.hexdigest()}"
+        )
+        return
+
     check_untouched_steps_match(_skill_text(), base_text)
 
 

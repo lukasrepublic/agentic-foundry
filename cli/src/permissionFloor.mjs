@@ -80,7 +80,7 @@ export function buildSettings(map, pins) {
   // becomes a standing grant over whatever code that resolution delivered. That is the same
   // floating-pin defect `autoUpdate: false` guards the LATER fetches against, left open on the
   // first one — and strictly weaker than the manual path docs/QUICKSTART.md documents
-  // (`claude plugin marketplace add lukasrepublic/agentic-foundry#v1.1.0`). Single-sourced from
+  // (the documented `marketplace add …#<tag>` install line). Single-sourced from
   // the `foundry` pin block, so it cannot drift from the marketplace manifest.
   const marketplaceEntry = {
     source: { source: 'github', repo: pins.marketplace_repo, ref: `v${pins.plugin_version}` },
