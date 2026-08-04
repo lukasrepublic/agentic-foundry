@@ -8,7 +8,17 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
-## Unreleased
+## v1.2.0 — 2026-08-04
+
+**The onboarding wave.** Twelve atoms realizing
+`intake/er-onboarding-wizard-and-permission-floor.md` end to end, plus the light-lane fixes that
+rode with them. The wave's organizing finding is structural: **`/foundry:init` can never scaffold
+its own permission floor** — a model editing its own confinement is classifier-denied (confirmed
+live). So the floor must exist *before a session does*, which makes the Claude session a **step**
+rather than the entry point, and introduces a pre-session bootstrap CLI as phase 0. Every atom below
+went through the factory: front-authorized, implemented on its own branch, security-reviewed where
+it touched a flagged path, and merged through the floor.
+
 
 ### `/foundry:init` stops prescribing settings writes it cannot perform (feat-foundry-init-slimming, AC-INS-1..8)
 
