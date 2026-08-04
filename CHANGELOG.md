@@ -10,6 +10,33 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 
 ## Unreleased
 
+### `/foundry:init` stops prescribing settings writes it cannot perform (feat-foundry-init-slimming, AC-INS-1..8)
+
+- **The bug:** an empirical classifier sweep confirmed a model editing its own confinement is
+  hard-denied — so `/foundry:init`'s `.claude/settings.json` writes (plugin/marketplace
+  enablement, the git-identity jail bootstrap, the `statusLine` wiring, the native Bash sandbox
+  enable) were prescribing a write an agent session can never actually perform. Every adopter who
+  reached those steps met a denial where the skill promised a write.
+- **The fix:** all four steps become delimited, machine-checkable **VERIFY-ONLY** regions — read
+  the artifact, report the verdict, and either **REFUSE** with a pointer (where
+  `[[feat-foundry-bootstrap-cli]]` actually owns the write: plugin enablement, commit identity) or
+  **REPORT-ONLY** + `no shipped writer` (the four artifacts nothing ships writes: the `statusLine`/
+  `subagentStatusLine` wiring, the sandbox enable, the `gh` jail's authentication, and the
+  `GH_CONFIG_DIR` session-env carrier). A new closing step 14, the **hello-loop**, walks the
+  operator through one toy atom end-to-end (intake → spec-review → authorize → dispatch → merge,
+  with the one-keypress authorize ask explained as it fires) and cleans up after itself. A new
+  `## What init verifies — and what it no longer does` section states the skill's own honest
+  tiering, including that init **still writes** three artifacts
+  (`.claude/foundry-operators.json`, `.foundry/stack-profile.lock`, the `.gitignore` managed
+  block) — it is not "purely conversational".
+- **Strictly narrowing.** Steps 1, 3, 5, 6, 7, 8, 9, 10 and 13 keep their numbers and stay
+  byte-identical; `scripts/foundry-bootstrap.sh` and both statusline wrapper scripts ship
+  unchanged. `docs/QUICKSTART.md` gains a `## Before your first session` section naming the
+  pre-session bootstrap's writes, both `gh`-jail security caveats, and a per-artifact coverage
+  table for the four artifacts nothing ships owns; `docs/troubleshooting.md` gains a matching
+  symptom-first entry. New `tests/test_init_slimming.py` (region/tiering/step locks plus a
+  negative control per lock class) and three new `tests/test_docs_claims.py` cases.
+
 ### Docs-truth reconciliation: an overstated enforcement claim, a misattributed env var, and the spec-path shape (feat-foundry-docs-truth-reconciliation, AC-DTR-1..5)
 
 - **`skills/id-sync/SKILL.md` no longer claims never-force-sync is MACHINE-enforced** — nothing in

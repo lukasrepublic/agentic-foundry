@@ -244,6 +244,104 @@ def test_control_plane_how_to_covers_the_pattern():
     assert "target_repo freeze" in enforced
 
 
+# ------------------------------------------------------------ feat-foundry-init-slimming --
+# AC-INS-6 — QUICKSTART's "Before your first session" narrative + its per-artifact coverage
+# table, and the cross-file agreement that /foundry:init VERIFIES (never writes) the four
+# artifacts nothing ships owns. AC-INS-1..5/-8's region/tiering/step locks live in the sibling
+# tests/test_init_slimming.py (spec Design note: "extend, do not duplicate").
+
+INIT_SKILL = os.path.join(REPO_ROOT, "skills", "init", "SKILL.md")
+_INS_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.MULTILINE)
+
+
+def _ins_section_body(text, heading):
+    """Body of the ONE ATX heading with EXACT text `heading`, to the next heading at the same
+    or a shallower level (or EOF)."""
+    matches = list(_INS_HEADING_RE.finditer(text))
+    found = [i for i, m in enumerate(matches) if m.group(2) == heading]
+    assert len(found) == 1, f"heading {heading!r} must occur exactly once; found {len(found)}"
+    i = found[0]
+    level = len(matches[i].group(1))
+    start = matches[i].end()
+    end = len(text)
+    for j in range(i + 1, len(matches)):
+        if len(matches[j].group(1)) <= level:
+            end = matches[j].start()
+            break
+    return text[start:end]
+
+
+def test_init_narrative_matches_the_slimmed_skill():
+    """QUICKSTART's own /foundry:init narrative + docs/troubleshooting.md describe init as
+    VERIFYING, never writing, the statusLine/sandbox/gh-jail/GH_CONFIG_DIR artifacts — and the
+    skill's own tiering section still carries the `no shipped writer` truth those two docs echo,
+    so a rewrite of one side without the other is caught."""
+    skill_text = _read(INIT_SKILL)
+    tiering = _ins_section_body(skill_text, "What init verifies — and what it no longer does")
+    assert "no shipped writer" in tiering
+
+    quickstart_text = _read(QUICKSTART)
+    wire_section = _ins_section_body(quickstart_text, "1. Wire your repo (once)")
+    assert "verifies and reports" in wire_section, (
+        "QUICKSTART's own /foundry:init narrative no longer describes init as verifying"
+    )
+    assert "it never writes" in wire_section, (
+        "QUICKSTART's own /foundry:init narrative no longer states init never writes these artifacts"
+    )
+
+    troubleshooting_text = _read(TROUBLESHOOTING)
+    ts_heading = "`/foundry:init` reports a status line, sandbox, or gh-jail finding instead of wiring it"
+    ts_section = _ins_section_body(troubleshooting_text, ts_heading)
+    assert "verifies and reports" in ts_section
+    assert "it never writes" in ts_section
+    assert "no shipped writer" in ts_section
+
+
+def test_quickstart_names_the_pre_session_step():
+    """AC-INS-6: 'Before your first session' names what the pre-session step OWNS (the writes),
+    carries BOTH jail caveats (plaintext token at rest; server-side revocation, not just a local
+    logout), carries the GH_CONFIG_DIR carrier caveat pointing at identity-isolation.md, and
+    carries the condensed scripts/foundry-bootstrap.sh prelude narrative relocated out of step 4."""
+    text = _read(QUICKSTART)
+    body = _ins_section_body(text, "Before your first session")
+
+    # the condensed bootstrap-prelude narrative, and what it writes
+    assert "scripts/foundry-bootstrap.sh" in body
+    for artifact in (".claude/gh-identity", ".envrc", "GH_CONFIG_DIR", "includeIf",
+                      "operator registry", ".gitignore"):
+        assert artifact in body, f"pre-session-step narrative omits {artifact!r}"
+
+    # both gh-jail security caveats
+    assert "plaintext token at rest" in body
+    assert "server-side" in body
+    assert "not enough" in body
+
+    # the GH_CONFIG_DIR session-env-carrier caveat, pointing at identity-isolation.md
+    assert "[identity-isolation.md](identity-isolation.md)" in body
+
+
+def test_quickstart_names_an_owner_for_every_moved_artifact():
+    """AC-INS-6 / spec R1 — the strandability lock: the coverage table carries one row per
+    artifact for the FOUR that nothing ships owns (statusLine wiring, sandbox enable, gh jail
+    auth, the GH_CONFIG_DIR carrier), each with the literal `no shipped writer` and a non-empty
+    by-hand remedy — never a pointer to a scaffolder that does not exist."""
+    text = _read(QUICKSTART)
+    body = _ins_section_body(text, "Before your first session")
+    m = re.search(r"\| *Artifact *\| *Status *\| *By-hand remedy *\|\n\|[-| ]+\|\n((?:\|.*\|\n?)+)", body)
+    assert m, "coverage table not found in 'Before your first session'"
+    rows = [ln for ln in m.group(1).strip("\n").split("\n") if ln.strip()]
+    assert len(rows) == 4, f"expected exactly 4 coverage rows, found {len(rows)}: {rows}"
+
+    expected_artifact_fragments = ["statusLine", "sandbox.enabled", "authentication", "GH_CONFIG_DIR"]
+    for frag, row in zip(expected_artifact_fragments, rows):
+        assert frag in row, f"coverage row order/content drifted — expected {frag!r} in {row!r}"
+        cells = [c.strip() for c in row.strip("|").split("|")]
+        assert len(cells) == 3, f"coverage row does not have exactly 3 cells: {row!r}"
+        artifact, status, remedy = cells
+        assert status == "no shipped writer", f"{artifact!r} row status is {status!r}, not 'no shipped writer'"
+        assert remedy, f"{artifact!r} row carries no by-hand remedy"
+
+
 # ------------------------------------------------------------ feat-foundry-docs-truth-reconciliation
 # AC-DTR-1/-2/-3 — three verified untruths in shipped prose (spec's header comments locate each):
 # (1) skills/id-sync/SKILL.md claimed never-force-sync MACHINE-enforced; nothing enforces it, so

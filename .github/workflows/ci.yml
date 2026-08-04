@@ -49,7 +49,38 @@ jobs:
         # and claims no coverage rather than passing vacuously.
         env:
           FOUNDRY_LEAK_DENYLIST: ${{ secrets.FOUNDRY_LEAK_DENYLIST }}
-        run: python3 -m pytest tests/ -q
+        # AC-INS-5's byte-identity case takes its baseline from INIT_SLIMMING_BASE and FAILS (never
+        # skips) when that is unset — deliberate, so a missing baseline is RED rather than a silent
+        # pass. Its frozen contract supplies the var from the CHECKPOINT LOCATOR; the bare
+        # `pytest tests/ -q` here has no locator, so the job must resolve the same blob itself.
+        # Depends on the full-history checkout above.
+        #
+        # THE SHA IS RESOLVED INTO A VARIABLE FIRST, AND CHECKED, rather than interpolated straight
+        # into `git show` (PR #65 security review Block 1). The obvious one-liner
+        #   git show "$(git merge-base HEAD origin/main):skills/init/SKILL.md" > "$base"
+        # is FAIL-OPEN in a way that is easy to miss and was verified by hand here:
+        #   * errexit cannot see it. A command substitution inside a WORD of another command does
+        #     not contribute its status — the simple command's status is `git show`'s alone. (The
+        #     assignment form on the next line is the opposite case: there the substitution IS the
+        #     command, so errexit does fire.) The step already runs under `bash -e {0}`, so a bare
+        #     `set -e` adds nothing.
+        #   * An empty substitution yields a VALID ref, not an error: `git show ":<path>"` is git's
+        #     index-stage-0 syntax, so it resolves against the CURRENT INDEX, exits 0, and writes
+        #     the PR's own post-change file as the "baseline".
+        #   * The assertion then compares the file to ITSELF and passes, proving nothing, with no
+        #     red step anywhere. Measured: the recipe emitted 20057 bytes (byte-for-byte the current
+        #     file) and the case reported `1 passed`.
+        # So the guard that actually matters is `[ -n "$base_sha" ]`, not `set -e`. `-s` on the blob
+        # is the belt to that braces.
+        run: |
+          set -euo pipefail
+          base_sha="$(git merge-base HEAD origin/main)"
+          [ -n "$base_sha" ] || { echo "::error::no merge-base with origin/main (needs fetch-depth: 0)"; exit 1; }
+          INIT_SLIMMING_BASE="$(mktemp)"
+          git show "${base_sha}:skills/init/SKILL.md" > "$INIT_SLIMMING_BASE"
+          [ -s "$INIT_SLIMMING_BASE" ] || { echo "::error::empty AC-INS-5 baseline"; exit 1; }
+          export INIT_SLIMMING_BASE
+          python3 -m pytest tests/ -q
       - name: Graph builder selftest
         run: python3 scripts/foundry-build-citation-graph.py --selftest
       - name: Graph MCP selftest

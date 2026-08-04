@@ -36,6 +36,52 @@ What you'll produce, artifact by artifact:
 - **node 22+** — for the Workflow templates and Playwright journeys (the graph MCP server is Python).
 - A repo you own, on GitHub, with CI you trust (the floor derives from YOUR checks).
 
+## Before your first session
+
+Multi-account machines only — if `gh`'s only authenticated account already owns every repo you
+onboard, skip this section: `/foundry:init` (below) still **verifies and reports** on the
+artifacts named here, it just never redirects you to it.
+
+A plugin cannot write its own session's confinement, so the per-account identity jail is seeded
+**before** any Claude Code session runs — a physical, out-of-session step, not something
+`/foundry:init` can do for you. The pre-session step that owns this write is
+`scripts/foundry-bootstrap.sh`'s `project-scaffold` (or the combined `<target-dir>` form): it
+clones the workspace template, installs the plugin from the declared marketplace, then writes
+`.claude/gh-identity` (the account handle) and an `.envrc` exporting `GH_CONFIG_DIR`, wires the
+git-native commit-identity `includeIf` binding, seeds the operator registry, and applies the
+runtime-partition `.gitignore` block — before handing off to `claude` so you land in
+`/foundry:init` with all of that already in place:
+
+```bash
+scripts/foundry-bootstrap.sh <target-dir> --gh-account <name> [--git-author "Name <email>"] [--existing]
+```
+
+**Two things it does NOT do, and you do by hand:**
+
+- **Authenticate the jail.** `scripts/foundry-bootstrap.sh` never runs `gh`'s own login flow.
+  Seed it yourself: `GH_CONFIG_DIR=~/.config/gh-<account> gh auth login --insecure-storage`
+  (inline token storage keeps the jail real rather than keyring-shared — the trade is a
+  **plaintext token at rest**, so also `chmod 0700 ~/.config/gh-<account>` and keep that
+  directory out of any dotfiles/backup sync tool).
+  To revoke, a local `gh auth logout` is **not enough** — the token stays valid until you also
+  revoke it server-side (github.com → Settings → Developer settings); local logout alone does
+  not invalidate an already-issued token.
+- **Export `GH_CONFIG_DIR` into your Claude Code session.** Set it yourself in the gitignored
+  `.claude/settings.local.json` env, or rely on the `.envrc` the bootstrap wrote — which only
+  fires if **direnv** is installed, hooked into your shell, and you've run `direnv allow` here;
+  otherwise it stays inert and nothing is exported. See
+  [identity-isolation.md](identity-isolation.md) for the full session-env-carrier story.
+
+**Coverage — the four artifacts no shipped writer owns today.** `/foundry:init` verifies and
+reports on each; none of them is written by anything this plugin ships.
+
+| Artifact | Status | By-hand remedy |
+|---|---|---|
+| `statusLine`/`subagentStatusLine` wiring | no shipped writer | install `scripts/foundry-statusline-wrapper.sh` (resp. `-subagent-`) into `.claude/hooks/`, `chmod 0755`, then set `statusLine.command` / `subagentStatusLine.command` in `.claude/settings.json` to the `$CLAUDE_PROJECT_DIR` form shown in the wrapper scripts' own header comments. |
+| `sandbox.enabled` (native Bash sandbox) | no shipped writer | set `sandbox.enabled: true` in `.claude/settings.json` yourself — see `code.claude.com/docs/en/sandboxing`. |
+| the `gh` jail's authentication | no shipped writer | `GH_CONFIG_DIR=~/.config/gh-<account> gh auth login --insecure-storage`, as above. |
+| the `GH_CONFIG_DIR` session-env carrier | no shipped writer | set it in `.claude/settings.local.json`, or use direnv + the `.envrc` the bootstrap script wrote, as above. |
+
 ## The minimal path
 
 The six-verb core loop, on one repo, with nothing else read first. The full governance model —
@@ -77,6 +123,11 @@ apply the shipped ruleset template and print the honest tier (`TIER-A`, `TIER-B`
 or `PREFLIGHT-ERROR`) — see [merge-floor.md](merge-floor.md) for what each verdict means and why
 a created ruleset is not, on its own, evidence of enforcement. (`init` does not apply branch
 protection itself; `foundry_tier_preflight.py` is the command that does.)
+
+`/foundry:init` also **verifies and reports** — it never writes — the status line wiring, the
+native Bash sandbox enable, and the git-identity jail: a plugin cannot edit its own session's
+confinement. See **Before your first session**, above, for what owns each of those writes and the
+by-hand remedy where nothing does.
 
 **Existing codebase?** Run `/foundry:extract-spec` first — it surveys the code and promotes a
 chosen capability into a candidate spec, which then rides the exact same loop below.
