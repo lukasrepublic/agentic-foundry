@@ -55,8 +55,14 @@ test('AC-BCL-4: buildSettings is a set bijection onto the bundled map by tier', 
     for (const r of expected) assert.ok(actual.has(r), `missing ${tier} rule ${r}`);
   }
   assert.deepEqual(Object.keys(settings).sort(), ['enabledPlugins', 'extraKnownMarketplaces', 'permissions']);
+  // AC-BCL-4(b), contract v1.2: `ref` is the pin. Derived from `pins.plugin_version` rather than
+  // written as a second literal, so the assertion cannot drift from the marketplace manifest.
   assert.deepEqual(settings.extraKnownMarketplaces['agentic-foundry'], {
-    source: { source: 'github', repo: 'lukasrepublic/agentic-foundry' },
+    source: {
+      source: 'github',
+      repo: 'lukasrepublic/agentic-foundry',
+      ref: `v${pins.plugin_version}`,
+    },
     autoUpdate: false,
   });
   assert.deepEqual(settings.enabledPlugins, { 'foundry@agentic-foundry': true });

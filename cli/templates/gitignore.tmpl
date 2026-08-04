@@ -7,3 +7,12 @@
 !/.foundry/build-provenance.yaml
 !/.foundry/stack-profile.lock
 # FOUNDRY-RUNTIME-GITIGNORE-END
+
+# Local, UNGATED permission overrides — never commit them (PR #61 security review Risk 5).
+# The floor model this workspace is scaffolded around distinguishes the committed
+# .claude/settings.json, whose `allow` rules take effect only after the operator accepts the trust
+# dialog that lists them, from .claude/settings.local.json, which is read with NO trust ceremony
+# (it is where the harness's "always allow" persist option writes). A committed settings.local.json
+# would therefore propagate ungated local grants to every clone, with no dialog and no review —
+# which is precisely the shadowing that /foundry:doctor's permission-floor probe exists to report.
+/.claude/settings.local.json

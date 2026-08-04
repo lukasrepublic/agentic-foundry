@@ -53,8 +53,18 @@ export function ensureDirFor(filePath) {
 }
 
 export function fileBytesEqual(existingPath, desiredBytes) {
-  if (!fs.existsSync(existingPath)) return { present: false, equal: false };
-  const stat = fs.lstatSync(existingPath);
+  // lstat, NOT existsSync (PR #61 security review Block 2). existsSync FOLLOWS symlinks, so a
+  // DANGLING symlink at a managed path reported `false` -> the row was classified `create` ->
+  // writeFileSync followed the link and landed the write at the link's target, OUTSIDE the
+  // physically-resolved target root (AC-BCL-9) and reachable at $HOME/.claude/settings.json
+  // (AC-BCL-4(d)) — a user-scope settings file is NOT gated by the workspace trust dialog, so on
+  // that one path the CLI stopped declaring and started granting. lstat does not follow the final
+  // component, so ANY existing entry — dangling symlink included — is seen and falls to the
+  // `notRegular` arm below, i.e. `drifted`: reported, never written. Symlinks whose targets EXIST
+  // were already caught (realpath resolves them out of root), as were symlinked ancestors; this
+  // closes the dangling-leaf case, the only one that escaped.
+  const stat = fs.lstatSync(existingPath, { throwIfNoEntry: false });
+  if (!stat) return { present: false, equal: false };
   if (!stat.isFile()) return { present: true, equal: false, notRegular: true };
   const actual = fs.readFileSync(existingPath);
   return { present: true, equal: Buffer.compare(actual, Buffer.from(desiredBytes)) === 0 };
