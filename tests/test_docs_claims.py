@@ -342,6 +342,373 @@ def test_quickstart_names_an_owner_for_every_moved_artifact():
         assert remedy, f"{artifact!r} row carries no by-hand remedy"
 
 
+# ------------------------------------------------------------ feat-foundry-docs-truth-reconciliation
+# AC-DTR-1/-2/-3 — three verified untruths in shipped prose (spec's header comments locate each):
+# (1) skills/id-sync/SKILL.md claimed never-force-sync MACHINE-enforced; nothing enforces it, so
+#     every occurrence of the enforcement-claim literal must be a NEGATED claim, and the file must
+#     carry zero occurrences of the case-sensitive literal `MACHINE-enforced`.
+# (2) docs/troubleshooting.md misattributed a cache-move power to FOUNDRY_PLUGINS_DIR; it only
+#     scopes fleet-doctor's installed_plugins.json lookup. Every mention anywhere in docs/**  +
+#     README.md must co-occur, within its own SLICE (Terminology: fenced block -> table row ->
+#     contiguous non-blank run), with both fleet-doctor scope literals.
+# (3) eleven doc sites dropped the <product> segment the shipped `derive_area` projection indexes.
+#
+# Every check below computes its verdict from PARSED STRUCTURE (occurrence positions, the
+# preceding-word test, segment-list lengths) -- never from substring presence in joined text
+# (house lesson: "assert on structure, not substrings").
+
+ID_SYNC = os.path.join(REPO_ROOT, "skills", "id-sync", "SKILL.md")
+ADOPT_HOWTO = os.path.join(REPO_ROOT, "docs", "how-to", "adopt-on-an-existing-codebase.md")
+RECOVER_HOWTO = os.path.join(REPO_ROOT, "docs", "how-to", "recover-from-a-failed-gate.md")
+
+_ENFORCEMENT_RE = re.compile(r"machine-enforced", re.IGNORECASE)
+
+
+def _preceding_word(text, pos):
+    """The whitespace-delimited word immediately before position `pos` in `text`."""
+    words = text[:pos].split()
+    return words[-1] if words else ""
+
+
+def _is_negating_word(word):
+    """True if `word` IS (once markdown emphasis / punctuation decoration is stripped) the
+    literal `not` (case-insensitive) -- so `**NOT`, `(not`, `not:` all still count."""
+    stripped = word.strip("*_`()[]{}:;,.\"'“”‘’—-")
+    return stripped.lower() == "not"
+
+
+def _unnegated_enforcement_positions(text):
+    """Positions of the case-insensitive `machine-enforced` literal NOT preceded by not/NOT."""
+    return [m.start() for m in _ENFORCEMENT_RE.finditer(text)
+            if not _is_negating_word(_preceding_word(text, m.start()))]
+
+
+def _id_sync_unnegated_claim_failures(text):
+    """AC-DTR-1 checkpoint 1: zero unnegated occurrences of the enforcement-claim literal
+    ANYWHERE in the file (frontmatter description, every heading, every body line), and zero
+    occurrences of the case-SENSITIVE literal `MACHINE-enforced` at all (negated or not --
+    the honest replacement is spelled lowercase, matching the sibling id-* skills' house form)."""
+    failures = []
+    if "MACHINE-enforced" in text:
+        failures.append("contains the case-sensitive literal 'MACHINE-enforced'")
+    unnegated = _unnegated_enforcement_positions(text)
+    if unnegated:
+        failures.append(f"{len(unnegated)} unnegated occurrence(s) of 'machine-enforced' "
+                         f"at position(s) {unnegated}")
+    return failures
+
+
+def test_id_sync_makes_no_unnegated_enforcement_claim():
+    """AC-DTR-1 / DTR-1-NO-UNNEGATED-CLAIM-OK."""
+    failures = _id_sync_unnegated_claim_failures(_read(ID_SYNC))
+    assert not failures, f"skills/id-sync/SKILL.md: {failures}"
+
+
+_NEVER_FORCE_SYNC_LITERALS = (
+    "derive_realization_verdict",
+    "machine-derived",
+    "records",
+    "not a merge block",
+)
+
+
+def _id_sync_section_failures(text):
+    """AC-DTR-1 checkpoint 2: the ONE heading located by the stable `never-force-sync` substring
+    (never by pre-change heading text) carries no unnegated enforcement claim in its OWN heading
+    text, and its body names all four required literals."""
+    failures = []
+    headings = [m for m in _CP_HEADING_RE.finditer(text) if "never-force-sync" in m.group(2)]
+    if len(headings) != 1:
+        failures.append(f"expected exactly one heading containing 'never-force-sync'; "
+                         f"found {len(headings)}")
+        return failures
+    heading_text = headings[0].group(2)
+    if _unnegated_enforcement_positions(heading_text):
+        failures.append(f"heading {heading_text!r} carries an unnegated enforcement claim")
+    body = re.sub(r"\s+", " ", _cp_section_body(text, "never-force-sync"))
+    for literal in _NEVER_FORCE_SYNC_LITERALS:
+        if literal not in body:
+            failures.append(f"never-force-sync section body missing literal {literal!r}")
+    return failures
+
+
+def test_id_sync_section_names_the_real_mechanism():
+    """AC-DTR-1 / DTR-1-SECTION-NAMES-THE-REAL-MECHANISM-OK."""
+    failures = _id_sync_section_failures(_read(ID_SYNC))
+    assert not failures, f"skills/id-sync/SKILL.md 'never-force-sync' section: {failures}"
+
+
+# --- AC-DTR-2 -- FOUNDRY_PLUGINS_DIR is described by what actually reads it ------------------
+_FLEET_DOCTOR_SCOPE_LITERALS = ("foundry-fleet-doctor", "installed_plugins.json")
+_FOUNDRY_PLUGINS_DIR = "FOUNDRY_PLUGINS_DIR"
+_FENCE_RE = re.compile(r"```.*?```", re.S)
+
+
+def _slice_at(text, pos):
+    """The slice (spec Terminology) containing the occurrence at `pos`:
+    (i) inside a fenced code block -> that block's full contents;
+    (ii) else on a table-row line (first non-ws char `|`) -> that single line;
+    (iii) else the maximal run of consecutive non-blank, non-table-row lines containing it.
+    A slice never spans a blank line, and never spans two table rows."""
+    for m in _FENCE_RE.finditer(text):
+        if m.start() <= pos < m.end():
+            return text[m.start():m.end()]
+
+    line_start = text.rfind("\n", 0, pos) + 1
+    line_end = text.find("\n", pos)
+    if line_end == -1:
+        line_end = len(text)
+    line = text[line_start:line_end]
+    if line.lstrip().startswith("|"):
+        return line
+
+    def _is_blank(l):
+        return l.strip() == ""
+
+    def _is_table_row(l):
+        return l.lstrip().startswith("|")
+
+    lines = text.split("\n")
+    idx = text.count("\n", 0, line_start)
+    start = idx
+    while start > 0 and not _is_blank(lines[start - 1]) and not _is_table_row(lines[start - 1]):
+        start -= 1
+    end = idx
+    while (end < len(lines) - 1 and not _is_blank(lines[end + 1])
+           and not _is_table_row(lines[end + 1])):
+        end += 1
+    return "\n".join(lines[start:end + 1])
+
+
+def _docs_and_readme_texts():
+    """{relpath: text} for README.md + every file under docs/** (spec's `docs/**` + README.md)."""
+    texts = {"README.md": _read(README)}
+    docs_dir = os.path.join(REPO_ROOT, "docs")
+    for root, _dirs, files in os.walk(docs_dir):
+        for f in files:
+            p = os.path.join(root, f)
+            try:
+                texts[os.path.relpath(p, REPO_ROOT)] = _read(p)
+            except UnicodeDecodeError:
+                continue
+    return texts
+
+
+def _plugins_dir_scope_failures(file_texts):
+    """AC-DTR-2 checkpoint 1: every FOUNDRY_PLUGINS_DIR occurrence's own SLICE contains BOTH
+    fleet-doctor scope literals."""
+    failures = []
+    for relpath, text in file_texts.items():
+        for m in re.finditer(re.escape(_FOUNDRY_PLUGINS_DIR), text):
+            sl = _slice_at(text, m.start())
+            missing = [lit for lit in _FLEET_DOCTOR_SCOPE_LITERALS if lit not in sl]
+            if missing:
+                failures.append(f"{relpath}@{m.start()}: slice missing {missing}")
+    return failures
+
+
+def _troubleshooting_cache_clear_failures(text):
+    """AC-DTR-2 checkpoint 1's second half: the slice carrying the cache-clear command names
+    zero occurrences of FOUNDRY_PLUGINS_DIR -- the variable does not move the cache."""
+    idx = text.find("rm -rf ~/.claude/plugins/cache/")
+    if idx == -1:
+        return ["docs/troubleshooting.md no longer carries the cache-clear command at all"]
+    sl = _slice_at(text, idx)
+    if _FOUNDRY_PLUGINS_DIR in sl:
+        return ["the cache-clear command's slice still mentions FOUNDRY_PLUGINS_DIR"]
+    return []
+
+
+def test_plugins_dir_env_var_is_described_by_its_reader():
+    """AC-DTR-2 / DTR-2-ENV-VAR-SCOPED-OK."""
+    failures = _plugins_dir_scope_failures(_docs_and_readme_texts())
+    failures += _troubleshooting_cache_clear_failures(_read(TROUBLESHOOTING))
+    assert not failures, "; ".join(failures)
+
+
+def _quickstart_plugins_dir_note_failures(text):
+    """AC-DTR-2 checkpoint 2: QUICKSTART carries >=1 FOUNDRY_PLUGINS_DIR mention that both
+    satisfies the co-occurrence rule AND names the default `~/.claude/plugins`."""
+    matches = list(re.finditer(re.escape(_FOUNDRY_PLUGINS_DIR), text))
+    if not matches:
+        return ["docs/QUICKSTART.md carries no FOUNDRY_PLUGINS_DIR mention"]
+    for m in matches:
+        sl = _slice_at(text, m.start())
+        if all(lit in sl for lit in _FLEET_DOCTOR_SCOPE_LITERALS) and "~/.claude/plugins" in sl:
+            return []
+    return ["no FOUNDRY_PLUGINS_DIR mention in docs/QUICKSTART.md is both co-scoped with the "
+            "fleet-doctor literals and names the default ~/.claude/plugins"]
+
+
+def test_quickstart_documents_the_plugins_dir_override():
+    """AC-DTR-2 / DTR-2-QUICKSTART-NOTE-OK."""
+    failures = _quickstart_plugins_dir_note_failures(_read(QUICKSTART))
+    assert not failures, "; ".join(failures)
+
+
+# --- AC-DTR-3 -- every concrete spec-path mention in the reconciled doc set is 3+ segments ----
+_SPEC_PATH_RUN_RE = re.compile(r"specs/features/([A-Za-z0-9._<>-]+(?:/[A-Za-z0-9._<>-]+)*)")
+_TRUNCATED_FIRST_SEGMENTS = ("…", "...")  # the spec's two truncation spellings
+
+
+def _spec_path_segment_lists(text):
+    """Every spec-path mention's segment list (Terminology: the run split on `/`, trailing
+    `feat-*.md` element removed when present)."""
+    out = []
+    for m in _SPEC_PATH_RUN_RE.finditer(text):
+        segments = m.group(1).split("/")
+        if segments and re.match(r"^feat-.*\.md$", segments[-1]):
+            segments = segments[:-1]
+        out.append(segments)
+    return out
+
+
+def _reconciled_docs_failures(doc_texts):
+    """AC-DTR-3: every non-truncated, non-empty spec-path mention has segment-list length >= 3."""
+    failures = []
+    for relpath, text in doc_texts.items():
+        for segments in _spec_path_segment_lists(text):
+            if not segments:
+                continue
+            if segments[0] in _TRUNCATED_FIRST_SEGMENTS:
+                continue
+            if len(segments) < 3:
+                failures.append(f"{relpath}: spec-path mention {segments} has < 3 segments")
+    return failures
+
+
+_RECONCILED_DOC_SET_PATHS = {
+    "README.md": README,
+    "docs/QUICKSTART.md": QUICKSTART,
+    "docs/how-to/adopt-on-an-existing-codebase.md": ADOPT_HOWTO,
+    "docs/how-to/recover-from-a-failed-gate.md": RECOVER_HOWTO,
+}
+
+
+def test_reconciled_docs_carry_the_product_segment():
+    """AC-DTR-3 / DTR-3-PATH-SHAPE-OK."""
+    doc_texts = {rel: _read(p) for rel, p in _RECONCILED_DOC_SET_PATHS.items()}
+    failures = _reconciled_docs_failures(doc_texts)
+    assert not failures, "; ".join(failures)
+
+
+# --- AC-DTR-4 -- the meta-test: four negative controls prove none of the above is vacuous -----
+def test_docs_truth_negative_controls_all_fire():
+    """AC-DTR-4 / DTR-4-CONTROLS-OK. Four mutated in-memory copies, each of which the
+    corresponding checker above MUST report as a FAILURE."""
+    # (a) the enforcement-claim literal re-inserted unnegated.
+    mutated_a = _read(ID_SYNC) + "\n\nAppendix: this discipline is machine-enforced by policy.\n"
+    assert _id_sync_unnegated_claim_failures(mutated_a), "control (a) did not fire"
+
+    # (b) a FOUNDRY_PLUGINS_DIR mention stripped of the fleet-doctor scope literals.
+    stripped_row = "| lookup root | override with `FOUNDRY_PLUGINS_DIR` if you need to |\n"
+    assert _plugins_dir_scope_failures({"synthetic-b.md": stripped_row}), "control (b) did not fire"
+
+    # (c) a spec-path mention shortened by one segment.
+    original = _read(QUICKSTART)
+    shortened = original.replace(
+        "specs/features/app/export/csv/feat-export-csv.md",
+        "specs/features/app/feat-export-csv.md",
+        1,
+    )
+    assert shortened != original, "control (c) setup found nothing to shorten"
+    assert _reconciled_docs_failures({"docs/QUICKSTART.md": shortened}), "control (c) did not fire"
+
+    # (d) THE SLICE-SCOPING CONTROL (review B1): both fleet-doctor scope literals present in the
+    #     file but OUTSIDE the mention's own slice -- a different table row, and beyond a blank
+    #     line -- must still report FAILURE, proving slice-scoping is enforced, not assumed.
+    synthetic_d = (
+        "| root override | uses `FOUNDRY_PLUGINS_DIR` |\n"
+        "| unrelated row | nothing to see here |\n"
+        "\n"
+        "| doctor lookup | `foundry-fleet-doctor` reads `installed_plugins.json` |\n"
+    )
+    assert _plugins_dir_scope_failures({"synthetic-d.md": synthetic_d}), "control (d) did not fire"
+
+
+# --- AC-DTR-4 -- additive-only: every pre-existing case still defined, byte-identical body -----
+_PREEXISTING_DOCS_CLAIMS_CASES = (
+    "test_manifests_agree",
+    "test_every_install_pin_matches_the_manifests",
+    "test_readme_status_matches_the_manifests",
+    "test_changelog_has_a_section_for_the_shipped_version",
+    "test_test_count_claim_is_true",
+    "test_every_shipped_skill_is_in_the_verb_reference",
+    "test_the_verb_reference_lists_no_phantom_verbs",
+    "test_relative_doc_links_resolve",
+    "test_control_plane_how_to_is_shipped_and_linked",
+    "test_control_plane_how_to_covers_the_pattern",
+    "test_no_journey_narration_in_shipped_docs",
+)
+
+
+def _top_level_function_bodies(source):
+    """{name: exact source text} for every top-level `def` in `source` (via ast, never a
+    substring/line-count heuristic, so a reformat that preserves meaning still convicts)."""
+    import ast
+    tree = ast.parse(source)
+    return {
+        node.name: ast.get_source_segment(source, node)
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+    }
+
+
+def _resolve_docs_claims_base():
+    """The merge-base blob of THIS file, as (source_text, error).
+
+    Preferred source: DTR_DOCS_CLAIMS_BASE (the AC-DTR-4 checkpoint's own locator pre-resolves
+    `git merge-base HEAD origin/main` and exports the blob to a temp path -- required in a
+    SHALLOW checkout, e.g. ci.yml's pytest job, where `git merge-base` cannot resolve `origin/main`
+    at all). Falling back to resolving it locally here as well is deliberate and reconciles two
+    otherwise-conflicting frozen clauses: AC-DTR-4 says this case "SHALL fail, never skip, when
+    [DTR_DOCS_CLAIMS_BASE] is unset or unreadable", while AC-DTR-5 separately requires a BARE
+    `python3 -m pytest tests/ -q` (no env var set by anyone) to stay green -- which every ordinary
+    (non-shallow) invocation of this suite is. The fail-never-skip guarantee is preserved for the
+    case neither source resolves (a shallow clone with no locator-supplied var)."""
+    env_path = os.environ.get("DTR_DOCS_CLAIMS_BASE")
+    if env_path:
+        try:
+            with open(env_path, encoding="utf-8") as fh:
+                return fh.read(), None
+        except OSError as exc:
+            return None, f"DTR_DOCS_CLAIMS_BASE={env_path!r} is unreadable: {exc}"
+
+    try:
+        mb = subprocess.run(["git", "merge-base", "HEAD", "origin/main"], cwd=REPO_ROOT,
+                             capture_output=True, text=True, timeout=30)
+        if mb.returncode != 0 or not mb.stdout.strip():
+            return None, (f"DTR_DOCS_CLAIMS_BASE is unset, and `git merge-base HEAD origin/main` "
+                           f"could not resolve it either: {mb.stderr.strip()}")
+        sha = mb.stdout.strip()
+        show = subprocess.run(["git", "show", f"{sha}:tests/test_docs_claims.py"], cwd=REPO_ROOT,
+                               capture_output=True, text=True, timeout=30)
+        if show.returncode != 0:
+            return None, (f"DTR_DOCS_CLAIMS_BASE is unset, and `git show {sha}:"
+                           f"tests/test_docs_claims.py` failed: {show.stderr.strip()}")
+        return show.stdout, None
+    except OSError as exc:
+        return None, f"DTR_DOCS_CLAIMS_BASE is unset, and local git resolution errored: {exc}"
+
+
+def test_preexisting_docs_claims_cases_are_unweakened():
+    """AC-DTR-4 / DTR-4-ADDITIVE-ONLY-OK. FAILS (never skips) when no merge-base baseline can be
+    resolved -- neither via DTR_DOCS_CLAIMS_BASE (the checkpoint's own locator) nor by this file
+    resolving it locally itself (see `_resolve_docs_claims_base`)."""
+    base_source, error = _resolve_docs_claims_base()
+    assert base_source is not None, error
+
+    base_bodies = _top_level_function_bodies(base_source)
+    current_bodies = _top_level_function_bodies(_read(__file__))
+
+    missing = [n for n in _PREEXISTING_DOCS_CLAIMS_CASES if n not in current_bodies]
+    assert not missing, f"pre-existing case(s) no longer defined in this file: {missing}"
+
+    changed = [n for n in _PREEXISTING_DOCS_CLAIMS_CASES
+               if n in base_bodies and base_bodies[n] != current_bodies[n]]
+    assert not changed, f"pre-existing case(s) diverged from their merge-base body: {changed}"
+
+
 def test_no_journey_narration_in_shipped_docs():
     """The public tree describes what IS, not what was deleted or how it got here. These
     markers are the narration classes scrubbed in the pre-v1 content pass; reintroducing

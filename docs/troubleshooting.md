@@ -205,7 +205,8 @@ claude plugin uninstall foundry@agentic-foundry
 # 2. remove the marketplace registration
 claude plugin marketplace remove lukasrepublic/agentic-foundry
 
-# 3. clear the plugin cache (default location; FOUNDRY_PLUGINS_DIR overrides it if you set one)
+# 3. clear the plugin cache (default location; see docs/QUICKSTART.md's "Where things live" for
+#    the fleet-doctor lookup-root override, which does not move this cache)
 rm -rf ~/.claude/plugins/cache/
 
 # (the same cache clear also resolves a stale registry entry in

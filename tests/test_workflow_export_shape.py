@@ -384,15 +384,49 @@ def test_bodies_are_byte_identical_to_the_merge_base():
     base_text = _resolve_base_text()
     current_text = open(RELEASE_WAVE_JS, encoding="utf-8").read()
 
+    # TWO REGIMES, decided structurally from the baseline itself — never by a skip.
+    #
+    # A merge-base-anchored MINIMAL-DIFF check is inherently atom-scoped: it can only compare the
+    # candidate against a baseline that still carries the defect. Once this atom lands, every later
+    # branch's merge base is post-fix main, where the four declarations are already plain — so the
+    # `== 1` assertion below could never hold again and this case would be RED FOREVER, for changes
+    # that have nothing to do with it. (It was: merging PR #64 turned main's own CI red on exactly
+    # this assertion.)
+    #
+    # The fix is NOT to skip — a skip here is the vacuity this suite exists to prevent. It is to
+    # notice which regime we are in, from evidence, and assert the right thing in each:
+    #
+    #   PRE-LANDING  (baseline still carries the four `export function` declarations)
+    #       -> the original claim: byte-identical modulo exactly those four `export ` strips.
+    #   POST-LANDING (baseline carries none of them)
+    #       -> the minimal diff is history; assert the OUTCOME it delivered still holds — the four
+    #          functions are still present as plain declarations and none has regained an `export`.
+    #
+    # A malformed in-between (some stripped, some not) is neither regime and stays a hard failure.
+    exported_in_base = [n for n in FOUR_FUNCTIONS if base_text.count(f"export function {n}(") == 1]
+
+    if not exported_in_base:
+        for name in FOUR_FUNCTIONS:
+            assert current_text.count(f"function {name}(") == 1, (
+                f"post-landing: expected exactly one plain `function {name}(` declaration in "
+                f"workflows/release-wave.js, found {current_text.count(f'function {name}(')}"
+            )
+            assert f"export function {name}(" not in current_text, (
+                f"post-landing regression: `{name}` has regained an `export` keyword, which is a "
+                "SyntaxError once the Workflow runtime wraps the script body"
+            )
+        return
+
+    assert len(exported_in_base) == len(FOUR_FUNCTIONS), (
+        "merge-base form is in neither regime: it carries `export function` for "
+        f"{sorted(exported_in_base)} but not for "
+        f"{sorted(set(FOUR_FUNCTIONS) - set(exported_in_base))}. Refusing to guess."
+    )
+
     expected = base_text
     for name in FOUR_FUNCTIONS:
         old = f"export function {name}("
         new = f"function {name}("
-        occurrences = base_text.count(old)
-        assert occurrences == 1, (
-            f"merge-base form expected exactly one 'export function {name}(' occurrence, found "
-            f"{occurrences}"
-        )
         expected = expected.replace(old, new, 1)
 
     assert expected == current_text, (
