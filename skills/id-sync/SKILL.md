@@ -1,6 +1,6 @@
 ---
 name: id-sync
-description: The infra-delivery POST-MERGE GitOps reconcile-and-observe driver (step 13) — the PROCEDURE the generic agent runs AFTER merge (merge IS the deploy trigger) to drive the GitOps controller's idempotent reconcile toward the GATE-MERGED IaC, PINNED to the merged candidate_sha (argocd app sync/refresh, reusing the shipped candidate_sha/expected_sha staleness pin so the realization read is coupled to the merged commit, never an arbitrary HEAD), then READ the realized state and RECORD the realization observation via the DEDICATED post-deploy producer emit_realization_evidence (scripts/foundry_realization.py) — recording {candidate_sha, post_apply_plan_empty, argocd:{applicable, sync_status, health_status}, artifact:{applicable, deployed_identity, merged_commit}} that derive_realization_verdict consumes — NOT the pre-merge emit_infra_walk_evidence. BOTH ArgoCD axes via argocd_adjudicate (Synced ∧ Healthy ⇒ LANDED; a Degraded-but-Synced app must NOT green). never-force-sync is MACHINE-enforced by the recorded-evidence model (a --force/--prune past the read leaves a non-LANDED record derive_realization_verdict FAILs), not skill prose. Fail-closed ArgoCD direction — a missing/unreachable/indeterminate ArgoCD ⇒ NOT-LANDED, never a silent advisory pass. ADVISORY observe-and-record (NOT a pre-merge gate); NOT-LANDED is a tracked incident state feeding the realization gate / deploy-status / id-rollback. Never issues a mutating tofu apply / destructive prune.
+description: The infra-delivery POST-MERGE GitOps reconcile-and-observe driver (step 13) — the PROCEDURE the generic agent runs AFTER merge (merge IS the deploy trigger) to drive the GitOps controller's idempotent reconcile toward the GATE-MERGED IaC, PINNED to the merged candidate_sha (argocd app sync/refresh, reusing the shipped candidate_sha/expected_sha staleness pin so the realization read is coupled to the merged commit, never an arbitrary HEAD), then READ the realized state and RECORD the realization observation via the DEDICATED post-deploy producer emit_realization_evidence (scripts/foundry_realization.py) — recording {candidate_sha, post_apply_plan_empty, argocd:{applicable, sync_status, health_status}, artifact:{applicable, deployed_identity, merged_commit}} that derive_realization_verdict consumes — NOT the pre-merge emit_infra_walk_evidence. BOTH ArgoCD axes via argocd_adjudicate (Synced ∧ Healthy ⇒ LANDED; a Degraded-but-Synced app must NOT green). never-force-sync is NOT machine-enforced (a --force/--prune past the read leaves a non-LANDED record derive_realization_verdict FAILs — machine-derived, not skill-prose enforcement). Fail-closed ArgoCD direction — a missing/unreachable/indeterminate ArgoCD ⇒ NOT-LANDED, never a silent advisory pass. ADVISORY observe-and-record (NOT a pre-merge gate); NOT-LANDED is a tracked incident state feeding the realization gate / deploy-status / id-rollback. Never issues a mutating tofu apply / destructive prune.
 ---
 
 # id-sync — the POST-MERGE GitOps reconcile-and-observe driver (infra-delivery step 13)
@@ -99,14 +99,19 @@ Run these steps **in order**. Each is a step, not reference prose.
    the **realization gate** / `deploy-status` / **`id-rollback`** (the operator + `id-rollback`
    decide; **never auto-reconciled past the merged commit**).
 
-## never-force-sync-blindly — MACHINE-enforced by the recorded-evidence model
+## never-force-sync-blindly — not machine-enforced, machine-derived from recorded evidence
 
-The reconcile is driven toward the merged `candidate_sha`, and **never-force is enforced by the
-RECORDED-EVIDENCE model, NOT a skill-prose promise**: a `--force`/`--prune` past the
-realization read leaves a **non-LANDED** `emit_realization_evidence` record that
-`derive_realization_verdict` **FAILs** — the bound is coupled to the recorded post-apply state, so
-blindly forcing past the read **cannot manufacture a LANDED**. Under-realization is **surfaced, never
-papered over**.
+The reconcile is driven toward the merged `candidate_sha`, and never-force-sync-blindly is
+**not machine-enforced**: nothing in the tree observes a `--force`/`--prune` past the read (grep-verified,
+neither `force` nor `prune` occurs in `foundry_realization.py`). What is real instead — `id-sync`
+**records** the realization observation, and `derive_realization_verdict` computes a
+**machine-derived** verdict over what was recorded: a `--force`/`--prune` past the realization read
+leaves a **non-LANDED** `emit_realization_evidence` record that `derive_realization_verdict`
+**FAILs** — the bound is coupled to the recorded post-apply state, so blindly forcing past the read
+**cannot manufacture a LANDED**. That verdict is an observation + incident trigger, **not a merge
+block** (`derive_realization_verdict`'s own docstring, `foundry_realization.py:204`) — merge already
+happened, so the realization frame stays advisory. Under-realization is **surfaced, never papered
+over**.
 
 ## Outputs (the named hand-offs)
 
@@ -132,7 +137,8 @@ papered over**.
   indeterminate/unreachable required signal maps to **NOT-LANDED**, never a silent advisory pass.
 - **`--force`/`--prune` past the read / a mutating `tofu apply` / destructive prune** — forbidden.
   The idempotent reconcile toward the *merged* commit + the read-only realization read are the only
-  acts; never-force is **machine-enforced by the recorded-evidence model**.
+  acts; never-force is **not machine-enforced** — a `--force`/`--prune` past the read leaves a
+  non-LANDED record that `derive_realization_verdict` FAILs, so it cannot manufacture a LANDED.
 - **Auto-reconciling past the merged commit on NOT-LANDED** — forbidden. NOT-LANDED is a tracked
   incident state feeding `id-rollback`; the operator decides, the skill never mutates past the
   authorized merged state.
