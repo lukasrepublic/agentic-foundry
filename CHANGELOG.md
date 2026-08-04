@@ -49,6 +49,89 @@ All notable changes to Agentic Foundry are documented here (SemVer).
   fault-injected atomic-replace/TOCTOU scenarios, and byte-level before/after comparison of both
   files.
 
+### The pre-session bootstrap CLI: `npx create-agentic-workspace` (feat-foundry-bootstrap-cli, AC-BCL-1..11)
+
+- **`create-agentic-workspace` ships as a new, zero-dependency npm package rooted at `cli/`** — the
+  ER's finding is structural: `/foundry:init` can never scaffold its own permission floor (a model
+  editing its own confinement is classifier-denied), so the floor must be written **before a
+  session exists**, in the operator's own terminal. `npx create-agentic-workspace` walks
+  name/dir → greenfield-vs-existing → git/GitHub identity → stage mode → the permission
+  conversation, previews every file **and** every capability it will declare before the first
+  byte, then writes and stops.
+- **It declares; it never grants.** The plugin's reviewed three-tier `docs/permission-floor.json`
+  is emitted verbatim (bundled as a byte-identical mirror, `cli/permission-floor.json`) into the
+  new workspace's committed `.claude/settings.json`, alongside `extraKnownMarketplaces` and
+  `enabledPlugins` single-sourced from `cli/package.json`'s `foundry` pin block. The marketplace
+  entry is a pinned literal (`autoUpdate: false` — the floor's rules are version-wildcarded, so
+  auto-update would be a standing grant over unseen plugin versions); the written file's top-level
+  key set is closed, and `statusLine`/`sandbox`/`hooks`/`apiKeyHelper`/`env`/`mcpServers`/
+  `additionalDirectories` are never emitted at any nesting level. The CLI never runs `claude`,
+  never accepts the workspace trust dialog, and never writes under `$HOME/.claude/`; the exit line
+  explains the trust hand-off and directs the operator to `/foundry:doctor`'s permission-floor
+  check afterward — the one adopter-side check that compares against the **installed plugin's own**
+  copy of the map rather than the npm tarball's.
+- **Absorbs `foundry-bootstrap.sh`'s out-of-session identity wiring**, proved differentially equal
+  to the shipped script across four artifacts (global git config listing, the per-account include
+  file's path and bytes, the repo-local `useConfigOnly` line, and the `.claude/gh-identity`
+  marker). The optional `gh api user` probe is bounded (one call, timeout, its own `GH_CONFIG_DIR`
+  jail, five token/host variables stripped), discards on any login mismatch, and persists no probe
+  output beyond the confirmed name/email.
+- **Scaffolds a closed, seven-file, schema-valid workspace seed**, and re-running is a
+  **reconcile-with-drift-report** (the `terraform init` posture): a managed path that is absent is
+  created, one that matches is left untouched, and one that exists and differs is reported
+  `drifted` and **never overwritten** — never-clobber is unconditional, on every path and in every
+  mode, including `--existing` against a foreign, hand-authored `.claude/settings.json` (reported
+  drifted, never merged). The permission-drift half of the report reuses
+  `[[feat-foundry-doctor-permission-floor-check]]`'s eight-class vocabulary and its `covers()`
+  subsumption relation, kept in agreement with `tests/test_permission_floor_map.py::_subsumes` on
+  a shared row table so the two matchers cannot diverge silently.
+- **Supply-chain posture, stated honestly.** Zero third-party dependencies, `scripts` closed to
+  `{test}` (no lifecycle hook of any kind), every `import`/dynamic `import()` a `node:` builtin or
+  a relative path (statically decidable), and no network module anywhere in the import closure —
+  the only reachable egress is the one bounded `gh` probe. Every control here is a **build-time**
+  check over the source tree; it does not attest the published tarball. `tests/test_bootstrap_cli.py`
+  drives the package's own `node --test` suite as a subprocess (no CI workflow edit) plus seventeen
+  mutation negative controls, one per invariant class.
+
+**Security review (PR #61) — remediation disposition.** A separate-context floor-#3 review returned
+2 Blocks + 6 Risks over the new supply-chain surface. **Both Blocks fixed:**
+
+- **B1 — the marketplace pin floated.** The emitted `extraKnownMarketplaces` entry carried
+  `{source, repo}` and no `ref`, so an adopter's *first* marketplace resolution followed the default
+  branch — and because the floor's allow rules are version-wildcarded
+  (`cache/*/foundry/*/scripts/…`), that turned the operator's single trust acceptance into a standing
+  grant over whatever code the resolution delivered. It is the same floating-pin defect
+  `autoUpdate: false` guards the *later* fetches against, left open on the first, and strictly weaker
+  than the pinned manual path `docs/QUICKSTART.md` already documented. The entry now carries
+  `ref: v<plugin_version>`, single-sourced from the `foundry` pin block per AC-BCL-4(b) (contract
+  v1.2). Worth recording *why* CI was green: three assertions pinned the **unpinned** shape, so the
+  checkpoint passed precisely *because* the fix was missing, and applying it turned them red. Two new
+  controls (`o`, `o2`) now redden on a dropped ref and on a wrong one.
+- **B2 — a dangling symlink at a managed path escaped confinement.** `fileBytesEqual` tested with
+  `existsSync`, which *follows* symlinks and so reported `false` for a dangling one; the row was
+  classified `create` and `writeFileSync` followed the link, landing the write outside the
+  physically-resolved target root — reachable at `$HOME/.claude/settings.json`, which no trust dialog
+  gates. On that one path the CLI stopped declaring and started granting. Now `lstat`-based, so any
+  existing entry (dangling symlink included) is `drifted`: reported, never written; the write itself
+  additionally uses `O_EXCL`. New control `p` asserts at the outcome level that nothing appears at the
+  link target — and was verified by mutation to fail against the pre-fix code.
+
+**Risks fixed:** R1 — the `gh` binary name is a string literal again, not `env.FOUNDRY_TEST_GH_BIN || 'gh'`
+(that seam let anything controlling the environment choose the spawned binary, `claude` included, making
+the "child-process set is closed to `{git, gh}`" claim false; it was also dead code). R4 — the assertion
+guarding "reads no plugin-cache path" was **vacuous**: a three-arm `or` whose last arm matched the
+substring `map.`, which the guarded file always contains. Replaced with a structural check that
+balanced-brace-extracts the cache-walking function and requires every `fs.*` call inside it to be
+read-only, plus a pin on the reader set; the underlying stat calls are now `throwIfNoEntry`-guarded so a
+broken symlink in the operator's plugin cache can no longer turn a completed scaffold into a stack trace.
+R5 — the scaffolded `.gitignore` now ignores `/.claude/settings.local.json`, so a fresh workspace cannot
+commit ungated local grants (the managed block stays byte-identical to the shipped applier; the line is
+added outside it). **Residuals (recorded, not fixed):** R2 — an identity-path refusal still occurs after
+`applyPlan`, so exit 1 there leaves a scaffolded tree with git identity unwired; R3 — the per-account
+`gh` config jail directory is created by the parent and is not in the preview's enumerated
+machine-scope writes; R6 — the `.claude/gh-identity` marker is written outside the plan/preview
+machinery and overwrites a differing pre-existing marker.
+
 ### `--verify-tag` resolves ssh-config host aliases before the `source.repo` cross-check (feat-foundry-verify-tag-ssh-alias-resolution, AC-VTA-1..5)
 
 - **The bug:** `tag_pin_coherence`'s `source.repo` cross-check stripped one of exactly three literal
