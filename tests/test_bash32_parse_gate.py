@@ -39,15 +39,13 @@ JOB_NAME = "shell-parse-bash32"
 # requires this atom leave it byte-unchanged (security-path depends on the labeled/unlabeled
 # trigger types to re-run after the `security-reviewed` label is posted; narrowing `types:` would
 # silently degrade that gate). Same shape as test_btb_gates.py's `_PRE_WIDENING_ALTERNATION`.
-# WIDENED 2026-08-04 (Tier-A hardening), in the same reviewed diff as the workflow change, which
-# is exactly what this frozen constant exists to force. `edited` was added because spec-link reads
-# the `Spec:` trailer from the PR BODY: without it, correcting a missing trailer does not re-run
-# the gate, so the check stays red until some unrelated event re-triggers it. This is a WIDENING —
-# strictly more events run the gates, never fewer — which is the direction this guard permits;
-# the standing prohibition is on NARROWING (dropping labeled/unlabeled would silently degrade
-# security-path) and on `pull_request_target`, both still asserted below.
+# UNCHANGED from the shipped surface. `edited` was briefly added here during the 2026-08-04 Tier-A
+# hardening and REMOVED again in the same cycle: it re-ran the gates at the same head SHA under a
+# different action, letting a PR author supersede a red staleness verdict by editing the
+# description (security review Block 1). This constant is why that had to be a deliberate, visible
+# edit rather than a quiet one — it did its job.
 _FROZEN_ON_BLOCK = {
-    "pull_request": {"types": ["opened", "synchronize", "reopened", "labeled", "unlabeled", "edited"]},
+    "pull_request": {"types": ["opened", "synchronize", "reopened", "labeled", "unlabeled"]},
 }
 
 _DOCKER_STUB = '''#!/bin/sh

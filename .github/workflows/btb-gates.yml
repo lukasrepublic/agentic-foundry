@@ -47,11 +47,11 @@
 name: btb-gates
 on:
   pull_request:
-    # `edited` is here because spec-link reads the PR BODY for the `Spec:` trailer. Without it,
-    # correcting a missing trailer does not re-run the gate — the check stays red until some
-    # unrelated event re-triggers it, which trains people to ignore a red spec-link. Found the
-    # hard way on PR #70.
-    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
+    # `edited` was added here and REMOVED again in the same review cycle. It re-runs the gates at
+    # the SAME head SHA with action=edited, which let a PR author supersede a red staleness verdict
+    # by editing the description — one click, no commits, no re-review (security review Block 1,
+    # 2026-08-04). Convenience is not worth a bypass; re-run the check instead.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: read
@@ -82,10 +82,16 @@ jobs:
           # fetched or executed here) — a shared script would mean checking out to run it.
           tier() {
             local p; p="$(gh api "repos/${REPO}/branches/${BASE}" -q .protected 2>/dev/null || echo unknown)"
+            # `.protected` is a COARSE boolean — it is true for a branch protected only by
+            # "restrict deletions". It proves SOMETHING guards the branch, never that THESE contexts
+            # are required, and a read-only token cannot enumerate that (the /protection endpoint is
+            # admin-only). So this reports what it can actually substantiate and no more (security
+            # review Block 3, 2026-08-04) — the same discipline foundry_tier_preflight.py applies
+            # when it refuses to call classic protection Tier A.
             case "$p" in
-              true)  printf '**merge floor tier: A (enforced)** — `%s` is server-protected; the platform blocks a merge that does not satisfy the required checks' "$BASE" ;;
+              true)  printf '**merge floor: `%s` IS server-protected** — some protection is active; this job cannot enumerate WHICH contexts are required with a read-only token' "$BASE" ;;
               false) printf '**merge floor tier: B (advisory)** — `%s` is NOT server-protected; these checks report, the server does not enforce' "$BASE" ;;
-              *)     printf '**merge floor tier: UNKNOWN** — could not read protection state for `%s`; treat as advisory' "$BASE" ;;
+              *)     printf '**merge floor: UNKNOWN** — could not read protection state for `%s`; treat as advisory' "$BASE" ;;
             esac
           }
           summary "$(tier)"
@@ -129,10 +135,16 @@ jobs:
           # it is duplicated rather than shared (both jobs are deliberately checkout-free).
           tier() {
             local p; p="$(gh api "repos/${REPO}/branches/${BASE}" -q .protected 2>/dev/null || echo unknown)"
+            # `.protected` is a COARSE boolean — it is true for a branch protected only by
+            # "restrict deletions". It proves SOMETHING guards the branch, never that THESE contexts
+            # are required, and a read-only token cannot enumerate that (the /protection endpoint is
+            # admin-only). So this reports what it can actually substantiate and no more (security
+            # review Block 3, 2026-08-04) — the same discipline foundry_tier_preflight.py applies
+            # when it refuses to call classic protection Tier A.
             case "$p" in
-              true)  printf '**merge floor tier: A (enforced)** — `%s` is server-protected; the platform blocks a merge that does not satisfy the required checks' "$BASE" ;;
+              true)  printf '**merge floor: `%s` IS server-protected** — some protection is active; this job cannot enumerate WHICH contexts are required with a read-only token' "$BASE" ;;
               false) printf '**merge floor tier: B (advisory)** — `%s` is NOT server-protected; these checks report, the server does not enforce' "$BASE" ;;
-              *)     printf '**merge floor tier: UNKNOWN** — could not read protection state for `%s`; treat as advisory' "$BASE" ;;
+              *)     printf '**merge floor: UNKNOWN** — could not read protection state for `%s`; treat as advisory' "$BASE" ;;
             esac
           }
           summary "$(tier)"
@@ -160,22 +172,18 @@ jobs:
           hits="$(printf '%s\n' "$files" | grep -E '(auth|secret|credential|token|provenance|signing|\.rego$)|^\.github/|^hooks/|^\.claude-plugin/|(^|/)(standing-versions|profile-version-ledger)|(^|/)(requirements[^/]*\.txt|package(-lock)?\.json|pyproject\.toml|Pipfile[^/]*|go\.(mod|sum)|Cargo\.(toml|lock))$|^skills/|^agents/|^rulesets/|^scripts/foundry_tier_preflight' || true)"
           if [ -z "$hits" ]; then
             summary "security-path: PASS (not applicable) — no auth/secrets/supply-chain path in the diff"
-          elif printf '%s\n' "$labels" | grep -qxF 'security-reviewed' && [ "$ACTION" = "synchronize" ]; then
-            # STALE-LABEL TOCTOU. New commits just landed, so a 'security-reviewed' label earned on
-            # the previous diff no longer says anything about what is now proposed. Without this,
-            # the sequence "get reviewed on a benign diff, then push" walks straight through the
-            # gate. Recorded as a Tier-A precondition at the 2026-07-27 floor-#3 review ("strip the
-            # review label on synchronize"), and live surface since the repo went public.
-            #
-            # WHY FAIL RATHER THAN STRIP: stripping needs `pull-requests: write`, which a
-            # fork-originated `pull_request` token does not carry — so the strip would silently
-            # no-op on exactly the PRs that matter most. Failing achieves the same outcome with a
-            # READ-ONLY token. Keyed on the EVENT ACTION, not on commit timestamps, which a fork
-            # author can forge with GIT_COMMITTER_DATE.
-            summary "security-path: FAIL — new commits pushed after the 'security-reviewed' label. Re-run the security review against the CURRENT diff, then REMOVE and RE-APPLY the label (re-applying is what emits the fresh 'labeled' event this gate accepts)."
-            printf 'flagged paths:\n%s\n' "$hits"
-            exit 1
           elif printf '%s\n' "$labels" | grep -qxF 'security-reviewed'; then
+            # STALE-LABEL TOCTOU is handled by INVALIDATING THE STATE, not by inspecting this run's
+            # event. The first attempt keyed on `github.event.action == "synchronize"` and was
+            # bypassable three ways (security review Blocks 1/2, 2026-08-04): an `edited` event
+            # re-ran the gate green at the same head; removing and re-adding the label re-ran it as
+            # `labeled` — which the failure message literally instructed the user to do; and
+            # close→push→reopen never emits `synchronize` at all. An event is a moment; the question
+            # "was this diff reviewed" is about STATE.
+            #
+            # `.github/workflows/security-label-reset.yml` now strips the label whenever commits
+            # land, so by the time this arm reads it the label means "reviewed at THIS head" — and
+            # every one of those three bypasses ends with no label rather than a stale one.
             summary "security-path: PASS — security-flagged paths present AND 'security-reviewed' label posted (floor #3 review recorded)"
             printf 'flagged paths:\n%s\n' "$hits"
           else

@@ -1,0 +1,65 @@
+# Strips `security-reviewed` whenever new commits land on a PR.
+#
+# WHY THIS EXISTS. `security-path` (btb-gates.yml) passes a security-flagged diff when the
+# `security-reviewed` label is present. A label is STATE, and state goes stale: review a benign
+# diff, get labelled, then push. The label still says "reviewed" about code nobody reviewed.
+#
+# The first attempt at closing this lived inside `security-path` and keyed on
+# `github.event.action == "synchronize"`. It was bypassable three ways, all found by security
+# review on 2026-08-04:
+#   * an `edited` event re-ran the gate at the SAME head with a different action — green superseded
+#     the red, one click, no commits;
+#   * removing and re-adding the label re-ran it as `labeled` — which that gate's own failure
+#     message instructed the user to do, so the documented remedy WAS the bypass;
+#   * close → push → reopen never emits `synchronize` at all.
+# An event is a moment. "Has this diff been reviewed" is a question about state, so the fix has to
+# change the state.
+#
+# WHY `pull_request_target`, AND WHY THAT IS SAFE HERE. Removing a label needs
+# `pull-requests: write`, which a fork-originated `pull_request` token can never carry — so a
+# `pull_request`-triggered stripper would silently no-op on exactly the PRs that matter most.
+# `pull_request_target` runs with the BASE repository's token, which has the permission.
+#
+# `pull_request_target` is normally dangerous because it grants a privileged token to a workflow
+# that may check out and execute fork code. This workflow CHECKS OUT NOTHING and RUNS NO REPOSITORY
+# CODE. It has no `actions/checkout`, no `run:` touching the PR's tree, and a single API call whose
+# only inputs are the PR number and a literal label name. There is no path by which fork-controlled
+# content executes. Do not add a checkout step here — that is precisely the "pwn request" pattern,
+# and it would hand a write-scoped token to attacker-controlled code.
+#
+# `reopened` is included because commits CAN land while a PR is closed, and reopening emits
+# `reopened` rather than `synchronize` — the third bypass above.
+
+name: security-label-reset
+
+on:
+  pull_request_target:
+    types: [synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write   # the whole point: invalidate the label. Nothing else is granted.
+
+jobs:
+  reset:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Strip security-reviewed (new commits invalidate the prior review)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # `|| true` on the DELETE only: the label is frequently absent (most pushes are to PRs
+          # that were never labelled), and GitHub returns 404 for "label not on issue". That is the
+          # desired end state, not an error. The read above it is NOT tolerant — if we cannot
+          # determine the label set we must not report success.
+          labels="$(gh pr view "$PR" --repo "$REPO" --json labels -q '.labels[].name')"
+          if printf '%s\n' "$labels" | grep -qxF 'security-reviewed'; then
+            gh api -X DELETE "repos/${REPO}/issues/${PR}/labels/security-reviewed" >/dev/null || true
+            echo "security-reviewed stripped — new commits landed, so the prior review no longer describes this diff."
+            echo "Re-run the security review against the current diff, then re-apply the label." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "no security-reviewed label present — nothing to strip."
+          fi

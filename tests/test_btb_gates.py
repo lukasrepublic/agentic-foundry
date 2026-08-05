@@ -102,10 +102,16 @@ def test_every_gate_job_states_its_tier_and_labels_tier_b_advisory(tmp_path):
     #
     # So drive each job's real step body three times over the same PASS row, varying only what the
     # branch endpoint reports, and require all three readings to differ correctly.
+    # The protected=true row deliberately does NOT expect a "tier: A (enforced)" claim. `.protected`
+    # is a coarse boolean — true for a branch protected only by "restrict deletions" — so it proves
+    # SOMETHING guards the branch, never that THESE contexts are required, and a read-only token
+    # cannot enumerate that. An earlier revision did claim Tier A here and the security review
+    # (Block 3, 2026-08-04) called it an unearned claim. The assertion now pins the honest wording,
+    # so a future edit that re-inflates it goes red.
     rows = [
-        ('{"name":"main","protected":true}',  "tier: A (enforced)",  "server-protected"),
-        ('{"name":"main","protected":false}', "tier: B (advisory)",  "advisory"),
-        ("",                                  "tier: UNKNOWN",       "advisory"),   # unreadable -> fail safe
+        ('{"name":"main","protected":true}',  "IS server-protected",       "cannot enumerate WHICH contexts"),
+        ('{"name":"main","protected":false}', "tier: B (advisory)",        "advisory"),
+        ("",                                  "merge floor: UNKNOWN",      "advisory"),   # unreadable -> fail safe
     ]
     cases = (
         ("spec-link",     dict(pr_body="Spec: specs/features/foundry/x/feat-x.md\n", labels=[], files=["a.py"])),
