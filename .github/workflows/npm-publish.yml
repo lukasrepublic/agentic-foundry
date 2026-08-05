@@ -113,7 +113,6 @@ jobs:
         # branch code as a release, and provenance ATTESTS it — worse than no attestation, because
         # it is truthful about a ref nobody reviewed (security review R4, 2026-08-04).
         if: steps.gate.outputs.publish == 'true' && inputs.dry_run != true && github.ref_type == 'tag'
-
         working-directory: cli
         run: npm publish
 
