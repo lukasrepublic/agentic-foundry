@@ -461,6 +461,111 @@ def tag_pin_coherence(tree, version, *, resolver=None):
                   f"{'tag commit' if sha == tagc else 'tag parent'}) — coherent{note}")
 
 
+def published_tag_coherence(tree, version, *, ls_remote=None):
+    """(ok, detail) — the NON-HERMETIC, POST-PUSH check: the tag an adopter fetches must be the tag
+    this release verified.
+
+    `tag_pin_coherence` proves the pin is coherent inside the LOCAL object store. That check — and
+    the whole pytest suite — is structurally blind to one thing: whether the tag exists UPSTREAM at
+    all, and whether upstream's tag resolves to the commit the local one does. Nothing hermetic can
+    see it, because the answer lives on a remote.
+
+    That blindness has published twice in one day. The F3 zero-history reset deleted the `v0.26.x`
+    tags upstream while every local check stayed green, so every copy-pasted install line resolved a
+    dead ref for every stranger. A second instance followed the same day. Both were found by a human
+    reading the published artifact, which is not a control.
+
+    WHY COMPARING REFS IS ENOUGH TO PROVE THE PINNED SHA EXISTS UPSTREAM. `ls-remote` lists refs; it
+    cannot test an arbitrary object. But `tag_pin_coherence` has already established that `source.sha`
+    is the tag commit or its FIRST PARENT (AC-TPC-5's adjacency check — never merely an ancestor). So
+    if upstream's peeled tag resolves to the same commit as the local tag, the pinned sha is that
+    commit or its parent, both necessarily reachable from upstream's tag, hence present upstream. The
+    ref comparison covers the sha transitively. This derivation is the reason the check is sound, so
+    it is stated rather than left for a reader to reconstruct — and it is why this function REFUSES
+    when `tag_pin_coherence` has not been run and passed (below): without adjacency the derivation
+    does not hold.
+
+    ORDERING. This CANNOT run at `--verify-tag` time. The plan's step order is tag -> verify-tag ->
+    push, so at verify-tag the tag is deliberately local-only and an upstream probe would fail every
+    correct release. It is a separate step AFTER both pushes, which is the first moment the property
+    is real.
+
+    `ls_remote` is an OPTIONAL keyword-only injection seam -- `(tree, tag) -> (rc, stdout)` --
+    mirroring the shipped `resolver` / `acceptance_fn` / `er_state_fn` / `suite_runner` convention.
+    `main()`'s `--verify-published` branch passes NO argument, mirroring the existing never-inject
+    guard on the CLI path.
+    """
+    tag = f"v{version}"
+
+    def git(*a):
+        """(rc, stdout). rc=-1 means the command could not be RUN at all — never conflated with a
+        clean non-zero exit, for the same reason tag_pin_coherence's helper separates them."""
+        try:
+            r = subprocess.run(["git", "-C", tree, *a],
+                               capture_output=True, text=True, timeout=30)
+        except Exception:
+            return -1, ""
+        return r.returncode, (r.stdout or "").strip()
+
+    # --- the local pin must ALREADY be coherent. This check's soundness rests on AC-TPC-5 adjacency
+    # (see the docstring derivation); running it against an unverified local pin would compare two
+    # refs and report a green that proves nothing about the sha. Fail closed, and name the order.
+    ok, detail = tag_pin_coherence(tree, version)
+    if not ok:
+        return False, (f"refusing the upstream check: the LOCAL pin is not coherent, so comparing "
+                       f"refs would prove nothing about source.sha — {detail}")
+
+    rc, local = git("rev-parse", f"{tag}^{{commit}}")
+    if rc != 0 or not local:
+        return False, (f"tag {tag} does not resolve locally, so there is nothing to compare "
+                       f"upstream against. Tag first, then push, then re-run this check.")
+
+    # --- the probe. `refs/tags/X^{}` is the PEELED commit of an annotated tag; a lightweight tag
+    # emits no peeled line, so both refspecs are requested and the peeled one preferred when present.
+    if ls_remote is None:
+        rc, out = git("ls-remote", "origin", f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}")
+    else:
+        rc, out = ls_remote(tree, tag)
+
+    # --- A NETWORK FAILURE IS NOT A PASS. The entire point of this check is that it leaves the
+    # hermetic world, so "I could not reach the remote" must never render as "the remote is fine".
+    # It refuses, exactly as tag_pin_coherence refuses an unreadable git dir.
+    if rc != 0:
+        return False, (f"cannot verify the published tag: `git ls-remote origin refs/tags/{tag}` "
+                       f"{'could not run' if rc < 0 else f'exited {rc}'}. This check is non-hermetic "
+                       f"by design; an unreachable remote is REFUSED, never reported as coherent.")
+
+    peeled, plain = "", ""
+    for line in (out or "").splitlines():
+        parts = line.split("\t", 1)
+        if len(parts) != 2:
+            continue
+        obj, ref = parts[0].strip(), parts[1].strip()
+        if ref == f"refs/tags/{tag}^{{}}":
+            peeled = obj
+        elif ref == f"refs/tags/{tag}":
+            plain = obj
+    upstream = peeled or plain
+
+    # --- THE F3 CLASS. The tag resolves locally and the pin is coherent, but the ref an adopter
+    # would fetch is simply not there. Every published install line is dead and nothing local says so.
+    if not upstream:
+        return False, (f"PUBLISHED TAG MISSING: {tag} resolves locally to {local[:12]}… and its pin "
+                       f"is coherent, but `ls-remote origin` lists no refs/tags/{tag}. Every "
+                       f"published `#{tag}` install line resolves a dead ref. Push the tag "
+                       f"(`git push origin {tag}`), then re-run.")
+
+    if upstream != local:
+        return False, (f"PUBLISHED TAG DIVERGED: {tag} resolves upstream to {upstream[:12]}… but "
+                       f"locally to {local[:12]}…. An adopter installing `#{tag}` receives the "
+                       f"upstream commit, which is NOT the one this release verified. Do not "
+                       f"reconcile by force-pushing the tag — determine which is correct first.")
+
+    return True, (f"published tag {tag} resolves upstream to {upstream[:12]}…, matching the verified "
+                  f"local tag; source.sha is that commit or its first parent, so the pin resolves "
+                  f"from a clean clone")
+
+
 def worktree_clean(tree):
     """(ok, detail) — the candidate tree has no uncommitted tracked changes.
 
@@ -537,6 +642,13 @@ def publish_plan(tree, version):
     line the reorder exists for, and the `--verify-tag` step re-runs the machine check against the
     tag that actually now exists — which is the ONLY point at which the coherence gate is not
     structurally a no-op.
+
+    THE PLAN ENDS WITH A NON-HERMETIC CHECK, AFTER THE PUSHES. Everything above — and the whole
+    pytest suite — reasons about the LOCAL object store, so none of it can see "the tag is not
+    upstream" or "upstream's tag resolves elsewhere". That blind spot published twice in one day
+    when the F3 zero-history reset deleted the tags upstream while every local check stayed green.
+    `--verify-published` closes it, and it CANNOT be folded into `--verify-tag`: at that point the
+    tag is deliberately local-only, so an upstream probe would refuse every correct release.
     """
     tag = f"v{version}"
     return [
@@ -551,6 +663,8 @@ def publish_plan(tree, version):
         f"python3 scripts/foundry-cut-release.py --tree {tree} --version {version} --verify-tag  # MACHINE re-check; must print TAG-PIN-COHERENT",
         f"git -C {tree} push origin main                           # never force-push",
         f"git -C {tree} push origin {tag}                          # if rejected by a parallel push: reconcile by MERGE, never force-push",
+        f"python3 scripts/foundry-cut-release.py --tree {tree} --version {version} --verify-published  "
+        f"# NON-HERMETIC post-push re-check; must print PUBLISHED-TAG-COHERENT",
     ]
 
 
@@ -829,11 +943,26 @@ def main(argv=None):
                          "vTARGET, after tagging and BEFORE pushing. This is the step at which the "
                          "check stops being a no-op: during a first cut the tag does not exist yet, "
                          "so cut-release can only assert the PLAN's order, not the artifact.")
+    ap.add_argument("--verify-published", action="store_true",
+                    help="re-run ONLY the NON-HERMETIC upstream check, AFTER pushing the tag: the "
+                         "ref an adopter fetches must resolve to the commit this release verified. "
+                         "Cannot be folded into --verify-tag, which runs before the push by design. "
+                         "An unreachable remote REFUSES — it is never reported as coherent.")
     args = ap.parse_args(argv)
     if args.selftest:
         return _selftest()
     if not args.tree or not args.version:
         ap.error("--tree and --version are required (unless --selftest)")
+    if args.verify_tag and args.verify_published:
+        ap.error("--verify-tag and --verify-published are separate steps in the plan's order "
+                 "(tag -> verify-tag -> push -> verify-published); run them one at a time")
+    if args.verify_published:
+        # NO ls_remote here, EVER — same never-inject guard as the suite_runner on the cut path. A
+        # stub on the CLI path would make every release report a fabricated upstream, which is
+        # strictly worse than not having the check, because it would carry a green.
+        ok, detail = published_tag_coherence(os.path.abspath(args.tree), args.version)
+        print(f"{'PUBLISHED-TAG-COHERENT' if ok else 'PUBLISHED-TAG-INCOHERENT'}: {detail}")
+        return 0 if ok else 2
     if args.verify_tag:
         # A dedicated, callable post-tag verifier. Without it AC-TPC-2 has no caller on the cut that
         # creates the tag, and the only defense against recurrence is the operator following the
