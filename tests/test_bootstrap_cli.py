@@ -856,7 +856,22 @@ def test_an_edited_managed_file_is_reported_not_overwritten(tmp_path):
 def test_drift_classes_are_exactly_the_dpf_vocabulary():
     rc = run_node_tests(pattern="AC-BCL-8: classifyDrift")
     assert rc.returncode == 0, rc.stdout + rc.stderr
-    assert "pass 1" in rc.stdout or re.search(r"# pass 1", rc.stdout) or "ℹ pass 1" in rc.stdout
+    # Assert the NAMED test ran and passed — not a global pass COUNT.
+    #
+    # The count form (`"pass 1" in rc.stdout`) was counting the wrong thing. Under
+    # `--test-name-pattern`, node still visits every file, and a file containing NO matching test
+    # is itself reported as a passing test (`✔ test/handoff.test.mjs`). So the total was
+    # (matching tests) + (files with no match), and adding ANY new test file anywhere under
+    # cli/test/ turned this red — which is exactly how it broke when cli/test/handoff.test.mjs was
+    # added, a file with no connection to drift classes at all.
+    #
+    # What the assertion meant was "the pattern selected this one test and it passed". That is what
+    # it now says, and it is strictly stronger: the count form would have been satisfied by any
+    # single passing test, including a file-level pass with the real test silently not matching.
+    name = "AC-BCL-8: classifyDrift emits exactly the AC-DPF-8 vocabulary, never another class name"
+    passed = re.search(rf"^(?:✔|ok \d+ -) {re.escape(name)}", rc.stdout, re.M)
+    assert passed, f"the named drift-vocabulary test did not run/pass:\n{rc.stdout}"
+    assert re.search(r"(?:^|\s)(?:#|ℹ) fail 0\b", rc.stdout, re.M), rc.stdout
 
 
 def test_covers_agrees_with_the_map_suite_on_the_shared_table():
