@@ -133,9 +133,54 @@ jobs:
           PKG_VERSION: ${{ steps.gate.outputs.version }}
         run: |
           set -euo pipefail
-          att="$(npm view "${PKG_NAME}@${PKG_VERSION}" dist.attestations 2>/dev/null || true)"
+          # POLLED, not read once. The v1.2.1 cut published create-agentic-workspace@0.2.1 WITH a
+          # valid SLSA provenance attestation and this step still failed: `npm view` ran seconds
+          # after `npm publish` and the registry had not yet surfaced `dist.attestations`. The
+          # attestation was present moments later. A single read turns registry propagation into a
+          # red check on a correct, fully-attested publish — and a red here is worse than noise,
+          # because the honest response to "the publish produced no attestation" is to distrust a
+          # release that was in fact fine.
+          #
+          # So: retry with backoff, and keep the assertion itself exactly as strict. This does NOT
+          # weaken the check — `npm view` on an absent field prints nothing and EXITS 0, so the
+          # verdict is still read from the OUTPUT, never the exit code (security review R2,
+          # 2026-08-04), and an attestation that never appears still fails the run. The only thing
+          # that changed is how long we are willing to wait for the registry to catch up.
+          # `--prefer-online` + a THROWAWAY cache are what make the retry actually retry. `npm view`
+          # goes through pacote/make-fetch-happen with `preferOnline: false` and honours the
+          # registry's cache-control (npmjs serves the packument with a max-age), and the earlier
+          # "Skip if this version is already on the registry" step ALREADY fetched and cached that
+          # packument — the copy from BEFORE the publish. Without these flags all six reads can be
+          # served from that stale cache without revalidation, so the loop would poll for ~150s and
+          # still fail on a correctly attested publish: the exact flake this is meant to fix, just
+          # slower (security review Risk, 2026-08-06).
+          NPM_VERIFY_CACHE="$RUNNER_TEMP/npm-verify-cache"
+          att=""
+          err="$RUNNER_TEMP/npm-view-attestations.err"
+          for attempt in 1 2 3 4 5 6; do
+            # stderr is CAPTURED rather than discarded. Suppressing it meant a registry outage, a
+            # DNS failure or an auth error produced six silent empty reads and then an error line
+            # asserting "the publish produced none" — a claim the step had not observed. A red
+            # check must distinguish "no attestation" from "could not ask".
+            att="$(npm view --prefer-online --cache "$NPM_VERIFY_CACHE" \
+                     "${PKG_NAME}@${PKG_VERSION}" dist.attestations 2>"$err" || true)"
+            # Assert on SHAPE, not mere non-emptiness: `[ -n "$att" ]` alone would accept any
+            # non-blank string, so require the provenance marker the field is supposed to carry.
+            if printf '%s' "$att" | grep -q 'predicateType'; then
+              echo "attestation visible on attempt ${attempt}."
+              break
+            fi
+            att=""
+            if [ "$attempt" -lt 6 ]; then
+              delay=$((attempt * 10))
+              echo "attestation not yet visible (attempt ${attempt}/6) — registry propagation; sleeping ${delay}s"
+              sleep "$delay"
+            fi
+          done
           if [ -z "$att" ]; then
-            echo "::error::no provenance attestation on ${PKG_NAME}@${PKG_VERSION} — the publish produced none"
+            echo "::error::no provenance attestation on ${PKG_NAME}@${PKG_VERSION} after 6 attempts over ~150s"
+            echo "--- last stderr from npm view (empty means the registry answered, with no attestation) ---"
+            cat "$err" || true
             exit 1
           fi
           echo "attestation present for ${PKG_NAME}@${PKG_VERSION}:"
