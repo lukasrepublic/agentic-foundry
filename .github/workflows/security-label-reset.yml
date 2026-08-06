@@ -1,0 +1,182 @@
+# Strips `security-reviewed` whenever new commits land on a PR.
+#
+# WHY THIS EXISTS. `security-path` (btb-gates.yml) passes a security-flagged diff when a label
+# NAMING THE COMMIT AND BASE UNDER REVIEW is present — `security-reviewed:<head12>-<base8>`. It
+# began life as a BARE `security-reviewed`, and that is the history this file records: a label is
+# STATE, and state goes stale — review a benign diff, get labelled, then push, and the label still
+# says "reviewed" about code nobody reviewed. The bare spelling no longer satisfies the gate.
+#
+# The first attempt at closing this lived inside `security-path` and keyed on
+# `github.event.action == "synchronize"`. It was bypassable three ways, all found by security
+# review on 2026-08-04:
+#   * an `edited` event re-ran the gate at the SAME head with a different action — green superseded
+#     the red, one click, no commits;
+#   * removing and re-adding the label re-ran it as `labeled` — which that gate's own failure
+#     message instructed the user to do, so the documented remedy WAS the bypass;
+#   * close → push → reopen never emits `synchronize` at all.
+# An event is a moment. "Has this diff been reviewed" is a question about state, so the fix has to
+# change the state.
+#
+# WHY `pull_request_target`, AND WHY THAT IS SAFE HERE. Removing a label needs
+# `pull-requests: write`, which a fork-originated `pull_request` token can never carry — so a
+# `pull_request`-triggered stripper would silently no-op on exactly the PRs that matter most.
+# `pull_request_target` runs with the BASE repository's token, which has the permission.
+#
+# `pull_request_target` is normally dangerous because it grants a privileged token to a workflow
+# that may check out and execute fork code. This workflow CHECKS OUT NOTHING and RUNS NO REPOSITORY
+# CODE. It has no `actions/checkout`, no `run:` touching the PR's tree, and a single API call whose
+# only inputs are the PR number and a literal label name. There is no path by which fork-controlled
+# content executes. Do not add a checkout step here — that is precisely the "pwn request" pattern,
+# and it would hand a write-scoped token to attacker-controlled code.
+#
+# `reopened` is included because commits CAN land while a PR is closed, and reopening emits
+# `reopened` rather than `synchronize` — the third bypass above.
+#
+# THIS WORKFLOW IS BELT-AND-BRACES FOR THE HEAD-SHA CASE, NOT THE MECHANISM. Stripping alone lost a
+# race: this workflow and `security-path` start from the same event with no ordering, so the gate
+# could read the label before the DELETE landed and record a terminal PASS for an unreviewed head.
+# The actual guarantee is that the label is BOUND TO (HEAD SHA, BASE REF) —
+# `security-reviewed:<head12>-<base8>` either names the commit AND base being gated or it does not.
+# This workflow only keeps the label set tidy; it is not what makes the gate correct.
+#
+# `edited` MATTERS because a base retarget arrives only as that event, and it changes the effective
+# diff with NO new commits and NO change to the head SHA. On a base change this workflow strips
+# EVERY review label, the current head's included, since none of them describe the new diff.
+#
+# It is NOT, however, the control for that case — an earlier revision of this header said it was,
+# and that was true only while the label bound the head alone. See the next paragraph: the label
+# now names the base too, so the gate refuses a mismatched base from STATE. Stripping is still
+# worth doing (fail-closed: at worst an unnecessary strip costing a re-label), but nothing rests
+# on it, and a reader must not conclude the `-${BASE_TAG}` suffix or the gate's BASE_FROM arm is
+# redundant machinery this workflow already covers (security review, 2026-08-06).
+#
+# WHAT ACTUALLY CLOSES THE RETARGET CASE (this paragraph used to decline it).
+# The review label is bound to (head SHA, BASE REF): `security-reviewed:<head12>-<base8>`, where
+# base8 is sha256 of the base ref NAME. A label earned against `main` does not name a PR now
+# targeting anything else, whatever event is in flight — so the verdict is STATE, and no longer
+# depends on the `edited` event firing or on this workflow's DELETE succeeding.
+#
+# An earlier revision of this very header said base binding "was priced and declined". That decline
+# was against binding to `base.SHA` — rejected because the base tip moves on every merge into main,
+# invalidating every outstanding label with no PR event to announce it. Binding to the ref NAME
+# carries none of that cost. Leaving the decline in place while the code below implemented it would
+# have told the next maintainer this was already-evaluated-and-rejected, i.e. safe to simplify out
+# (security review Risk 2, 2026-08-06).
+#
+# THIS WORKFLOW IS NOW CLEANUP, NOT THE CONTROL, on every path. It keeps the label set honest for
+# the next run; the gate's correctness rests on the label naming (head, base).
+name: security-label-reset
+
+on:
+  pull_request_target:
+    types: [synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: write   # the whole point: invalidate the label. Nothing else is granted.
+
+jobs:
+  reset:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Strip security-reviewed (new commits invalidate the prior review)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          # Non-empty ONLY when this `edited` event retargeted the base branch. Title/body edits
+          # leave it empty, so they cost nothing — the diff did not move.
+          BASE_FROM: ${{ github.event.changes.base.ref.from }}
+        run: |
+          set -euo pipefail
+          # `|| true` on the DELETE only: the label is frequently absent (most pushes are to PRs
+          # that were never labelled), and GitHub returns 404 for "label not on issue". That is the
+          # desired end state, not an error. The read above it is NOT tolerant — if we cannot
+          # determine the label set we must not report success.
+          labels="$(gh pr view "$PR" --repo "$REPO" --json labels -q '.labels[].name')"
+
+          # TWELVE hex, not seven — see the matching note in btb-gates.yml. A 28-bit prefix is
+          # grindable in seconds, and at 7 hex an attacker-ground head would make `keep` MATCH,
+          # so this workflow would deliberately preserve a label describing a different commit
+          # while the gate accepted it (security review Block 1, 2026-08-06). Both files must use
+          # the same width or the stripper and the gate disagree about which label is current.
+          # Computed IDENTICALLY to btb-gates.yml (head12 + 8-hex digest of the base ref name).
+          # If these two ever diverge, the stripper and the gate disagree about which label is
+          # current — the same hazard the sha-width note describes, one field wider.
+          BASE_TAG="$(printf '%s' "$BASE_REF" | sha256sum | cut -c1-8)"
+          keep="security-reviewed:${HEAD_SHA:0:12}-${BASE_TAG}"
+
+          # Normally the current head's label is KEPT: it is the one case where the review genuinely
+          # describes what is proposed, and deleting it would force a pointless re-review. When the
+          # BASE moved, the head SHA is unchanged while the diff is not, so that label is exactly
+          # the stale one — `keep` is emptied and every review label goes.
+          #
+          # NOTE the division of labour: `security-path` ALSO fails closed on a base retarget, from
+          # its own event payload, and THAT is the control. This strip is cleanup that makes the
+          # label state honest for the next run; it is not what makes the gate correct.
+          base_changed=0
+          if [ -n "${BASE_FROM:-}" ]; then
+            keep=""
+            base_changed=1
+            echo "base retargeted from '${BASE_FROM}' — the head SHA did not move but the diff did," \
+                 "so EVERY review label is stripped, including this head's."
+          fi
+
+          stripped=0
+          failed=0
+          while IFS= read -r l; do
+            case "$l" in
+              security-reviewed*)
+                if [ "$l" != "$keep" ]; then
+                  # The label name is percent-encoded: it is operator-authored free text and may
+                  # contain a space or a slash, either of which would otherwise change which URL
+                  # path this DELETE addresses.
+                  enc="$(printf '%s' "$l" | jq -sRr @uri)"
+                  # `|| true` is deliberate for the ORDINARY case: GitHub 404s "label not on
+                  # issue", which is the desired end state, not an error. But it must not silently
+                  # swallow a 5xx or a rate-limit on the base-retarget path, where this strip is
+                  # the only thing acting — so success is VERIFIED below rather than assumed here,
+                  # and `stripped` is only incremented for a call that actually returned 0.
+                  if gh api -X DELETE "repos/${REPO}/issues/${PR}/labels/${enc}" >/dev/null 2>&1; then
+                    echo "stripped '$l' — it does not describe the diff now proposed."
+                    stripped=$((stripped + 1))
+                  else
+                    echo "DELETE for '$l' did not succeed (already absent, or the API refused)."
+                    failed=$((failed + 1))
+                  fi
+                fi
+                ;;
+            esac
+          done <<< "$labels"
+
+          if [ "$base_changed" -eq 1 ]; then
+            # RE-READ and prove the end state. On this path the strip is load-bearing, and a log
+            # line saying "stripped" is not evidence that the label is gone.
+            #
+            # The read is SEPARATED from the match, and its failure is FATAL. The first version was
+            # `remaining="$(gh pr view … | grep -c … || true)"`, which is fail-OPEN in the one place
+            # that must not be: if `gh pr view` 5xx'd or rate-limited, the pipeline died, `grep -c`
+            # counted an empty stream, `remaining` became "0", and the job printed "verified: no
+            # review label survives" and exited 0 with the stale label still on the PR. That is
+            # precisely the failure this block was added to close, displaced one level up — and it
+            # contradicted this file's own claim above that the label read is not tolerant
+            # (security review Risk 1, 2026-08-06).
+            if ! after="$(gh pr view "$PR" --repo "$REPO" --json labels -q '.labels[].name')"; then
+              echo "::error::base was retargeted but the label set could not be re-read — cannot confirm the stale review label is gone"
+              exit 1
+            fi
+            if printf '%s\n' "$after" | grep -q '^security-reviewed'; then
+              echo "::error::base was retargeted but a review label survives — the label set still asserts a review of a different diff"
+              printf '%s\n' "$after" | grep '^security-reviewed'
+              exit 1
+            fi
+            echo "verified: no review label survives the base retarget."
+          fi
+
+          if [ "$stripped" -eq 0 ] && [ "$failed" -eq 0 ]; then
+            echo "no stale review label present — nothing to strip."
+          elif [ "$stripped" -gt 0 ]; then
+            echo "Re-run the security review against the current diff, then apply 'security-reviewed:${HEAD_SHA:0:12}-${BASE_TAG}'." >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -18,16 +18,21 @@ rows:
     expect_exit_zero: true
     expect_summary_contains: "spec-link: PASS — factory lane"
 
-  - name: lane-light-body
+  # NEGATIVE CONTROL, and the security-relevant row in this matrix. `Lane: light` in the PR BODY
+  # used to grant the light lane; it no longer does, because a fork author writes their own body
+  # and could therefore self-declare the lane and skip spec-link entirely. Deliberately paired with
+  # a CODE file: a docs-only file would pass via the docs-only arm and mask whether the body was
+  # honoured, which is precisely how this row failed to catch the hole before.
+  - name: lane-light-body-is-not-a-signal
     pr_body: |
       Lane: light
 
-      Docs-only charter-authorized tweak, no factory spec.
+      A code change trying to claim the light lane from the body alone.
     labels: []
     files:
-      - "docs/some-note.md"
-    expect_exit_zero: true
-    expect_summary_contains: "spec-link: PASS (not applicable) — light lane"
+      - "scripts/foundry_dispatch_lint.py"
+    expect_exit_zero: false
+    expect_summary_contains: "spec-link: FAIL"
 
   - name: lane-light-label
     pr_body: |

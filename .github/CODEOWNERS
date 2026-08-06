@@ -1,0 +1,37 @@
+# Code owners for agentic-foundry.
+#
+# WHAT THIS DOES AND DOES NOT DO — stated plainly, because a CODEOWNERS file that people believe
+# is enforcing when it is not is worse than no file at all.
+#
+# GitHub only *requires* code-owner review when the branch protection rule for `main` sets
+# `require_code_owner_review: true`. It is currently FALSE here: this repository runs a
+# solo-operator model, and requiring a code-owner review would mean requiring a second person who
+# does not exist — the merge would be unsatisfiable rather than protected.
+#
+# So today this file does two real things and one theoretical one:
+#   * it requests the owner as a reviewer automatically on any PR touching these paths, which is
+#     the reminder that matters when the fleet is running many parallel sessions;
+#   * it is the machine-readable record of which paths are considered privileged surface;
+#   * and it becomes ENFORCING the moment a second maintainer exists and
+#     `require_code_owner_review` is turned on — no further edit needed.
+#
+# Recorded as a Tier-A precondition at the 2026-07-27 floor-#3 review ("CODEOWNERS on .github/").
+
+# Default owner for everything not matched more specifically below.
+*                       @lukasrepublic
+
+# CI and automation — the merge floor itself. A change here can weaken every other gate, and one
+# of these workflows now holds `id-token: write` and publishes to a public registry.
+/.github/               @lukasrepublic
+
+# The plugin manifest and the shipped hook wiring — prompt-level and load-time executable surface.
+/.claude-plugin/        @lukasrepublic
+/hooks/                 @lukasrepublic
+
+# Authorization, contracts and the merge gate — the front-authorization floor's own machinery.
+/scripts/foundry_authz.py       @lukasrepublic
+/scripts/foundry-authorize.py   @lukasrepublic
+/scripts/foundry_contract.py    @lukasrepublic
+
+# The publishable CLI: what an adopter executes on a clean machine, before any session exists.
+/cli/                   @lukasrepublic

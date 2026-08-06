@@ -34,13 +34,32 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "btb-gates.yml"
 CI_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 JOB_NAME = "shell-parse-bash32"
+# The ONE shared `gh` stub (tests/fixtures/gh-stub/gh) — the same binary the sibling gate tests
+# use, so the branch-protection probe is served identically here rather than by a second stub that
+# could drift from it.
+GH_STUB_DIR = Path(__file__).resolve().parent / "fixtures" / "gh-stub"
 
 # The workflow's `on:` block, FROZEN — byte-verbatim of the shipped trigger surface. AC-B32-12
 # requires this atom leave it byte-unchanged (security-path depends on the labeled/unlabeled
 # trigger types to re-run after the `security-reviewed` label is posted; narrowing `types:` would
 # silently degrade that gate). Same shape as test_btb_gates.py's `_PRE_WIDENING_ALTERNATION`.
+# UNCHANGED from the shipped surface. `edited` was briefly added here during the 2026-08-04 Tier-A
+# hardening and REMOVED again in the same cycle: it re-ran the gates at the same head SHA under a
+# different action, letting a PR author supersede a red staleness verdict by editing the
+# description (security review Block 1). This constant is why that had to be a deliberate, visible
+# edit rather than a quiet one — it did its job.
 _FROZEN_ON_BLOCK = {
-    "pull_request": {"types": ["opened", "synchronize", "reopened", "labeled", "unlabeled"]},
+    "pull_request": {
+        # `edited` was RE-ADDED 2026-08-06 and the freeze moved with it, deliberately. It had been
+        # removed because the staleness verdict then keyed on `github.event.action`, so an
+        # `edited` re-run at the same head could supersede a red. That reason is gone: the verdict
+        # is now a pure function of (files, labels, head SHA), so a re-run at an unchanged head
+        # gives the same answer. It is back because a BASE RETARGET arrives only as `edited`,
+        # changes the effective diff with no new commits, and `security-path` must fail closed on
+        # it — without the trigger the gate never re-runs and its previous green stands for a diff
+        # it never saw (review R1, 2026-08-06).
+        "types": ["opened", "synchronize", "reopened", "labeled", "unlabeled", "edited"],
+    },
 }
 
 _DOCKER_STUB = '''#!/bin/sh
@@ -195,12 +214,61 @@ def test_job_present_structurally_shaped_and_never_skippable():
 # ==================================================================== AC-B32-4 (tier honesty) ==
 
 def test_states_tier_advisory(tmp_path):
+    """AC-B32-4(c): this job states its enforcement tier "as `spec-link` and `security-path`
+    already do" — and what those two do, since the 2026-08-04 tier-honesty pass, is DERIVE it from
+    the live protection state rather than print a literal.
+
+    This test used to assert the literal `tier: B`, which is precisely how the job came to ship
+    "tier B, advisory — does not server-side block on this repo's current plan" from a public repo
+    with enforcing branch protection: the claim was wrong, and the test that was supposed to catch
+    it was pinned to the same wrong constant. So drive the real step body over each protection
+    state and require three genuinely distinct readings — a body that echoed one constant
+    containing all three substrings cannot pass.
+    """
     docker_bin = _install_docker_stub(tmp_path)
+    gh_bin = GH_STUB_DIR
     run = _parse_step_run(_load_doc())
-    proc, summary = _run_script(run, cwd=REPO_ROOT, path_prepend=docker_bin)
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "tier: B" in summary, f"missing tier statement:\n{summary}"
-    assert "advisory" in summary, f"missing the honest 'advisory' label:\n{summary}"
+
+    rows = [
+        ('{"name":"main","protected":true}',  "IS server-protected", "cannot enumerate WHICH contexts"),
+        ('{"name":"main","protected":false}', "tier: B (advisory)",  "advisory"),
+        ("",                                  "merge floor: UNKNOWN", "advisory"),   # unreadable -> fail safe
+    ]
+    observed = set()
+    for branch_body, expected_tier, expected_word in rows:
+        proc, summary = _run_script(
+            run, cwd=REPO_ROOT, path_prepend=f"{gh_bin}:{docker_bin}",
+            extra_env={"GH_STUB_BRANCH_BODY": branch_body, "REPO": "acme/demo",
+                       "BASE": "main", "GH_TOKEN": "x-test-token"},
+        )
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert expected_tier in summary, (
+            f"the parse gate did not derive {expected_tier!r} when the branch endpoint returned "
+            f"{branch_body!r}:\n{summary}")
+        assert expected_word in summary, f"summary missing {expected_word!r}:\n{summary}"
+        # OBSERVED, not expected — the sibling test in test_btb_gates.py collected the row's own
+        # literal here and asserted the count was 3, which made the assertion unfalsifiable (review
+        # R2, 2026-08-06). Reading the emitted line back is what makes "three distinct readings"
+        # a claim about the step body rather than about this table.
+        tier_lines = [ln for ln in summary.splitlines() if ln.startswith("**merge floor")]
+        assert len(tier_lines) == 1, (
+            f"the parse gate emitted {len(tier_lines)} merge-floor lines, expected exactly 1:\n{summary}")
+        observed.add(tier_lines[0])
+    assert len(observed) == 3, (
+        f"the parse gate did not produce three DISTINCT tier readings — a body echoing one constant "
+        f"would satisfy every substring check above and still land here: {observed}")
+
+    # And the literal must be GONE from the verdict lines, where a restated tier would drift from
+    # the probe that derived it. Asserted on the step body text, so re-inlining it goes red even if
+    # the derived line above still happens to be correct.
+    # Comment lines are excluded on purpose: the comment at the removal site QUOTES the literal it
+    # removed, which is the right thing for a comment to do and the wrong thing to convict on.
+    executable = "\n".join(
+        line for line in run.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert "tier B, advisory" not in executable, (
+        "the parse gate's verdict line restates a hardcoded tier — that copy is what shipped a "
+        "false public claim about our own merge floor while this test stayed green")
 
 
 # ==================================================================== AC-B32-5 (fails closed) ==
