@@ -194,7 +194,12 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
       for (const f of findings) print(`  [${f.class}] ${JSON.stringify(f)}`);
     }
 
-    print(TRUST_HANDOFF_TEXT(targetRoot));
+    // Probed here, not inside preview.mjs, which renders text and never touches the filesystem.
+    // `.git` is a DIRECTORY in a normal clone and a FILE in a worktree/submodule, so `existsSync`
+    // on the path is the check that covers both — a directory-only test would tell a worktree user
+    // to re-init a repository they already have.
+    const isGitRepo = fs.existsSync(path.join(targetRoot, '.git'));
+    print(TRUST_HANDOFF_TEXT(targetRoot, { isGitRepo }));
 
     return { exitCode: exitCodeForPlan(plan), output: lines.join('\n') };
   } catch (e) {
