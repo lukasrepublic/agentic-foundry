@@ -255,7 +255,10 @@ def _run_reset(tmp_path, *, labels, head_sha=TEST_HEAD_SHA, base_from="", extra_
     log = tmp_path / "gh-calls.log"
     deleted_log = tmp_path / "gh-deleted.log"
     deleted_log.write_text("", encoding="utf-8")
-    env = {"BASE_FROM": base_from, "GH_STUB_LOG": str(log),
+    # BASE_REF is the base branch the label is bound against; the workflow computes the label's
+    # base component from it, so an unset value dies under `set -u` (loudly, which is correct —
+    # a stripper that guessed the base would delete the wrong labels).
+    env = {"BASE_FROM": base_from, "BASE_REF": "main", "GH_STUB_LOG": str(log),
            "GH_STUB_DELETED_LOG": str(deleted_log)}
     if extra_env:
         env.update(extra_env)
@@ -279,14 +282,14 @@ def test_reset_keeps_this_heads_label_and_strips_every_other():
     with tempfile.TemporaryDirectory() as d:
         proc, _summary, deleted = _run_reset(
             Path(d),
-            labels=["lane:light", "security-reviewed:0badc0d00000", "security-reviewed:abcdef123456",
+            labels=["lane:light", "security-reviewed:0badc0d00000-0d6e4079", "security-reviewed:abcdef123456-0d6e4079",
                     "security-reviewed"],
         )
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "security-reviewed:abcdef123456" not in deleted, (
+    assert "security-reviewed:abcdef123456-0d6e4079" not in deleted, (
         "the label naming the CURRENT head was stripped — every push would demand a re-review of "
         f"a diff already reviewed at that commit. deleted={deleted}")
-    assert sorted(deleted) == ["security-reviewed", "security-reviewed:0badc0d00000"], deleted
+    assert sorted(deleted) == ["security-reviewed", "security-reviewed:0badc0d00000-0d6e4079"], deleted
     assert "lane:light" not in deleted, "the stripper deleted a label outside its remit"
 
 
@@ -298,11 +301,11 @@ def test_reset_strips_this_heads_label_too_when_the_base_was_retargeted():
     with tempfile.TemporaryDirectory() as d:
         proc, _summary, deleted = _run_reset(
             Path(d),
-            labels=["security-reviewed:abcdef123456"],
+            labels=["security-reviewed:abcdef123456-0d6e4079"],
             base_from="some-docs-branch",
         )
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert deleted == ["security-reviewed:abcdef123456"], (
+    assert deleted == ["security-reviewed:abcdef123456-0d6e4079"], (
         "a base retarget left the head-bound review label in place — the diff moved while the head "
         f"SHA did not, so that label describes a review that never happened. deleted={deleted}")
 
@@ -314,7 +317,7 @@ def test_reset_is_a_no_op_for_a_title_or_body_edit():
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         proc, _summary, deleted = _run_reset(
-            Path(d), labels=["security-reviewed:abcdef123456"], base_from="",
+            Path(d), labels=["security-reviewed:abcdef123456-0d6e4079"], base_from="",
         )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert deleted == [], f"a non-base edit stripped labels: {deleted}"
@@ -358,13 +361,36 @@ def test_security_path_fails_closed_when_the_base_was_retargeted(tmp_path):
     """
     proc, summary = _run_step_body(
         "security-path", tmp_path, pr_body="",
-        labels=["security-reviewed:abcdef123456"], files=[".github/workflows/ci.yml"],
+        labels=["security-reviewed:abcdef123456-0d6e4079"], files=[".github/workflows/ci.yml"],
         extra_env={"BASE_FROM": "some-docs-branch"},
     )
     assert proc.returncode != 0, (
         "a base retarget must fail closed even when the label names the current head — the head "
         f"did not move but the diff did:\n{summary}")
     assert "base was retargeted" in summary, summary
+
+
+def test_security_path_rejects_a_label_bound_to_a_different_base(tmp_path):
+    """THE reason for base-ref binding. Without it the retarget defence was EVENT-keyed
+    (`changes.base.ref.from`), so it depended on the `edited` event firing AND the stripper's
+    DELETE succeeding. Retarget away, title-edit, retarget back — break either link and a later
+    title edit re-greens at an unchanged head, which is the supersede-a-red bypass this atom
+    already closed once.
+
+    Bound to (head, base ref), the verdict is STATE: a label earned against `main` simply does not
+    name the PR now targeting `release/x`, whatever event is in flight. Note BASE_FROM is EMPTY
+    here — this is the quiet title-edit event, the exact moment the old design let through.
+    """
+    proc, summary = _run_step_body(
+        "security-path", tmp_path, pr_body="",
+        labels=["security-reviewed:abcdef123456-0d6e4079"],   # 0d6e4079 == sha256('main')[:8]
+        files=[".github/workflows/ci.yml"],
+        extra_env={"BASE": "release/x", "BASE_FROM": ""},
+    )
+    assert proc.returncode != 0, (
+        "a review label earned against 'main' admitted a PR now targeting 'release/x' — the label "
+        f"must name the base it was earned against:\n{summary}")
+    assert "security-path: FAIL" in summary, summary
 
 
 def test_security_path_retarget_does_not_demand_a_review_label_for_a_clean_diff(tmp_path):
@@ -390,7 +416,7 @@ def test_security_path_ignores_base_from_when_it_is_empty(tmp_path):
     a re-review and the gate would be trained into the ignore-list."""
     proc, summary = _run_step_body(
         "security-path", tmp_path, pr_body="",
-        labels=["security-reviewed:abcdef123456"], files=[".github/workflows/ci.yml"],
+        labels=["security-reviewed:abcdef123456-0d6e4079"], files=[".github/workflows/ci.yml"],
         extra_env={"BASE_FROM": ""},
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
@@ -406,7 +432,7 @@ def test_reset_fails_when_a_base_retarget_strip_did_not_take(tmp_path):
     Driven with the stub refusing every DELETE, so the label genuinely survives."""
     proc, summary, _deleted = _run_reset(
         tmp_path,
-        labels=["security-reviewed:0badc0d00000"],
+        labels=["security-reviewed:0badc0d00000-0d6e4079"],
         base_from="some-docs-branch",
         extra_env={"GH_STUB_LABEL_EXIT": "1"},
     )

@@ -74,6 +74,7 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           # Non-empty ONLY when this `edited` event retargeted the base branch. Title/body edits
           # leave it empty, so they cost nothing — the diff did not move.
           BASE_FROM: ${{ github.event.changes.base.ref.from }}
@@ -90,7 +91,11 @@ jobs:
           # so this workflow would deliberately preserve a label describing a different commit
           # while the gate accepted it (security review Block 1, 2026-08-06). Both files must use
           # the same width or the stripper and the gate disagree about which label is current.
-          keep="security-reviewed:${HEAD_SHA:0:12}"
+          # Computed IDENTICALLY to btb-gates.yml (head12 + 8-hex digest of the base ref name).
+          # If these two ever diverge, the stripper and the gate disagree about which label is
+          # current — the same hazard the sha-width note describes, one field wider.
+          BASE_TAG="$(printf '%s' "$BASE_REF" | sha256sum | cut -c1-8)"
+          keep="security-reviewed:${HEAD_SHA:0:12}-${BASE_TAG}"
 
           # Normally the current head's label is KEPT: it is the one case where the review genuinely
           # describes what is proposed, and deleting it would force a pointless re-review. When the

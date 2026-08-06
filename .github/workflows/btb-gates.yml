@@ -68,9 +68,12 @@ on:
     # `edited` was added, REMOVED, and now deliberately RESTORED — the reasoning matters.
     # It was removed (security review Block 1, 2026-08-04) because the staleness verdict then keyed
     # on `github.event.action`, so re-running at the same head with action=edited let an author
-    # supersede a red by editing the description. That reason is GONE: the verdict is now a pure
-    # function of (files, labels, head SHA), so an `edited` re-run at an unchanged head produces
-    # the SAME answer — there is no verdict to overturn.
+    # supersede a red by editing the description. That reason is GONE: the verdict is a pure
+    # function of (files, labels, head SHA, BASE REF), so an `edited` re-run at an unchanged head
+    # and unchanged base produces the SAME answer — there is no verdict to overturn.
+    # The base ref is part of that tuple deliberately: an earlier revision omitted it and this
+    # very comment was FALSE, because the retarget verdict then came from the per-event
+    # BASE_FROM rather than from state (security review Risk, 2026-08-06).
     # It is restored because a base retarget arrives ONLY as `edited`, changes the effective diff
     # with no new commits, and `security-path` must fail closed on it (see the BASE_FROM arm).
     # Without `edited` the gate never re-runs and its previous green stands for a diff it never saw.
@@ -204,7 +207,29 @@ jobs:
           # the current head's label) and this gate matches too: both mechanisms fail at once, with
           # the label text identical so nothing looks stale (security review Block 1, 2026-08-06).
           # 12 hex is 48 bits, git's own modern abbreviation floor, and out of grinding reach.
-          REVIEW_LABEL="security-reviewed:${HEAD_SHA:0:12}"
+          # BOUND TO (head SHA, base REF) — state, not event.
+          #
+          # Head-binding alone left the retarget case resting on TWO things that can fail: that the
+          # `edited` event fires at all, and that the stripper's DELETE succeeds. Retarget away,
+          # title-edit, retarget back — if either link breaks, a later title edit re-greens at an
+          # unchanged head. That is the "supersede a red by editing the description" bypass this
+          # atom already closed once (security review Risk 2, 2026-08-06).
+          #
+          # The base is bound as an 8-hex DIGEST of the ref NAME, not the name itself and not
+          # `base.sha`:
+          #   * NOT base.sha — that is the base branch TIP, so every merge into main would
+          #     invalidate every outstanding review label, with no PR event to announce it. A gate
+          #     that cries wolf is worse than the residual it closes.
+          #   * NOT the raw ref name — GitHub caps label names at 50 chars; `security-reviewed:` is
+          #     18, +12 +1 leaves 19, and this branch's own name (`atom/tier-a-hardening`) is 21.
+          #     Truncating would create silent prefix collisions between sibling refs.
+          # 8 hex of sha256 is fixed-width, charset- and case-safe, and the FAIL message prints the
+          # human ref name alongside the exact label to copy, so nothing is lost to readability.
+          #
+          # `security-label-reset.yml` MUST compute this identically — the same divergence hazard
+          # the sha-width note above describes.
+          BASE_TAG="$(printf '%s' "$BASE" | sha256sum | cut -c1-8)"
+          REVIEW_LABEL="security-reviewed:${HEAD_SHA:0:12}-${BASE_TAG}"
           if [ -z "$hits" ]; then
             # Not-applicable WINS over the base-retarget arm, deliberately. That arm used to sit
             # above this test, so a docs-only PR that got retargeted was told "…then apply
