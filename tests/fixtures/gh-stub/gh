@@ -37,7 +37,16 @@ case "${1:-}" in
         if printf '%s\n' "$*" | grep -q -- '--json body'; then
           printf '%s\n' "${GH_STUB_PR_BODY:-}"
         elif printf '%s\n' "$*" | grep -q -- '--json labels'; then
-          printf '%s\n' "${GH_STUB_PR_LABELS:-}"
+          # STATEFUL when $GH_STUB_DELETED_LOG is set: labels this stub has already accepted a
+          # DELETE for are filtered out of subsequent reads. Without this the stub is a constant,
+          # and `security-label-reset`'s re-read-and-verify step (which fails closed when a review
+          # label survives a base retarget) could never be exercised — every test would see the
+          # pre-delete label set and the verification would look broken rather than working.
+          if [ -n "${GH_STUB_DELETED_LOG:-}" ] && [ -f "${GH_STUB_DELETED_LOG}" ]; then
+            printf '%s\n' "${GH_STUB_PR_LABELS:-}" | grep -vxF -f "${GH_STUB_DELETED_LOG}" || true
+          else
+            printf '%s\n' "${GH_STUB_PR_LABELS:-}"
+          fi
         fi
         exit "${GH_STUB_VIEW_EXIT:-0}"
         ;;
@@ -133,6 +142,15 @@ case "${1:-}" in
       if [ -n "${GH_STUB_BRANCH_STDERR:-}" ]; then printf '%s\n' "${GH_STUB_BRANCH_STDERR}" >&2; fi
       exit "${GH_STUB_BRANCH_EXIT:-0}"
     elif [[ "$api_path" =~ ^repos/[^/]+/[^/]+/issues/[^/]+/labels/.+$ ]]; then
+      # Record the DELETE so `gh pr view --json labels` above stops reporting this label. The name
+      # is the last path segment and arrives PERCENT-ENCODED (the caller encodes it), so decode
+      # before journaling — otherwise a label containing a space would never match on re-read and
+      # the verification step would report a survivor that was in fact deleted.
+      if [ -n "${GH_STUB_DELETED_LOG:-}" ] && [ "${GH_STUB_LABEL_EXIT:-0}" = "0" ]; then
+        printf '%s\n' "${api_path##*/labels/}" \
+          | python3 -c 'import sys,urllib.parse; sys.stdout.write(urllib.parse.unquote(sys.stdin.read()))' \
+          >> "${GH_STUB_DELETED_LOG}"
+      fi
       # `security-label-reset.yml`'s label DELETE. An EXPLICIT arm rather than the fallback below,
       # because the stripper's test asserts on WHICH labels were deleted by reading $GH_STUB_LOG —
       # and a call resolved by the catch-all would still be journaled, so a typo'd endpoint would

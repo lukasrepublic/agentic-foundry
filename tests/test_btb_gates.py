@@ -28,11 +28,11 @@ GH_STUB_DIR = Path(__file__).resolve().parent / "fixtures" / "gh-stub"
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "btb-gates"
 
 # The head SHA every row below is gated at. Arbitrary but FIXED, because the whole point of the
-# post-2026-08-04 design is that the review label NAMES a commit: `security-reviewed:<sha7>`
+# post-2026-08-04 design is that the review label NAMES a commit: `security-reviewed:<sha12>`
 # either matches the head being gated or it does not. Rows spell the sha7 out literally rather
 # than slicing this constant, so a test that agreed with a buggy slice cannot exist.
-TEST_HEAD_SHA = "abcdef1234567890abcdef1234567890abcdef12"   # sha7 == "abcdef1"
-TEST_STALE_SHA = "0badc0d000000000000000000000000000000000"  # sha7 == "0badc0d"
+TEST_HEAD_SHA = "abcdef1234567890abcdef1234567890abcdef12"   # sha12 == "abcdef123456"
+TEST_STALE_SHA = "0badc0d000000000000000000000000000000000"  # sha12 == "0badc0d00000"
 
 
 def _load_step_run(job_name: str, workflow_path: Path = WORKFLOW_PATH) -> str:
@@ -64,6 +64,11 @@ def _run_step_body(job_name: str, tmp_path, *, pr_body="", labels=(), files=(), 
         "GH_TOKEN": "x-test-token",
         "PR": "123",
         "REPO": "acme/demo",
+        # BASE is defaulted because `tier()` reads it. Without it, `local p; p="$(gh api …)"` dies
+        # under `set -u` INSIDE the command substitution, so `summary "$(tier)"` emitted an EMPTY
+        # merge-floor line — and every row tolerated a gate job that stated no tier at all, which
+        # is exactly what AC-SCW-11 exists to prevent (review N2, 2026-08-06).
+        "BASE": "main",
         "HEAD_SHA": head_sha,
         "GITHUB_STEP_SUMMARY": str(summary_path),
         "GH_STUB_PR_BODY": pr_body,
@@ -133,7 +138,7 @@ def test_every_gate_job_states_its_tier_and_labels_tier_b_advisory(tmp_path):
         ("security-path", dict(pr_body="", labels=[], files=["docs/readme.md"])),
     )
     for job_name, kwargs in cases:
-        seen = set()
+        observed = set()
         for branch_body, expected_tier, expected_word in rows:
             proc, summary = _run_step_body(
                 job_name, tmp_path,
@@ -146,11 +151,20 @@ def test_every_gate_job_states_its_tier_and_labels_tier_b_advisory(tmp_path):
                 f"{branch_body!r}:\n{summary}")
             assert expected_word in summary, (
                 f"{job_name} summary missing {expected_word!r}:\n{summary}")
-            seen.add(expected_tier)
-        # The three readings must be genuinely distinct — a helper that hardcoded any single
-        # verdict would satisfy one row and fail the others, but a helper that echoed a constant
-        # containing all three substrings would slip through without this.
-        assert len(seen) == 3, f"{job_name} did not produce three distinct tier readings: {seen}"
+            # Collect the OBSERVED tier line, not the row's expectation. An earlier revision did
+            # `seen.add(expected_tier)` and then asserted `len(seen) == 3` — populated purely from
+            # the literal table above, so it was 3 unconditionally and could not fail for ANY step
+            # body. Worse, its comment claimed it caught "a helper that echoed a constant
+            # containing all three substrings", which is precisely the body it let through: all
+            # three `in summary` checks would pass and the count would still be 3. A vacuous
+            # assertion in the test for the merge floor's own honesty claim (review R2, 2026-08-06).
+            tier_lines = [ln for ln in summary.splitlines() if ln.startswith("**merge floor")]
+            assert len(tier_lines) == 1, (
+                f"{job_name} emitted {len(tier_lines)} merge-floor lines, expected exactly 1:\n{summary}")
+            observed.add(tier_lines[0])
+        assert len(observed) == 3, (
+            f"{job_name} did not produce three DISTINCT tier readings — a body echoing one constant "
+            f"would satisfy every substring check above and still land here: {observed}")
 
 
 # ==================================================================== AC-SCW-12 (security-path) =
@@ -229,18 +243,29 @@ def test_security_path_widening_is_superset_of_prior_match_set(tmp_path):
 # pin that asymmetry, because it is the one place the two mechanisms do not overlap.
 
 
-def _run_reset(tmp_path, *, labels, head_sha=TEST_HEAD_SHA, base_from=""):
+def _run_reset(tmp_path, *, labels, head_sha=TEST_HEAD_SHA, base_from="", extra_env=None):
     """Drive the REAL security-label-reset.yml step body, journaling every `gh` call so the test
     reads WHICH labels were deleted off the actual invocations rather than off the script's own
-    narration."""
+    narration.
+
+    `GH_STUB_DELETED_LOG` makes the stub STATEFUL — a label the stub accepted a DELETE for stops
+    appearing in later `gh pr view --json labels` reads. That is what lets the workflow's
+    re-read-and-verify branch (fail-closed when a review label survives a base retarget) be
+    exercised for real instead of always seeing the pre-delete label set."""
     log = tmp_path / "gh-calls.log"
+    deleted_log = tmp_path / "gh-deleted.log"
+    deleted_log.write_text("", encoding="utf-8")
+    env = {"BASE_FROM": base_from, "GH_STUB_LOG": str(log),
+           "GH_STUB_DELETED_LOG": str(deleted_log)}
+    if extra_env:
+        env.update(extra_env)
     proc, summary = _run_step_body(
         "reset", tmp_path, labels=labels, head_sha=head_sha,
-        workflow_path=RESET_WORKFLOW_PATH,
-        extra_env={"BASE_FROM": base_from, "GH_STUB_LOG": str(log)},
+        workflow_path=RESET_WORKFLOW_PATH, extra_env=env,
     )
+    from urllib.parse import unquote
     deleted = [
-        line.rsplit("/labels/", 1)[1].strip()
+        unquote(line.rsplit("/labels/", 1)[1].strip())
         for line in (log.read_text(encoding="utf-8").splitlines() if log.exists() else [])
         if "-X DELETE" in line and "/labels/" in line
     ]
@@ -254,14 +279,14 @@ def test_reset_keeps_this_heads_label_and_strips_every_other():
     with tempfile.TemporaryDirectory() as d:
         proc, _summary, deleted = _run_reset(
             Path(d),
-            labels=["lane:light", "security-reviewed:0badc0d", "security-reviewed:abcdef1",
+            labels=["lane:light", "security-reviewed:0badc0d00000", "security-reviewed:abcdef123456",
                     "security-reviewed"],
         )
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert "security-reviewed:abcdef1" not in deleted, (
+    assert "security-reviewed:abcdef123456" not in deleted, (
         "the label naming the CURRENT head was stripped — every push would demand a re-review of "
         f"a diff already reviewed at that commit. deleted={deleted}")
-    assert sorted(deleted) == ["security-reviewed", "security-reviewed:0badc0d"], deleted
+    assert sorted(deleted) == ["security-reviewed", "security-reviewed:0badc0d00000"], deleted
     assert "lane:light" not in deleted, "the stripper deleted a label outside its remit"
 
 
@@ -273,11 +298,11 @@ def test_reset_strips_this_heads_label_too_when_the_base_was_retargeted():
     with tempfile.TemporaryDirectory() as d:
         proc, _summary, deleted = _run_reset(
             Path(d),
-            labels=["security-reviewed:abcdef1"],
+            labels=["security-reviewed:abcdef123456"],
             base_from="some-docs-branch",
         )
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    assert deleted == ["security-reviewed:abcdef1"], (
+    assert deleted == ["security-reviewed:abcdef123456"], (
         "a base retarget left the head-bound review label in place — the diff moved while the head "
         f"SHA did not, so that label describes a review that never happened. deleted={deleted}")
 
@@ -289,7 +314,7 @@ def test_reset_is_a_no_op_for_a_title_or_body_edit():
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         proc, _summary, deleted = _run_reset(
-            Path(d), labels=["security-reviewed:abcdef1"], base_from="",
+            Path(d), labels=["security-reviewed:abcdef123456"], base_from="",
         )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert deleted == [], f"a non-base edit stripped labels: {deleted}"
@@ -306,3 +331,83 @@ def test_reset_never_checks_out_the_pull_request():
             assert "uses" not in step, (
                 f"security-label-reset grew an action step ({step.get('uses')!r}) — this workflow "
                 "holds a write-scoped token on a fork-triggerable event and must run no repo code")
+            # The property that actually keeps this workflow safe is NOT "no action step" — it is
+            # that no GitHub expression is interpolated into a shell body. Every fork-influenced
+            # value (PR, REPO, HEAD_SHA, BASE_FROM) arrives via `env:`, where it is a shell
+            # variable rather than text spliced into the script before bash ever sees it. A future
+            # edit adding `${{ github.event.pull_request.title }}` to a `run:` would pass the
+            # checkout assertion above while handing a `pull-requests: write` token to
+            # attacker-controlled string interpolation (review R4, 2026-08-06).
+            assert "${{" not in step.get("run", ""), (
+                "a GitHub expression is interpolated directly into a run: body of a "
+                "pull_request_target workflow — pass it through env: instead")
+
+
+def test_security_path_fails_closed_when_the_base_was_retargeted(tmp_path):
+    """R1: retargeting the base moves the effective diff with NO new commits and NO change to the
+    head SHA, so a head-bound label survives a change it never described — the one case SHA
+    binding cannot cover.
+
+    The gate reads `BASE_FROM` from its OWN event payload and fails BEFORE consulting labels.
+    Doing it here rather than in the stripper is the point: the two workflows share an event with
+    no ordering, a GITHUB_TOKEN strip cannot re-run this gate, so a green recorded here would be
+    terminal. Reading our own payload has no race to lose.
+
+    Note the label supplied below is the CURRENT head's and would otherwise PASS — that is what
+    makes this row prove the arm rather than merely observe a failure.
+    """
+    proc, summary = _run_step_body(
+        "security-path", tmp_path, pr_body="",
+        labels=["security-reviewed:abcdef123456"], files=[".github/workflows/ci.yml"],
+        extra_env={"BASE_FROM": "some-docs-branch"},
+    )
+    assert proc.returncode != 0, (
+        "a base retarget must fail closed even when the label names the current head — the head "
+        f"did not move but the diff did:\n{summary}")
+    assert "base was retargeted" in summary, summary
+
+
+def test_security_path_ignores_base_from_when_it_is_empty(tmp_path):
+    """Negative control for the row above. `changes.base.ref.from` is populated ONLY on a real base
+    retarget, so a title/body edit must cost nothing — otherwise every description fix would demand
+    a re-review and the gate would be trained into the ignore-list."""
+    proc, summary = _run_step_body(
+        "security-path", tmp_path, pr_body="",
+        labels=["security-reviewed:abcdef123456"], files=[".github/workflows/ci.yml"],
+        extra_env={"BASE_FROM": ""},
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "security-path: PASS" in summary, summary
+
+
+def test_reset_fails_when_a_base_retarget_strip_did_not_take(tmp_path):
+    """R3: `|| true` on the DELETE is right for the ordinary case (GitHub 404s "label not on
+    issue"), but on the base-retarget path this strip is the only thing acting. A 5xx or a
+    rate-limit there left the stale label in place while the job logged "stripped" and exited 0 —
+    asserting something that did not happen.
+
+    Driven with the stub refusing every DELETE, so the label genuinely survives."""
+    proc, summary, _deleted = _run_reset(
+        tmp_path,
+        labels=["security-reviewed:0badc0d00000"],
+        base_from="some-docs-branch",
+        extra_env={"GH_STUB_LABEL_EXIT": "1"},
+    )
+    assert proc.returncode != 0, (
+        "the DELETE failed and a review label survived a base retarget, but the job reported "
+        f"success:\n{proc.stdout}\n{summary}")
+    assert "survive" in (proc.stdout + summary), proc.stdout + summary
+
+
+def test_reset_trigger_types_are_frozen():
+    """`edited` in this list is load-bearing, not incidental: a base retarget arrives ONLY as
+    `edited`, and it is the one case a head-bound label cannot describe. Dropping it would leave
+    `test_reset_strips_this_heads_label_too_when_the_base_was_retargeted` green — that test injects
+    BASE_FROM directly into the step body, so it cannot notice that production would never supply
+    it. The sibling workflow's `on:` block is frozen byte-verbatim for exactly this reason
+    (`_FROZEN_ON_BLOCK` in test_bash32_parse_gate.py); the asymmetry was an oversight
+    (review R4, 2026-08-06)."""
+    doc = yaml.safe_load(RESET_WORKFLOW_PATH.read_text(encoding="utf-8"))
+    assert doc[True]["pull_request_target"]["types"] == ["synchronize", "reopened", "edited"], (
+        "security-label-reset's trigger types changed — if `edited` was dropped, the base-retarget "
+        "strip can never fire in production even though its test still passes")

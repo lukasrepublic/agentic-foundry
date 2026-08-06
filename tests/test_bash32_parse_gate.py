@@ -49,7 +49,17 @@ GH_STUB_DIR = Path(__file__).resolve().parent / "fixtures" / "gh-stub"
 # description (security review Block 1). This constant is why that had to be a deliberate, visible
 # edit rather than a quiet one — it did its job.
 _FROZEN_ON_BLOCK = {
-    "pull_request": {"types": ["opened", "synchronize", "reopened", "labeled", "unlabeled"]},
+    "pull_request": {
+        # `edited` was RE-ADDED 2026-08-06 and the freeze moved with it, deliberately. It had been
+        # removed because the staleness verdict then keyed on `github.event.action`, so an
+        # `edited` re-run at the same head could supersede a red. That reason is gone: the verdict
+        # is now a pure function of (files, labels, head SHA), so a re-run at an unchanged head
+        # gives the same answer. It is back because a BASE RETARGET arrives only as `edited`,
+        # changes the effective diff with no new commits, and `security-path` must fail closed on
+        # it — without the trigger the gate never re-runs and its previous green stands for a diff
+        # it never saw (review R1, 2026-08-06).
+        "types": ["opened", "synchronize", "reopened", "labeled", "unlabeled", "edited"],
+    },
 }
 
 _DOCKER_STUB = '''#!/bin/sh
@@ -224,7 +234,7 @@ def test_states_tier_advisory(tmp_path):
         ('{"name":"main","protected":false}', "tier: B (advisory)",  "advisory"),
         ("",                                  "merge floor: UNKNOWN", "advisory"),   # unreadable -> fail safe
     ]
-    seen = set()
+    observed = set()
     for branch_body, expected_tier, expected_word in rows:
         proc, summary = _run_script(
             run, cwd=REPO_ROOT, path_prepend=f"{gh_bin}:{docker_bin}",
@@ -236,8 +246,17 @@ def test_states_tier_advisory(tmp_path):
             f"the parse gate did not derive {expected_tier!r} when the branch endpoint returned "
             f"{branch_body!r}:\n{summary}")
         assert expected_word in summary, f"summary missing {expected_word!r}:\n{summary}"
-        seen.add(expected_tier)
-    assert len(seen) == 3, f"the parse gate did not produce three distinct tier readings: {seen}"
+        # OBSERVED, not expected — the sibling test in test_btb_gates.py collected the row's own
+        # literal here and asserted the count was 3, which made the assertion unfalsifiable (review
+        # R2, 2026-08-06). Reading the emitted line back is what makes "three distinct readings"
+        # a claim about the step body rather than about this table.
+        tier_lines = [ln for ln in summary.splitlines() if ln.startswith("**merge floor")]
+        assert len(tier_lines) == 1, (
+            f"the parse gate emitted {len(tier_lines)} merge-floor lines, expected exactly 1:\n{summary}")
+        observed.add(tier_lines[0])
+    assert len(observed) == 3, (
+        f"the parse gate did not produce three DISTINCT tier readings — a body echoing one constant "
+        f"would satisfy every substring check above and still land here: {observed}")
 
     # And the literal must be GONE from the verdict lines, where a restated tier would drift from
     # the probe that derived it. Asserted on the step body text, so re-inlining it goes red even if

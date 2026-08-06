@@ -1,6 +1,10 @@
 # btb-gates.yml — the native merge floor's conditional gates (introduced in v0.24.0).
-# NOTE for adopters copying this template: the "merge floor tier" summary line below is a
-# hardcoded label — set this label to match your plan (A where rulesets enforce, B otherwise).
+# NOTE for adopters copying this template: the "merge floor tier" summary line is DERIVED at run
+# time from the live branch-protection state (the `tier()` helper) — there is nothing to set. This
+# note used to say the opposite ("a hardcoded label — set this label to match your plan"), which
+# survived the edit that removed the last literal and was caught by review (2026-08-06). A stale
+# instruction in the header of the file whose whole point is not to ship false merge-floor claims
+# is the same defect one level up.
 #
 # THREE ALWAYS-REPORTING gate jobs (a required context that never reports blocks a PR forever —
 # each job always concludes, reporting `not applicable` when its condition doesn't bind):
@@ -8,8 +12,13 @@
 #                          (`Spec:` trailer in the PR body); light-lane and docs-only PRs are
 #                          not-applicable. Replaces the provenance-marker chain as the lane signal.
 #   * security-path      — floor #3 routing as CI: a diff touching auth/secrets/supply-chain paths
-#                          requires the `security-reviewed` label (posted after a security-reviewer
-#                          subagent pass); clean diffs are not-applicable.
+#                          requires a `security-reviewed:<sha12>` label naming THE HEAD COMMIT
+#                          BEING GATED (posted after a security-reviewer subagent pass); clean
+#                          diffs are not-applicable. The BARE `security-reviewed` label no longer
+#                          satisfies it — that spelling admitted any diff, which is the hole the
+#                          head-binding closes. This line still said "the `security-reviewed`
+#                          label" after that change, so a reader following the header applied a
+#                          label that could not work (caught by review 2026-08-06).
 #   * shell-parse-bash32 — bash32-parse-guard (feat-foundry-bash32-parse-guard, AC-B32-4..8,10,12):
 #                          runs `bash -n` under a digest-pinned, version-asserted bash 3.2
 #                          container over every git-tracked `*.sh`, DISCOVERED (never enumerated),
@@ -56,11 +65,16 @@
 name: btb-gates
 on:
   pull_request:
-    # `edited` was added here and REMOVED again in the same review cycle. It re-runs the gates at
-    # the SAME head SHA with action=edited, which let a PR author supersede a red staleness verdict
-    # by editing the description — one click, no commits, no re-review (security review Block 1,
-    # 2026-08-04). Convenience is not worth a bypass; re-run the check instead.
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    # `edited` was added, REMOVED, and now deliberately RESTORED — the reasoning matters.
+    # It was removed (security review Block 1, 2026-08-04) because the staleness verdict then keyed
+    # on `github.event.action`, so re-running at the same head with action=edited let an author
+    # supersede a red by editing the description. That reason is GONE: the verdict is now a pure
+    # function of (files, labels, head SHA), so an `edited` re-run at an unchanged head produces
+    # the SAME answer — there is no verdict to overturn.
+    # It is restored because a base retarget arrives ONLY as `edited`, changes the effective diff
+    # with no new commits, and `security-path` must fail closed on it (see the BASE_FROM arm).
+    # Without `edited` the gate never re-runs and its previous green stands for a diff it never saw.
+    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
 
 permissions:
   contents: read
@@ -135,6 +149,10 @@ jobs:
           REPO: ${{ github.repository }}
           BASE: ${{ github.event.pull_request.base.ref }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # Non-empty ONLY when THIS event retargeted the base branch. Read here, in the gate, from
+          # the gate's OWN event payload — deliberately not delegated to the stripper workflow, see
+          # the base-retarget arm below.
+          BASE_FROM: ${{ github.event.changes.base.ref.from }}
         run: |
           set -euo pipefail
           files="$(gh api --paginate "repos/${REPO}/pulls/${PR}/files" -q '.[].filename')"
@@ -179,9 +197,29 @@ jobs:
           # in tests/fixtures/btb-gates/security-path-matrix.yaml. OR-append only, same discipline
           # as the GP-2 widening above (widen-only, AC-TARC-15).
           hits="$(printf '%s\n' "$files" | grep -E '(auth|secret|credential|token|provenance|signing|\.rego$)|^\.github/|^hooks/|^\.claude-plugin/|(^|/)(standing-versions|profile-version-ledger)|(^|/)(requirements[^/]*\.txt|package(-lock)?\.json|pyproject\.toml|Pipfile[^/]*|go\.(mod|sum)|Cargo\.(toml|lock))$|^skills/|^agents/|^rulesets/|^scripts/foundry_tier_preflight' || true)"
+          # The review label names a commit: `security-reviewed:<sha12>`. TWELVE hex, not seven.
+          # Seven is 28 bits, and a targeted 28-bit prefix is grindable in seconds by a commit
+          # grinder varying a trailer — so an author could land a commit whose sha7 EQUALS the
+          # reviewed one, at which point the stripper's `keep` matches (it deliberately preserves
+          # the current head's label) and this gate matches too: both mechanisms fail at once, with
+          # the label text identical so nothing looks stale (security review Block 1, 2026-08-06).
+          # 12 hex is 48 bits, git's own modern abbreviation floor, and out of grinding reach.
+          REVIEW_LABEL="security-reviewed:${HEAD_SHA:0:12}"
+          if [ -n "${BASE_FROM:-}" ]; then
+            # BASE RETARGET — the one case head-SHA binding cannot cover, handled HERE rather than
+            # by the stripper. Changing the base moves the effective diff with no new commits and
+            # no change to the head SHA, so a head-bound label survives a diff it never described.
+            # Delegating this to `security-label-reset.yml` reintroduced exactly the race that
+            # killed the previous design: the strip and this gate share an event with no ordering,
+            # and a GITHUB_TOKEN strip cannot re-run this gate, so a green recorded here would be
+            # TERMINAL. Reading our OWN event payload has no race to lose — and it fails closed
+            # before the label is consulted at all, so there is no label state to get wrong.
+            summary "security-path: FAIL — base was retargeted from '${BASE_FROM}'. The head SHA did not move but the diff did, so any existing review label describes a different change. Re-run the security-reviewer pass against the NEW base, then apply '${REVIEW_LABEL}'."
+            exit 1
+          fi
           if [ -z "$hits" ]; then
             summary "security-path: PASS (not applicable) — no auth/secrets/supply-chain path in the diff"
-          elif printf '%s\n' "$labels" | grep -qxF "security-reviewed:${HEAD_SHA:0:7}"; then
+          elif printf '%s\n' "$labels" | grep -qxF "$REVIEW_LABEL"; then
             # STALE-LABEL TOCTOU is handled by INVALIDATING THE STATE, not by inspecting this run's
             # event. The first attempt keyed on `github.event.action == "synchronize"` and was
             # bypassable three ways (security review Blocks 1/2, 2026-08-04): an `edited` event
@@ -198,14 +236,15 @@ jobs:
             # never re-run this gate to correct it. No adversary needed: label a PR, push one more
             # commit, coin-flip (security review, 2026-08-04, second pass).
             #
-            # So the label is BOUND TO THE HEAD SHA. `security-reviewed:<sha7>` either names the
+            # So the label is BOUND TO THE HEAD SHA. `security-reviewed:<sha12>` either names the
             # commit being gated or it does not; there is no window in which a stale label reads as
             # fresh, and no ordering to lose. The stripper is kept as belt-and-braces cleanup, not
-            # as the mechanism.
-            summary "security-path: PASS — security-flagged paths present AND 'security-reviewed:${HEAD_SHA:0:7}' label posted (floor #3 review recorded for THIS head)"
+            # as the mechanism — and the base-retarget case it cannot cover is handled above, in
+            # this job, from this job's own event.
+            summary "security-path: PASS — security-flagged paths present AND '${REVIEW_LABEL}' label posted (floor #3 review recorded for THIS head)"
             printf 'flagged paths:\n%s\n' "$hits"
           else
-            summary "security-path: FAIL — diff touches security surfaces with no review label for this head. Run the security-reviewer pass against the CURRENT diff, then apply the label 'security-reviewed:${HEAD_SHA:0:7}'. The label names the commit reviewed, so pushing new commits cannot carry an old review forward."
+            summary "security-path: FAIL — diff touches security surfaces with no review label for this head. Run the security-reviewer pass against the CURRENT diff, then apply the label '${REVIEW_LABEL}'. The label names the commit reviewed, so pushing new commits cannot carry an old review forward."
             printf 'flagged paths:\n%s\n' "$hits"
             exit 1
           fi

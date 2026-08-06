@@ -85,31 +85,69 @@ jobs:
           # determine the label set we must not report success.
           labels="$(gh pr view "$PR" --repo "$REPO" --json labels -q '.labels[].name')"
 
+          # TWELVE hex, not seven — see the matching note in btb-gates.yml. A 28-bit prefix is
+          # grindable in seconds, and at 7 hex an attacker-ground head would make `keep` MATCH,
+          # so this workflow would deliberately preserve a label describing a different commit
+          # while the gate accepted it (security review Block 1, 2026-08-06). Both files must use
+          # the same width or the stripper and the gate disagree about which label is current.
+          keep="security-reviewed:${HEAD_SHA:0:12}"
+
           # Normally the current head's label is KEPT: it is the one case where the review genuinely
-          # describes what is proposed, and deleting it would force a pointless re-review. But when
-          # the BASE moved, the head SHA is unchanged while the diff is not, so that label is
-          # exactly the stale one — `keep` is emptied and every review label goes.
-          keep="security-reviewed:${HEAD_SHA:0:7}"
+          # describes what is proposed, and deleting it would force a pointless re-review. When the
+          # BASE moved, the head SHA is unchanged while the diff is not, so that label is exactly
+          # the stale one — `keep` is emptied and every review label goes.
+          #
+          # NOTE the division of labour: `security-path` ALSO fails closed on a base retarget, from
+          # its own event payload, and THAT is the control. This strip is cleanup that makes the
+          # label state honest for the next run; it is not what makes the gate correct.
+          base_changed=0
           if [ -n "${BASE_FROM:-}" ]; then
             keep=""
+            base_changed=1
             echo "base retargeted from '${BASE_FROM}' — the head SHA did not move but the diff did," \
                  "so EVERY review label is stripped, including this head's."
           fi
 
           stripped=0
+          failed=0
           while IFS= read -r l; do
             case "$l" in
               security-reviewed*)
                 if [ "$l" != "$keep" ]; then
-                  gh api -X DELETE "repos/${REPO}/issues/${PR}/labels/${l}" >/dev/null || true
-                  echo "stripped '$l' — it does not describe the diff now proposed."
-                  stripped=$((stripped + 1))
+                  # The label name is percent-encoded: it is operator-authored free text and may
+                  # contain a space or a slash, either of which would otherwise change which URL
+                  # path this DELETE addresses.
+                  enc="$(printf '%s' "$l" | jq -sRr @uri)"
+                  # `|| true` is deliberate for the ORDINARY case: GitHub 404s "label not on
+                  # issue", which is the desired end state, not an error. But it must not silently
+                  # swallow a 5xx or a rate-limit on the base-retarget path, where this strip is
+                  # the only thing acting — so success is VERIFIED below rather than assumed here,
+                  # and `stripped` is only incremented for a call that actually returned 0.
+                  if gh api -X DELETE "repos/${REPO}/issues/${PR}/labels/${enc}" >/dev/null 2>&1; then
+                    echo "stripped '$l' — it does not describe the diff now proposed."
+                    stripped=$((stripped + 1))
+                  else
+                    echo "DELETE for '$l' did not succeed (already absent, or the API refused)."
+                    failed=$((failed + 1))
+                  fi
                 fi
                 ;;
             esac
           done <<< "$labels"
-          if [ "$stripped" -eq 0 ]; then
+
+          if [ "$base_changed" -eq 1 ]; then
+            # RE-READ and prove the end state. On this path the strip is load-bearing, and a log
+            # line saying "stripped" is not evidence that the label is gone.
+            remaining="$(gh pr view "$PR" --repo "$REPO" --json labels -q '.labels[].name' | grep -c '^security-reviewed' || true)"
+            if [ "${remaining:-0}" -ne 0 ]; then
+              echo "::error::base was retargeted but ${remaining} review label(s) survive — the label set still asserts a review of a different diff"
+              exit 1
+            fi
+            echo "verified: no review label survives the base retarget."
+          fi
+
+          if [ "$stripped" -eq 0 ] && [ "$failed" -eq 0 ]; then
             echo "no stale review label present — nothing to strip."
-          else
-            echo "Re-run the security review against the current diff, then apply 'security-reviewed:${HEAD_SHA:0:7}'." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$stripped" -gt 0 ]; then
+            echo "Re-run the security review against the current diff, then apply '${keep:-security-reviewed:${HEAD_SHA:0:12}}'." >> "$GITHUB_STEP_SUMMARY"
           fi
