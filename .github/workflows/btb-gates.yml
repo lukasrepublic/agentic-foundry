@@ -12,7 +12,7 @@
 #                          (`Spec:` trailer in the PR body); light-lane and docs-only PRs are
 #                          not-applicable. Replaces the provenance-marker chain as the lane signal.
 #   * security-path      — floor #3 routing as CI: a diff touching auth/secrets/supply-chain paths
-#                          requires a `security-reviewed:<sha12>` label naming THE HEAD COMMIT
+#                          requires a `security-reviewed:<head12>-<base8>` label naming THE HEAD COMMIT
 #                          BEING GATED (posted after a security-reviewer subagent pass); clean
 #                          diffs are not-applicable. The BARE `security-reviewed` label no longer
 #                          satisfies it — that spelling admitted any diff, which is the hole the
@@ -46,7 +46,7 @@
 #   * label-only lane signals — spec-link no longer reads `Lane: light` from the fork-controlled
 #     PR body;
 #   * stale-label TOCTOU — the review label is BOUND TO THE HEAD SHA
-#     (`security-reviewed:<sha12>`), so a label earned on an earlier commit cannot describe a later
+#     (`security-reviewed:<head12>-<base8>`), so a label earned on an earlier commit cannot describe a later
 #     one. `security-label-reset.yml` additionally strips stale labels. The first attempt at this
 #     inspected the triggering EVENT and was bypassable three ways; the second used the stripper
 #     alone and lost a race with this gate. Both are recorded at the check site.
@@ -221,7 +221,7 @@ jobs:
           # in tests/fixtures/btb-gates/security-path-matrix.yaml. OR-append only, same discipline
           # as the GP-2 widening above (widen-only, AC-TARC-15).
           hits="$(printf '%s\n' "$files" | grep -E '(auth|secret|credential|token|provenance|signing|\.rego$)|^\.github/|^hooks/|^\.claude-plugin/|(^|/)(standing-versions|profile-version-ledger)|(^|/)(requirements[^/]*\.txt|package(-lock)?\.json|pyproject\.toml|Pipfile[^/]*|go\.(mod|sum)|Cargo\.(toml|lock))$|^skills/|^agents/|^rulesets/|^scripts/foundry_tier_preflight' || true)"
-          # The review label names a commit: `security-reviewed:<sha12>`. TWELVE hex, not seven.
+          # The review label names a commit: `security-reviewed:<head12>-<base8>`. TWELVE hex, not seven.
           # Seven is 28 bits, and a targeted 28-bit prefix is grindable in seconds by a commit
           # grinder varying a trailer — so an author could land a commit whose sha7 EQUALS the
           # reviewed one, at which point the stripper's `keep` matches (it deliberately preserves
@@ -288,7 +288,7 @@ jobs:
             # never re-run this gate to correct it. No adversary needed: label a PR, push one more
             # commit, coin-flip (security review, 2026-08-04, second pass).
             #
-            # So the label is BOUND TO THE HEAD SHA. `security-reviewed:<sha12>` either names the
+            # So the label is BOUND TO THE HEAD SHA. `security-reviewed:<head12>-<base8>` either names the
             # commit being gated or it does not; there is no window in which a stale label reads as
             # fresh, and no ordering to lose. The stripper is kept as belt-and-braces cleanup, not
             # as the mechanism — and the base-retarget case it cannot cover is handled above, in

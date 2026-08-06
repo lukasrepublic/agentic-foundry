@@ -45,15 +45,21 @@
 # costing a re-label), whereas re-running the GATE on `edited` was fail-open, which is why `edited`
 # was removed from btb-gates.yml and belongs here.
 #
-# RESIDUAL, STATED NOT HIDDEN: a strip cannot re-run `security-path`. GitHub does not create
-# workflow runs from GITHUB_TOKEN actions, so the already-green check run from the previous base
-# stays green until some later event re-runs it. Stripping makes the STATE honest — the next run,
-# whenever it comes, is correct — it does not retroactively redden a recorded check. Closing that
-# too would mean binding the label to the base as well (`<head12>-<base12>`), which was priced and
-# declined: retargeting requires an existing non-`main` base, a review earned on it, and an operator
-# who merges without looking, and the operator's own test pass is the terminal gate (CLAUDE.md,
-# "Delivery sign-off"). Naming the residual is the control here.
-
+# WHAT ACTUALLY CLOSES THE RETARGET CASE (this paragraph used to decline it).
+# The review label is bound to (head SHA, BASE REF): `security-reviewed:<head12>-<base8>`, where
+# base8 is sha256 of the base ref NAME. A label earned against `main` does not name a PR now
+# targeting anything else, whatever event is in flight — so the verdict is STATE, and no longer
+# depends on the `edited` event firing or on this workflow's DELETE succeeding.
+#
+# An earlier revision of this very header said base binding "was priced and declined". That decline
+# was against binding to `base.SHA` — rejected because the base tip moves on every merge into main,
+# invalidating every outstanding label with no PR event to announce it. Binding to the ref NAME
+# carries none of that cost. Leaving the decline in place while the code below implemented it would
+# have told the next maintainer this was already-evaluated-and-rejected, i.e. safe to simplify out
+# (security review Risk 2, 2026-08-06).
+#
+# THIS WORKFLOW IS NOW CLEANUP, NOT THE CONTROL, on every path. It keeps the label set honest for
+# the next run; the gate's correctness rests on the label naming (head, base).
 name: security-label-reset
 
 on:
@@ -167,5 +173,5 @@ jobs:
           if [ "$stripped" -eq 0 ] && [ "$failed" -eq 0 ]; then
             echo "no stale review label present — nothing to strip."
           elif [ "$stripped" -gt 0 ]; then
-            echo "Re-run the security review against the current diff, then apply '${keep:-security-reviewed:${HEAD_SHA:0:12}}'." >> "$GITHUB_STEP_SUMMARY"
+            echo "Re-run the security review against the current diff, then apply 'security-reviewed:${HEAD_SHA:0:12}-${BASE_TAG}'." >> "$GITHUB_STEP_SUMMARY"
           fi

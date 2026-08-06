@@ -380,6 +380,16 @@ def test_security_path_rejects_a_label_bound_to_a_different_base(tmp_path):
     Bound to (head, base ref), the verdict is STATE: a label earned against `main` simply does not
     name the PR now targeting `release/x`, whatever event is in flight. Note BASE_FROM is EMPTY
     here — this is the quiet title-edit event, the exact moment the old design let through.
+
+    HONEST BASELINE: this row would have passed BEFORE base binding too — the fixture label carries
+    a `-<base8>` suffix the old bare matcher did not expect either, so it failed for an unrelated
+    reason. It is NOT the proven-red regression its name suggests. The evidence for base binding
+    came from running EACH DESIGN WITH THE LABEL IT WOULD ITSELF HAVE ISSUED:
+        head-only gate + head-only label, base moved -> PASS  (the bypass)
+        ref-bound gate + main-bound label, base moved -> FAIL  (closed)
+    What genuinely goes red if `-${BASE_TAG}` is dropped from REVIEW_LABEL is
+    `flagged-label-names-this-head`. Recorded because a row that reads like proof and is not is
+    exactly the vacuous-assertion class this atom spent three rounds removing.
     """
     proc, summary = _run_step_body(
         "security-path", tmp_path, pr_body="",
