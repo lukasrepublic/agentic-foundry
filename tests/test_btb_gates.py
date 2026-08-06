@@ -23,25 +23,39 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "btb-gates.yml"
+RESET_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "security-label-reset.yml"
 GH_STUB_DIR = Path(__file__).resolve().parent / "fixtures" / "gh-stub"
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "btb-gates"
 
+# The head SHA every row below is gated at. Arbitrary but FIXED, because the whole point of the
+# post-2026-08-04 design is that the review label NAMES a commit: `security-reviewed:<sha7>`
+# either matches the head being gated or it does not. Rows spell the sha7 out literally rather
+# than slicing this constant, so a test that agreed with a buggy slice cannot exist.
+TEST_HEAD_SHA = "abcdef1234567890abcdef1234567890abcdef12"   # sha7 == "abcdef1"
+TEST_STALE_SHA = "0badc0d000000000000000000000000000000000"  # sha7 == "0badc0d"
 
-def _load_step_run(job_name: str) -> str:
+
+def _load_step_run(job_name: str, workflow_path: Path = WORKFLOW_PATH) -> str:
     """Extract the REAL, verbatim `run:` script body of the named job's (single) step, straight
     out of the shipped workflow file. Pure data extraction — no branching/decision logic is
     read or reproduced here, only the script TEXT the real `bash` process below executes."""
-    doc = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+    doc = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
     steps = doc["jobs"][job_name]["steps"]
     assert len(steps) == 1, f"job {job_name!r} grew a second step — the extraction helper assumed exactly one"
     return steps[0]["run"]
 
 
-def _run_step_body(job_name: str, tmp_path, *, pr_body="", labels=(), files=(), extra_env=None):
+def _run_step_body(job_name: str, tmp_path, *, pr_body="", labels=(), files=(), extra_env=None,
+                   head_sha=TEST_HEAD_SHA, workflow_path: Path = WORKFLOW_PATH):
     """Drive the REAL shipped step body under `bash -c`, with the fixture `gh` stub prepended to
     PATH and fed this row's PR body / labels / changed-file list via env vars (the SAME
-    mechanism `gh pr view`/`gh api` would surface to the real script)."""
-    script = _load_step_run(job_name)
+    mechanism `gh pr view`/`gh api` would surface to the real script).
+
+    `HEAD_SHA` is supplied because the shipped step bodies read it: the review label is bound to
+    the commit under review. It is set here rather than defaulted inside the scripts on purpose —
+    a step body that tolerated an absent HEAD_SHA would compare against the empty prefix, which
+    every `security-reviewed:*` label matches."""
+    script = _load_step_run(job_name, workflow_path)
     summary_path = tmp_path / f"{job_name}-summary.md"
     summary_path.write_text("", encoding="utf-8")
     env = dict(os.environ)
@@ -50,6 +64,7 @@ def _run_step_body(job_name: str, tmp_path, *, pr_body="", labels=(), files=(), 
         "GH_TOKEN": "x-test-token",
         "PR": "123",
         "REPO": "acme/demo",
+        "HEAD_SHA": head_sha,
         "GITHUB_STEP_SUMMARY": str(summary_path),
         "GH_STUB_PR_BODY": pr_body,
         "GH_STUB_PR_LABELS": "\n".join(labels),
@@ -203,3 +218,91 @@ def test_security_path_widening_is_superset_of_prior_match_set(tmp_path):
         "this is not a pure OR-append widening any more"
     )
     assert "^skills/" in current_script and "^agents/" in current_script
+
+
+# ============================================ security-label-reset (2026-08-05, second pass) ====
+#
+# The stripper is BELT-AND-BRACES for the new-commits case — head-SHA binding is what makes
+# `security-path` correct there, and the stripper races it with no ordering, so it is not relied
+# on. It IS load-bearing for exactly one case: a base retarget moves the effective diff while the
+# head SHA does not move, so a head-bound label survives a change it never described. These tests
+# pin that asymmetry, because it is the one place the two mechanisms do not overlap.
+
+
+def _run_reset(tmp_path, *, labels, head_sha=TEST_HEAD_SHA, base_from=""):
+    """Drive the REAL security-label-reset.yml step body, journaling every `gh` call so the test
+    reads WHICH labels were deleted off the actual invocations rather than off the script's own
+    narration."""
+    log = tmp_path / "gh-calls.log"
+    proc, summary = _run_step_body(
+        "reset", tmp_path, labels=labels, head_sha=head_sha,
+        workflow_path=RESET_WORKFLOW_PATH,
+        extra_env={"BASE_FROM": base_from, "GH_STUB_LOG": str(log)},
+    )
+    deleted = [
+        line.rsplit("/labels/", 1)[1].strip()
+        for line in (log.read_text(encoding="utf-8").splitlines() if log.exists() else [])
+        if "-X DELETE" in line and "/labels/" in line
+    ]
+    return proc, summary, deleted
+
+
+def test_reset_keeps_this_heads_label_and_strips_every_other():
+    """The ordinary push case: a label naming the current head is the one label that still
+    describes what is proposed, so deleting it would force a pointless re-review."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        proc, _summary, deleted = _run_reset(
+            Path(d),
+            labels=["lane:light", "security-reviewed:0badc0d", "security-reviewed:abcdef1",
+                    "security-reviewed"],
+        )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "security-reviewed:abcdef1" not in deleted, (
+        "the label naming the CURRENT head was stripped — every push would demand a re-review of "
+        f"a diff already reviewed at that commit. deleted={deleted}")
+    assert sorted(deleted) == ["security-reviewed", "security-reviewed:0badc0d"], deleted
+    assert "lane:light" not in deleted, "the stripper deleted a label outside its remit"
+
+
+def test_reset_strips_this_heads_label_too_when_the_base_was_retargeted():
+    """The one case SHA-binding cannot close by construction. Retargeting the base changes the
+    effective diff with NO new commits and NO change to the head SHA, so the head-bound label is
+    exactly the stale one and must go with the rest."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        proc, _summary, deleted = _run_reset(
+            Path(d),
+            labels=["security-reviewed:abcdef1"],
+            base_from="some-docs-branch",
+        )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert deleted == ["security-reviewed:abcdef1"], (
+        "a base retarget left the head-bound review label in place — the diff moved while the head "
+        f"SHA did not, so that label describes a review that never happened. deleted={deleted}")
+
+
+def test_reset_is_a_no_op_for_a_title_or_body_edit():
+    """`BASE_FROM` is populated only when the base ref actually changed, so title/body edits — the
+    common `edited` event — must cost nothing. If they stripped, every description fix would
+    demand a re-review, and the gate would be trained into the operator's ignore-list."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        proc, _summary, deleted = _run_reset(
+            Path(d), labels=["security-reviewed:abcdef1"], base_from="",
+        )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert deleted == [], f"a non-base edit stripped labels: {deleted}"
+
+
+def test_reset_never_checks_out_the_pull_request():
+    """`pull_request_target` runs with the BASE repo's write-scoped token. A checkout step here is
+    the pwn-request pattern. Asserted structurally, on the shipped YAML."""
+    doc = yaml.safe_load(RESET_WORKFLOW_PATH.read_text(encoding="utf-8"))
+    assert list(doc[True].keys()) == ["pull_request_target"], doc[True]
+    assert doc["permissions"] == {"contents": "read", "pull-requests": "write"}, doc["permissions"]
+    for job in doc["jobs"].values():
+        for step in job["steps"]:
+            assert "uses" not in step, (
+                f"security-label-reset grew an action step ({step.get('uses')!r}) — this workflow "
+                "holds a write-scoped token on a fork-triggerable event and must run no repo code")

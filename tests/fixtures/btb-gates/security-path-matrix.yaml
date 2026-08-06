@@ -108,6 +108,54 @@ rows:
     expect_exit_zero: true
     expect_summary_contains: "security-path: PASS (not applicable)"
 
+  # --- HEAD-BOUND REVIEW LABEL (2026-08-05, second security-review pass) --------------------
+  # The label is `security-reviewed:<sha7>` and names the commit it describes. The three rows
+  # below are the whole guarantee: a label for THIS head admits the diff, a label for ANOTHER
+  # head does not, and the old bare `security-reviewed` — which used to admit anything — no
+  # longer admits anything at all. All three are driven at HEAD_SHA abcdef123... (sha7 abcdef1);
+  # the sha7 is written out literally so the row cannot agree with a buggy slice in the gate.
+  #
+  # A green that was never red proves nothing, so each row was re-run against the PREVIOUS design
+  # (bare-label `grep -qxF 'security-reviewed'`) before being trusted. Reported honestly:
+  #   * `flagged-label-names-this-head`     — RED pre-change (the suffixed label did not match, so
+  #                                           a reviewed diff was refused). Bites.
+  #   * `flagged-label-is-bare-legacy-form` — RED pre-change (the bare label ADMITTED a diff nobody
+  #                                           reviewed at this head). This is the actual hole. Bites.
+  #   * `flagged-label-names-another-head`  — GREEN pre-change, i.e. it did NOT bite: the old
+  #                                           exact-match grep rejected a suffixed label for any
+  #                                           head, so it refused this row for an unrelated reason.
+  #                                           Kept as a forward regression guard — it goes red if
+  #                                           the exact match is ever loosened to a prefix/substring
+  #                                           match, which would make every `security-reviewed:*`
+  #                                           label admit every head — but it is not evidence that
+  #                                           this change fixed anything.
+  - name: flagged-label-names-this-head
+    files:
+      - ".github/workflows/ci.yml"
+    labels:
+      - "security-reviewed:abcdef1"
+    expect_flagged: true
+    expect_exit_zero: true
+    expect_summary_contains: "security-path: PASS — security-flagged paths present"
+
+  - name: flagged-label-names-another-head
+    files:
+      - ".github/workflows/ci.yml"
+    labels:
+      - "security-reviewed:0badc0d"
+    expect_flagged: true
+    expect_exit_zero: false
+    expect_summary_contains: "security-path: FAIL"
+
+  - name: flagged-label-is-bare-legacy-form
+    files:
+      - ".github/workflows/ci.yml"
+    labels:
+      - "security-reviewed"
+    expect_flagged: true
+    expect_exit_zero: false
+    expect_summary_contains: "security-path: FAIL"
+
 # `widen_only_probe_paths` — AC-SCW-13 (widen-only invariant): real example paths that the
 # PRE-widening alternation already flagged (auth/secret substring, `^hooks/`, `^\.github/`,
 # a supply-chain manifest name), captured from the shipped step body BEFORE this atom's edit

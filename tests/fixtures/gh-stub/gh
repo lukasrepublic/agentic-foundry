@@ -132,6 +132,13 @@ case "${1:-}" in
       fi
       if [ -n "${GH_STUB_BRANCH_STDERR:-}" ]; then printf '%s\n' "${GH_STUB_BRANCH_STDERR}" >&2; fi
       exit "${GH_STUB_BRANCH_EXIT:-0}"
+    elif [[ "$api_path" =~ ^repos/[^/]+/[^/]+/issues/[^/]+/labels/.+$ ]]; then
+      # `security-label-reset.yml`'s label DELETE. An EXPLICIT arm rather than the fallback below,
+      # because the stripper's test asserts on WHICH labels were deleted by reading $GH_STUB_LOG —
+      # and a call resolved by the catch-all would still be journaled, so a typo'd endpoint would
+      # look like a successful delete. Defaults to 0: GitHub 404s "label not on issue", which the
+      # shipped script tolerates deliberately, and rows that need that path set GH_STUB_LABEL_EXIT.
+      exit "${GH_STUB_LABEL_EXIT:-0}"
     elif [[ "$api_path" =~ ^repos/[^/]+/[^/]+/pulls/[^/]+/files$ ]]; then
       # Shipped arm, PRESERVED VERBATIM (AC-TARC-13 non-regression).
       printf '%s\n' "${GH_STUB_PR_FILES:-}"

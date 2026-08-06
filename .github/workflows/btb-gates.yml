@@ -23,15 +23,24 @@
 # Free plan" line was accurate when written and silently became false on 2026-08-04 when the repo
 # went public with enforcing branch protection — a public, wrong claim about our own merge floor,
 # which is exactly the class of drift this project exists to catch.
-# TIER-A PRECONDITIONS (recorded per the 2026-07-27 floor-#3 review, findings 5/8) — ALL MET as of
-# 2026-08-04, and they had to be, because going public made two of them live fork surface:
+# TIER-A PRECONDITIONS (recorded per the 2026-07-27 floor-#3 review, findings 5/8) — status as of
+# 2026-08-04. Going public made two of them live fork surface. Three are MET; CODEOWNERS is a
+# prerequisite in place rather than a control in force (see below) — stated that way deliberately,
+# because "ALL MET" is what this header said before review checked it:
 #   * branch protection + required checks — applied at the flip (6 required contexts, enforce_admins,
 #     no force-push, no deletion);
-#   * CODEOWNERS on .github/ — added (see .github/CODEOWNERS, which is explicit about being
-#     advisory until `require_code_owner_review` is enabled);
+#   * CODEOWNERS on .github/ — the FILE is added, but the precondition is only PARTLY met and
+#     saying otherwise would be the exact overclaim this block was rewritten to remove: GitHub
+#     requires code-owner review only when `require_code_owner_review` is set on the branch rule,
+#     and it is NOT set here (a solo maintainer cannot approve their own PR, so requiring it would
+#     make merges unsatisfiable). The file is a prerequisite in place, not a control in force;
 #   * label-only lane signals — spec-link no longer reads `Lane: light` from the fork-controlled
 #     PR body;
-#   * stale-label TOCTOU — security-path now fails when commits land after the review label.
+#   * stale-label TOCTOU — the review label is BOUND TO THE HEAD SHA
+#     (`security-reviewed:<sha7>`), so a label earned on an earlier commit cannot describe a later
+#     one. `security-label-reset.yml` additionally strips stale labels. The first attempt at this
+#     inspected the triggering EVENT and was bypassable three ways; the second used the stripper
+#     alone and lost a race with this gate. Both are recorded at the check site.
 # E2E-journeys gate: not present for this repo (no app runtime); the adopter template ships
 # with the Phase-5 certification path.
 #
@@ -125,7 +134,7 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
           BASE: ${{ github.event.pull_request.base.ref }}
-          ACTION: ${{ github.event.action }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           files="$(gh api --paginate "repos/${REPO}/pulls/${PR}/files" -q '.[].filename')"
@@ -172,7 +181,7 @@ jobs:
           hits="$(printf '%s\n' "$files" | grep -E '(auth|secret|credential|token|provenance|signing|\.rego$)|^\.github/|^hooks/|^\.claude-plugin/|(^|/)(standing-versions|profile-version-ledger)|(^|/)(requirements[^/]*\.txt|package(-lock)?\.json|pyproject\.toml|Pipfile[^/]*|go\.(mod|sum)|Cargo\.(toml|lock))$|^skills/|^agents/|^rulesets/|^scripts/foundry_tier_preflight' || true)"
           if [ -z "$hits" ]; then
             summary "security-path: PASS (not applicable) — no auth/secrets/supply-chain path in the diff"
-          elif printf '%s\n' "$labels" | grep -qxF 'security-reviewed'; then
+          elif printf '%s\n' "$labels" | grep -qxF "security-reviewed:${HEAD_SHA:0:7}"; then
             # STALE-LABEL TOCTOU is handled by INVALIDATING THE STATE, not by inspecting this run's
             # event. The first attempt keyed on `github.event.action == "synchronize"` and was
             # bypassable three ways (security review Blocks 1/2, 2026-08-04): an `edited` event
@@ -181,13 +190,22 @@ jobs:
             # close→push→reopen never emits `synchronize` at all. An event is a moment; the question
             # "was this diff reviewed" is about STATE.
             #
-            # `.github/workflows/security-label-reset.yml` now strips the label whenever commits
-            # land, so by the time this arm reads it the label means "reviewed at THIS head" — and
-            # every one of those three bypasses ends with no label rather than a stale one.
-            summary "security-path: PASS — security-flagged paths present AND 'security-reviewed' label posted (floor #3 review recorded)"
+            # The stripper alone was NOT enough, and the reason is worth keeping: it and this gate
+            # are two independent workflows started by the SAME event, with no ordering between
+            # them. If this job read the label before the stripper deleted it, it recorded PASS
+            # against the new head for an unreviewed diff — and that PASS was TERMINAL, because
+            # GitHub does not create workflow runs from GITHUB_TOKEN actions, so the strip could
+            # never re-run this gate to correct it. No adversary needed: label a PR, push one more
+            # commit, coin-flip (security review, 2026-08-04, second pass).
+            #
+            # So the label is BOUND TO THE HEAD SHA. `security-reviewed:<sha7>` either names the
+            # commit being gated or it does not; there is no window in which a stale label reads as
+            # fresh, and no ordering to lose. The stripper is kept as belt-and-braces cleanup, not
+            # as the mechanism.
+            summary "security-path: PASS — security-flagged paths present AND 'security-reviewed:${HEAD_SHA:0:7}' label posted (floor #3 review recorded for THIS head)"
             printf 'flagged paths:\n%s\n' "$hits"
           else
-            summary "security-path: FAIL — diff touches security surfaces with no 'security-reviewed' label. Run the security-reviewer pass, then label the PR."
+            summary "security-path: FAIL — diff touches security surfaces with no review label for this head. Run the security-reviewer pass against the CURRENT diff, then apply the label 'security-reviewed:${HEAD_SHA:0:7}'. The label names the commit reviewed, so pushing new commits cannot carry an old review forward."
             printf 'flagged paths:\n%s\n' "$hits"
             exit 1
           fi
@@ -208,6 +226,12 @@ jobs:
           persist-credentials: false
 
       - name: bash-3.2 parse gate (always reports)
+        env:
+          # For the tier() derivation only. `contents: read` covers the branches endpoint; the
+          # admin-only /protection sub-resource is never touched, same as the sibling jobs.
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE: ${{ github.event.pull_request.base.ref }}
         run: |
           set -euo pipefail
           # Bash 3.2 pin — the version Apple still ships as /bin/bash on macOS. RESOLVED and
@@ -217,7 +241,27 @@ jobs:
           IMG="docker.io/library/bash@sha256:3a13e5da38baa575985778cd09ce8ac736d4b4dafc91a430e71271f6e5311b89"
 
           summary() { printf '%s\n' "$1" >> "$GITHUB_STEP_SUMMARY"; printf '%s\n' "$1"; }
-          summary "**merge floor tier: B (advisory)** — private repo, Free plan; checks report, server does not enforce"
+          # DERIVED, not hardcoded — the third and last site of the literal this atom removes. It
+          # used to print "merge floor tier: B (advisory) — private repo, Free plan", which was
+          # true when written and false from the moment the repo went public with enforcing
+          # protection: a public, wrong claim about our own merge floor.
+          #
+          # An intermediate revision of this atom deleted the line outright, reasoning that a
+          # checkout-based parse gate's verdict does not depend on the tier. That overshot:
+          # AC-B32-4(c) of feat-foundry-bash32-parse-guard REQUIRES this job to write a
+          # step-summary line stating its enforcement tier "as `spec-link` and `security-path`
+          # already do", and an authorized AC is not something an implementation may quietly drop.
+          # Parity with the siblings is what the AC ties itself to, so parity is what it gets —
+          # byte-identical wording, derived from the same read-only probe.
+          tier() {
+            local p; p="$(gh api "repos/${REPO}/branches/${BASE}" -q .protected 2>/dev/null || echo unknown)"
+            case "$p" in
+              true)  printf '**merge floor: `%s` IS server-protected** — some protection is active; this job cannot enumerate WHICH contexts are required with a read-only token' "$BASE" ;;
+              false) printf '**merge floor tier: B (advisory)** — `%s` is NOT server-protected; these checks report, the server does not enforce' "$BASE" ;;
+              *)     printf '**merge floor: UNKNOWN** — could not read protection state for `%s`; treat as advisory' "$BASE" ;;
+            esac
+          }
+          summary "$(tier)"
 
           # AC-B32-10: a digest pins immutability, not identity — a digest resolved off a
           # modern-bash tag would make every checkpoint here pass while checking nothing it
@@ -259,8 +303,14 @@ jobs:
             fi
           done < <(git ls-files | grep -e '[.]sh$')
 
+          # The verdict lines carried a SECOND copy of the hardcoded tier — "(tier B, advisory —
+          # reports, does not server-side block on this repo's current plan)" — and it is the copy
+          # the tier test was actually reading, so removing only the standalone line above left the
+          # false claim shipping and the test still green. Both are gone; the tier is now stated
+          # exactly once, derived, by tier() above. Do not re-inline it here: a tier restated next
+          # to a verdict is a tier that drifts from the probe that derived it.
           if [ "$failures" -gt 0 ]; then
-            summary "shell-parse-bash32: FAIL — ${failures} of ${parsed} shipped shell script(s) failed to parse under bash 3.2 (tier B, advisory — reports, does not server-side block on this repo's current plan)"
+            summary "shell-parse-bash32: FAIL — ${failures} of ${parsed} shipped shell script(s) failed to parse under bash 3.2"
             exit 1
           fi
-          summary "shell-parse-bash32: PASS — all ${parsed} shipped shell script(s) parse under bash 3.2 (tier B, advisory — reports, does not server-side block on this repo's current plan)"
+          summary "shell-parse-bash32: PASS — all ${parsed} shipped shell script(s) parse under bash 3.2"

@@ -29,12 +29,36 @@
 #
 # `reopened` is included because commits CAN land while a PR is closed, and reopening emits
 # `reopened` rather than `synchronize` — the third bypass above.
+#
+# THIS WORKFLOW IS BELT-AND-BRACES FOR THE HEAD-SHA CASE, NOT THE MECHANISM. Stripping alone lost a
+# race: this workflow and `security-path` start from the same event with no ordering, so the gate
+# could read the label before the DELETE landed and record a terminal PASS for an unreviewed head.
+# The actual guarantee is that the label is BOUND TO THE HEAD SHA (`security-reviewed:<sha7>`) — it
+# either names the commit being gated or it does not. For new commits this workflow only keeps the
+# label set tidy; it is not what makes the gate correct.
+#
+# `edited` IS DIFFERENT, and it is the one case where this workflow is load-bearing. Retargeting the
+# base branch changes the effective diff with NO new commits and NO change to the head SHA — so a
+# head-bound label survives a change it never described. That is the one gap SHA-binding cannot
+# close by construction, so on a base change we strip EVERY review label, the current head's
+# included. The asymmetry is deliberate: stripping is fail-closed (at worst an unnecessary strip
+# costing a re-label), whereas re-running the GATE on `edited` was fail-open, which is why `edited`
+# was removed from btb-gates.yml and belongs here.
+#
+# RESIDUAL, STATED NOT HIDDEN: a strip cannot re-run `security-path`. GitHub does not create
+# workflow runs from GITHUB_TOKEN actions, so the already-green check run from the previous base
+# stays green until some later event re-runs it. Stripping makes the STATE honest — the next run,
+# whenever it comes, is correct — it does not retroactively redden a recorded check. Closing that
+# too would mean binding the label to the base as well (`<head7>-<base7>`), which was priced and
+# declined: retargeting requires an existing non-`main` base, a review earned on it, and an operator
+# who merges without looking, and the operator's own test pass is the terminal gate (CLAUDE.md,
+# "Delivery sign-off"). Naming the residual is the control here.
 
 name: security-label-reset
 
 on:
   pull_request_target:
-    types: [synchronize, reopened]
+    types: [synchronize, reopened, edited]
 
 permissions:
   contents: read
@@ -49,6 +73,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # Non-empty ONLY when this `edited` event retargeted the base branch. Title/body edits
+          # leave it empty, so they cost nothing — the diff did not move.
+          BASE_FROM: ${{ github.event.changes.base.ref.from }}
         run: |
           set -euo pipefail
           # `|| true` on the DELETE only: the label is frequently absent (most pushes are to PRs
@@ -56,10 +84,32 @@ jobs:
           # desired end state, not an error. The read above it is NOT tolerant — if we cannot
           # determine the label set we must not report success.
           labels="$(gh pr view "$PR" --repo "$REPO" --json labels -q '.labels[].name')"
-          if printf '%s\n' "$labels" | grep -qxF 'security-reviewed'; then
-            gh api -X DELETE "repos/${REPO}/issues/${PR}/labels/security-reviewed" >/dev/null || true
-            echo "security-reviewed stripped — new commits landed, so the prior review no longer describes this diff."
-            echo "Re-run the security review against the current diff, then re-apply the label." >> "$GITHUB_STEP_SUMMARY"
+
+          # Normally the current head's label is KEPT: it is the one case where the review genuinely
+          # describes what is proposed, and deleting it would force a pointless re-review. But when
+          # the BASE moved, the head SHA is unchanged while the diff is not, so that label is
+          # exactly the stale one — `keep` is emptied and every review label goes.
+          keep="security-reviewed:${HEAD_SHA:0:7}"
+          if [ -n "${BASE_FROM:-}" ]; then
+            keep=""
+            echo "base retargeted from '${BASE_FROM}' — the head SHA did not move but the diff did," \
+                 "so EVERY review label is stripped, including this head's."
+          fi
+
+          stripped=0
+          while IFS= read -r l; do
+            case "$l" in
+              security-reviewed*)
+                if [ "$l" != "$keep" ]; then
+                  gh api -X DELETE "repos/${REPO}/issues/${PR}/labels/${l}" >/dev/null || true
+                  echo "stripped '$l' — it does not describe the diff now proposed."
+                  stripped=$((stripped + 1))
+                fi
+                ;;
+            esac
+          done <<< "$labels"
+          if [ "$stripped" -eq 0 ]; then
+            echo "no stale review label present — nothing to strip."
           else
-            echo "no security-reviewed label present — nothing to strip."
+            echo "Re-run the security review against the current diff, then apply 'security-reviewed:${HEAD_SHA:0:7}'." >> "$GITHUB_STEP_SUMMARY"
           fi
