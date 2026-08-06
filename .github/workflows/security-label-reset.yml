@@ -1,8 +1,10 @@
 # Strips `security-reviewed` whenever new commits land on a PR.
 #
-# WHY THIS EXISTS. `security-path` (btb-gates.yml) passes a security-flagged diff when the
-# `security-reviewed` label is present. A label is STATE, and state goes stale: review a benign
-# diff, get labelled, then push. The label still says "reviewed" about code nobody reviewed.
+# WHY THIS EXISTS. `security-path` (btb-gates.yml) passes a security-flagged diff when a label
+# NAMING THE COMMIT AND BASE UNDER REVIEW is present — `security-reviewed:<head12>-<base8>`. It
+# began life as a BARE `security-reviewed`, and that is the history this file records: a label is
+# STATE, and state goes stale — review a benign diff, get labelled, then push, and the label still
+# says "reviewed" about code nobody reviewed. The bare spelling no longer satisfies the gate.
 #
 # The first attempt at closing this lived inside `security-path` and keyed on
 # `github.event.action == "synchronize"`. It was bypassable three ways, all found by security
@@ -33,17 +35,20 @@
 # THIS WORKFLOW IS BELT-AND-BRACES FOR THE HEAD-SHA CASE, NOT THE MECHANISM. Stripping alone lost a
 # race: this workflow and `security-path` start from the same event with no ordering, so the gate
 # could read the label before the DELETE landed and record a terminal PASS for an unreviewed head.
-# The actual guarantee is that the label is BOUND TO THE HEAD SHA (`security-reviewed:<sha12>`) — it
-# either names the commit being gated or it does not. For new commits this workflow only keeps the
-# label set tidy; it is not what makes the gate correct.
+# The actual guarantee is that the label is BOUND TO (HEAD SHA, BASE REF) —
+# `security-reviewed:<head12>-<base8>` either names the commit AND base being gated or it does not.
+# This workflow only keeps the label set tidy; it is not what makes the gate correct.
 #
-# `edited` IS DIFFERENT, and it is the one case where this workflow is load-bearing. Retargeting the
-# base branch changes the effective diff with NO new commits and NO change to the head SHA — so a
-# head-bound label survives a change it never described. That is the one gap SHA-binding cannot
-# close by construction, so on a base change we strip EVERY review label, the current head's
-# included. The asymmetry is deliberate: stripping is fail-closed (at worst an unnecessary strip
-# costing a re-label), whereas re-running the GATE on `edited` was fail-open, which is why `edited`
-# was removed from btb-gates.yml and belongs here.
+# `edited` MATTERS because a base retarget arrives only as that event, and it changes the effective
+# diff with NO new commits and NO change to the head SHA. On a base change this workflow strips
+# EVERY review label, the current head's included, since none of them describe the new diff.
+#
+# It is NOT, however, the control for that case — an earlier revision of this header said it was,
+# and that was true only while the label bound the head alone. See the next paragraph: the label
+# now names the base too, so the gate refuses a mismatched base from STATE. Stripping is still
+# worth doing (fail-closed: at worst an unnecessary strip costing a re-label), but nothing rests
+# on it, and a reader must not conclude the `-${BASE_TAG}` suffix or the gate's BASE_FROM arm is
+# redundant machinery this workflow already covers (security review, 2026-08-06).
 #
 # WHAT ACTUALLY CLOSES THE RETARGET CASE (this paragraph used to decline it).
 # The review label is bound to (head SHA, BASE REF): `security-reviewed:<head12>-<base8>`, where
