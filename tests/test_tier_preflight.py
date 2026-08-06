@@ -395,6 +395,46 @@ def test_tarc_06_cause_no_ruleset_emits_reapply_text_not_plan_text(tmp_path):
     assert PLAN_TEXT not in proc.stdout
 
 
+def test_classic_branch_protection_is_not_reported_as_no_ruleset(tmp_path):
+    """No ruleset, but `main` IS protected the classic way.
+
+    Before this, the branch-rules probe returned `[]` for classic protection and the verdict fell
+    through to `no-ruleset` — indistinguishable from a branch with NO protection at all. That was a
+    false negative about the merge floor, observed live on this repository 2026-08-04 (`main` was
+    `protected=true` with six required contexts while the probe read empty). Still TIER-B, because
+    read-only we can learn THAT the branch is protected but not WHICH contexts it requires — and
+    claiming TIER-A on "something is protecting this" is the overclaim the tool exists to prevent.
+    """
+    env = _readonly_env(extra={
+        "GH_STUB_RULESETS_PAGE1": "",
+        "GH_STUB_BRANCH_BODY": json.dumps({"name": "main", "protected": True}),
+    })
+    proc, journal = _run_cli(tmp_path, ["--repo", REPO, "--context", "spec-link"], env)
+    assert _final_line(proc).startswith("TIER-B (classic-protection):")
+    assert "IS protected by classic branch protection" in proc.stdout
+    # The OLD remediation sentence must be gone. Asserted on the full sentence, not on the
+    # NO_RULESET_TEXT fragment ("re-run with --apply"), which the new remediation legitimately
+    # contains too — migrating to a ruleset is still the recommended fix.
+    assert "no ruleset carrying the template's name exists" not in proc.stdout
+    # And the final line must not read as "nothing is enforced", which is the misreading this
+    # whole cause exists to prevent.
+    assert "ruleset NOT enforced" not in _final_line(proc)
+    # The disambiguation must use the READ-ONLY branch endpoint, never the admin-only
+    # /protection sub-resource — the tool's least-privilege promise is load-bearing.
+    assert "/protection" not in journal
+
+
+def test_unprotected_branch_still_reports_no_ruleset(tmp_path):
+    """The negative control for the row above: `protected: false` must NOT borrow the new cause."""
+    env = _readonly_env(extra={
+        "GH_STUB_RULESETS_PAGE1": "",
+        "GH_STUB_BRANCH_BODY": json.dumps({"name": "main", "protected": False}),
+    })
+    proc, journal = _run_cli(tmp_path, ["--repo", REPO, "--context", "spec-link"], env)
+    assert _final_line(proc).startswith("TIER-B (no-ruleset):")
+    assert NO_RULESET_TEXT in proc.stdout
+
+
 def test_tarc_06_overlapping_input_precedence_prefers_created_not_enforced_over_context_missing(tmp_path):
     env = _readonly_env(probe_contexts=["spec-link"], extra={
         "GH_STUB_RULESETS_PAGE1": json.dumps({"name": TEMPLATE_NAME, "enforcement": "active"}),

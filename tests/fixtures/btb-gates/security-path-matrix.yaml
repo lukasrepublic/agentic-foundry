@@ -8,9 +8,14 @@
 # (tier-a-ruleset-as-code, AC-TARC-15) 6 more rows: 2 FLAGGED positive rows proving the widened
 # `^rulesets/`/`^scripts/foundry_tier_preflight` arms match this atom's own two new surfaces, and
 # 4 CLEAN anchor-correctness negative-control rows proving those anchors don't over-match a
-# neighbour. Every row omits the `security-reviewed` label, so a FLAGGED row's real verdict is a
-# step failure (exit != 0, "security-path: FAIL") and a CLEAN row's real verdict is a pass
+# neighbour. All of those rows omit the review label, so a FLAGGED one's real verdict is a step
+# failure (exit != 0, "security-path: FAIL") and a CLEAN one's is a pass
 # ("security-path: PASS (not applicable)").
+#
+# This line used to say "EVERY row omits the label". That stopped being true when the
+# head/base-bound rows were appended at the end — they carry labels deliberately — and it is the
+# same stale-prose defect this atom is fixing in its own workflow headers, so it is fixed here too
+# rather than left for the next reader to trip over.
 rows:
   - name: flagged-skill-file
     files:
@@ -107,6 +112,55 @@ rows:
     expect_flagged: false
     expect_exit_zero: true
     expect_summary_contains: "security-path: PASS (not applicable)"
+
+  # --- HEAD-BOUND REVIEW LABEL (2026-08-05, second security-review pass) --------------------
+  # The label is `security-reviewed:<sha12>` and names the commit it describes. The three rows
+  # below are the whole guarantee: a label for THIS head admits the diff, a label for ANOTHER
+  # head does not, and the old bare `security-reviewed` — which used to admit anything — no
+  # longer admits anything at all. The suffix is sha256('main')[:8] — the base ref every row
+  # is gated against; the gate binds (head, base ref) so the label names both. All three are driven at HEAD_SHA abcdef123456789... (sha12 abcdef123456);
+  # the sha12 is written out literally so the row cannot agree with a buggy slice in the gate.
+  #
+  # A green that was never red proves nothing, so each row was re-run against the PREVIOUS design
+  # (bare-label `grep -qxF 'security-reviewed'`) before being trusted. Reported honestly:
+  #   * `flagged-label-names-this-head`     — RED pre-change (the suffixed label did not match, so
+  #                                           a reviewed diff was refused). Bites.
+  #   * `flagged-label-is-bare-legacy-form` — RED pre-change (the bare label ADMITTED a diff nobody
+  #                                           reviewed at this head). This is the actual hole. Bites.
+  #   * `flagged-label-names-another-head`  — GREEN pre-change, i.e. it did NOT bite: the old
+  #                                           exact-match grep rejected a suffixed label for any
+  #                                           head, so it refused this row for an unrelated reason.
+  #                                           Kept as a forward regression guard — it goes red if
+  #                                           the exact match is ever loosened to a prefix/substring
+  #                                           match, which would make every `security-reviewed:*`
+  #                                           label admit every head — but it is not evidence that
+  #                                           this change fixed anything.
+  - name: flagged-label-names-this-head
+    files:
+      - ".github/workflows/ci.yml"
+    labels:
+      - "security-reviewed:abcdef123456-0d6e4079"
+    expect_flagged: true
+    expect_exit_zero: true
+    expect_summary_contains: "security-path: PASS — security-flagged paths present"
+
+  - name: flagged-label-names-another-head
+    files:
+      - ".github/workflows/ci.yml"
+    labels:
+      - "security-reviewed:0badc0d00000-0d6e4079"
+    expect_flagged: true
+    expect_exit_zero: false
+    expect_summary_contains: "security-path: FAIL"
+
+  - name: flagged-label-is-bare-legacy-form
+    files:
+      - ".github/workflows/ci.yml"
+    labels:
+      - "security-reviewed"
+    expect_flagged: true
+    expect_exit_zero: false
+    expect_summary_contains: "security-path: FAIL"
 
 # `widen_only_probe_paths` — AC-SCW-13 (widen-only invariant): real example paths that the
 # PRE-widening alternation already flagged (auth/secret substring, `^hooks/`, `^\.github/`,

@@ -85,6 +85,15 @@ REMEDIATION_NO_RULESET = (
     "no ruleset carrying the template's name exists — re-run with --apply."
 )
 
+REMEDIATION_CLASSIC_PROTECTION = (
+    "no ruleset exists, BUT the default branch is protected by CLASSIC branch protection, which the "
+    "branch-rules probe cannot see. This is NOT an unprotected branch — the verdict is 'unverifiable "
+    "from a read-only token', not 'advisory'. Reading which contexts classic protection requires "
+    "needs the admin-only /branches/{branch}/protection endpoint, and this tool is deliberately "
+    "read-only. Either re-run with --apply to migrate to a ruleset (recommended — rulesets are "
+    "GitHub's forward path and are introspectable), or confirm the required contexts by hand."
+)
+
 # The verdict vocabulary (closed set) and its exit codes.
 _VERDICT_EXIT = {"TIER-A": 0, "TIER-B": 10, "PREFLIGHT-ERROR": 1}
 _CAUSE_TOKEN_RE = re.compile(r"^[a-z-]+$")
@@ -206,9 +215,22 @@ def probe_has_rsc_rule(probe_rules: list) -> bool:
 
 
 def resolve_cause(create_plan_gated: bool, found_entry: dict | None, has_rsc_rule: bool,
-                  contexts_satisfied: bool = False, has_pr_rule: bool = True) -> tuple[str, str]:
+                  contexts_satisfied: bool = False, has_pr_rule: bool = True,
+                  classic_protected: bool = False) -> tuple[str, str]:
     """The Tier B cause table (closed set), evaluated in DECLARED PRECEDENCE ORDER — first match
-    wins, a strict partition of every input that reaches Tier B (AC-TARC-6)."""
+    wins, a strict partition of every input that reaches Tier B (AC-TARC-6).
+
+    `classic_protected` splits the terminal `no-ruleset` case in two. Before it, a branch protected
+    the CLASSIC way reported `no-ruleset` — indistinguishable from a branch with no protection at
+    all, because the branch-rules endpoint reports rulesets only and returns `[]` for classic
+    protection. That was a FALSE NEGATIVE about the merge floor, and this tool is what decides
+    whether the gates get called load-bearing: it told an adopter with a genuinely enforcing Tier-A
+    floor that their gates were advisory. Observed on this repo 2026-08-04, where `main` was
+    `protected=true` with six required contexts while the probe returned an empty rule list.
+
+    The new cause is still TIER-B, deliberately. Read-only, we can learn THAT the branch is
+    protected but not WHICH contexts it requires, and claiming TIER-A on the strength of "something
+    is protecting this branch" would be exactly the overclaim the tool exists to prevent."""
     if create_plan_gated:
         return "plan-gated", REMEDIATION_PLAN_LIMITATION
     if found_entry is not None:
@@ -225,6 +247,8 @@ def resolve_cause(create_plan_gated: bool, found_entry: dict | None, has_rsc_rul
         return "pull-request-missing", REMEDIATION_PULL_REQUEST_MISSING
     if has_rsc_rule:
         return "context-missing", REMEDIATION_CONTEXT_MISSING
+    if classic_protected:
+        return "classic-protection", REMEDIATION_CLASSIC_PROTECTION
     return "no-ruleset", REMEDIATION_NO_RULESET
 
 
@@ -380,16 +404,42 @@ def run(args: argparse.Namespace) -> int:
     found_entry = find_entry(rulesets_list, template_name)
     has_rsc_rule = probe_has_rsc_rule(probe_rules)
 
+    # Only asked when it can change the answer — i.e. when we are otherwise about to report
+    # `no-ruleset`. `/branches/{branch}` is READABLE WITH A READ-ONLY TOKEN (unlike
+    # `/branches/{branch}/protection`, which is admin-only), so this preserves the tool's
+    # least-privilege promise. A failure here is not fatal: it degrades to the previous
+    # `no-ruleset` answer rather than turning a Tier-B report into a PREFLIGHT-ERROR.
+    classic_protected = False
+    if found_entry is None and not has_rsc_rule and not create_plan_gated:
+        blabel = f"repos/{args.repo}/branches/{quote(default_branch, safe='')}"
+        bres = run_gh(blabel, timeout=timeout)
+        if classify_generic_failure(bres, blabel) is None:
+            try:
+                classic_protected = bool(json.loads(bres.stdout).get("protected"))
+            except (json.JSONDecodeError, AttributeError):
+                classic_protected = False
+        if classic_protected:
+            lines.append(f"note: {default_branch} IS protected by classic branch protection "
+                         f"(the branch-rules probe reports rulesets only, so it read empty)")
+
     cause, remediation = resolve_cause(create_plan_gated, found_entry, has_rsc_rule,
                                        contexts_satisfied=bool(required and required <= enforced),
-                                       has_pr_rule=("pull_request" in rule_types))
+                                       has_pr_rule=("pull_request" in rule_types),
+                                       classic_protected=classic_protected)
     lines.append(remediation)
     if cause == "context-missing":
         lines.append(f"required contexts: {sorted(required)}")
         lines.append(f"enforced contexts: {sorted(enforced)}")
     lines.append("the merge gate continues to run advisory-only in the meantime.")
     stored = "stored but " if found_entry is not None else ""
-    return finish(lines, "TIER-B", cause, f"ruleset {stored}NOT enforced on {args.repo}@{default_branch}.")
+    if cause == "classic-protection":
+        # "ruleset NOT enforced" is true but reads as "nothing is enforced", which is the exact
+        # misreading this cause exists to prevent.
+        detail = (f"no ruleset on {args.repo}@{default_branch}; the branch IS protected by classic "
+                  f"branch protection, whose required contexts a read-only token cannot enumerate.")
+    else:
+        detail = f"ruleset {stored}NOT enforced on {args.repo}@{default_branch}."
+    return finish(lines, "TIER-B", cause, detail)
 
 
 # ------------------------------------------- CLI glue -------------------------------------------#
