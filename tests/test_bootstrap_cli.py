@@ -310,6 +310,7 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
     TARBALL_VERSION_BY_PLUGIN_PIN = {
         "1.1.0": "0.1.0",
         "1.2.0": "0.2.0",
+        "1.2.1": "0.2.1",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (
