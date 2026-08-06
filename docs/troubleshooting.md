@@ -214,7 +214,7 @@ rm -rf ~/.claude/plugins/cache/
 #  manual edit is safe if it doesn't)
 
 # 4. reinstall clean
-claude plugin marketplace add lukasrepublic/agentic-foundry#v1.2.0
+claude plugin marketplace add lukasrepublic/agentic-foundry#v1.2.1
 claude plugin install foundry@agentic-foundry
 ```
 
