@@ -8,6 +8,43 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.2.1 — 2026-08-06
+
+### `create-agentic-workspace` publishes to npm over OIDC trusted publishing
+
+- **What this release is for.** The pre-session bootstrap CLI had never been published, so
+  `npx create-agentic-workspace` — **step 0** of the documented setup path — 404'd for every reader.
+  This is a patch release whose purpose is to fire `.github/workflows/npm-publish.yml` and publish
+  `create-agentic-workspace@0.2.1`. The plugin content is unchanged from v1.2.0 apart from the
+  publish machinery and this bump.
+- **Trusted publishing, not a stored token.** The bootstrap-CLI spec's R9 obligation said
+  `npm publish --provenance`, which implies a long-lived `NPM_TOKEN` in repository secrets. npm's
+  OIDC trusted publishing went GA 2025-07-31 and is now the recommended path: no credential to leak
+  or rotate, the repository→package binding enforced by npm rather than by whoever holds a token,
+  and provenance generated automatically (the flag is redundant). R9's *intent* — an attested
+  publish, verified — ships in full; its literal 2024 shape deliberately does not.
+- **The attestation is verified, not inferred.** After publishing, the workflow asserts the registry
+  reports a non-empty `dist.attestations` for the version just published and exits non-zero when it
+  is absent. R9 named `npm audit signatures`, which verifies *installed dependencies* — this package
+  has none, so that check would have been vacuous.
+- **Ref-binding, twice.** npm's trusted publishing binds owner + repo + workflow + environment but
+  **not a ref**. The workflow conditions the publish on `github.ref_type == 'tag'`; the
+  `npm-publish` GitHub Environment independently admits `v*` tags only. Without either, a
+  `workflow_dispatch` on any branch could publish unreviewed code with a *truthful* attestation.
+- **Security review:** performed at spec time and again on the PR diff (2026-08-04); no Blocks. Three
+  findings fixed pre-merge — `$GITHUB_OUTPUT` injection via unvalidated manifest name/version, the
+  vacuous `npm audit signatures` check, and the missing ref condition.
+- **The bootstrap, recorded not hidden.** npm cannot configure a trusted publisher for a package
+  that does not yet exist, and has no PyPI-style pre-registration (`npm/cli#8544` is open) — so the
+  first publish cannot use OIDC. The name was claimed on 2026-08-06 by a `0.0.0` placeholder
+  carrying no real code, published from an **interactive passkey-authenticated session**; no
+  automation token was created or stored. That placeholder is **deprecated on the registry**
+  (verified). Two consequences worth stating: npm sets `latest` on a package's *first* publish
+  regardless of `--tag`, so `latest` pointed at the placeholder until this release moved it; and
+  `0.0.0` is permanent, so an explicit pin to it resolves an unattested artifact forever.
+  Follow-up: set the package's npm publishing access to **require the trusted publisher**, which
+  disables token publishes for good.
+
 ## v1.2.0 — 2026-08-04
 
 ### `--verify-tag` accepts GitHub's port-443 SSH host (fix, found by dogfooding the cut)
