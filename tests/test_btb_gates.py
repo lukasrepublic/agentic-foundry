@@ -29,7 +29,7 @@ FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "btb-gates"
 
 # The head SHA every row below is gated at. Arbitrary but FIXED, because the whole point of the
 # post-2026-08-04 design is that the review label NAMES a commit: `security-reviewed:<sha12>`
-# either matches the head being gated or it does not. Rows spell the sha7 out literally rather
+# either matches the head being gated or it does not. Rows spell the sha12 out literally rather
 # than slicing this constant, so a test that agreed with a buggy slice cannot exist.
 TEST_HEAD_SHA = "abcdef1234567890abcdef1234567890abcdef12"   # sha12 == "abcdef123456"
 TEST_STALE_SHA = "0badc0d000000000000000000000000000000000"  # sha12 == "0badc0d00000"
@@ -365,6 +365,23 @@ def test_security_path_fails_closed_when_the_base_was_retargeted(tmp_path):
         "a base retarget must fail closed even when the label names the current head — the head "
         f"did not move but the diff did:\n{summary}")
     assert "base was retargeted" in summary, summary
+
+
+def test_security_path_retarget_does_not_demand_a_review_label_for_a_clean_diff(tmp_path):
+    """Risk 3: the retarget arm used to sit ABOVE the `hits` test, so a docs-only PR that got
+    retargeted was told "…then apply 'security-reviewed:<sha12>'". Applying that label passed —
+    `hits` was empty anyway — which teaches the operator that handing out the review label is how
+    you clear this red. That is round 1's lesson verbatim: a gate whose documented remedy is the
+    bypass will be followed. Not-applicable must win over the retarget arm."""
+    proc, summary = _run_step_body(
+        "security-path", tmp_path, pr_body="", labels=[], files=["docs/readme.md"],
+        extra_env={"BASE_FROM": "some-docs-branch"},
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "PASS (not applicable)" in summary, summary
+    assert "security-reviewed:" not in summary, (
+        "a diff with no security surface was told to apply a review label — that instruction is "
+        f"how an operator learns to hand out review labels for unreviewed diffs:\n{summary}")
 
 
 def test_security_path_ignores_base_from_when_it_is_empty(tmp_path):

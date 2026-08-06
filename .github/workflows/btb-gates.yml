@@ -46,7 +46,7 @@
 #   * label-only lane signals — spec-link no longer reads `Lane: light` from the fork-controlled
 #     PR body;
 #   * stale-label TOCTOU — the review label is BOUND TO THE HEAD SHA
-#     (`security-reviewed:<sha7>`), so a label earned on an earlier commit cannot describe a later
+#     (`security-reviewed:<sha12>`), so a label earned on an earlier commit cannot describe a later
 #     one. `security-label-reset.yml` additionally strips stale labels. The first attempt at this
 #     inspected the triggering EVENT and was bypassable three ways; the second used the stripper
 #     alone and lost a race with this gate. Both are recorded at the check site.
@@ -205,20 +205,26 @@ jobs:
           # the label text identical so nothing looks stale (security review Block 1, 2026-08-06).
           # 12 hex is 48 bits, git's own modern abbreviation floor, and out of grinding reach.
           REVIEW_LABEL="security-reviewed:${HEAD_SHA:0:12}"
-          if [ -n "${BASE_FROM:-}" ]; then
+          if [ -z "$hits" ]; then
+            # Not-applicable WINS over the base-retarget arm, deliberately. That arm used to sit
+            # above this test, so a docs-only PR that got retargeted was told "…then apply
+            # 'security-reviewed:<sha12>'" — and applying it passed, because `hits` was empty
+            # anyway. That teaches the operator that handing out the review label is how you clear
+            # this red, which is R1's lesson exactly: a gate whose documented remedy is the bypass
+            # will be followed (security review Risk 3, 2026-08-06). A diff with no security
+            # surface has nothing to re-review, whatever the base did.
+            summary "security-path: PASS (not applicable) — no auth/secrets/supply-chain path in the diff"
+          elif [ -n "${BASE_FROM:-}" ]; then
             # BASE RETARGET — the one case head-SHA binding cannot cover, handled HERE rather than
             # by the stripper. Changing the base moves the effective diff with no new commits and
             # no change to the head SHA, so a head-bound label survives a diff it never described.
             # Delegating this to `security-label-reset.yml` reintroduced exactly the race that
             # killed the previous design: the strip and this gate share an event with no ordering,
             # and a GITHUB_TOKEN strip cannot re-run this gate, so a green recorded here would be
-            # TERMINAL. Reading our OWN event payload has no race to lose — and it fails closed
-            # before the label is consulted at all, so there is no label state to get wrong.
-            summary "security-path: FAIL — base was retargeted from '${BASE_FROM}'. The head SHA did not move but the diff did, so any existing review label describes a different change. Re-run the security-reviewer pass against the NEW base, then apply '${REVIEW_LABEL}'."
+            # TERMINAL. Reading our OWN event payload has no race to lose.
+            summary "security-path: FAIL — base was retargeted from '${BASE_FROM}' and the diff touches security surfaces. The head SHA did not move but the diff did, so any existing review label describes a different change. Re-run the security-reviewer pass against the NEW base, then apply '${REVIEW_LABEL}'."
+            printf 'flagged paths:\n%s\n' "$hits"
             exit 1
-          fi
-          if [ -z "$hits" ]; then
-            summary "security-path: PASS (not applicable) — no auth/secrets/supply-chain path in the diff"
           elif printf '%s\n' "$labels" | grep -qxF "$REVIEW_LABEL"; then
             # STALE-LABEL TOCTOU is handled by INVALIDATING THE STATE, not by inspecting this run's
             # event. The first attempt keyed on `github.event.action == "synchronize"` and was

@@ -33,7 +33,7 @@
 # THIS WORKFLOW IS BELT-AND-BRACES FOR THE HEAD-SHA CASE, NOT THE MECHANISM. Stripping alone lost a
 # race: this workflow and `security-path` start from the same event with no ordering, so the gate
 # could read the label before the DELETE landed and record a terminal PASS for an unreviewed head.
-# The actual guarantee is that the label is BOUND TO THE HEAD SHA (`security-reviewed:<sha7>`) — it
+# The actual guarantee is that the label is BOUND TO THE HEAD SHA (`security-reviewed:<sha12>`) — it
 # either names the commit being gated or it does not. For new commits this workflow only keeps the
 # label set tidy; it is not what makes the gate correct.
 #
@@ -49,7 +49,7 @@
 # workflow runs from GITHUB_TOKEN actions, so the already-green check run from the previous base
 # stays green until some later event re-runs it. Stripping makes the STATE honest — the next run,
 # whenever it comes, is correct — it does not retroactively redden a recorded check. Closing that
-# too would mean binding the label to the base as well (`<head7>-<base7>`), which was priced and
+# too would mean binding the label to the base as well (`<head12>-<base12>`), which was priced and
 # declined: retargeting requires an existing non-`main` base, a review earned on it, and an operator
 # who merges without looking, and the operator's own test pass is the terminal gate (CLAUDE.md,
 # "Delivery sign-off"). Naming the residual is the control here.
@@ -138,9 +138,22 @@ jobs:
           if [ "$base_changed" -eq 1 ]; then
             # RE-READ and prove the end state. On this path the strip is load-bearing, and a log
             # line saying "stripped" is not evidence that the label is gone.
-            remaining="$(gh pr view "$PR" --repo "$REPO" --json labels -q '.labels[].name' | grep -c '^security-reviewed' || true)"
-            if [ "${remaining:-0}" -ne 0 ]; then
-              echo "::error::base was retargeted but ${remaining} review label(s) survive — the label set still asserts a review of a different diff"
+            #
+            # The read is SEPARATED from the match, and its failure is FATAL. The first version was
+            # `remaining="$(gh pr view … | grep -c … || true)"`, which is fail-OPEN in the one place
+            # that must not be: if `gh pr view` 5xx'd or rate-limited, the pipeline died, `grep -c`
+            # counted an empty stream, `remaining` became "0", and the job printed "verified: no
+            # review label survives" and exited 0 with the stale label still on the PR. That is
+            # precisely the failure this block was added to close, displaced one level up — and it
+            # contradicted this file's own claim above that the label read is not tolerant
+            # (security review Risk 1, 2026-08-06).
+            if ! after="$(gh pr view "$PR" --repo "$REPO" --json labels -q '.labels[].name')"; then
+              echo "::error::base was retargeted but the label set could not be re-read — cannot confirm the stale review label is gone"
+              exit 1
+            fi
+            if printf '%s\n' "$after" | grep -q '^security-reviewed'; then
+              echo "::error::base was retargeted but a review label survives — the label set still asserts a review of a different diff"
+              printf '%s\n' "$after" | grep '^security-reviewed'
               exit 1
             fi
             echo "verified: no review label survives the base retarget."
