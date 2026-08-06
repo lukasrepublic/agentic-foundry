@@ -50,6 +50,27 @@
 #     one. `security-label-reset.yml` additionally strips stale labels. The first attempt at this
 #     inspected the triggering EVENT and was bypassable three ways; the second used the stripper
 #     alone and lost a race with this gate. Both are recorded at the check site.
+# ⚠️ WHAT THESE GATES DO NOT DEFEND AGAINST, STATED PLAINLY. On the `pull_request` trigger GitHub
+# runs the workflow FROM THE PR'S MERGE REF — so a fork author's edits to THIS FILE take effect in
+# that run. A fork PR can therefore rewrite `security-path` to print PASS and `exit 0`, and the
+# required context reports green under its own name. Every hardening below (label-only lane
+# signals, the head+base-bound review label) closes a fork's control of the PR *body*; none of it
+# closes a fork's control of the *gate definition*, which is the same finding one level up.
+#
+# This is NOT a defect introduced by the tier-A hardening — it is how `pull_request` has always
+# worked — but this file is the one asserting the Tier-A preconditions are met on live fork
+# surface, and asserting that while silent about this would be exactly the overclaim the atom
+# exists to remove (security review, 2026-08-06).
+#
+# The fix is a follow-up atom, not a comment: move `spec-link` and `security-path` to
+# `pull_request_target`, whose definition comes from the BASE branch and is fork-immutable. Both
+# jobs are already deliberately checkout-free and consume only API metadata — precisely the
+# profile `security-label-reset.yml`'s header argues makes `pull_request_target` safe.
+# `shell-parse-bash32` must STAY on `pull_request`: it checks out fork code, which is the one
+# thing that trigger must never do with a privileged token. Until then, the practical control is
+# GitHub's "require approval for outside collaborators before running workflows", plus the
+# operator's own review of any fork PR — a practice, not a mechanism.
+#
 # E2E-journeys gate: not present for this repo (no app runtime); the adopter template ships
 # with the Phase-5 certification path.
 #

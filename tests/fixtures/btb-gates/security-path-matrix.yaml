@@ -8,9 +8,14 @@
 # (tier-a-ruleset-as-code, AC-TARC-15) 6 more rows: 2 FLAGGED positive rows proving the widened
 # `^rulesets/`/`^scripts/foundry_tier_preflight` arms match this atom's own two new surfaces, and
 # 4 CLEAN anchor-correctness negative-control rows proving those anchors don't over-match a
-# neighbour. Every row omits the `security-reviewed` label, so a FLAGGED row's real verdict is a
-# step failure (exit != 0, "security-path: FAIL") and a CLEAN row's real verdict is a pass
+# neighbour. All of those rows omit the review label, so a FLAGGED one's real verdict is a step
+# failure (exit != 0, "security-path: FAIL") and a CLEAN one's is a pass
 # ("security-path: PASS (not applicable)").
+#
+# This line used to say "EVERY row omits the label". That stopped being true when the
+# head/base-bound rows were appended at the end — they carry labels deliberately — and it is the
+# same stale-prose defect this atom is fixing in its own workflow headers, so it is fixed here too
+# rather than left for the next reader to trip over.
 rows:
   - name: flagged-skill-file
     files:
