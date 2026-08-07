@@ -70,10 +70,12 @@ multi-atom fan-out).
      > context; do not expect either inlined here beyond a per-artifact cap of `<N>` chars
      > (`$CLAUDE_PROJECT_DIR/.foundry/dispatch-inline-cap`, default 2048 — a short quoted
      > checkpoint is fine, the whole normative region or the whole contract is not). Any
-     > code-repo evidence artifact you produce (walk-evidence, test/build logs) resolves
+     > code-repo evidence artifact you produce (seam-exercise notes, test/build logs) resolves
      > relative to your OWN worktree root — never `$CLAUDE_PROJECT_DIR`. Do NOT weaken any
-     > frozen acceptance-contract checkpoint. Run the live-seam walk (real boot + Chrome
-     > MCP / real seam) against each frozen checkpoint's locator. Cut the PR via
+     > frozen acceptance-contract checkpoint. **Exercise the live seam** — boot via the active
+     > profile's `app_exercise_binding` and drive each frozen checkpoint's locator against the
+     > real running app (Chrome MCP / real seam). Nothing machine-adjudicates this; you
+     > self-report it. Cut the PR via
      > `gh pr create`; the merge floor (branch protection / required CI checks, plus
      > `hooks/foundry-git-discipline.sh` within sessions) decides the merge. Return the structured result per the
      > worker return contract below (pointers only), INCLUDING your learning records
@@ -112,7 +114,7 @@ fields below), never its body.
 {"branch": "<str>", "pr_url": "<str|null>", "files_touched": ["<path>"],
  "seam_verdict": "PASS|FAIL|EVIDENCE-MISSING|NOT-APPLICABLE",  # worker-self-reported live-seam result ("walk_verdict" is the legacy name for this field)
  "summary": "<str>", "status": "ready|failed",
- "evidence": ["<path — walk-evidence / test / build artifact, never the artifact's body>"],
+ "evidence": ["<path — seam-exercise / test / build artifact, never the artifact's body>"],
  "learnings": [{"<record per the learn-distill buffer schema; forwarded UNVALIDATED>": "..."}]}
 ```
 

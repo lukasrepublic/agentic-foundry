@@ -49,9 +49,9 @@ library or was mislocked here. Choose deliberately, before you write code.
 5. **Run static validation.** `uv run ruff format --check .`, `uv run ruff check .`, `uv run mypy
    src`, then `uv build` — fix every finding before proceeding. Every tool runs via `uv run`,
    resolved from the locked project environment (`uv.lock`), never an ambient install.
-6. **There is no live seam to exercise.** This profile carries no `app_exercise_binding` — step 6
-   of the generic SDLC (the boot-and-probe live-seam walk) is not applicable here; the test recipe
-   in step 4 is this stack's runtime evidence.
+6. **There is no live seam to exercise.** This profile carries no `app_exercise_binding` — the
+   generic SDLC's boot-and-probe step is not applicable here; the test recipe in step 4 is this
+   stack's runtime evidence.
 7. **Keep secrets in the environment.** Even a library's own test/example fixtures must read
    configuration/secrets from env; never hardcode or commit real credentials.
 

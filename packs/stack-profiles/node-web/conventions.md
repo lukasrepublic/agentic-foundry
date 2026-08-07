@@ -11,7 +11,7 @@ generated.
 > authorized at the normal `/foundry:authorize` gate. These conventions are an **advisory
 > mistake-catcher FOR the trusted operator**, not a defense AGAINST them. They encode the
 > house style so the generic factory's SDLC steps 4 (architecture/conventions), 6 (static
-> validation), 7 (test recipe), and 8 (the app-exercise live seam) are stack-faithful.
+> validation), 7 (test recipe), and 8 (exercising the app's live seam) are stack-faithful.
 
 ## Layers
 
@@ -62,6 +62,7 @@ Reviewers uphold it; `allowed_dependencies` records the intent a reviewer checks
 
 The profile's `app_exercise_binding` is the generic analog of `make dev`: a `boot` command
 that starts the stack and ≥1 `surface` exercises covering at least the **`ui`** (Next.js
-page render) and **`api`** (Fastify endpoint) surfaces, so the SDLC step-8 live-seam walk
-has a stack-faithful target. (Drivability of these strings is owned by the deferred step-8
-wiring atom; this profile asserts their STRUCTURE.)
+page render) and **`api`** (Fastify endpoint) surfaces, so exercising the seam during
+implementation and `/foundry:certify-local` at release time both have a stack-faithful,
+resolvable boot target. (This profile asserts the STRUCTURE of these strings; their
+drivability is the consumer's.)
