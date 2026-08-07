@@ -410,9 +410,18 @@ def _emitting_jobs_and_tiers(workflow_text: str) -> dict:
     return emitting
 
 
+# BOTH workflow files, because the gate jobs are split by trigger: the two metadata gates run on
+# `pull_request_target` (definition taken from the base branch, so a fork cannot rewrite them) and
+# `shell-parse-bash32` stays on `pull_request` because it checks out fork code. Reading only one
+# file would let the README claim tier labels for jobs that no longer emit them — the exact
+# doc-drift class this claim exists to catch.
+_GATE_WORKFLOWS = (".github/workflows/btb-gates.yml", ".github/workflows/btb-gates-base.yml")
+
+
 def _derive_gate_tier(root: Path) -> tuple:
-    workflow_text = read_doc_text(root, ".github/workflows/btb-gates.yml")
-    emitting = _emitting_jobs_and_tiers(workflow_text)
+    emitting = {}
+    for rel in _GATE_WORKFLOWS:
+        emitting.update(_emitting_jobs_and_tiers(read_doc_text(root, rel)))
     tier_table_text = read_doc_text(root, "docs/merge-floor.md")
     documented_tiers = set(_TIER_TABLE_ROW_RE.findall(tier_table_text))
     return emitting, documented_tiers
@@ -441,10 +450,13 @@ def _check_gate_tier(root: Path) -> None:
 
 def _mutate_gate_tier(tmp_path_arg: Path) -> Path:
     dest = _materialize(
-        REPO_ROOT, tmp_path_arg, ["README.md", ".github/workflows/btb-gates.yml", "docs/merge-floor.md"]
+        REPO_ROOT, tmp_path_arg, ["README.md", *_GATE_WORKFLOWS, "docs/merge-floor.md"]
     )
-    p = dest / ".github" / "workflows" / "btb-gates.yml"
-    p.write_text(p.read_text(encoding="utf-8").replace("  spec-link:\n", "  spec-link-renamed:\n"), encoding="utf-8")
+    # Mutate in the file that actually DEFINES spec-link now. Renaming in btb-gates.yml would be a
+    # no-op mutation, which would make this claim's own mutation guard vacuous — a green that can
+    # never go red.
+    p = dest / ".github" / "workflows" / "btb-gates-base.yml"
+    p.write_text(p.read_text(encoding="utf-8").replace("  spec-link-base:\n", "  spec-link-renamed:\n"), encoding="utf-8")
     return dest
 
 
