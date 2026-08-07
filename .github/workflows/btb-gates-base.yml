@@ -1,0 +1,261 @@
+# .github/workflows/btb-gates-base.yml — the two METADATA gates, evaluated from the BASE definition.
+#
+# WHY THIS FILE EXISTS. `btb-gates.yml` runs on `pull_request`, and GitHub runs that workflow FROM
+# THE PR'S MERGE REF — so a fork author's edits to the gate file take effect in the run that grades
+# their own PR. A fork PR can rewrite `security-path` to print PASS and `exit 0`, and the required
+# context reports green under its own name. `btb-gates.yml`'s header has stated this plainly since
+# the 2026-08-06 security review; this file is the fix it named.
+#
+# `pull_request_target` takes its workflow definition from the BASE repository's DEFAULT BRANCH
+# (GitHub Actions docs, "Events that trigger workflows", verified 2026-08-06: "This event runs in
+# the context of the default branch of the base repository, rather than in the context of the merge
+# commit, as the `pull_request` event does"). A fork therefore cannot alter what grades it.
+#
+# THE SAFETY PROFILE IS THE WHOLE ARGUMENT. `pull_request_target` is dangerous ONLY because it pairs
+# a privileged token with the temptation to check out untrusted code — GitHub's own guidance is
+# "Avoid using this event if you need to build or run code from the pull request." These two jobs
+# never check out anything. They consume ONLY API metadata (the changed-file list, the label set,
+# the base ref) through `gh`. No `actions/checkout`, no fetch, no execution of repository content —
+# which is exactly the profile `security-label-reset.yml` already runs under, and exactly why the
+# recorded follow-up named these two jobs and no others.
+#
+# `shell-parse-bash32` DELIBERATELY STAYS on `pull_request` in `btb-gates.yml`. It checks out fork
+# code, which is the one thing this trigger must never do with a privileged token. Moving it here
+# would trade a gate-definition hole for a code-execution hole — strictly worse.
+#
+# ONE FILE PER TRIGGER, NOT ONE FILE WITH TWO TRIGGERS. Declaring both triggers in `btb-gates.yml`
+# and gating each job with `if: github.event_name == …` was considered and REJECTED: every PR would
+# fire the workflow twice, the inapplicable jobs would report as `skipped` (which required-status
+# evaluation can treat as satisfied), and — decisively — the `pull_request` copy is fork-controlled,
+# so a fork could flip its own `if:` and produce a SECOND check run under the same context name.
+# That reintroduces the exact hole this file closes. Industry consensus is the separate-file split
+# (GitHub Actions security hardening; the widely-cited "keep untrusted content and privileged
+# execution in separate workflows" pattern).
+#
+# WHY THE JOB NAMES CARRY A `-base` SUFFIX. Required status checks match by CONTEXT NAME. If these
+# jobs kept the names `spec-link` / `security-path` while `btb-gates.yml` still defines them, every
+# PR would produce TWO check runs per name and the required check would be ambiguous. The suffix
+# also states the security property at the place an operator reads it: this verdict came from the
+# base definition. The migration is deliberately two steps — see MIGRATION below.
+#
+# MIGRATION (the reason this file adds and removes nothing):
+#   1. THIS PR — add these jobs. Nothing currently required changes; `btb-gates.yml` is untouched,
+#      so no PR can be blocked by landing it. Once on `main` the jobs begin reporting on every PR.
+#   2. OPERATOR — swap the required contexts on `main`: add `spec-link-base` + `security-path-base`,
+#      remove `spec-link` + `security-path`. There is no unprotected window: both pairs run.
+#   3. FOLLOW-UP PR — delete `spec-link` / `security-path` from `btb-gates.yml`.
+# Step 2 cannot be folded into step 1: a `pull_request_target` definition is invisible until it is
+# on the default branch, so a PR that both adds this file and deletes the old jobs would report
+# NEITHER pair and could never satisfy its own required checks.
+name: btb-gates-base
+
+on:
+  pull_request_target:
+    # Byte-identical to btb-gates.yml's list, and for the same reasons — in particular `edited`,
+    # which is the ONLY event a base retarget arrives as. Dropping it would let a retarget change
+    # the effective diff with no new commits while the previous green stands for a diff never seen.
+    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
+
+# Least-privilege, and load-bearing here rather than merely tidy: `pull_request_target` would
+# otherwise grant the default token write access on a fork-authored event. These jobs only read.
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  spec-link-base:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: spec-link gate (always reports)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          body="$(gh pr view "$PR" --repo "$REPO" --json body -q .body)"
+          labels="$(gh pr view "$PR" --repo "$REPO" --json labels -q '.labels[].name')"
+          files="$(gh api --paginate "repos/${REPO}/pulls/${PR}/files" -q '.[].filename')"
+          summary() { printf '%s\n' "$1" >> "$GITHUB_STEP_SUMMARY"; printf '%s\n' "$1"; }
+          # DERIVED, never hardcoded. This line was a literal "tier: B (advisory) — private repo,
+          # Free plan" for as long as that happened to be true; it silently became false the moment
+          # the repo went public with branch protection, and it is a PUBLIC claim about our own
+          # merge floor. Reading it from the API costs one call and removes the drift class.
+          # Duplicated verbatim in security-path rather than factored into a script because these
+          # two jobs are deliberately CHECKOUT-FREE (floor-#3 review finding 6: no repo code is
+          # fetched or executed here) — a shared script would mean checking out to run it.
+          tier() {
+            local p; p="$(gh api "repos/${REPO}/branches/${BASE}" -q .protected 2>/dev/null || echo unknown)"
+            # `.protected` is a COARSE boolean — it is true for a branch protected only by
+            # "restrict deletions". It proves SOMETHING guards the branch, never that THESE contexts
+            # are required, and a read-only token cannot enumerate that (the /protection endpoint is
+            # admin-only). So this reports what it can actually substantiate and no more (security
+            # review Block 3, 2026-08-04) — the same discipline foundry_tier_preflight.py applies
+            # when it refuses to call classic protection Tier A.
+            case "$p" in
+              true)  printf '**merge floor: `%s` IS server-protected** — some protection is active; this job cannot enumerate WHICH contexts are required with a read-only token' "$BASE" ;;
+              false) printf '**merge floor tier: B (advisory)** — `%s` is NOT server-protected; these checks report, the server does not enforce' "$BASE" ;;
+              *)     printf '**merge floor: UNKNOWN** — could not read protection state for `%s`; treat as advisory' "$BASE" ;;
+            esac
+          }
+          summary "$(tier)"
+          if printf '%s\n' "$body" | grep -qE '^Spec: .+'; then
+            spec_ref="$(printf '%s\n' "$body" | grep -E '^Spec: ' | sed -n '1p' | tr -cd '[:alnum:]/._ :-' | cut -c1-200)"
+            summary "spec-link: PASS — factory lane, ${spec_ref}"
+          elif printf '%s\n' "$labels" | grep -qxF 'lane:light'; then
+            # LABEL-ONLY, deliberately. This used to also accept `Lane: light` from the PR BODY,
+            # which a fork author writes — so a fork PR could self-declare the light lane and skip
+            # the spec-link requirement entirely. A label can only be applied by someone with write
+            # access. Recorded as a Tier-A precondition at the 2026-07-27 floor-#3 review
+            # ("prefer label-only lane signals"), and live surface since the repo went public.
+            # RESIDUAL, stated rather than hidden: the `Spec:` trailer above is still read from the
+            # body, because a label cannot carry a spec path. A fork can therefore assert any path.
+            # That is bounded — the trailer identifies which spec to check, and the operator's
+            # review is what checks it — whereas `Lane: light` bypassed the check altogether.
+            summary "spec-link: PASS (not applicable) — light lane (charter-authorized, label-gated)"
+          elif ! printf '%s\n' "$files" | grep -qvE '\.(md|txt|png|svg|pdf)$'; then
+            summary "spec-link: PASS (not applicable) — docs-only diff"
+          else
+            summary "spec-link: FAIL — code diff with no lane signal. Add a 'Spec: <workspace spec path>' trailer to the PR body (factory lane), or apply the 'lane:light' LABEL plus a charter (light lane). 'Lane: light' in the body is no longer accepted — a fork author controls the body, so the lane signal is label-gated."
+            exit 1
+          fi
+
+  security-path-base:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: security-path gate (always reports)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # Non-empty ONLY when THIS event retargeted the base branch. Read here, in the gate, from
+          # the gate's OWN event payload — deliberately not delegated to the stripper workflow, see
+          # the base-retarget arm below.
+          BASE_FROM: ${{ github.event.changes.base.ref.from }}
+        run: |
+          set -euo pipefail
+          files="$(gh api --paginate "repos/${REPO}/pulls/${PR}/files" -q '.[].filename')"
+          labels="$(gh pr view "$PR" --repo "$REPO" --json labels -q '.labels[].name')"
+          summary() { printf '%s\n' "$1" >> "$GITHUB_STEP_SUMMARY"; printf '%s\n' "$1"; }
+          # DERIVED — see the identical helper in spec-link for why this is not a literal and why
+          # it is duplicated rather than shared (both jobs are deliberately checkout-free).
+          tier() {
+            local p; p="$(gh api "repos/${REPO}/branches/${BASE}" -q .protected 2>/dev/null || echo unknown)"
+            # `.protected` is a COARSE boolean — it is true for a branch protected only by
+            # "restrict deletions". It proves SOMETHING guards the branch, never that THESE contexts
+            # are required, and a read-only token cannot enumerate that (the /protection endpoint is
+            # admin-only). So this reports what it can actually substantiate and no more (security
+            # review Block 3, 2026-08-04) — the same discipline foundry_tier_preflight.py applies
+            # when it refuses to call classic protection Tier A.
+            case "$p" in
+              true)  printf '**merge floor: `%s` IS server-protected** — some protection is active; this job cannot enumerate WHICH contexts are required with a read-only token' "$BASE" ;;
+              false) printf '**merge floor tier: B (advisory)** — `%s` is NOT server-protected; these checks report, the server does not enforce' "$BASE" ;;
+              *)     printf '**merge floor: UNKNOWN** — could not read protection state for `%s`; treat as advisory' "$BASE" ;;
+            esac
+          }
+          summary "$(tier)"
+          # Security-surface paths (floor-#3 review findings 1/4: UNANCHORED keyword substrings —
+          # foundry_authz.py, authorization checks etc. must match — plus .github/ wholesale,
+          # hooks/, plugin manifests, shipped version pins/policy, dependency manifests).
+          # GP-2 widening (AC-SCW-12/-13, security review required): `^skills/` and `^agents/`
+          # added, WHOLESALE (a skill/agent file is prompt-level executable surface — a stale
+          # deleted-module mention or a behaviour edit there is not distinguishable from a typo
+          # fix by file type). Both new arms are ANCHORED (`^`) so `myskills/`, `skillset/`,
+          # `docs/agents-guide.md` and `docs/agents/overview.md` stay clean — see the
+          # negative-control rows in tests/fixtures/btb-gates/security-path-matrix.yaml. This is
+          # an OR-append only: every existing alternative above is unchanged, so every
+          # previously-flagged path stays flagged (widen-only, AC-SCW-13). Expected volume +
+          # revisit trigger recorded in the spec's Residuals section.
+          # tier-a-ruleset-as-code widening (AC-TARC-15, security review required): `^rulesets/`
+          # and `^scripts/foundry_tier_preflight` appended so THIS ATOM's own two new surfaces —
+          # the shipped merge-floor ruleset template and the preflight/apply CLI that holds an
+          # Administration (write) token on its --apply path — are mechanically floor-#3-routed
+          # forever, not just today by operator memory. Both new arms are ANCHORED so
+          # `docs/rulesets/notes.md`, `rulesets-recipes/branch.json`, `scripts/foundry_tier.py`,
+          # and `scripts/my_foundry_tier_preflight.py` stay clean — see the negative-control rows
+          # in tests/fixtures/btb-gates/security-path-matrix.yaml. OR-append only, same discipline
+          # as the GP-2 widening above (widen-only, AC-TARC-15).
+          hits="$(printf '%s\n' "$files" | grep -E '(auth|secret|credential|token|provenance|signing|\.rego$)|^\.github/|^hooks/|^\.claude-plugin/|(^|/)(standing-versions|profile-version-ledger)|(^|/)(requirements[^/]*\.txt|package(-lock)?\.json|pyproject\.toml|Pipfile[^/]*|go\.(mod|sum)|Cargo\.(toml|lock))$|^skills/|^agents/|^rulesets/|^scripts/foundry_tier_preflight' || true)"
+          # The review label names a commit: `security-reviewed:<head12>-<base8>`. TWELVE hex, not seven.
+          # Seven is 28 bits, and a targeted 28-bit prefix is grindable in seconds by a commit
+          # grinder varying a trailer — so an author could land a commit whose sha7 EQUALS the
+          # reviewed one, at which point the stripper's `keep` matches (it deliberately preserves
+          # the current head's label) and this gate matches too: both mechanisms fail at once, with
+          # the label text identical so nothing looks stale (security review Block 1, 2026-08-06).
+          # 12 hex is 48 bits, git's own modern abbreviation floor, and out of grinding reach.
+          # BOUND TO (head SHA, base REF) — state, not event.
+          #
+          # Head-binding alone left the retarget case resting on TWO things that can fail: that the
+          # `edited` event fires at all, and that the stripper's DELETE succeeds. Retarget away,
+          # title-edit, retarget back — if either link breaks, a later title edit re-greens at an
+          # unchanged head. That is the "supersede a red by editing the description" bypass this
+          # atom already closed once (security review Risk 2, 2026-08-06).
+          #
+          # The base is bound as an 8-hex DIGEST of the ref NAME, not the name itself and not
+          # `base.sha`:
+          #   * NOT base.sha — that is the base branch TIP, so every merge into main would
+          #     invalidate every outstanding review label, with no PR event to announce it. A gate
+          #     that cries wolf is worse than the residual it closes.
+          #   * NOT the raw ref name — GitHub caps label names at 50 chars; `security-reviewed:` is
+          #     18, +12 +1 leaves 19, and this branch's own name (`atom/tier-a-hardening`) is 21.
+          #     Truncating would create silent prefix collisions between sibling refs.
+          # 8 hex of sha256 is fixed-width, charset- and case-safe, and the FAIL message prints the
+          # human ref name alongside the exact label to copy, so nothing is lost to readability.
+          #
+          # `security-label-reset.yml` MUST compute this identically — the same divergence hazard
+          # the sha-width note above describes.
+          BASE_TAG="$(printf '%s' "$BASE" | sha256sum | cut -c1-8)"
+          REVIEW_LABEL="security-reviewed:${HEAD_SHA:0:12}-${BASE_TAG}"
+          if [ -z "$hits" ]; then
+            # Not-applicable WINS over the base-retarget arm, deliberately. That arm used to sit
+            # above this test, so a docs-only PR that got retargeted was told "…then apply
+            # 'security-reviewed:<sha12>'" — and applying it passed, because `hits` was empty
+            # anyway. That teaches the operator that handing out the review label is how you clear
+            # this red, which is R1's lesson exactly: a gate whose documented remedy is the bypass
+            # will be followed (security review Risk 3, 2026-08-06). A diff with no security
+            # surface has nothing to re-review, whatever the base did.
+            summary "security-path: PASS (not applicable) — no auth/secrets/supply-chain path in the diff"
+          elif [ -n "${BASE_FROM:-}" ]; then
+            # BASE RETARGET — the one case head-SHA binding cannot cover, handled HERE rather than
+            # by the stripper. Changing the base moves the effective diff with no new commits and
+            # no change to the head SHA, so a head-bound label survives a diff it never described.
+            # Delegating this to `security-label-reset.yml` reintroduced exactly the race that
+            # killed the previous design: the strip and this gate share an event with no ordering,
+            # and a GITHUB_TOKEN strip cannot re-run this gate, so a green recorded here would be
+            # TERMINAL. Reading our OWN event payload has no race to lose.
+            summary "security-path: FAIL — base was retargeted from '${BASE_FROM}' and the diff touches security surfaces. The head SHA did not move but the diff did, so any existing review label describes a different change. Re-run the security-reviewer pass against the NEW base, then apply '${REVIEW_LABEL}'."
+            printf 'flagged paths:\n%s\n' "$hits"
+            exit 1
+          elif printf '%s\n' "$labels" | grep -qxF "$REVIEW_LABEL"; then
+            # STALE-LABEL TOCTOU is handled by INVALIDATING THE STATE, not by inspecting this run's
+            # event. The first attempt keyed on `github.event.action == "synchronize"` and was
+            # bypassable three ways (security review Blocks 1/2, 2026-08-04): an `edited` event
+            # re-ran the gate green at the same head; removing and re-adding the label re-ran it as
+            # `labeled` — which the failure message literally instructed the user to do; and
+            # close→push→reopen never emits `synchronize` at all. An event is a moment; the question
+            # "was this diff reviewed" is about STATE.
+            #
+            # The stripper alone was NOT enough, and the reason is worth keeping: it and this gate
+            # are two independent workflows started by the SAME event, with no ordering between
+            # them. If this job read the label before the stripper deleted it, it recorded PASS
+            # against the new head for an unreviewed diff — and that PASS was TERMINAL, because
+            # GitHub does not create workflow runs from GITHUB_TOKEN actions, so the strip could
+            # never re-run this gate to correct it. No adversary needed: label a PR, push one more
+            # commit, coin-flip (security review, 2026-08-04, second pass).
+            #
+            # So the label is BOUND TO THE HEAD SHA. `security-reviewed:<head12>-<base8>` either names the
+            # commit being gated or it does not; there is no window in which a stale label reads as
+            # fresh, and no ordering to lose. The stripper is kept as belt-and-braces cleanup, not
+            # as the mechanism — and the base-retarget case it cannot cover is handled above, in
+            # this job, from this job's own event.
+            summary "security-path: PASS — security-flagged paths present AND '${REVIEW_LABEL}' label posted (floor #3 review recorded for THIS head)"
+            printf 'flagged paths:\n%s\n' "$hits"
+          else
+            summary "security-path: FAIL — diff touches security surfaces with no review label for this head. Run the security-reviewer pass against the CURRENT diff, then apply the label '${REVIEW_LABEL}'. The label names the commit reviewed, so pushing new commits cannot carry an old review forward."
+            printf 'flagged paths:\n%s\n' "$hits"
+            exit 1
+          fi
+
