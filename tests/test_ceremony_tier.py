@@ -24,7 +24,10 @@ from conftest import REPO_ROOT, load_module
 ct = load_module("scripts/foundry_ceremony_tier.py", "foundry_ceremony_tier")
 
 CLI = os.path.join(REPO_ROOT, "scripts", "foundry_ceremony_tier.py")
-BTB_GATES = os.path.join(REPO_ROOT, ".github", "workflows", "btb-gates.yml")
+# `security-path` moved to the base-evaluated workflow (pull_request_target) so a fork cannot
+# rewrite the gate that grades it. This locator follows the JOB, not the filename — the CTR-4
+# "one source of truth" claim is about the shipped gate literal, wherever it ships.
+BTB_GATES = os.path.join(REPO_ROOT, ".github", "workflows", "btb-gates-base.yml")
 FIXTURE = os.path.join(REPO_ROOT, "tests", "fixtures", "ceremony_tier_fixture.md")
 
 
@@ -168,8 +171,8 @@ class TestCTR3SecurityTrigger:
 
 
 def _extract_security_path_job_block(workflow_text):
-    match = re.search(r"\n  security-path:\n(.*)", workflow_text, re.DOTALL)
-    assert match, "security-path: job not found in btb-gates.yml"
+    match = re.search(r"\n  security-path-base:\n(.*)", workflow_text, re.DOTALL)
+    assert match, "security-path-base: job not found in btb-gates-base.yml"
     return match.group(1)
 
 

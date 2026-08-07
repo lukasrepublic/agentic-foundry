@@ -208,7 +208,7 @@ honestly labeled:
 | **A — enforced** | Branch protection / rulesets: required status checks on `main` | Public repos on any plan; private repos on paid plans |
 | **B — advisory, labeled** | The same CI checks, always-reporting + the plugin's client-side git-discipline hook (refuses `--admin` bypass; admits plain merge only on live all-green checks; fail-closed on any error) | Private repos on plans without rulesets |
 
-No tier is silently overclaimed: the `spec-link`, `security-path` and `shell-parse-bash32` gate jobs label their
+No tier is silently overclaimed: the `spec-link-base`, `security-path-base` and `shell-parse-bash32` gate jobs label their
 tier in every summary. Why the
 tiers are honest rather than uniform — and what a client-side hook can and cannot promise —
 is the heart of the [trust model](docs/DESIGN.md). Full mechanics: **[docs/merge-floor.md](docs/merge-floor.md)**.
@@ -232,8 +232,12 @@ field the schema advertises for this is read by nothing. Two atoms are specified
 they ship, read this row as "built and exercised in this repo", not "available on first install".
 
 <sup>†</sup> `/foundry:authorize` itself has no skip — the freeze is unconditional and
-operator-signed. Separately, the `spec-link` merge gate accepts a **declared light lane**
-(`Lane: light`) for changes that are not spec-driven, and that declaration is self-asserted.
+operator-signed. Separately, the `spec-link-base` merge gate accepts a **declared light lane**
+for changes that are not spec-driven, applied as the `lane:light` LABEL. It used to be a
+`Lane: light` line in the PR body; that was removed because a PR body is written by its author,
+so a fork could self-declare the light lane and skip the check entirely. A label can only be
+applied by someone with write access — so the declaration is still discretionary, but it is no
+longer self-asserted by an outside contributor.
 So "nothing merges unauthorized" is a property of the factory lane, not of every possible
 PR. The trade and how to remove it: [docs/merge-floor.md → *The two lanes*](docs/merge-floor.md#the-two-lanes-and-the-escape-hatch-you-should-know-about).
 
