@@ -56,7 +56,7 @@ template first:
 
 ```
 python3 scripts/foundry_tier_preflight.py --repo <owner>/<repo> \
-  --context spec-link --context security-path --apply
+  --context spec-link-base --context security-path-base --apply
 ```
 
 On a private repository on a plan without ruleset enforcement, the honest and correct outcome
@@ -68,33 +68,37 @@ so the checks above continue to run advisory-only.
 1. **Your CI** — whatever your repo already runs (tests, lint, build). Foundry adds
    nothing here and replaces nothing.
 2. **The gate workflows** (templates in this repo's own `.github/workflows/` — copy or
-   adapt): `spec-link` (a code-change PR must carry a lane signal — see *The two lanes*
-   below) and `security-path` (a diff touching auth/secrets/dependency surfaces requires a
-   posted security-review verdict). Both are **always-reporting**: they
+   adapt): `spec-link-base` (a code-change PR must carry a lane signal — see *The two lanes*
+   below) and `security-path-base` (a diff touching auth/secrets/dependency surfaces requires a
+   posted security-review verdict). Both run on `pull_request_target`, so GitHub takes their
+   definition from your default branch rather than the PR's merge ref — a fork cannot rewrite the
+   gate that grades it. They are checkout-free by design, which is what makes that trigger safe.
+   Both are **always-reporting**: they
    post `success (not applicable)` rather than staying silent, so they can be marked
    required on Tier A without deadlocking.
 
 ### The two lanes (and the escape hatch you should know about)
 
-`spec-link` passes a PR on any **one** of three conditions, and it is worth knowing all three
+`spec-link-base` passes a PR on any **one** of three conditions, and it is worth knowing all three
 before you rely on the gate:
 
 | Condition | Lane | What it means |
 |---|---|---|
 | `Spec: <workspace spec path>` in the PR body | **factory** | The change is governed by a frozen contract. This is the lane the product is built around. |
-| `Lane: light` in the PR body, **or** a `lane:light` label | **light** | The author is asserting the change is charter-authorized rather than spec-authorized. |
+| A `lane:light` **label** | **light** | The author is asserting the change is charter-authorized rather than spec-authorized. A `Lane: light` line in the PR body used to work too; that was removed, because a PR body is written by its author, so a fork could self-declare the light lane and skip the check. |
 | Every changed file is `.md`/`.txt`/`.png`/`.svg`/`.pdf` | n/a | Docs-only diff; the spec requirement does not apply. |
 
-**The light lane is self-asserted, and nothing verifies a charter exists.** One line in a PR
-body — or a label anyone with triage rights can add — and the spec-link requirement is
-satisfied. The gate's summary says *"charter-authorized"*, but that phrase describes the
-author's claim, not a check the workflow performed.
+**The light lane is discretionary, and nothing verifies a charter exists.** A label from anyone
+with write access, and the spec-link requirement is satisfied. The gate's summary says
+*"charter-authorized"*, but that phrase describes the applier's claim, not a check the workflow
+performed. It is no longer *self*-asserted by an outside contributor — the body signal was removed
+precisely so a fork could not grant itself the lane — but a maintainer can still grant it freely.
 
 That is a deliberate trade, not an oversight: this gate's job is to make an ungoverned change
 **visible** — in the PR body, in the checks tab, and in the audit trail — rather than
 impossible. A mechanism-level ban would have to enumerate every way around it, and the
 operator's own review is the terminal control regardless. But you should size the guarantee
-accurately: `spec-link` green means *"a lane was declared"*, not *"a frozen contract
+accurately: `spec-link-base` green means *"a lane was declared"*, not *"a frozen contract
 authorized this diff"*. If you want the stronger property, require the `Spec:` form and drop
 the light lane from your copy of the workflow — it is four lines of shell.
 
@@ -154,7 +158,7 @@ the light lane from your copy of the workflow — it is four lines of shell.
   human with push rights can still merge from their own terminal. We say so. A tool that
   claims fail-closed enforcement from purely client-side machinery is overclaiming — the
   trust model ([DESIGN.md](DESIGN.md)) is built on not doing that.
-- **`spec-link` green does not mean "front-authorized".** It means a lane was declared, and
+- **`spec-link-base` green does not mean "front-authorized".** It means a lane was declared, and
   one of the two lanes is self-asserted (see *The two lanes* above). Front-authorization is
   enforced where the freeze happens — `/foundry:authorize` binding `spec_sha256` +
   `contract_sha256` — not by this check. Read the two together or you will over-trust the
