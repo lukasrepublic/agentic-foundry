@@ -167,6 +167,53 @@ and emits their closes.
 - **No version inference, no signing.** The operator picks the version; release-time signing/provenance
   (Sigstore/SLSA) is a typed, dormant seam gated to the first **public** release.
 
+## The install pin: what `source.sha` is, and why it names the tag's PARENT
+
+**Decided 2026-08-07 (operator).** This was an open design question — drop `source.sha` and let
+`ref` plus tag protection carry the integrity claim, or keep it and document what it names. It is
+**kept**, and the reasoning is recorded here so the next reader does not re-open it, or worse,
+"fix" the parent relationship into a loop.
+
+**`sha` is not decorative — it OUTRANKS `ref`.** Per the Claude Code plugin-marketplace docs
+(verified 2026-08-07), a github/git/url plugin source takes `ref` (*"Optional. Git branch or tag"*)
+and `sha` (*"Optional. Full 40-character git commit SHA to pin to an exact version"*), and when both
+are present **the pinned commit is what gets installed**. Since Claude Code v2.1.141 a *deleted*
+upstream ref does not even block the install, as long as the pinned commit is still reachable. So:
+
+| Resolved by | What an adopter gets |
+|---|---|
+| the **marketplace** catalogue | read at the **ref** — marketplace sources support `ref` only |
+| the **plugin** itself | installed at **`sha`** — `ref` is the label and the fallback |
+
+**Therefore `source.sha` at tag `vX.Y.Z` names the tag commit's FIRST PARENT, and that is
+structurally necessary rather than a defect.** A commit cannot contain its own hash, so the pin
+names the content commit **R** while the tag sits on the re-pin commit **R2**. `tag_pin_coherence`
+enforces the adjacency (`sha ∈ {tag commit, first parent}`), so a pin reaching further back than
+the parent is refused — that is the check, not an accident of it.
+
+**Why it is kept rather than dropped.** Dropping it would delete R2, and with it the plan's ordering
+hazard, the coherence gate and the adjacency invariant — a real simplification, honestly weighed.
+Two things decided against it. First, this repo's own standing-versions rule binds it: *"CI actions
+pinned to a 40-char commit SHA, not `@vN`"*. Publishing its own supply-chain artifact pinned to a
+mutable tag while requiring SHA pins of everyone else is incoherent, and the README already
+advertises the project as SHA-pinned. Second, this plugin ships **hooks that execute in an adopter's
+session**; tag protection is a *policy* control an admin can switch off, whereas a content-addressed
+pin cannot be. The industry pattern points the same way — Homebrew pins a tarball checksum, Go
+records dependency hashes, GitHub Actions consumers pin `@<sha>` — with the caveat that in all of
+those the pin lives in the *consumer* or a separate index, never self-referentially inside the
+artifact. Claude Code's same-repo catalogue is what forces the self-reference here. Splitting the
+catalogue into its own repo would dissolve it structurally and remains the only clean alternative,
+at a cost far above this decision.
+
+> **KNOWN AND HARMLESS: the installed tree carries a stale `source.sha`.** Because `sha` outranks
+> `ref`, what an adopter installs is **R** — and R's own `.claude-plugin/marketplace.json` still
+> carries the *previous* release's sha, since the correcting value only lands in R2. This is inert:
+> the catalogue an adopter resolves is read **at the ref (R2)**, never from the installed tree, so
+> the stale field is never consulted by anything. **Do not "fix" it.** Writing R's own sha into R
+> changes R's hash — the self-reference again — and chasing it produces an infinite re-pin loop.
+> It is recorded here because this repo has shipped four separate stale-pin defects, and the next
+> reader will otherwise find this one and treat it as a fifth.
+
 ## Anti-patterns
 
 - **Editing the gate to make a red cut go green** — fix the candidate tree, never the acceptance gate.
@@ -179,6 +226,10 @@ and emits their closes.
   the tag; skipping the post-tag re-check leaves the property entirely unverified.
 - **Pinning `source.sha` to an annotated-tag object, a branch name, or an abbreviated hash** — it
   must be a full 40-character commit id. A ref name is a *mutable* pin: what an adopter resolves
-  changes as the ref moves.
+  changes as the ref moves. And since `sha` outranks `ref` at install time, a bad value here is not
+  softened by a correct tag — it IS what ships.
+- **"Correcting" `source.sha` at the tag so it names the tag commit.** It cannot: a commit cannot
+  contain its own hash. The parent relationship is the design (see *The install pin* above), and
+  every attempt to close it produces a new commit that needs a new pin, forever.
 - **Force-pushing to reconcile a parallel push** — reconcile by merge; the tag is already immutable.
 - **On a harness denial** of a cut-release command — distinct from this loop's own `REFUSED`/`GATED` states — see `docs/harness-denial-fallback.md` and STOP: hand back the exact denied invocation; never retry it or route around it.
