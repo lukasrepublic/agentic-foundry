@@ -311,6 +311,11 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         "1.1.0": "0.1.0",
         "1.2.0": "0.2.0",
         "1.2.1": "0.2.1",
+        # v1.2.2 republishes the CLI on purpose: 0.2.1 shipped from v1.2.1 on 2026-08-05 and
+        # PR #75 (step 0 left the reader in a non-git directory) merged the day after, so the
+        # fix existed on main and reached nobody. npm-publish skips a version already on the
+        # registry, which is why the tarball bump is load-bearing rather than cosmetic.
+        "1.2.2": "0.2.2",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (
