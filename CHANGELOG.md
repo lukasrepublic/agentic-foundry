@@ -8,6 +8,80 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.2.2 — 2026-08-07
+
+### Why this release exists: a shipped fix that never reached anyone
+
+`create-agentic-workspace@0.2.1` was published from `v1.2.1` (2026-08-05). **PR #75 — the fix for
+step 0 leaving a reader in a non-git directory without saying so — merged the day after.** So the
+defect was fixed on `main` and every stranger following the README kept hitting it, because the
+published artifact predated the fix. Found by running the clean-machine install pass in a fresh
+container against published materials only: the scaffolded directory was not a git repo and the
+handoff never mentioned `git init`. This is the same failure shape as the v1.0.0 re-pin — the branch
+was checked and called done while the published artifact was wrong — and it is the reason the
+clean-machine pass exists as a control rather than a formality. `cli/package.json` is bumped to
+**0.2.2** so `npm-publish.yml` actually republishes; it skips any version already on the registry.
+
+### The fork-rewritable gate definition is closed for both metadata gates
+
+`btb-gates.yml` runs on `pull_request`, which GitHub evaluates **from the PR's merge ref** — so a
+fork author's edits to the gate file took effect in the run grading their own PR, and a fork could
+rewrite `security-path` to print PASS. `spec-link` and `security-path` now live in
+`.github/workflows/btb-gates-base.yml` as `spec-link-base` / `security-path-base` on
+`pull_request_target`, whose definition comes from the default branch (#77, #79). Both are
+checkout-free and consume only API metadata, which is what makes that trigger safe; the workflow
+contains no `uses:` at all and declares `contents: read` + `pull-requests: read`.
+
+**Not closed, and deliberately not claimed as closed:** `shell-parse-bash32` checks out fork code,
+so it stays on `pull_request` and remains fork-rewritable by design — moving it would trade a
+gate-definition hole for a code-execution hole. Its residual control is a practice, bounded to a
+correctness failure rather than a privilege escalation. `test_the_gate_jobs_are_split_by_trigger`
+asserts the split structurally (trigger per file, job set per file, no `uses:` in the privileged
+workflow, least-privilege permissions) and was mutation-checked both ways.
+
+### The release gate could not see that a tag was missing upstream
+
+`tag_pin_coherence` proves the pin is coherent in the **local** object store; nothing hermetic could
+see that the tag was absent upstream or resolved elsewhere. That blindness published twice in one
+day when the F3 reset deleted tags while every local check stayed green. Adds
+`published_tag_coherence` + `--verify-published`, appended to the publish plan **after both pushes**
+(#76). It cannot be folded into `--verify-tag`, which by design runs before the push. Fail-closed: a
+transport failure refuses rather than passing.
+
+### Docs that were wrong on a public repo
+
+`docs/merge-floor.md` shipped a copy-pasteable `foundry_tier_preflight` invocation naming the
+pre-split contexts — an adopter following it would have configured required checks that never
+report. Both it and `README.md` also still documented **`Lane: light` in the PR body** as a way to
+claim the light lane; that path was removed in the tier-A hardening precisely because a PR body is
+author-written, so a fork could self-declare the lane. The docs were advertising a removed bypass.
+Now label-only, with the guarantee sized honestly: discretionary, but no longer *self*-asserted by
+an outside contributor.
+
+### The `source.sha` decision, recorded (#80)
+
+Kept, and re-grounded on the vendor docs rather than on the prior framing: **`sha` outranks `ref`**
+at install time, and since Claude Code v2.1.141 a deleted ref does not block an install whose sha
+resolves. So the catalogue resolves at the ref and the plugin installs at the sha, which makes
+"`source.sha` names the tag's first parent" structural rather than a caveat — a commit cannot contain
+its own hash. Written up in `skills/cut-release/SKILL.md` § *The install pin*, including a residual
+documented as **DO NOT FIX**: the installed tree carries an earlier sha in its own manifest, which is
+inert and unfixable by construction.
+
+### Also
+
+- **Tier-A hardening** (#71): the merge-floor tier is derived from live protection state instead of a
+  hardcoded literal that was true when written and false the moment the repo went public; the review
+  label is bound to `(head, base)`.
+- **npm attestation check** (#74): polls for registry propagation instead of failing a correct publish
+  on a race.
+
+### Security review
+
+Every atom in this release carried a security review. #71, #77, #79 and #80 each touched
+`.github/` or `skills/` and cleared `security-path` with a head-bound review label. No Blocks
+outstanding.
+
 ## v1.2.1 — 2026-08-06
 
 ### `create-agentic-workspace` publishes to npm over OIDC trusted publishing
