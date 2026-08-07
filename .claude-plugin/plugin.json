@@ -1,7 +1,7 @@
 {
   "name": "foundry",
   "displayName": "Agentic Foundry",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Governed, spec-driven delivery for agent-built software: spec \u2192 operator authorization \u2192 governed build \u2192 an honestly-tiered merge floor \u2192 certification against the running app \u2192 human sign-off.",
   "author": {
     "name": "Lukas Sliwka",
