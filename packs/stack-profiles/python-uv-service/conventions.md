@@ -62,5 +62,6 @@ loaded into the generic worker, never generated.
 
 The profile's `app_exercise_binding` is the generic analog of `make dev`: `boot` starts the ASGI app
 under `uvicorn` bound to `127.0.0.1:8000`, and its single `api` surface exercises `GET
-http://127.0.0.1:8000/healthz`, asserting a `200` JSON body `{status: ok}` — so the SDLC step-8
-live-seam walk and `/foundry:certify-local` have a stack-faithful, resolvable boot target.
+http://127.0.0.1:8000/healthz`, asserting a `200` JSON body `{status: ok}` — so exercising the
+seam during implementation and `/foundry:certify-local` at release time both have a
+stack-faithful, resolvable boot target.

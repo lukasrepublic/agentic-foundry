@@ -16,7 +16,7 @@ strings **read-only** through the CTX guard, collects the structured plan/diff, 
 **the review artifact** (the hand-off the human / `id-review` / the merge floor reads) plus a
 `.foundry/`-partitioned **plan STEP-REPORT NOTE**. The infra live-seam's dedicated walk-evidence
 recorder + verdict machinery this skill used to compose with was retired
-(see `docs/DESIGN.md`) — there is no live consumer that adjudicates this note into a
+(see `docs/merge-floor.md` — no bespoke merge gate ships) — there is no live consumer that adjudicates this note into a
 PASS/FAIL today; it is advisory input for the human review at the merge floor.
 
 ## When to trigger
@@ -34,7 +34,7 @@ and NOT the merge authority**, and it **does NOT decide its own PASS**. **Honest
 design intent had the **FROZEN acceptance-contract** compute a PASS via `derive_walk_verdict` (and
 the per-surface `derive_infra_walk_verdict`) at a dedicated **live-seam blocking merge gate** — that
 verdict machinery, and the gate that consumed it, were **retired**
-(`docs/DESIGN.md`) and do not exist in `scripts/` today. `id-plan` **records
+(`docs/merge-floor.md` — no bespoke merge gate ships) and do not exist in `scripts/` today. `id-plan` **records
 observations; it does not adjudicate them**, and nothing currently machine-adjudicates them either —
 **the merge floor** (the adopter's branch protection + CI checks — see `docs/merge-floor.md`) **is
 the merge authority**, and this note is advisory input for the operator/reviewer at that floor. It
