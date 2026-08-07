@@ -6,9 +6,9 @@ description: The interactive implementation posture (/foundry:mode-interactive) 
 # /foundry:mode-interactive
 
 The default posture. The lean direct loop: ONE accountable context implements
-inline, runs the live-seam walk, and the **operator reviews the merge diff** (Regular
-mode) — the un-forgeable segregation on single-host. No worker dispatch, no
-queue; the retro shows this beats the dispatch ceremony for most work.
+inline, exercises the change against the real running seam, and the **operator reviews the
+merge diff** (Regular mode) — the un-forgeable segregation on single-host. No worker dispatch,
+no queue; the retro shows this beats the dispatch ceremony for most work.
 
 ## When to trigger
 
@@ -19,7 +19,12 @@ queue; the retro shows this beats the dispatch ceremony for most work.
 
 1. Confirm the atom is AUTHORIZED (`/foundry:authorize` first if not).
 2. Implement inline against the frozen `acceptance-contract.yaml` (do not weaken checkpoints).
-3. Run the live-seam walk (real boot + Chrome MCP / real seam) against each frozen checkpoint locator.
+3. **Exercise the live seam** — boot the stack via the active profile's `app_exercise_binding`
+   and drive each frozen checkpoint's locator against the **real running app** (Chrome MCP /
+   real seam). This is *your own* verification, not a gate: no verdict engine consumes it and
+   nothing machine-adjudicates it. The bespoke "walk" engine that once did was removed in
+   v0.24.0. The machine step is **certification** (`/foundry:certify-local`) at release time,
+   and the merge floor is what actually admits the PR.
    - **Fast lane for breadth (page-context fetch + SSE tail).** For *many* cases against the
      same seam, a faster faithful method than one-UI-path-at-a-time: drive the app's API
      **from the browser page context** (real cookies/session → the real model + DB seam, not a
@@ -27,10 +32,11 @@ queue; the retro shows this beats the dispatch ceremony for most work.
    - **Caveat — conversation independence.** Independent single-shot page-context calls behave
      differently from multi-turn/stateful flows; conversation-state independence must be
      **verified, not assumed**.
-   - **The UI walk stays authoritative.** The fast lane is for breadth only; the **UI walk
-     remains authoritative**, especially for stateful/multi-turn flows. Do not substitute the
-     fast lane for the authoritative UI walk on those paths.
-4. Cut the PR (`gh pr create`); the worker cuts its PR, the merge floor decides.
+   - **The UI path stays authoritative.** The fast lane is for breadth only; the **real UI
+     path remains authoritative**, especially for stateful/multi-turn flows. Do not substitute
+     the fast lane for the authoritative UI path there.
+4. Cut the PR (`gh pr create`); the merge floor decides. *(In this mode you cut your own PR —
+   there is no worker; that is `mode-autonomous`.)*
 5. **Operator reviews the diff + the floor's check results at the merge** — the Regular-mode authority. Merge on PASS.
 
 ## The load-bearing insight
@@ -43,5 +49,6 @@ the merge floor) is identical and invariant in both.
 
 ## Anti-patterns
 
-- **Skipping the live-seam walk** because "it compiled / unit-tests pass" — status ≠ functional.
+- **Skipping the live-seam exercise** because "it compiled / unit-tests pass" — status ≠ functional.
+  Nothing blocks you from skipping it, which is exactly why it is listed here.
 - **Self-merging in Regular mode** — the operator diff-review IS the segregation; do not bypass it even under noninteractive.

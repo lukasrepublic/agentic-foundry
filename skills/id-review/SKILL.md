@@ -100,7 +100,7 @@ then dispatch.
    adopted the industry-standard policy-as-code gate — explaining the drop here is prose, not a risk
    signal). `id-review` only **names** this expectation; **no live component mechanically satisfies or
    enforces it today** — the bespoke merge-gate verdict machinery that once re-derived and enforced it
-   was retired (`docs/DESIGN.md`), so this is presented to
+   was retired (`docs/merge-floor.md` — no bespoke merge gate ships), so this is presented to
    the operator/reviewer at the merge floor for their own judgment, not machine-adjudicated.
 
 ## Honesty floor — this skill DECLARES a process; it does not verify a review happened
