@@ -61,6 +61,15 @@ data** — it never tags, never pushes, never closes issues itself. You execute 
    *previous* release's sha — the install delivers the previous version's code. That shipped on
    v1.0.0 and v1.0.1 and was hand-corrected both times.
 
+   **`source.sha` names R, the tag's PARENT — and that is correct.** A commit cannot contain its
+   own hash, so the pin names the content commit while the tag sits on the re-pin commit. It is
+   also the field that decides what ships: per the plugin-marketplace docs, `sha` **outranks**
+   `ref`, and since Claude Code v2.1.141 a deleted ref does not block an install whose sha still
+   resolves. The catalogue is read at the ref; the plugin is installed at the sha. The gate
+   enforces the adjacency, so a pin reaching further back than the tag's parent is refused.
+   Full reasoning, and why the field is kept rather than dropped:
+   [`skills/cut-release/SKILL.md` → *The install pin*](../../skills/cut-release/SKILL.md).
+
    **Why the tree must be clean, and why the commit is path-scoped.** The tag now lands on R2,
    created *after* the acceptance gate ran. `git commit -am` would sweep every modified tracked
    file into it and publish that under the release tag, ungated.
