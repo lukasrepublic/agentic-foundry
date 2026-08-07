@@ -23,6 +23,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "btb-gates.yml"
+BASE_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "btb-gates-base.yml"
 RESET_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "security-label-reset.yml"
 GH_STUB_DIR = Path(__file__).resolve().parent / "fixtures" / "gh-stub"
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "btb-gates"
@@ -35,10 +36,31 @@ TEST_HEAD_SHA = "abcdef1234567890abcdef1234567890abcdef12"   # sha12 == "abcdef1
 TEST_STALE_SHA = "0badc0d000000000000000000000000000000000"  # sha12 == "0badc0d00000"
 
 
-def _load_step_run(job_name: str, workflow_path: Path = WORKFLOW_PATH) -> str:
+# WHERE EACH GATE'S BODY NOW LIVES. `spec-link` and `security-path` moved to
+# `btb-gates-base.yml` on `pull_request_target` (whose definition GitHub takes from the base
+# repository's default branch), so a fork can no longer rewrite the gate that grades it. Only the
+# FILE and the JOB NAME changed — the step bodies are byte-identical, which is why every call site
+# below still names the gate by its logical name and none of them changed.
+#
+# This table is deliberately a lookup rather than a search across both files: a search would
+# silently keep passing if a gate reappeared in the fork-evaluated workflow, which is the exact
+# regression this migration exists to prevent. See test_the_gate_jobs_are_split_by_trigger.
+GATE_SOURCE = {
+    "spec-link":          (BASE_WORKFLOW_PATH, "spec-link-base"),
+    "security-path":      (BASE_WORKFLOW_PATH, "security-path-base"),
+    "shell-parse-bash32": (WORKFLOW_PATH,      "shell-parse-bash32"),
+}
+
+
+def _load_step_run(job_name: str, workflow_path: Path = None) -> str:
     """Extract the REAL, verbatim `run:` script body of the named job's (single) step, straight
     out of the shipped workflow file. Pure data extraction — no branching/decision logic is
-    read or reproduced here, only the script TEXT the real `bash` process below executes."""
+    read or reproduced here, only the script TEXT the real `bash` process below executes.
+
+    With no explicit `workflow_path`, the gate's file and real job name are resolved through
+    GATE_SOURCE, so callers keep naming gates logically across the trigger split."""
+    if workflow_path is None:
+        workflow_path, job_name = GATE_SOURCE.get(job_name, (WORKFLOW_PATH, job_name))
     doc = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
     steps = doc["jobs"][job_name]["steps"]
     assert len(steps) == 1, f"job {job_name!r} grew a second step — the extraction helper assumed exactly one"
@@ -46,7 +68,7 @@ def _load_step_run(job_name: str, workflow_path: Path = WORKFLOW_PATH) -> str:
 
 
 def _run_step_body(job_name: str, tmp_path, *, pr_body="", labels=(), files=(), extra_env=None,
-                   head_sha=TEST_HEAD_SHA, workflow_path: Path = WORKFLOW_PATH):
+                   head_sha=TEST_HEAD_SHA, workflow_path: Path = None):
     """Drive the REAL shipped step body under `bash -c`, with the fixture `gh` stub prepended to
     PATH and fed this row's PR body / labels / changed-file list via env vars (the SAME
     mechanism `gh pr view`/`gh api` would surface to the real script).
@@ -110,9 +132,10 @@ def test_spec_link_verdict_matches_independent_lane_matrix(row, tmp_path):
 # ==================================================================== AC-SCW-11 (tier honesty) =
 
 def test_every_gate_job_states_its_tier_and_labels_tier_b_advisory(tmp_path):
-    doc = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
-    job_names = list(doc["jobs"].keys())
-    assert set(job_names) == {"spec-link", "security-path", "shell-parse-bash32"}, job_names
+    assert set(yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]) \
+        | set(yaml.safe_load(BASE_WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]) \
+        == {"spec-link-base", "security-path-base", "shell-parse-bash32"}, \
+        "the gate set changed — every gate must still state its tier"
 
     # Each job must STATE its enforcement tier, and state it DERIVED from the live protection
     # state rather than as a literal. The literal is what this test used to assert, and it is
@@ -464,3 +487,46 @@ def test_reset_trigger_types_are_frozen():
     assert doc[True]["pull_request_target"]["types"] == ["synchronize", "reopened", "edited"], (
         "security-label-reset's trigger types changed — if `edited` was dropped, the base-retarget "
         "strip can never fire in production even though its test still passes")
+
+
+# ============================================== the trigger split (fork-evaluated gate surface) ==
+
+def test_the_gate_jobs_are_split_by_trigger():
+    """THE security property of the migration, asserted structurally.
+
+    `pull_request` runs a workflow FROM THE PR'S MERGE REF, so a fork author's edits to that file
+    take effect in the run that grades their own PR. `pull_request_target` takes its definition
+    from the base repository's default branch instead. The two metadata gates therefore live in
+    `btb-gates-base.yml`; `shell-parse-bash32` must NOT follow them, because it checks out fork
+    code and that is the one thing a privileged trigger must never do.
+
+    A prose comment cannot enforce this. Without this test, moving a job back — or adding a new
+    metadata gate to the fork-evaluated file out of habit — reopens the hole silently, and every
+    other test in this module would keep passing because it resolves gates through GATE_SOURCE.
+    """
+    fork_doc = yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))
+    base_doc = yaml.safe_load(BASE_WORKFLOW_PATH.read_text(encoding="utf-8"))
+
+    # `on:` parses as the boolean True under YAML 1.1 — read it by identity, not by the string.
+    def triggers(doc):
+        return set((doc.get(True) if True in doc else doc["on"]).keys())
+
+    assert triggers(fork_doc) == {"pull_request"}, triggers(fork_doc)
+    assert triggers(base_doc) == {"pull_request_target"}, triggers(base_doc)
+
+    assert set(fork_doc["jobs"]) == {"shell-parse-bash32"}, (
+        "a job other than shell-parse-bash32 is in the FORK-EVALUATED workflow; a fork PR can "
+        f"rewrite it and report green under its own name: {set(fork_doc['jobs'])}")
+    assert set(base_doc["jobs"]) == {"spec-link-base", "security-path-base"}, set(base_doc["jobs"])
+
+    # The whole safety case for `pull_request_target` is that these jobs run NO repository code.
+    # One `uses:` — an `actions/checkout` above all — turns a metadata gate into arbitrary fork
+    # code executing with a privileged token, which is strictly worse than the hole being closed.
+    assert "uses:" not in BASE_WORKFLOW_PATH.read_text(encoding="utf-8"), (
+        "btb-gates-base.yml uses an action; on pull_request_target it must fetch and execute "
+        "nothing at all")
+
+    # Least privilege is load-bearing here rather than tidy: without it the default token carries
+    # WRITE on a fork-authored event.
+    assert base_doc.get("permissions") == {"contents": "read", "pull-requests": "read"}, \
+        base_doc.get("permissions")
