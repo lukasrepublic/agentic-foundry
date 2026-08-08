@@ -73,7 +73,7 @@ UNTOUCHED_STEPS = (1, 3, 5, 6, 7, 8, 9, 10, 13)
 # once this atom is in the merge base, comparing against that base is comparing text to itself, so
 # the standing anchor becomes this literal. A legitimate edit to any of the nine steps MUST update
 # it in the SAME reviewed diff — the MERGE_BASE_ENTRIES_DIGEST convention, applied here.
-UNTOUCHED_STEPS_DIGEST = "14bf4a5978f61c11257eed6e41a41ecba9b67da78784ee5cb0d73d96d8bd73fe"
+UNTOUCHED_STEPS_DIGEST = "c39fee454def6a423a799baa0a38dacd815cdeef2be33bcdd67cb40bdcd47742"
 
 BYPASS_TOKENS = ["--yes", "--dangerously", "bypassPermissions", "acceptEdits", "auto-approve", "allow rule"]
 HELLO_VERBS_IN_ORDER = ["/foundry:intake", "/foundry:spec-review", "/foundry:authorize", "/foundry:dispatch", "merge"]

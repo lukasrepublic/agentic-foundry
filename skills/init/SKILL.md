@@ -118,19 +118,29 @@ standalone plugin repo) so the gates are live + fail-closed.
    precisely, because one of them is not a floor statement:
 
    - `TIER-A` — enforced and verified. Nothing further.
-   - `TIER-B (classic-protection)` — **the branch IS protected**, by CLASSIC branch protection,
-     which the branch-rules probe cannot see. This means "unverifiable from a read-only token",
-     NOT "advisory". Confirm the required contexts by hand via the admin-only
-     `/branches/{branch}/protection` endpoint, or re-run with `--apply` to migrate to a ruleset
-     (recommended — rulesets are GitHub's forward path and are introspectable).
+   - `TIER-B (classic-protection)` — **some protection IS active** on the branch, applied as
+     CLASSIC branch protection, which the branch-rules probe cannot see. The verdict means
+     "unverifiable from a read-only token", NOT "advisory". It does NOT prove the protection is
+     adequate: the probe reads only `protected: true`, which is equally true of a protection
+     requiring no checks at all. Enumerate what is actually required by hand — the admin-only
+     `gh api repos/<owner>/<repo>/branches/main/protection`.
    - `TIER-B` with no protection at all — genuinely advisory; see below.
 
-   This framework's own `main` is in the second state: classic protection with every `ci.yml`
-   job plus `btb-gates`' `spec-link`/`security-path` checks required, `strict: true`,
+   **If you migrate to a ruleset, do not lose contexts on the way.** `--apply` requires the
+   required contexts as `--context` arguments and installs only those; the example above passes
+   two because two is enough to demonstrate the flag, NOT because two is a floor. Enumerate the
+   currently-required set from the admin endpoint first and pass **every** one, and keep classic
+   protection in place until the probe reports `TIER-A` over that full set. Removing classic
+   protection in favour of a thinner ruleset lowers a live floor.
+
+   This framework's own `main` is in the second state — verified 2026-08-08 against the admin
+   endpoint: classic protection requiring `selftests`, `secret-scan`, `release-acceptance`,
+   `shell-parse-bash32`, `spec-link-base` and `security-path-base`, with `strict: true`,
    `enforce_admins: true`, `allow_force_pushes: false`, and NO required reviews (a solo operator
-   cannot supply a distinct approving principal, so the checks are the gate). **`enforce_admins:
-   true` is what makes the floor real**: it is why `gh pr merge --admin` is dead here rather than
-   merely discouraged, and why even a release cut must route its `main` write through a PR.
+   cannot supply a distinct approving principal, so the checks are the gate). Re-read it rather
+   than trusting this list, which is a point-in-time observation. **`enforce_admins: true` is
+   what makes the floor real**: it is why `gh pr merge --admin` is dead here rather than merely
+   discouraged, and why even a release cut must route its `main` write through a PR.
 
    **An adopter with no protection applied is on Tier B (advisory) only** — the `ci.yml` command
    battery + `btb-gates`' always-reporting `spec-link`/`security-path` checks report on every PR
