@@ -321,6 +321,11 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         # (ER #88). A pin bump without a tarball bump would leave `npx create-agentic-workspace`
         # scaffolding with the old, unexplained prompts.
         "1.3.0": "0.3.0",
+        # v1.3.1 carries no CLI change — it releases two plugin-side fixes (contract_sha256 freeze
+        # asymmetry, and a publish plan that could not run on a protected main). The tarball still
+        # bumps, because the pin it EMBEDS moved: an unpinned `npx create-agentic-workspace` would
+        # otherwise keep scaffolding workspaces whose marketplace ref names 1.3.0.
+        "1.3.1": "0.3.1",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (
