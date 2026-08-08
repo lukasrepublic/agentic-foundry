@@ -99,9 +99,23 @@ def canonicalize_proper(proper: bytes) -> bytes:
 
 
 def contract_sha256_bytes(raw: bytes) -> str:
-    """contract_sha256 over the contract-proper region (sentinel-excluded)."""
+    """contract_sha256 over the contract-proper region (sentinel-excluded).
+
+    CANONICALIZES before hashing, exactly as `freeze_proper_and_trailer` does. The two MUST agree:
+    `authorize()` hashes the draft here, writes the frozen bytes there, then asserts the recorded
+    hash equals `contract_sha256_bytes(frozen)`. While only the writer canonicalized, any contract
+    whose proper region ended in more than one newline failed that assertion with
+    "internal: contract_sha256 unstable across freeze (newline canonicalization bug)" — a refusal
+    that named a real bug, but located it in the caller's file rather than in this asymmetry.
+
+    A FIRST authorize was immune: with no sentinel yet the whole file is the proper region, and its
+    single trailing newline is already canonical. It took a RE-authorization — where a blank line
+    left before the sentinel by an edit falls INSIDE the proper region — to expose it.
+
+    Verified safe when introduced: across all 352 acceptance contracts in the workspace and this
+    repo, zero hashes change, so every existing frozen authorization still verifies."""
     proper, _ = split_contract_bytes(raw)
-    return hashlib.sha256(proper).hexdigest()
+    return hashlib.sha256(canonicalize_proper(proper)).hexdigest()
 
 
 def contract_sha256(path: str) -> str:

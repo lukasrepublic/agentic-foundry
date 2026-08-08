@@ -355,3 +355,45 @@ class TestBuildSystemSnapshot:
         s1 = system_snapshot.build_system_snapshot(project_dir=str(tmp_path))
         s2 = system_snapshot.build_system_snapshot(project_dir=str(tmp_path))
         assert s1["signature"] == s2["signature"]
+
+
+# ── contract_sha256 / freeze canonicalization symmetry ──────────────────────────────────────
+# Regression: `contract_sha256_bytes` hashed the contract-proper region AS-IS while
+# `freeze_proper_and_trailer` hashed it AFTER `canonicalize_proper` rstripped it to one newline.
+# `authorize()` records the first and then asserts it equals the second over the frozen bytes, so
+# any contract whose proper region ended in >1 newline refused with "contract_sha256 unstable
+# across freeze". A FIRST authorize never hit it (no sentinel yet ⇒ the whole file is the proper
+# region, already single-newline-terminated); it took a RE-authorization, where a blank line left
+# before the sentinel falls inside the proper region, to expose it.
+
+def test_contract_sha256_is_stable_across_the_freeze_transition():
+    """The hash the operator signs must equal the hash of the bytes actually written."""
+    body = b"spec_ref: x\nscope:\n  allowed_paths: []\ncheckpoints: []\n"
+    trailer = "authorized:\n  auth_seq: 1\n"
+    for trailing in (b"", b"\n", b"\n\n", b"\n\n\n"):
+        raw = body.rstrip(b"\n") + b"\n" + trailing
+        recorded = contract.contract_sha256_bytes(raw)
+        frozen = contract.freeze_proper_and_trailer(raw, trailer)
+        assert contract.contract_sha256_bytes(frozen) == recorded, (
+            f"hash moved across the freeze for a proper region ending in {len(trailing)+1} newline(s)"
+        )
+
+
+def test_contract_sha256_ignores_trailing_newlines_in_the_proper_region():
+    """Trailing blank lines are formatting, not contract content — they must not change the hash."""
+    body = b"spec_ref: x\nscope:\n  allowed_paths: []\ncheckpoints: []\n"
+    one = contract.contract_sha256_bytes(body)
+    for extra in (b"\n", b"\n\n", b"\n\n\n\n"):
+        assert contract.contract_sha256_bytes(body + extra) == one
+
+
+def test_re_authorization_of_an_already_frozen_contract_is_hash_stable():
+    """The exact path that failed: freeze once, leave a blank line before the sentinel (as an edit
+    removing the last checkpoint does), then re-freeze."""
+    body = b"spec_ref: x\nscope:\n  allowed_paths: []\ncheckpoints: []\n"
+    frozen_once = contract.freeze_proper_and_trailer(body, "authorized:\n  auth_seq: 1\n")
+    proper, trailer = contract.split_contract_bytes(frozen_once)
+    edited = proper + b"\n" + trailer          # the stray blank line an edit leaves behind
+    recorded = contract.contract_sha256_bytes(edited)
+    refrozen = contract.freeze_proper_and_trailer(edited, "authorized:\n  auth_seq: 2\n")
+    assert contract.contract_sha256_bytes(refrozen) == recorded

@@ -613,3 +613,46 @@ def test_cli_path_never_injects_a_host_resolver():
     for call in calls:
         kw_names = {kw.arg for kw in call.keywords}
         assert "resolver" not in kw_names, "main()'s CLI path must never inject a resolver"
+
+
+# ── the main-push step must survive a protected branch ──────────────────────────────────────
+# Regression from the v1.3.0 cut: the plan emitted a bare `push origin main`, which a repo whose
+# main carries branch protection with enforce_admins REFUSES for everyone ("protected branch hook
+# declined"). The tag pushed fine, so the release existed upstream while its commits were not on
+# main, and the operator had to improvise the PR landing mid-cut. The direct push is kept (it is
+# correct wherever main is unprotected), but the plan now carries the fallback.
+
+def test_plan_names_the_protected_branch_fallback(repo):
+    plan = cr.publish_plan(str(repo), "1.0.1")
+    joined = "\n".join(plan)
+    assert "push origin main" in joined, "the direct push is still the first thing to try"
+    assert "protected branch hook declined" in joined, (
+        "the plan must name the EXACT refusal text, so an operator hitting it can match it"
+    )
+    assert "refs/heads/release/v1.0.1" in joined, "the fallback must name the branch to push"
+    low = joined.lower()
+    assert "pr" in low and "main" in low, "the fallback must route through a PR into main"
+
+
+def test_plan_warns_that_a_squash_landing_rewrites_the_tagged_commits(repo):
+    """The non-obvious consequence: after a squash/rebase landing the tag's commit is NOT an
+    ancestor of main. That is harmless — installs resolve by ref/sha, never via the branch — but an
+    operator who does not know it will think the release is broken and try to 'fix' it."""
+    joined = "\n".join(cr.publish_plan(str(repo), "1.0.1"))
+    assert "ancestor" in joined
+    assert "source.sha" in joined and "never via the" in joined
+    assert "diff v1.0.1^{commit} origin/main" in joined, "give the operator the parity check"
+
+
+def test_the_fallback_is_emitted_as_inert_comment_lines(repo):
+    """cut-release emits DATA the operator runs; the fallback is guidance, not a step to execute
+    blindly. Every fallback line must be commented so a copy-paste of the whole plan cannot run it
+    while the direct push is still the right move."""
+    plan = cr.publish_plan(str(repo), "1.0.1")
+    fallback = [s for s in plan if s.lstrip().startswith("# FALLBACK")]
+    assert fallback, "the fallback step is present and is its own block"
+    for step in fallback:
+        for line in step.splitlines():
+            if not line.strip():
+                continue
+            assert line.lstrip().startswith("#"), f"fallback line is executable, not commented: {line}"
