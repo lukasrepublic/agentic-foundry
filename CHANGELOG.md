@@ -8,6 +8,45 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.3.1 — 2026-08-08
+
+### Two gate defects the v1.3.0 cut hit live
+
+Both were found while shipping v1.3.0 and fixed directly rather than filed — this repo's own
+workspace is the control plane, not an adopter, so an enhancement request here is a request to
+oneself. Neither changes the CLI; `create-agentic-workspace` is unchanged since 0.3.0, and its
+tarball bumps to 0.3.1 only because the plugin pin it embeds moved.
+
+**`contract_sha256` was unstable across a RE-authorization.** The hasher read the contract-proper
+region as-is while the writer canonicalized it to exactly one trailing newline. `authorize()`
+records the first and asserts it equals the second, so any contract whose region ended in more than
+one newline refused with `internal: contract_sha256 unstable across freeze` — a message that was
+right that something was broken and wrong about where. A first authorization was immune (no
+sentinel yet, so the whole file is already canonical); only re-authorization exposed it. Both sides
+now canonicalize. Verified before changing anything: across 352 acceptance contracts, zero hashes
+move, so no existing frozen authorization is invalidated.
+
+Two Risks from the security review are closed rather than disclosed. Trailing newlines are **not**
+universally semantics-free in YAML — a keep-chomped block scalar (`|+`, `>+`) makes trailing blank
+lines part of the value, so two contracts with genuinely different frozen values could have shared
+one signature. `validate_contract_bytes` now refuses chomping indicators outright, which restores
+the premise as a fact about the format rather than an assumption about its authors. And the
+post-freeze assertion had become unfailable now that both sides canonicalize — worse, it was blind
+to the exact writer-side regression its own error message named. It now asserts a byte-level
+property that can actually fail.
+
+**The publish plan told the operator to push a branch that cannot be pushed.** It emitted a bare
+`push origin main`, which a repo whose main carries branch protection with `enforce_admins` refuses
+for everyone. During the v1.3.0 cut the tag pushed and main did not, leaving the release published
+upstream while its commits were not on the branch. The plan now names the exact refusal text and
+carries a commented fallback that routes through a PR — including the non-obvious consequence that
+a squash landing rewrites the release commits, so the tag's commit will not be an ancestor of main.
+That is harmless, because an install resolves the catalogue at the ref and the plugin at
+`source.sha`, never via the branch — but an operator who does not know it will try to "fix" it.
+
+**Security review disposition:** routed (the diff touches the front-authorization integrity core).
+No Block; both Risks above closed in the same PR.
+
 ## v1.3.0 — 2026-08-08
 
 ### The front door now explains itself
