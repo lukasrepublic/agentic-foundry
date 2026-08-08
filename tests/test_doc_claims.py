@@ -1449,11 +1449,14 @@ def _mutate_target_repo_freeze(tmp_path_arg: Path) -> Path:
     )
     p = dest / "scripts" / "foundry_contract.py"
     text = p.read_text(encoding="utf-8")
+    # Pinned to the two EXECUTABLE lines, not the whole function. The target previously included
+    # the docstring, so documenting the function moved the target and this control failed closed
+    # with "mutation target moved" — correct behaviour, but it fires on prose edits that cannot
+    # affect what is being controlled. Narrowing to the statements keeps the match exact (a real
+    # change to how the hash is computed still moves it) without coupling the control to comments.
     original = (
-        'def contract_sha256_bytes(raw: bytes) -> str:\n'
-        '    """contract_sha256 over the contract-proper region (sentinel-excluded)."""\n'
         '    proper, _ = split_contract_bytes(raw)\n'
-        '    return hashlib.sha256(proper).hexdigest()\n'
+        '    return hashlib.sha256(canonicalize_proper(proper)).hexdigest()\n'
     )
     if original not in text:
         raise MissingSourceError(
@@ -1461,7 +1464,6 @@ def _mutate_target_repo_freeze(tmp_path_arg: Path) -> Path:
             "(mutation target moved)"
         )
     mutated = (
-        'def contract_sha256_bytes(raw: bytes) -> str:\n'
         '    return hashlib.sha256(b"doc-claims-negative-control-constant").hexdigest()\n'
     )
     p.write_text(text.replace(original, mutated), encoding="utf-8")

@@ -355,3 +355,107 @@ class TestBuildSystemSnapshot:
         s1 = system_snapshot.build_system_snapshot(project_dir=str(tmp_path))
         s2 = system_snapshot.build_system_snapshot(project_dir=str(tmp_path))
         assert s1["signature"] == s2["signature"]
+
+
+# ── contract_sha256 / freeze canonicalization symmetry ──────────────────────────────────────
+# Regression: `contract_sha256_bytes` hashed the contract-proper region AS-IS while
+# `freeze_proper_and_trailer` hashed it AFTER `canonicalize_proper` rstripped it to one newline.
+# `authorize()` records the first and then asserts it equals the second over the frozen bytes, so
+# any contract whose proper region ended in >1 newline refused with "contract_sha256 unstable
+# across freeze". A FIRST authorize never hit it (no sentinel yet ⇒ the whole file is the proper
+# region, already single-newline-terminated); it took a RE-authorization, where a blank line left
+# before the sentinel falls inside the proper region, to expose it.
+
+def test_contract_sha256_is_stable_across_the_freeze_transition():
+    """The hash the operator signs must equal the hash of the bytes actually written."""
+    body = b"spec_ref: x\nscope:\n  allowed_paths: []\ncheckpoints: []\n"
+    trailer = "authorized:\n  auth_seq: 1\n"
+    for trailing in (b"", b"\n", b"\n\n", b"\n\n\n"):
+        raw = body.rstrip(b"\n") + b"\n" + trailing
+        recorded = contract.contract_sha256_bytes(raw)
+        frozen = contract.freeze_proper_and_trailer(raw, trailer)
+        assert contract.contract_sha256_bytes(frozen) == recorded, (
+            f"hash moved across the freeze for a proper region ending in {len(trailing)+1} newline(s)"
+        )
+
+
+def test_contract_sha256_ignores_trailing_newlines_in_the_proper_region():
+    """Trailing blank lines are formatting, not contract content — they must not change the hash."""
+    body = b"spec_ref: x\nscope:\n  allowed_paths: []\ncheckpoints: []\n"
+    one = contract.contract_sha256_bytes(body)
+    for extra in (b"\n", b"\n\n", b"\n\n\n\n"):
+        assert contract.contract_sha256_bytes(body + extra) == one
+
+
+def test_re_authorization_of_an_already_frozen_contract_is_hash_stable():
+    """The exact path that failed: freeze once, leave a blank line before the sentinel (as an edit
+    removing the last checkpoint does), then re-freeze."""
+    body = b"spec_ref: x\nscope:\n  allowed_paths: []\ncheckpoints: []\n"
+    frozen_once = contract.freeze_proper_and_trailer(body, "authorized:\n  auth_seq: 1\n")
+    proper, trailer = contract.split_contract_bytes(frozen_once)
+    edited = proper + b"\n" + trailer          # the stray blank line an edit leaves behind
+    recorded = contract.contract_sha256_bytes(edited)
+    refrozen = contract.freeze_proper_and_trailer(edited, "authorized:\n  auth_seq: 2\n")
+    assert contract.contract_sha256_bytes(refrozen) == recorded
+
+
+# ── the bound that makes trailing-newline canonicalization sound ─────────────────────────────
+# Canonicalizing trailing newlines out of the hashed region is safe only while trailing newlines
+# carry no meaning. YAML's KEEP-CHOMPING indicators (`|+`, `>+`) make trailing blank lines part of
+# the scalar's VALUE, so two contracts with genuinely different frozen values would share one
+# contract_sha256 — a collision INSIDE the signed region. Refused outright rather than disclosed.
+
+def test_keep_chomped_block_scalar_is_refused():
+    bad = (b"spec_ref: x\nscope:\n  allowed_paths: []\ncheckpoints: []\n"
+           b"note: |+\n  hi\n\n\n")
+    _ok, errors, _w = contract.validate_contract_bytes(bad)
+    assert any("keep-chomped" in e for e in errors), errors
+
+
+def test_the_collision_keep_chomping_would_allow_is_real():
+    """Not a hypothetical: without the floor these two contracts hash identically while parsing to
+    different values. This test documents WHY the floor exists, so a future reader does not remove
+    it as pedantry."""
+    a = b"k: |+\n  hi\n"
+    b = b"k: |+\n  hi\n\n\n"
+    assert yaml.safe_load(a) != yaml.safe_load(b), "the values genuinely differ"
+    assert contract.contract_sha256_bytes(a) == contract.contract_sha256_bytes(b), (
+        "…and the hash cannot tell them apart — which is exactly what the floor refuses"
+    )
+
+
+def test_plain_block_scalars_and_prose_mentions_are_not_refused():
+    """The floor must not fire on `|`/`>` (whose trailing blank lines are NOT content) or on a
+    comment that merely names the indicator."""
+    for body in (b"spec_ref: x\nscope:\n  allowed_paths: []\ncheckpoints: []\nnote: |\n  hi\n",
+                 b"spec_ref: x\nscope:\n  allowed_paths: []\ncheckpoints: []\nnote: >\n  hi\n",
+                 b"spec_ref: x\nscope:\n  allowed_paths: []\ncheckpoints: []\n# prose about |+ here\n"):
+        _ok, errors, _w = contract.validate_contract_bytes(body)
+        assert not [e for e in errors if "keep-chomped" in e], (body, errors)
+
+
+# ── the freeze-write assertion must convict a WRITER-side regression ─────────────────────────
+# The old post-freeze check compared two hashes that both canonicalize, so it could not fail — and
+# would have stayed green if `freeze_proper_and_trailer` stopped canonicalizing, the very defect its
+# error message named. The replacement asserts the frozen bytes literally begin with the canonical
+# contract-proper + sentinel.
+
+def test_frozen_bytes_begin_with_the_canonical_proper_and_sentinel():
+    raw = b"spec_ref: x\nscope:\n  allowed_paths: []\ncheckpoints: []\n\n\n"
+    frozen = contract.freeze_proper_and_trailer(raw, "authorized:\n  auth_seq: 1\n")
+    expected = contract.canonicalize_proper(contract.split_contract_bytes(raw)[0]) + contract._SENTINEL_B
+    assert frozen.startswith(expected)
+
+
+def test_a_non_canonicalizing_writer_is_convicted():
+    """Simulates the regression: a writer that appends the sentinel WITHOUT canonicalizing. The
+    old hash-equality check passed in this state; the prefix assertion must not."""
+    raw = b"spec_ref: x\nscope:\n  allowed_paths: []\ncheckpoints: []\n\n\n"
+    proper, _ = contract.split_contract_bytes(raw)
+    regressed = proper + contract._SENTINEL_B + b"\n" + b"authorized:\n  auth_seq: 1\n"
+    expected = contract.canonicalize_proper(proper) + contract._SENTINEL_B
+    assert not regressed.startswith(expected), "the prefix assertion convicts the writer regression"
+    # …while the assertion it replaced would NOT have caught it:
+    assert contract.contract_sha256_bytes(regressed) == contract.contract_sha256_bytes(raw), (
+        "the old hash-equality check stayed green here — which is why it was replaced"
+    )
