@@ -29,13 +29,18 @@ silent-halt source) with native primitives:
   auto-merge grant is WITHDRAWN.** The merge-gate PASS verdict it hinged on no
   longer exists — the merge signals are now the native floor (`ci.yml`'s pytest battery +
   graph selftests + doctor, plus `btb-gates`' `spec-link`/`security-path` checks), which is
-  **Tier B (advisory)** on this repo (no server-enforced required-status; a preflight
-  check found rulesets/branch protection unavailable on the current repo plan).
-  Advisory signals are not a sufficient basis for unattended self-merge: **the operator merges**,
-  or an agent merge is governed by `hooks/foundry-git-discipline.sh`'s deterministic `gh` clause
-  (`gh pr merge --admin` is BLOCKED outright; a plain `gh pr merge <n>` is allowed only when
-  `gh pr checks <n>` reports every check passing). This grant returns once Tier A (a real
-  server-enforced required-status) is live.
+  server-side required on this repo's `main` (classic branch protection: those
+  contexts required, `enforce_admins: true`, `strict`, force-pushes off). The earlier claim here
+  — that a preflight found branch protection unavailable on this plan — was STALE; protection is
+  applied. It is CLASSIC protection rather than a ruleset, so `scripts/foundry_tier_preflight.py`
+  reads it as `TIER-B (classic-protection)`: unverifiable from a read-only token, NOT advisory.
+  Server-side checks are still not a grant of unattended self-merge — they bound what CAN merge,
+  not who DECIDES to: **the operator merges**, or an agent merge is governed by
+  `hooks/foundry-git-discipline.sh`'s deterministic `gh` clause (`gh pr merge --admin` is BLOCKED
+  outright; a plain `gh pr merge <n>` is allowed only when `gh pr checks <n>` reports every check
+  passing). **The auto-merge grant nonetheless remains WITHDRAWN.** Restoring it is an
+  authorization change, not a consequence of this correction, and it is the operator's to
+  make — see `docs/merge-floor.md`. Until then the operator merges, or the `gh` clause governs.
 
 ## When to trigger
 
@@ -116,8 +121,9 @@ directly; see `skills/mode/SKILL.md`).
 - **Re-introducing `impl-progress.yaml` / a hand-written wave counter.** State is
   derived from merged-PR + verdict facts; the Workflow journal + `/loop` carry resume.
 - **Driving an un-authorized atom**, or **self-merging (including a `gh pr merge --admin`
-  bypass) on an advisory-only native-floor signal.** The auto-merge grant is withdrawn until
-  Tier A; the operator merges, or `foundry-git-discipline.sh`'s `gh` clause governs it.
+  bypass) on an advisory-only native-floor signal.** The auto-merge grant is withdrawn
+  pending an operator decision (server-side protection being live does not itself restore it);
+  the operator merges, or `foundry-git-discipline.sh`'s `gh` clause governs it.
 - **Hand-rolling the per-wave iteration** — it's the `Workflow` tool.
 - **Auto-answering a security-flagged, authorization-adjacent, or ambiguous fork.** The carve-out
   is closed and fail-closed — never widen it, never treat an unclassifiable fork as reversible.

@@ -161,7 +161,14 @@ hook_comment_expectation:
   #      substitution scanner mis-tracks backquotes across heredoc content), and the
   #      internal-evaluator-error path stops echoing the raw command (inline-credential leak
   #      exactly when the redacting evaluator has failed). Evaluator content byte-identical.
-  executable_content_sha256: '3be3abf0583c58aee97dd89f2753b3b73077ae7ba99ed88f15b15dbd5c8b76ad'
+  #   6. heredoc bodies excised before the scan (2026-08-08, light lane): a heredoc body is fed
+  #      to a program's STDIN and never parsed as commands, but the newline-to-clause rule made
+  #      every body line its own clause — so WRITING a file that MENTIONED a blocked command was
+  #      refused as though it ran one. Excision is the fail-open direction, so it is gated on
+  #      BOTH an inert consumer and an unexpandable body, and the adversarial pass on the change
+  #      caught one real fail-open before it shipped (`cat <<EOF | bash` — an inert consumer
+  #      whose STDOUT a shell then executes), now pinned by tests. Unknown sink CONVICTS.
+  executable_content_sha256: '97edf42e800124801ea14cab610aada0ea31fc29b10fe84b23218c885806f41c'
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
 operator_registry_shape:
