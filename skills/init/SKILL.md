@@ -1,6 +1,6 @@
 ---
 name: init
-description: Adopter scaffolder (/foundry:init). Stands up a new adopting project's Foundry wiring — operator registry, per-project gh identity isolation (multi-account machines), the app-exercise binding (the live-seam driver map, the generic analog of `make dev`), env/identity mapping — then fail-closes via /foundry:doctor. Branch-protection-as-code (Tier A) is retired pending a Rulesets-API rebuild (since an earlier realignment release); the current floor is Tier B advisory (ci.yml + btb-gates) + the git-discipline gh clause. Trigger when onboarding a new repo to Foundry, or extracting Foundry to a standalone plugin repo.
+description: Adopter scaffolder (/foundry:init). Stands up a new adopting project's Foundry wiring — operator registry, per-project gh identity isolation (multi-account machines), the app-exercise binding (the live-seam driver map, the generic analog of `make dev`), env/identity mapping — then fail-closes via /foundry:doctor. Branch-protection-as-CODE is retired pending a Rulesets-API rebuild; Tier A itself is NOT retired — it is applied by hand and is live on this framework's own main. An adopter who has not applied it is on Tier B advisory (ci.yml + btb-gates) + the git-discipline gh clause. Trigger when onboarding a new repo to Foundry, or extracting Foundry to a standalone plugin repo.
 ---
 
 # /foundry:init
@@ -95,19 +95,74 @@ standalone plugin repo) so the gates are live + fail-closed.
      default key. **Cross-account/private template:** if the workspace was seeded from a
      private template owned by a *different* account, `gh repo create --template` 403s —
      use the local-seed path.
-5. **Branch-protection-as-code — RETIRED, Tier A pending a rebuild (since an earlier realignment release).** This step
+5. **Branch protection — the as-CODE applier is retired; use the tier preflight.** This step
    used to run `foundry-branch-protection.sh apply/verify <owner/repo>` to PUT + verify a
    universal `foundry-merge-gate` required-status backstop. Both the applier script and the
-   `branch-protection.json` config it pinned are deleted
-   — the `foundry-merge-gate` required-status context they enforced no longer exists to enforce.
-   **Current floor on this repo: Tier B (advisory) only** — the `ci.yml` command battery +
-   `btb-gates`' always-reporting `spec-link`/`security-path` checks report on every PR but are
-   NOT a server-enforced required status, and `hooks/foundry-git-discipline.sh`'s `gh` clause
-   blocks a Foundry-session `gh pr merge --admin` outright and requires `gh pr checks` all-green
-   for a plain `gh pr merge` — but a human `git push` / the web UI / the REST API are not gated.
-   **Tier A (a real server-enforced required status) is deferred**, to be rebuilt on GitHub's
-   Rulesets API rather than the retired classic-branch-protection applier — do not re-introduce
-   the deleted script/config to fill this gap.
+   `branch-protection.json` config it pinned are deleted — the context they enforced no longer
+   exists to enforce. **Do not re-introduce them.** What replaced them is
+   `scripts/foundry_tier_preflight.py` + the shipped ruleset template
+   (`rulesets/tier-a-merge-floor.json`):
+
+   ```
+   python3 scripts/foundry_tier_preflight.py --repo <owner>/<repo> \
+     --context spec-link-base --context security-path-base [--apply]
+   ```
+
+   Read-only without `--apply` (reports the current tier); `--apply` installs the ruleset first.
+   It accepts only ONE kind of evidence for `TIER-A` — a post-apply read of the branch-rules
+   probe, the endpoint that reports what is actually ENFORCED. A created ruleset is not evidence:
+   a private repo on a plan without ruleset enforcement will store one, return success, and
+   enforce nothing.
+
+   **Tier A itself is NOT retired — only its as-code applier is.** Read the preflight's verdict
+   precisely, because one of them is not a floor statement:
+
+   - `TIER-A` — enforced and verified. Nothing further.
+   - `TIER-B (classic-protection)` — **some protection IS active** on the branch, applied as
+     CLASSIC branch protection, which the branch-rules probe cannot see. The verdict means
+     "unverifiable from a read-only token", NOT "advisory". It does NOT prove the protection is
+     adequate: the probe reads only `protected: true`, which is equally true of a protection
+     requiring no checks at all. Enumerate what is actually required by hand — the admin-only
+     `gh api repos/<owner>/<repo>/branches/main/protection`.
+   - `TIER-B` with no protection at all — genuinely advisory; see below.
+
+   **If you migrate to a ruleset, do not lose contexts on the way.** `--apply` requires the
+   required contexts as `--context` arguments and installs only those; the example above passes
+   two because two is enough to demonstrate the flag, NOT because two is a floor. Enumerate the
+   currently-required set from the admin endpoint first and pass **every** one, and keep classic
+   protection in place until the probe reports `TIER-A` over that full set. Removing classic
+   protection in favour of a thinner ruleset lowers a live floor.
+
+   **Carry the non-context properties across too — `--context` does not.** Three of them map
+   cleanly (`enforce_admins: true` → `bypass_actors: []`; `allow_force_pushes: false` → the
+   `non_fast_forward` rule; required reviews 0 → `required_approving_review_count: 0`). One does
+   NOT: the shipped template sets `strict_required_status_checks_policy: false`, so a branch on
+   classic `strict: true` silently loses the up-to-date-branch requirement unless you set it true
+   in the applied ruleset. That is the migration's sharpest edge — a full context list is not
+   sufficient to preserve the floor. Those four mirror what THIS repo carries, and are not the
+   whole surface: read the admin endpoint's full response and treat any field not named here
+   (`restrictions`, `required_linear_history`, `required_conversation_resolution`, `lock_branch`,
+   `block_creations`) the same way. One asymmetry runs the other direction and owes no
+   disclosure: the template's `pull_request` rule MANDATES a PR, where classic protection with no
+   required reviews still gates a direct push by status checks alone — that migration adds a
+   requirement rather than losing one.
+
+   This framework's own `main` is in the second state — verified 2026-08-08 against the admin
+   endpoint: classic protection requiring `selftests`, `secret-scan`, `release-acceptance`,
+   `shell-parse-bash32`, `spec-link-base` and `security-path-base`, with `strict: true`,
+   `enforce_admins: true`, `allow_force_pushes: false`, and NO required reviews (a solo operator
+   cannot supply a distinct approving principal, so the checks are the gate). Re-read it rather
+   than trusting this list, which is a point-in-time observation. **`enforce_admins: true` is
+   what makes the floor real**: it is why `gh pr merge --admin` is dead here rather than merely
+   discouraged, and why even a release cut must route its `main` write through a PR.
+
+   **An adopter with no protection applied is on Tier B (advisory) only** — the `ci.yml` command
+   battery + `btb-gates`' always-reporting `spec-link`/`security-path` checks report on every PR
+   but are NOT a server-enforced required status, and `hooks/foundry-git-discipline.sh`'s `gh`
+   clause blocks a Foundry-session `gh pr merge --admin` outright and requires `gh pr checks`
+   all-green for a plain `gh pr merge` — but a human `git push` / the web UI / the REST API are
+   not gated. Applying Tier A is the step that closes those three.
+
 6. **App-exercise binding (the live-seam driver).** Declare the adopter's boot
    command (the generic analog of `make dev`) + the `surface → how-to-exercise` map
    (`ui:`/`api:`/`cli:`/`pipeline:`/`binary:`/…). A contract surface with no usable driver
@@ -257,7 +312,7 @@ only verifies and reports on all five, and names the real owner for each.
 ## Inputs / Outputs
 
 - In: the adopter repo + its boot command + surface map + operator id(s) + (multi-account machines) the repo-owning gh account.
-- Out: a wired, DOCTOR-GREEN adopter (registry + identity isolation + driver map; branch-protection Tier A is deferred — see step 5).
+- Out: a wired, DOCTOR-GREEN adopter (registry + identity isolation + driver map; branch-protection Tier A is applied by hand — see step 5).
 
 ## Anti-patterns
 

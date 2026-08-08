@@ -99,9 +99,11 @@ allowlist:
   - path: skills/init/SKILL.md
     token: 'branch-protection'
     reason: >-
-      Step 4's own section is titled "Branch-protection-as-code — RETIRED, Tier A pending a
-      rebuild" and accurately describes today's Tier B advisory floor; live-and-accurate prose,
-      not stale.
+      Step 5's own section is titled "Branch protection — the as-CODE applier is retired; use the
+      tier preflight" and describes what actually replaced it. The earlier wording of this entry
+      said the step "accurately describes today's Tier B advisory floor", which stopped being
+      true once protection was applied to main; corrected here rather than left to rot, per the
+      maintenance note below. Live-and-accurate prose, not stale.
 
 # disclosure_matrix (AC-CRRC-3) — one row per prose surface, each naming the three required
 # elements a conformant retired disclosure must carry, authored independently of the prose it
