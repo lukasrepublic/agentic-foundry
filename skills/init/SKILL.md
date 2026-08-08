@@ -133,6 +133,14 @@ standalone plugin repo) so the gates are live + fail-closed.
    protection in place until the probe reports `TIER-A` over that full set. Removing classic
    protection in favour of a thinner ruleset lowers a live floor.
 
+   **Carry the non-context properties across too — `--context` does not.** Three of them map
+   cleanly (`enforce_admins: true` → `bypass_actors: []`; `allow_force_pushes: false` → the
+   `non_fast_forward` rule; required reviews 0 → `required_approving_review_count: 0`). One does
+   NOT: the shipped template sets `strict_required_status_checks_policy: false`, so a branch on
+   classic `strict: true` silently loses the up-to-date-branch requirement unless you set it true
+   in the applied ruleset. That is the migration's sharpest edge — a full context list is not
+   sufficient to preserve the floor.
+
    This framework's own `main` is in the second state — verified 2026-08-08 against the admin
    endpoint: classic protection requiring `selftests`, `secret-scan`, `release-acceptance`,
    `shell-parse-bash32`, `spec-link-base` and `security-path-base`, with `strict: true`,

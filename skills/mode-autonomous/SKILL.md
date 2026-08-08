@@ -29,11 +29,12 @@ silent-halt source) with native primitives:
   auto-merge grant is WITHDRAWN.** The merge-gate PASS verdict it hinged on no
   longer exists — the merge signals are now the native floor (`ci.yml`'s pytest battery +
   graph selftests + doctor, plus `btb-gates`' `spec-link`/`security-path` checks), which is
-  server-side required on this repo's `main` (classic branch protection: those
-  contexts required, `enforce_admins: true`, `strict`, force-pushes off). The earlier claim here
-  — that a preflight found branch protection unavailable on this plan — was STALE; protection is
-  applied. It is CLASSIC protection rather than a ruleset, so `scripts/foundry_tier_preflight.py`
-  reads it as `TIER-B (classic-protection)`: unverifiable from a read-only token, NOT advisory.
+  server-side required on this repo's `main`. The earlier claim here — that a preflight found
+  branch protection unavailable on this plan — was STALE; protection is applied. It is CLASSIC
+  protection rather than a ruleset, so `scripts/foundry_tier_preflight.py` reads it as
+  `TIER-B (classic-protection)`: unverifiable from a read-only token, NOT advisory. **The exact
+  required set is deliberately NOT restated here** — `skills/init/SKILL.md` step 5 is the single
+  source, and a live configuration copied into two files is a claim that rots in one of them.
   Server-side checks are still not a grant of unattended self-merge — they bound what CAN merge,
   not who DECIDES to: **the operator merges**, or an agent merge is governed by
   `hooks/foundry-git-discipline.sh`'s deterministic `gh` clause (`gh pr merge --admin` is BLOCKED

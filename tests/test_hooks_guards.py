@@ -213,6 +213,55 @@ def test_discipline_blocks_admin_merge_outright():
     assert p.returncode == 2, p.stdout + p.stderr
 
 
+# ---- TRIPWIRE: heredoc bodies must stay in the scan -----------------------------------------
+# These pass trivially against the guard as it stands, which does not treat a heredoc specially.
+# They are here for the NEXT person who tries to make it treat one specially.
+#
+# The guard convicts on blocked text inside a heredoc body even though the shell feeds that body
+# to a program's STDIN and never parses it as commands. That false BLOCK is real and annoying —
+# it refuses the authoring of a doc, a commit message, or a test fixture that merely NAMES a
+# blocked verb, including the fixtures in this file. An excision that exonerates such bodies was
+# built, reviewed, and WITHDRAWN: every string below defeated it, and each was confirmed to
+# execute under real bash 3.2.
+#
+#   consumer that is neither a pipe member nor a first word:
+#     tee >(bash) …   cat … > >(bash)   cat … | tee >(bash)   exec 3> >(bash) ; cat … >&3
+#   the continuation pre-pass splicing a body line into the terminator, so the closer resolves
+#     to a LATER delimiter and the live shell between them is excised — fired by an ordinary
+#     trailing backslash, not an adversarial one
+#   a closer accepted where real `<<` would not accept one (indented), so the scan resumes
+#     INSIDE bash's real body, where a data line that looks like an opener excises past the
+#     real terminator
+#   an opener matched where there is no redirection at all (in a comment, in a quoted argument,
+#     in `$(( 1 << n ))`), deleting live command text from the scan
+#
+# The cause is singular: knowing where a heredoc begins and ends requires PARSING THE SHELL, and
+# this guard is explicitly a heuristic scanner that does not. A heuristic exoneration on top of
+# a heuristic scanner multiplies failure modes. If the false BLOCK is worth fixing, it is worth
+# a real parse — not another allowlist. Until then the workaround is to author the text with the
+# file-editing tool rather than a Bash heredoc, which is the better channel for writing files.
+
+@pytest.mark.parametrize("cmd", [
+    "cat > /tmp/x <<EOF\ngit push --force origin main\nEOF",
+    "bash <<EOF\ngit push --force origin main\nEOF",
+    "cat <<EOF | bash\ngit push --force origin main\nEOF",
+    "tee >(bash) <<EOF\ngit push --force origin main\nEOF",
+    "cat <<EOF > >(bash)\ngit push --force origin main\nEOF",
+    "cat <<EOF | tee /tmp/x | bash\ngit push --force origin main\nEOF",
+    "exec 3> >(bash) ; cat <<EOF >&3\ngit push --force origin main\nEOF",
+    "2>/tmp/cat bash <<EOF\ngit push --force origin main\nEOF",
+    # the trailing-backslash terminator splice
+    "cat <<'EOF'\nx\\\nEOF\ngit push --force origin main\nEOF",
+    # an indented closer real `<<` would not honour, plus a nested opener in the data
+    "cat <<EOF\n EOF\ncat <<X\nEOF\ngit push --force origin main\nX",
+    # `<<` in a comment, i.e. in no redirection position at all
+    "cat notes.txt   # heredocs are written <<EOF\ngit push --force origin main\nEOF",
+])
+def test_discipline_convicts_through_heredoc_shapes(cmd):
+    p = _discipline(cmd)
+    assert p.returncode == 2, p.stdout + p.stderr
+
+
 # ---- the EVIDENCE-RULE stub: the ONE committed tests/fixtures/gh-stub/gh, driven by env vars.
 # `_stub_gh` (the old per-test ad hoc shell-body generator) is retired in favor of this single
 # fixture for every AC-SCW-1..5 row — a reimplemented/bespoke mock does not satisfy the atom's
