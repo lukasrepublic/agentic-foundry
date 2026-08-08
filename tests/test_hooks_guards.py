@@ -223,11 +223,12 @@ def test_discipline_blocks_admin_merge_outright():
 # blocked verb, including the fixtures in this file. An excision that exonerates such bodies was
 # built, reviewed, and WITHDRAWN.
 #
-# THE ROWS ARE OF TWO KINDS, and the difference is the point. The DEFEAT rows — marked below —
-# were each admitted by the withdrawn excision, and four of them were then confirmed to EXECUTE
-# under real bash 3.2 with a harmless payload. The CONTROL rows are ordinary shapes the excision
-# handled correctly; they are kept because a re-attempt has to keep handling them. Do not blur
-# the two: a row's value is that it records what was actually demonstrated.
+# THE ROWS ARE OF TWO KINDS, and the difference is the point. Every DEFEAT row was admitted by
+# the withdrawn excision AND then confirmed to EXECUTE under real bash 3.2, each one run with a
+# harmless payload in a scratch directory — the guard said nothing and the shell ran the command.
+# The CONTROL rows are ordinary shapes the excision handled correctly; they are kept because a
+# re-attempt has to keep handling them. Do not blur the two, and do not add a row to the DEFEAT
+# group on reasoning alone: a row's value is that it records what was actually demonstrated.
 #
 #   a consumer that is neither a pipe member nor a first word (process substitution, an fd
 #     hand-off, or a redirect target whose basename collides with an allowlisted one)
@@ -255,19 +256,20 @@ def test_discipline_blocks_admin_merge_outright():
     "cat <<EOF | bash\ngit push --force origin main\nEOF",
     "cat <<EOF | tee /tmp/x | bash\ngit push --force origin main\nEOF",
 
-    # --- DEFEAT: each of these was ADMITTED by the withdrawn excision -------------------------
-    # A consumer that is neither a pipe member nor a first word. The first, second and fourth
-    # were confirmed to EXECUTE under real bash 3.2 with a harmless payload.
+    # --- DEFEAT: admitted by the withdrawn excision, and each one confirmed EXECUTING ---------
+    # a consumer that is neither a pipe member nor a first word — process substitution
     "tee >(bash) <<EOF\ngit push --force origin main\nEOF",
     "cat <<EOF > >(bash)\ngit push --force origin main\nEOF",
     "cat <<EOF | tee >(bash)\ngit push --force origin main\nEOF",
-    "2>/tmp/cat bash <<EOF\ngit push --force origin main\nEOF",
+    # an fd hand-off, where the consumer is not even on the opener's line
     "exec 3> >(bash) ; cat <<EOF >&3\ngit push --force origin main\nEOF",
-    # the trailing-backslash terminator splice — CONFIRMED EXECUTING; fired by an ordinary
-    # trailing backslash, which is what made this the worst of the set
+    # a redirect target whose basename collides with an allowlisted sink
+    "2>/tmp/cat bash <<EOF\ngit push --force origin main\nEOF",
+    # the trailing-backslash terminator splice — fired by an ordinary trailing backslash rather
+    # than an adversarial construction, which is what made this the worst of the set
     "cat <<'EOF'\nx\\\nEOF\ngit push --force origin main\nEOF",
-    # an indented closer real `<<` would not honour, plus a nested opener in the data —
-    # CONFIRMED EXECUTING
+    # an indented closer real `<<` would not honour, so the scan resumes inside bash's real body
+    # and a data line that looks like an opener excises past the real terminator
     "cat <<EOF\n EOF\ncat <<X\nEOF\ngit push --force origin main\nX",
     # `<<` in a comment, i.e. in no redirection position at all
     "cat notes.txt   # heredocs are written <<EOF\ngit push --force origin main\nEOF",
