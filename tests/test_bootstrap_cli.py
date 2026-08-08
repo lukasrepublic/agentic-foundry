@@ -316,6 +316,11 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         # fix existed on main and reached nobody. npm-publish skips a version already on the
         # registry, which is why the tarball bump is load-bearing rather than cosmetic.
         "1.2.2": "0.2.2",
+        # v1.3.0 republishes the CLI because the CLI itself is what changed: the wizard's prompts
+        # now carry descriptions, per-choice lines, and a default rendered alongside the choices
+        # (ER #88). A pin bump without a tarball bump would leave `npx create-agentic-workspace`
+        # scaffolding with the old, unexplained prompts.
+        "1.3.0": "0.3.0",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (
