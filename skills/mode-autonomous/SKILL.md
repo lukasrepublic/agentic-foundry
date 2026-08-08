@@ -1,6 +1,6 @@
 ---
 name: mode-autonomous
-description: The autonomous implementation driver (/foundry:mode-autonomous). WRAP composing the native /loop (outer session cadence) + the foundry-release-wave Workflow (per-wave fan-out) + the native merge floor (ci.yml + btb-gates). Replaces impl-wizard's impl-progress.yaml wave-state with the Workflow journal + native scheduling. Trigger to drive an authorized release's atoms toward merge (the auto-merge grant is withdrawn until a real server-enforced required-status is live — the operator merges, or the git-discipline hook's checks-green clause governs an agent merge).
+description: The autonomous implementation driver (/foundry:mode-autonomous). WRAP composing the native /loop (outer session cadence) + the foundry-release-wave Workflow (per-wave fan-out) + the native merge floor (ci.yml + btb-gates). Replaces impl-wizard's impl-progress.yaml wave-state with the Workflow journal + native scheduling. Trigger to drive an authorized release's atoms toward merge (the auto-merge grant is withdrawn pending an operator decision — server-side protection being live does not itself restore it; the operator merges, or the git-discipline hook's checks-green clause governs an agent merge).
 ---
 
 # /foundry:mode-autonomous
@@ -29,13 +29,19 @@ silent-halt source) with native primitives:
   auto-merge grant is WITHDRAWN.** The merge-gate PASS verdict it hinged on no
   longer exists — the merge signals are now the native floor (`ci.yml`'s pytest battery +
   graph selftests + doctor, plus `btb-gates`' `spec-link`/`security-path` checks), which is
-  **Tier B (advisory)** on this repo (no server-enforced required-status; a preflight
-  check found rulesets/branch protection unavailable on the current repo plan).
-  Advisory signals are not a sufficient basis for unattended self-merge: **the operator merges**,
-  or an agent merge is governed by `hooks/foundry-git-discipline.sh`'s deterministic `gh` clause
-  (`gh pr merge --admin` is BLOCKED outright; a plain `gh pr merge <n>` is allowed only when
-  `gh pr checks <n>` reports every check passing). This grant returns once Tier A (a real
-  server-enforced required-status) is live.
+  server-side required on this repo's `main`. The earlier claim here — that a preflight found
+  branch protection unavailable on this plan — was STALE; protection is applied. It is CLASSIC
+  protection rather than a ruleset, so `scripts/foundry_tier_preflight.py` reads it as
+  `TIER-B (classic-protection)`: unverifiable from a read-only token, NOT advisory. **The exact
+  required set is deliberately NOT restated here** — `skills/init/SKILL.md` step 5 is the single
+  source, and a live configuration copied into two files is a claim that rots in one of them.
+  Server-side checks are still not a grant of unattended self-merge — they bound what CAN merge,
+  not who DECIDES to: **the operator merges**, or an agent merge is governed by
+  `hooks/foundry-git-discipline.sh`'s deterministic `gh` clause (`gh pr merge --admin` is BLOCKED
+  outright; a plain `gh pr merge <n>` is allowed only when `gh pr checks <n>` reports every check
+  passing). **The auto-merge grant nonetheless remains WITHDRAWN.** Restoring it is an
+  authorization change, not a consequence of this correction, and it is the operator's to
+  make — see `docs/merge-floor.md`. Until then the operator merges, or the `gh` clause governs.
 
 ## When to trigger
 
@@ -53,8 +59,9 @@ silent-halt source) with native primitives:
    Each atom flows `implement → verify` independently (native concurrency cap + journal).
 3. **Native floor + merge authority.** For each atom PR, confirm the native floor is GREEN
    (the `ci.yml` command battery on the candidate branch + the `btb-gates` `spec-link`/
-   `security-path` checks — Tier B advisory, honestly labeled, never a blocking required
-   status on this repo). **The auto-merge grant is WITHDRAWN** (an earlier realignment release): a green native
+   `security-path` checks — server-side REQUIRED on this repo's `main`; see `skills/init/SKILL.md`
+   step 5 for the enumerated set. The earlier "Tier B advisory, never a blocking required status"
+   wording here was stale). **The auto-merge grant is WITHDRAWN** (an earlier realignment release): a green native
    floor is a signal, not a merge authorization. Either the **operator merges**, or an agent's
    `gh pr merge` attempt is itself governed by `hooks/foundry-git-discipline.sh`'s deterministic
    `gh` clause — `--admin` is BLOCKED outright, and a plain merge is allowed only when
@@ -116,8 +123,9 @@ directly; see `skills/mode/SKILL.md`).
 - **Re-introducing `impl-progress.yaml` / a hand-written wave counter.** State is
   derived from merged-PR + verdict facts; the Workflow journal + `/loop` carry resume.
 - **Driving an un-authorized atom**, or **self-merging (including a `gh pr merge --admin`
-  bypass) on an advisory-only native-floor signal.** The auto-merge grant is withdrawn until
-  Tier A; the operator merges, or `foundry-git-discipline.sh`'s `gh` clause governs it.
+  bypass) on an advisory-only native-floor signal.** The auto-merge grant is withdrawn
+  pending an operator decision (server-side protection being live does not itself restore it);
+  the operator merges, or `foundry-git-discipline.sh`'s `gh` clause governs it.
 - **Hand-rolling the per-wave iteration** — it's the `Workflow` tool.
 - **Auto-answering a security-flagged, authorization-adjacent, or ambiguous fork.** The carve-out
   is closed and fail-closed — never widen it, never treat an unclassifiable fork as reversible.
