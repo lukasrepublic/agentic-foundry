@@ -1,6 +1,6 @@
 # Quickstart — zero to your first governed merge
 
-Every command below is copy-paste-runnable against **v1.2.2**. If a command here ever
+Every command below is copy-paste-runnable against **v1.3.0**. If a command here ever
 drifts from the shipped CLI, that's a bug — file it (a CI doc-drift test locks the pins
 on our side).
 
