@@ -221,11 +221,16 @@ def test_discipline_blocks_admin_merge_outright():
 # to a program's STDIN and never parses it as commands. That false BLOCK is real and annoying —
 # it refuses the authoring of a doc, a commit message, or a test fixture that merely NAMES a
 # blocked verb, including the fixtures in this file. An excision that exonerates such bodies was
-# built, reviewed, and WITHDRAWN: every string below defeated it, and each was confirmed to
-# execute under real bash 3.2.
+# built, reviewed, and WITHDRAWN.
 #
-#   consumer that is neither a pipe member nor a first word:
-#     tee >(bash) …   cat … > >(bash)   cat … | tee >(bash)   exec 3> >(bash) ; cat … >&3
+# THE ROWS ARE OF TWO KINDS, and the difference is the point. The DEFEAT rows — marked below —
+# were each admitted by the withdrawn excision, and four of them were then confirmed to EXECUTE
+# under real bash 3.2 with a harmless payload. The CONTROL rows are ordinary shapes the excision
+# handled correctly; they are kept because a re-attempt has to keep handling them. Do not blur
+# the two: a row's value is that it records what was actually demonstrated.
+#
+#   a consumer that is neither a pipe member nor a first word (process substitution, an fd
+#     hand-off, or a redirect target whose basename collides with an allowlisted one)
 #   the continuation pre-pass splicing a body line into the terminator, so the closer resolves
 #     to a LATER delimiter and the live shell between them is excised — fired by an ordinary
 #     trailing backslash, not an adversarial one
@@ -242,17 +247,27 @@ def test_discipline_blocks_admin_merge_outright():
 # file-editing tool rather than a Bash heredoc, which is the better channel for writing files.
 
 @pytest.mark.parametrize("cmd", [
+    # --- CONTROL: ordinary shapes the withdrawn excision handled CORRECTLY -------------------
+    # The first was its intended admit; the rest were its own bypass-control rows, which it
+    # convicted as designed. None of these defeated it.
     "cat > /tmp/x <<EOF\ngit push --force origin main\nEOF",
     "bash <<EOF\ngit push --force origin main\nEOF",
     "cat <<EOF | bash\ngit push --force origin main\nEOF",
+    "cat <<EOF | tee /tmp/x | bash\ngit push --force origin main\nEOF",
+
+    # --- DEFEAT: each of these was ADMITTED by the withdrawn excision -------------------------
+    # A consumer that is neither a pipe member nor a first word. The first, second and fourth
+    # were confirmed to EXECUTE under real bash 3.2 with a harmless payload.
     "tee >(bash) <<EOF\ngit push --force origin main\nEOF",
     "cat <<EOF > >(bash)\ngit push --force origin main\nEOF",
-    "cat <<EOF | tee /tmp/x | bash\ngit push --force origin main\nEOF",
-    "exec 3> >(bash) ; cat <<EOF >&3\ngit push --force origin main\nEOF",
+    "cat <<EOF | tee >(bash)\ngit push --force origin main\nEOF",
     "2>/tmp/cat bash <<EOF\ngit push --force origin main\nEOF",
-    # the trailing-backslash terminator splice
+    "exec 3> >(bash) ; cat <<EOF >&3\ngit push --force origin main\nEOF",
+    # the trailing-backslash terminator splice — CONFIRMED EXECUTING; fired by an ordinary
+    # trailing backslash, which is what made this the worst of the set
     "cat <<'EOF'\nx\\\nEOF\ngit push --force origin main\nEOF",
-    # an indented closer real `<<` would not honour, plus a nested opener in the data
+    # an indented closer real `<<` would not honour, plus a nested opener in the data —
+    # CONFIRMED EXECUTING
     "cat <<EOF\n EOF\ncat <<X\nEOF\ngit push --force origin main\nX",
     # `<<` in a comment, i.e. in no redirection position at all
     "cat notes.txt   # heredocs are written <<EOF\ngit push --force origin main\nEOF",
