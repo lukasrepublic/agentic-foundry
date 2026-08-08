@@ -8,6 +8,47 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.3.0 — 2026-08-08
+
+### The front door now explains itself
+
+`npx create-agentic-workspace` is the first thing a new adopter runs, and it asked questions it
+never explained. The enumerated prompt rendered as `Stage mode (lean/scale): ` — the alphabet of
+legal answers and nothing else — and its default was **structurally unreachable**: the suffix was a
+mutually-exclusive ternary (`choices ? … : default ? … : ''`), so the one record declaring both a
+choice list and a default could never display the default. Pressing Enter selected `lean` correctly
+and silently. A real adopter stalled mid-wizard and had to read the CLI's own source to answer.
+
+Every question now carries a `description` stating what the answer DOES, rendered above the prompt
+and as an indented continuation in `--help`; enumerated questions get one line per choice; and the
+suffix is additive — `Stage mode (lean/scale) [lean]: `. Booleans render `(y/n) [n]` rather than
+`[false]`, and an empty-string default renders `[blank]` rather than nothing, so the reader can see
+that Enter is both safe and pre-selected.
+
+The `--gh-account` prompt got the most attention, because it is the only answer that writes outside
+the project. It previously said just "blank to skip" while a non-blank answer wrote two global git
+`includeIf` entries plus a per-account identity file. The first draft of the fix disclosed those
+artifacts in config-key syntax and was **misread by this project's own operator as changing their
+global identity** — which it does not do; the rule lives in the global file but fires only inside
+the target folder. Copy that names the file without naming the scope of its effect is worse than no
+copy. The shipped text leads with "your global git identity is NOT changed", and a mutation control
+asserts that dropping that sentence while keeping the artifact list turns the suite red.
+
+All eight prompt strings were reviewed and approved by the operator one record at a time.
+
+Realizes ER #88 via `feat-foundry-wizard-prompt-disclosure` (13 ACs, 16 checkpoints, auth_seq=2).
+Machine-scope writes were already disclosed in the pre-write preview; the residual gap was consent
+ORDERING — the prompt is answered before the preview exists — so the disclosure moved to the prompt
+rather than being duplicated into the preview.
+
+**Security review disposition:** not routed. The atom touches no auth, secrets, or supply-chain
+surface; `cli/src/identity.mjs`, the permission-floor writer, and `cli/package.json` are all
+contract-denied and unmodified. The change is prompt text and its rendering.
+
+**Known-unrelated:** two pre-existing `cli/test/core.test.mjs` failures in `scaffold.mjs`
+path-confinement reproduce on a clean checkout of `main` on macOS and are untouched here —
+`scaffold.mjs` is contract-denied for this atom.
+
 ## v1.2.2 — 2026-08-07
 
 ### Why this release exists: a shipped fix that never reached anyone

@@ -9,6 +9,45 @@ function coerceBoolean(raw) {
   return v === 'y' || v === 'yes' || v === 'true' || v === '1';
 }
 
+/** The bracketed default (AC-WPD-5/-6/-7). A boolean renders `[y]`/`[n]` rather than its literal
+ * value — `[false]` reads as a type, not an affordance, on a yes/no question. An empty-string
+ * default renders `[blank]`: it states positively that a default exists, that it is blank, and
+ * therefore that Enter is safe. Rendering `[]` would read as noise instead. */
+export function defaultToken(rec) {
+  if (rec.default === undefined) return '';
+  if (rec.type === 'boolean') return rec.default ? '[y]' : '[n]';
+  return rec.default === '' ? '[blank]' : `[${rec.default}]`;
+}
+
+/** `(choices) [default]` — both when both are declared (AC-WPD-4). A boolean carries the implicit
+ * `(y/n)` vocabulary (AC-WPD-7). */
+export function promptSuffix(rec) {
+  const parts = [];
+  if (rec.choices) parts.push(`(${rec.choices.join('/')})`);
+  else if (rec.type === 'boolean') parts.push('(y/n)');
+  const dflt = defaultToken(rec);
+  if (dflt) parts.push(dflt);
+  return parts.length ? ` ${parts.join(' ')}` : '';
+}
+
+/** The description block printed ABOVE the prompt line (AC-WPD-2), with one indented line per
+ * enumerated choice BETWEEN the description and the prompt (AC-WPD-3). Derived from the question
+ * table and from no second list (AC-WPD-12). */
+export function renderPromptBlock(rec) {
+  // Leading blank line: readline echoes no newline after a piped answer, so without this the next
+  // question's description starts on the same line as the previous prompt. Separating the blocks
+  // is also simply easier to read in a real terminal.
+  const lines = ['', ...String(rec.description).split('\n')];
+  if (rec.choices) {
+    const width = Math.max(...rec.choices.map((c) => c.length));
+    for (const c of rec.choices) {
+      const note = (rec.choiceDescriptions || {})[c] || '';
+      lines.push(`  ${c.padEnd(width)}  ${note}`.trimEnd());
+    }
+  }
+  return lines.join('\n') + '\n';
+}
+
 /** yesMode is true when --yes was given OR stdin is not a TTY (AC-BCL-2): both suppress every
  * prompt, including the write-phase confirmation (AC-BCL-3). */
 export function isYesMode(values, isTTY) {
@@ -41,8 +80,11 @@ export async function resolveAnswers(table, parsed, { yesMode, input, output }) 
         resolved[rec.id] = rec.default;
         continue;
       }
-      const suffix = rec.choices ? ` (${rec.choices.join('/')})` : rec.default !== undefined && rec.default !== '' ? ` [${rec.default}]` : '';
-      const answer = (await rl.question(`${rec.prompt}${suffix}: `)).trim();
+      // The suffix is ADDITIVE (AC-WPD-4): choices and default render TOGETHER. The prior
+      // mutually-exclusive ternary suppressed the default on every record declaring choices —
+      // structurally, so the one record where a default matters most could never show it.
+      output.write(renderPromptBlock(rec));
+      const answer = (await rl.question(`${rec.prompt}${promptSuffix(rec)}: `)).trim();
       if (rec.type === 'boolean') {
         const b = coerceBoolean(answer);
         resolved[rec.id] = b === undefined ? rec.default : b;

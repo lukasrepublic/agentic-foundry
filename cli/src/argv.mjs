@@ -60,6 +60,19 @@ export function renderHelp(table, { programName = 'create-agentic-workspace' } =
     const req = rec.required ? ' (required)' : rec.default !== undefined && rec.default !== '' ? ` (default: ${rec.default})` : '';
     const choices = rec.choices ? ` [choices: ${rec.choices.join('|')}]` : '';
     lines.push(`  ${flagCol.padEnd(24)} ${rec.prompt}${choices}${req}`);
+    // The description renders as an indented continuation beneath its flag line (AC-WPD-10),
+    // across as many physical lines as the description itself contains, then one further
+    // indented line per declared choice (AC-WPD-11). Same table, no second list (AC-WPD-12).
+    for (const dline of String(rec.description).split('\n')) {
+      lines.push(dline ? `${' '.repeat(27)}${dline}` : '');
+    }
+    if (rec.choices) {
+      const width = Math.max(...rec.choices.map((c) => c.length));
+      for (const c of rec.choices) {
+        const note = (rec.choiceDescriptions || {})[c] || '';
+        lines.push(`${' '.repeat(27)}  ${c.padEnd(width)}  ${note}`.trimEnd());
+      }
+    }
   }
   lines.push('');
   lines.push('This CLI collects and transmits nothing: no telemetry.');
