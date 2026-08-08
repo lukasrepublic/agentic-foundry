@@ -139,7 +139,13 @@ standalone plugin repo) so the gates are live + fail-closed.
    NOT: the shipped template sets `strict_required_status_checks_policy: false`, so a branch on
    classic `strict: true` silently loses the up-to-date-branch requirement unless you set it true
    in the applied ruleset. That is the migration's sharpest edge — a full context list is not
-   sufficient to preserve the floor.
+   sufficient to preserve the floor. Those four mirror what THIS repo carries, and are not the
+   whole surface: read the admin endpoint's full response and treat any field not named here
+   (`restrictions`, `required_linear_history`, `required_conversation_resolution`, `lock_branch`,
+   `block_creations`) the same way. One asymmetry runs the other direction and owes no
+   disclosure: the template's `pull_request` rule MANDATES a PR, where classic protection with no
+   required reviews still gates a direct push by status checks alone — that migration adds a
+   requirement rather than losing one.
 
    This framework's own `main` is in the second state — verified 2026-08-08 against the admin
    endpoint: classic protection requiring `selftests`, `secret-scan`, `release-acceptance`,

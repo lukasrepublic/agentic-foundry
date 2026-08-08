@@ -1,6 +1,6 @@
 ---
 name: mode-autonomous
-description: The autonomous implementation driver (/foundry:mode-autonomous). WRAP composing the native /loop (outer session cadence) + the foundry-release-wave Workflow (per-wave fan-out) + the native merge floor (ci.yml + btb-gates). Replaces impl-wizard's impl-progress.yaml wave-state with the Workflow journal + native scheduling. Trigger to drive an authorized release's atoms toward merge (the auto-merge grant is withdrawn until a real server-enforced required-status is live — the operator merges, or the git-discipline hook's checks-green clause governs an agent merge).
+description: The autonomous implementation driver (/foundry:mode-autonomous). WRAP composing the native /loop (outer session cadence) + the foundry-release-wave Workflow (per-wave fan-out) + the native merge floor (ci.yml + btb-gates). Replaces impl-wizard's impl-progress.yaml wave-state with the Workflow journal + native scheduling. Trigger to drive an authorized release's atoms toward merge (the auto-merge grant is withdrawn pending an operator decision — server-side protection being live does not itself restore it; the operator merges, or the git-discipline hook's checks-green clause governs an agent merge).
 ---
 
 # /foundry:mode-autonomous
@@ -59,8 +59,9 @@ silent-halt source) with native primitives:
    Each atom flows `implement → verify` independently (native concurrency cap + journal).
 3. **Native floor + merge authority.** For each atom PR, confirm the native floor is GREEN
    (the `ci.yml` command battery on the candidate branch + the `btb-gates` `spec-link`/
-   `security-path` checks — Tier B advisory, honestly labeled, never a blocking required
-   status on this repo). **The auto-merge grant is WITHDRAWN** (an earlier realignment release): a green native
+   `security-path` checks — server-side REQUIRED on this repo's `main`; see `skills/init/SKILL.md`
+   step 5 for the enumerated set. The earlier "Tier B advisory, never a blocking required status"
+   wording here was stale). **The auto-merge grant is WITHDRAWN** (an earlier realignment release): a green native
    floor is a signal, not a merge authorization. Either the **operator merges**, or an agent's
    `gh pr merge` attempt is itself governed by `hooks/foundry-git-discipline.sh`'s deterministic
    `gh` clause — `--admin` is BLOCKED outright, and a plain merge is allowed only when
