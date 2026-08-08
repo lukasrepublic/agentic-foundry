@@ -11,7 +11,7 @@ real running app → human sign-off.**
 > to earn its keep. A gate ships only if it names the observed failure it prevents; the
 > operator's own judgment is what the automation serves, never what it replaces.
 
-**Status: v1.3.0.** Built solo, dogfooded daily — Foundry is built *with* Foundry: every release
+**Status: v1.3.1.** Built solo, dogfooded daily — Foundry is built *with* Foundry: every release
 you can install was itself specced, authorized, floor-gated, and certified through it.
 
 ## The loop, in one picture
@@ -160,7 +160,7 @@ npx create-agentic-workspace --dir my-workspace
 Already have a repo?
 
 ```bash
-claude plugin marketplace add lukasrepublic/agentic-foundry#v1.3.0
+claude plugin marketplace add lukasrepublic/agentic-foundry#v1.3.1
 claude plugin install foundry@agentic-foundry
 # in your repo's Claude Code session:
 /foundry:init       # wire your repo (operator registry, hooks, project config)
