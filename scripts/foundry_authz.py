@@ -364,9 +364,23 @@ def authorize(spec_path: str, contract_path: str, operator_id: str,
         block["reauth_after_impl"] = True
 
     frozen = fc.freeze_proper_and_trailer(raw, _yaml_trailer(block))
-    # Sanity: the recorded contract_sha256 must equal the post-write contract-proper hash.
-    if fc.contract_sha256_bytes(frozen) != contract_hash:
-        raise AuthzError("internal: contract_sha256 unstable across freeze (newline canonicalization bug)")
+
+    # The signed hash must cover exactly the bytes that get written. Since both the hasher and the
+    # writer canonicalize, `contract_sha256_bytes(frozen) == contract_hash` holds by construction —
+    # asserting it would be a tautology that cannot fail, and, worse, would still pass if the WRITER
+    # stopped canonicalizing (the hasher would re-canonicalize on the way back in and agree with
+    # itself). It read as coverage while checking nothing that could break.
+    #
+    # Assert the byte-level property instead: the frozen file must literally BEGIN with the
+    # canonical contract-proper followed by the sentinel. That convicts a writer-side regression —
+    # the exact defect the old message named and could not detect.
+    _expected_prefix = fc.canonicalize_proper(fc.split_contract_bytes(raw)[0]) + fc._SENTINEL_B
+    if not frozen.startswith(_expected_prefix):
+        raise AuthzError(
+            "internal: the frozen bytes do not begin with the canonical contract-proper + sentinel, "
+            "so the recorded contract_sha256 would not cover what was written "
+            "(freeze_proper_and_trailer regression)"
+        )
 
     tmp = contract_path + ".tmp"
     with open(tmp, "wb") as fh:

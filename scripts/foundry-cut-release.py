@@ -661,8 +661,20 @@ def publish_plan(tree, version):
         f"working-tree edits are swept into the tag ungated",
         f"git -C {tree} tag -a {tag} -m 'agentic-foundry {tag}'    # annotated tag at R2 — the commit that CARRIES the pin",
         f"python3 scripts/foundry-cut-release.py --tree {tree} --version {version} --verify-tag  # MACHINE re-check; must print TAG-PIN-COHERENT",
-        f"git -C {tree} push origin main                           # never force-push",
+        f"git -C {tree} push origin main                           # never force-push. If this is "
+        f"REFUSED ('protected branch hook declined'), main requires a PR — take the FALLBACK below. "
+        f"The tag push is unaffected either way",
         f"git -C {tree} push origin {tag}                          # if rejected by a parallel push: reconcile by MERGE, never force-push",
+        f"# FALLBACK — only when the main push above was refused. On a repo whose main carries branch\n"
+        f"# protection with enforce_admins, a direct push CANNOT succeed for anyone, so this is the\n"
+        f"# normal path there rather than an exception:\n"
+        f"#   git -C {tree} push origin HEAD:refs/heads/release/{tag}\n"
+        f"#   open a PR from release/{tag} into main, carrying whatever lane/review signal this repo's\n"
+        f"#   checks require, and land it once they are green.\n"
+        f"# A squash or rebase landing REWRITES R and R2, so the tag's commit will NOT be an ancestor\n"
+        f"# of main. That is expected and harmless: the TAG keeps both commits reachable, and an\n"
+        f"# install resolves marketplace.json at the REF and the plugin at source.sha — never via the\n"
+        f"# branch. Confirm content parity with:  git -C {tree} diff {tag}^{{commit}} origin/main",
         f"python3 scripts/foundry-cut-release.py --tree {tree} --version {version} --verify-published  "
         f"# NON-HERMETIC post-push re-check; must print PUBLISHED-TAG-COHERENT",
     ]

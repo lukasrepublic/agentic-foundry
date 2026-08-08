@@ -99,9 +99,30 @@ def canonicalize_proper(proper: bytes) -> bytes:
 
 
 def contract_sha256_bytes(raw: bytes) -> str:
-    """contract_sha256 over the contract-proper region (sentinel-excluded)."""
+    """contract_sha256 over the contract-proper region (sentinel-excluded).
+
+    CANONICALIZES before hashing, exactly as `freeze_proper_and_trailer` does. The two MUST agree:
+    `authorize()` hashes the draft here, writes the frozen bytes there, then asserts the recorded
+    hash equals `contract_sha256_bytes(frozen)`. While only the writer canonicalized, any contract
+    whose proper region ended in more than one newline failed that assertion with
+    "internal: contract_sha256 unstable across freeze (newline canonicalization bug)" — a refusal
+    that named a real bug, but located it in the caller's file rather than in this asymmetry.
+
+    A FIRST authorize was immune: with no sentinel yet the whole file is the proper region, and its
+    single trailing newline is already canonical. It took a RE-authorization — where a blank line
+    left before the sentinel by an edit falls INSIDE the proper region — to expose it.
+
+    No existing authorization is invalidated, and that holds BY CONSTRUCTION rather than by census:
+    `freeze_proper_and_trailer` canonicalizes before appending the sentinel, so every contract this
+    writer has ever frozen already has a canonical proper region, and `canonicalize_proper` is
+    idempotent. The hash can therefore only move for a contract hand-edited after freezing to leave
+    blank lines before the sentinel — which previously reported as a hash MISMATCH and now verifies
+    clean. That is a deliberate widening of what a signature tolerates, not a neutral refactor.
+
+    Sound only while trailing newlines carry no meaning. YAML's keep-chomping indicators (`|+`,
+    `>+`) would break that, so `validate_contract_bytes` refuses them outright."""
     proper, _ = split_contract_bytes(raw)
-    return hashlib.sha256(proper).hexdigest()
+    return hashlib.sha256(canonicalize_proper(proper)).hexdigest()
 
 
 def contract_sha256(path: str) -> str:
@@ -316,6 +337,28 @@ def validate_contract_bytes(raw: bytes, spec_ac_ids: list[str] | None = None) ->
             if data.get(_k) != _proper_data.get(_k):
                 errors.append(f"integrity: field '{_k}' is not fully within the hashed "
                               f"contract-proper region (authorization-sentinel injection?)")
+
+    # `contract_sha256` canonicalizes the contract-proper region's TRAILING NEWLINES away
+    # (canonicalize_proper), which is sound only while trailing newlines are semantics-free. In YAML
+    # they are not: a KEEP-CHOMPED block scalar (`|+` / `>+`) makes trailing empty lines part of the
+    # scalar's VALUE. A contract ending in such a scalar could therefore differ in a frozen field's
+    # real value while hashing identically — a collision inside the signed region, invisible to the
+    # sentinel-injection check above (both parses see the same mutated value).
+    #
+    # Closed here rather than disclosed as a bound: a chomping indicator has no legitimate use in an
+    # acceptance contract, and refusing it restores "trailing newlines carry no meaning" as a fact
+    # about this file format rather than an assumption about its authors. Zero contracts in the
+    # corpus use one, so this refuses nothing that exists.
+    _proper_text = _proper.decode("utf-8", errors="replace")
+    for _lineno, _line in enumerate(_proper_text.splitlines(), start=1):
+        _uncommented = _line.split("#", 1)[0]
+        if re.search(r"[|>]\+", _uncommented):
+            errors.append(
+                f"integrity: line {_lineno} uses a keep-chomped block scalar ('|+' or '>+'), whose "
+                "trailing blank lines are part of the value. contract_sha256 normalizes trailing "
+                "newlines away, so this would let two contracts with different frozen values share "
+                "one signature. Use '|' or '>' instead."
+            )
 
     # AC-SGC-1 (system-grounding block shape). UNCONDITIONAL: runs regardless of any snapshot —
     # this function is byte-pure and is also re-run at the merge gate, so a malformed
