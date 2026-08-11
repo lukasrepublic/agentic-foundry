@@ -22,7 +22,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLI_DIR = path.resolve(__dirname, '..');
 
 function tmpdir(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  // physicalResolve, not the raw mkdtemp path. `confinedJoin` documents that it takes a
+  // PHYSICALLY-RESOLVED root, and on macOS os.tmpdir() is /var/folders/… — a symlink to
+  // /private/var/folders/…. Handing it the raw path made every join resolve outside the root it
+  // was compared against, so confinedJoin returned null and buildManagedFiles refused its own
+  // first template. That is the harness violating the function's contract, not the function
+  // failing: run.mjs already physicalResolve()s the target root before it ever builds the plan.
+  // Invisible in CI, which is ubuntu-only, where /tmp is not behind a symlink.
+  return physicalResolve(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
 
 test('AC-BCL-2: the argv parser accepts exactly the table flags, and --help renders one line per record', () => {
