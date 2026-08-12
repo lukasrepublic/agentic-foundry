@@ -75,12 +75,12 @@ export function ruleTool(rule) {
 //
 // WHY THIS REPLACED A RAW PREFIX MATCH. The previous `covers` compared rule bodies as literal
 // strings. The Python twin canonicalizes first: it drops a leading interpreter word, expands `~/`
-// and `$HOME/` against the real home, and folds away the `plugins/cache/<mp>/foundry/<ver>/`
-// segment. For the input that actually occurs in the wild — the harness's ask-to-allow persist,
+// and `$HOME/` against the real home, and folds away the marketplace/version segments beneath
+// the plugin root. For the input that actually occurs in the wild — the harness's ask-to-allow persist,
 // which writes an ABSOLUTE, version-resolved path into settings.local.json — the two disagreed:
 //
-//   effective  Bash(/Users/<u>/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-doctor.py:*)
-//   map        Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-doctor.py)
+//   effective  an ABSOLUTE, version-resolved path under the operator's real plugin root
+//   map        the same script named through the map's `~` + wildcard form
 //   python covers -> true          node covers -> false
 //
 // So the CLI reported `allow-absent` for rules the doctor could see were covered. Left alone, the
@@ -88,16 +88,33 @@ export function ruleTool(rule) {
 // --------------------------------------------------------------------------------------------- //
 
 const INTERPRETER_WORDS = new Set(['python3', 'python', 'bash', 'sh']);
-const PLUGIN_CACHE_FOLD_RE = /plugins\/cache\/[^/\s]+\/foundry\/[^/\s]+\//;
 
-function foldBody(body, home) {
+/** Build the cache-fold pattern from the map's OWN `plugin_root_glob` rather than from a second
+ * hardcoded copy of that path. One source of truth: a map that moves its plugin root cannot leave
+ * a stale fold behind here. Each `*` becomes one non-empty, slash-free segment.
+ *
+ * Absent a glob there is no fold — a caller that does not know where the plugin root lives has no
+ * business guessing at it. classifyDrift always has the map, so the real path always folds. */
+export function foldRegexFromGlob(glob) {
+  if (typeof glob !== 'string' || glob === '') return null;
+  const tail = glob.replace(/^~\//, '').replace(/^\.claude\//, '');
+  const escaped = tail
+    .split('*')
+    .map((seg) => seg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('[^/\\s]+');
+  return new RegExp(escaped + '/');
+}
+
+function foldBody(body, home, foldRe) {
   body = body.trim();
   const m = /^(\S+)\s+([\s\S]+)$/.exec(body);
   if (m && INTERPRETER_WORDS.has(m[1])) body = m[2];
   if (body.startsWith('~/')) body = home.replace(/\/+$/, '') + body.slice(1);
   else if (body.startsWith('$HOME/')) body = home.replace(/\/+$/, '') + body.slice('$HOME'.length);
-  const f = PLUGIN_CACHE_FOLD_RE.exec(body);
-  if (f) body = body.slice(f.index + f[0].length);
+  if (foldRe) {
+    const f = foldRe.exec(body);
+    if (f) body = body.slice(f.index + f[0].length);
+  }
   return body;
 }
 
@@ -112,10 +129,10 @@ function splitMarker(body) {
 }
 
 /** AC-DPF-3's ask/allow-direction fold. Returns null for a rule that does not participate. */
-export function canonicalize(rule, home = os.homedir()) {
+export function canonicalize(rule, home = os.homedir(), foldRe = null) {
   const body = ruleBody(rule);
   if (body === null) return null;
-  const folded = foldBody(body, home);
+  const folded = foldBody(body, home, foldRe);
   const { reach, isPrefix } = splitMarker(folded);
   const isBlanket = isPrefix && (reach === '' || INTERPRETER_WORDS.has(reach));
   return { raw: rule, folded, reach, isPrefix, isBlanket, coverageReach: isBlanket ? '' : reach };
@@ -128,8 +145,8 @@ function coversCanon(effectiveC, mapC) {
 }
 
 /** Does `effectiveRule` (the broad rule) cover `mapRule` under the ask/allow fold? */
-export function covers(effectiveRule, mapRule, home = os.homedir()) {
-  return coversCanon(canonicalize(effectiveRule, home), canonicalize(mapRule, home));
+export function covers(effectiveRule, mapRule, home = os.homedir(), foldRe = null) {
+  return coversCanon(canonicalize(effectiveRule, home, foldRe), canonicalize(mapRule, home, foldRe));
 }
 
 /** AC-DPF-3(b), the DENY direction: no interpreter drop, no plugin-cache fold, and coverage
@@ -153,8 +170,8 @@ export function denyCovers(effectiveRule, mapRule) {
 /** A blanket effective allow rule: one whose reach swallows the whole map. Derived from the fold
  * rather than from an enumerated set of spellings — the old hardcoded trio (`Bash(*)`,
  * `Bash(python3 *)`, `Bash(python3:*)`) missed every other interpreter word the twin folds. */
-export function isBlanketAllow(rule, home = os.homedir()) {
-  const c = canonicalize(rule, home);
+export function isBlanketAllow(rule, home = os.homedir(), foldRe = null) {
+  const c = canonicalize(rule, home, foldRe);
   return c !== null && c.isBlanket;
 }
 
@@ -173,7 +190,7 @@ export const DRIFT_CLASSES = Object.freeze([
   'deny-missing',
   // AC-FDC-1. The `ask` tier was the one absence this vocabulary could not name: ask entries were
   // checked ONLY for being shadowed, never for being missing. Measured against a real target
-  // (riprip-io-handbook), the tools reported 46 findings and were silent about 16 more — every
+  // a real adopter workspace, the tools reported 46 findings and were silent about 16 more — every
   // ceremony rule gone, with the floor reading clean on that dimension.
   'ask-absent',
   // AC-FDC-2. Every absence test is tier-scoped: it consults only the effective tier matching the
@@ -241,6 +258,7 @@ export function renderCapabilityLines(map) {
  * name is ever emitted. */
 export function classifyDrift(map, effective, { pluginRootExpansion = [], unreadableOrigins = [], home = os.homedir() } = {}) {
   const findings = [];
+  const foldRe = foldRegexFromGlob(map.plugin_root_glob);
 
   for (const origin of unreadableOrigins) {
     findings.push({ class: 'settings-unreadable', origin });
@@ -248,14 +266,14 @@ export function classifyDrift(map, effective, { pluginRootExpansion = [], unread
 
   const shadowedByBlanket = new Set();
   for (const a of effective.allow) {
-    if (isBlanketAllow(a.rule, home)) {
+    if (isBlanketAllow(a.rule, home, foldRe)) {
       const swallowed = map.entries.filter((e) => e.tier !== 'allow');
       findings.push({
         class: 'blanket-allow',
         rule: a.rule,
         // the folded reach the blanket decision was actually made on — the same short form the
         // Python twin renders, so the two name this class identically (AC-FDC-6)
-        folded: canonicalize(a.rule, home).folded,
+        folded: canonicalize(a.rule, home, foldRe).folded,
         origin: a.origin,
         swallows: swallowed.map((e) => e.rule),
       });
@@ -290,7 +308,7 @@ export function classifyDrift(map, effective, { pluginRootExpansion = [], unread
 
   for (const entry of map.entries.filter((e) => e.tier === 'ask')) {
     if (shadowedByBlanket.has(entry.rule)) continue;
-    const coveringAllow = effective.allow.filter((a) => covers(a.rule, entry.rule, home));
+    const coveringAllow = effective.allow.filter((a) => covers(a.rule, entry.rule, home, foldRe));
     if (coveringAllow.length > 0) {
       findings.push({
         class: isCeremonyEntry(entry) ? 'ask-shadowed-ceremony' : 'ask-shadowed',
@@ -318,7 +336,7 @@ export function classifyDrift(map, effective, { pluginRootExpansion = [], unread
   // independent facts they are, rather than one being folded into the other.
   for (const entry of map.entries.filter((e) => e.tier === 'ask')) {
     if (conflicted.has(entry.rule)) continue;
-    const coveringAsk = effective.ask.filter((a) => covers(a.rule, entry.rule, home));
+    const coveringAsk = effective.ask.filter((a) => covers(a.rule, entry.rule, home, foldRe));
     if (coveringAsk.length === 0) {
       findings.push({ class: 'ask-absent', rule: entry.rule });
     }
@@ -330,7 +348,7 @@ export function classifyDrift(map, effective, { pluginRootExpansion = [], unread
 
   for (const entry of map.entries.filter((e) => e.tier === 'allow')) {
     if (conflicted.has(entry.rule)) continue;
-    const coveringAllow = effective.allow.filter((a) => covers(a.rule, entry.rule, home));
+    const coveringAllow = effective.allow.filter((a) => covers(a.rule, entry.rule, home, foldRe));
     if (coveringAllow.length === 0) {
       findings.push({ class: 'allow-absent', rule: entry.rule });
     }

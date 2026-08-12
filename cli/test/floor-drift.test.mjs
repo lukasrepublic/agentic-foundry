@@ -1,9 +1,9 @@
 // floor-drift.test.mjs — feat-foundry-onboarding-floor-drift-classification (AC-FDC-1..4, -7).
 //
 // The drift classifier used to check `ask` entries only for being SHADOWED, never for being
-// ABSENT: there was no ask-absent class in either implementation. Measured against a real target
-// (riprip-io-handbook) the tools reported 46 findings and were silent about 16 more — every
-// ceremony rule gone, with the floor reading clean on that dimension.
+// ABSENT: there was no ask-absent class in either implementation. Measured against a real adopter
+// workspace, the tools reported 46 findings and were silent about 16 more — every ceremony rule
+// gone, with the floor reading clean on that dimension.
 //
 // The cross-implementation differential (AC-FDC-5/-6) lives on the Python side, where it can drive
 // both classifiers over the shared corpus in one process.
@@ -19,11 +19,15 @@ import {
   isBlanketAllow,
   DRIFT_CLASSES,
   MapMalformed,
+  foldRegexFromGlob,
 } from '../src/permissionFloor.mjs';
 
 const CLI_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const MAP = loadMap(path.join(CLI_DIR, 'permission-floor.json'));
 const HOME = '/home/testuser';
+// the fold pattern is derived from the map's own plugin_root_glob, so a caller reaching for the
+// coverage relation directly supplies the same one classifyDrift computes internally
+const FOLD = foldRegexFromGlob(MAP.plugin_root_glob);
 
 const byTier = (tier) => MAP.entries.filter((e) => e.tier === tier).map((e) => e.rule);
 const eff = ({ allow = [], ask = [], deny = [] }, origin = 'settings.json') => ({
@@ -128,11 +132,11 @@ test('canonicalized_coverage_matches_the_deployed_rule_shape', () => {
   // covered — and the consuming reconcile would then have written 42 duplicates.
   const mapRule = byTier('allow').find((r) => r.includes('foundry-doctor.py'));
   const deployed = `Bash(${HOME}/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-doctor.py:*)`;
-  assert.equal(covers(deployed, mapRule, HOME), true);
+  assert.equal(covers(deployed, mapRule, HOME, FOLD), true);
   assert.equal(countBy(classify(eff({ allow: [deployed] })))['allow-absent'], byTier('allow').length - 1);
   // the interpreter-word fold, which the old enumerated three-spelling set reached by coincidence
-  assert.equal(isBlanketAllow('Bash(bash *)', HOME), true);
-  assert.equal(isBlanketAllow('Bash(sh:*)', HOME), true);
+  assert.equal(isBlanketAllow('Bash(bash *)', HOME, FOLD), true);
+  assert.equal(isBlanketAllow('Bash(sh:*)', HOME, FOLD), true);
 });
 
 test('deny_direction_refuses_the_fold', () => {

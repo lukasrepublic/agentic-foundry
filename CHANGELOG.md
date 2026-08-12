@@ -34,6 +34,10 @@ Both new classes are **informational**: an absent `allow` means more prompting, 
 absent `ask` is the same, so neither reaches the session-start banner. The actionable set is
 unchanged.
 
+`create-agentic-workspace` is unchanged in behaviour by this entry — it gains no flag and writes no
+new file. What changes is what its drift report can SEE, which is the precondition for the
+convergence write specified separately.
+
 ### The two implementations did not actually agree
 
 They had always claimed to agree "by construction" on the shared subsumption rule. That claim was a
