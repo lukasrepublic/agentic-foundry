@@ -144,10 +144,16 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
    delivery. Re-add the marketplace at the NEW tag, then update every scope:
 
    ```
-   claude plugin marketplace add <owner>/<repo>@vX.Y.Z --scope user
-   claude plugin update <plugin>@<marketplace> --scope user
-   claude plugin update <plugin>@<marketplace> --scope project
+   claude plugin marketplace add lukasrepublic/agentic-foundry#v1.4.2 --scope user
+   claude plugin update foundry@agentic-foundry --scope user
+   claude plugin update foundry@agentic-foundry --scope project
    ```
+
+   The ref above is CONCRETE and pinned, not a `vX.Y.Z` placeholder — a documented install command
+   carrying a floating ref is exactly what `test_documented_install_commands_name_the_shipped_pin`
+   (AC-BIP-13) refuses, and it refuses this file like any other. So this line is a **release pin
+   site**: the cut bumps it with the other six documented pins, and the gate fails the cut if it is
+   forgotten. When re-pointing for a NEW release, substitute the version being cut.
 
    Verify by READING the refreshed cache — `~/.claude/plugins/marketplaces/<marketplace>/.claude-plugin/marketplace.json`
    must show the new `version` AND the new `source.sha`; the CLI's own "success" line does not prove
