@@ -169,7 +169,14 @@ jobs:
           # modern-bash tag would make every checkpoint here pass while checking nothing it
           # claims to. Assert the resolved image really reports bash 3.2 before trusting it for
           # anything below; reject and stop rather than run `bash -n` under the wrong interpreter.
-          version_line="$(docker run --rm --entrypoint bash "$IMG" --version | head -1)"
+          # NO PIPE. `bash --version` prints four lines; `head -1` read the first and exited,
+          # closing the read end while the container was still writing. Under `set -euo pipefail`
+          # that SIGPIPE is the step's exit status, so this REQUIRED check failed intermittently
+          # before parsing a single file — observed three times in one session (ER #83), each
+          # passing on a plain re-run. Capture the whole output and take the first line in-shell:
+          # nothing closes early, so there is no race to lose.
+          version_all="$(docker run --rm --entrypoint bash "$IMG" --version)"
+          version_line="${version_all%%$'\n'*}"
           case "$version_line" in
             *"version 3.2"*) : ;;
             *)
