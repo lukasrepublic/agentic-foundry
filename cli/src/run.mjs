@@ -254,7 +254,12 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
     // on the path is the check that covers both — a directory-only test would tell a worktree user
     // to re-init a repository they already have.
     const isGitRepo = fs.existsSync(path.join(targetRoot, '.git'));
-    print(TRUST_HANDOFF_TEXT(targetRoot, { isGitRepo }));
+    print(TRUST_HANDOFF_TEXT(targetRoot, {
+      isGitRepo,
+      // only when a reconcile actually wrote — a dry run, a no-op second run, or a plain scaffold
+      // all keep the standard hand-off
+      reconciledExisting: Boolean(floorPlan && floorPlan.total > 0),
+    }));
 
     return { exitCode: exitCodeForPlan(plan), output: lines.join('\n') };
   } catch (e) {
