@@ -326,6 +326,9 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         # bumps, because the pin it EMBEDS moved: an unpinned `npx create-agentic-workspace` would
         # otherwise keep scaffolding workspaces whose marketplace ref names 1.3.0.
         "1.3.1": "0.3.1",
+        # v1.4.0 DOES carry a CLI change — the --reconcile-floor flag and the floorReconcile
+        # module — so the tarball bumps for its own sake as well as for the pin it embeds.
+        "1.4.0": "0.4.0",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (

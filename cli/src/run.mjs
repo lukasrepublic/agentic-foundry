@@ -14,6 +14,10 @@ import { buildManagedFiles, DECLARED_PATH_SET } from './scaffold.mjs';
 import { planManagedFiles, applyPlan, exitCodeForPlan } from './reconcile.mjs';
 import { renderPreview, TRUST_HANDOFF_TEXT } from './preview.mjs';
 import { validateSlug, resolveIdentity, wireIdentity, plannedMachineScopeWrites } from './identity.mjs';
+import {
+  resolveTarget, readTarget, readTrackedRules, planAdditions, applyAdditions,
+  writeTargetAtomically, renderPlan,
+} from './floorReconcile.mjs';
 
 export { DECLARED_PATH_SET };
 
@@ -151,6 +155,54 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
 
     print(renderPreview({ plan, machineScopeWrites, map }));
 
+    // Drift is classified HERE — before the write phase and before the dry-run return — not after
+    // applyPlan where the advisory report used to compute it. Two things depend on the move: the
+    // reconcile must know what it would add in order to decide whether to write at all, and
+    // --dry-run must be able to report those rules, which it never could before because it returned
+    // above the only classifyDrift call in the file.
+    const { effective, unreadable } = readEffectiveRules(physicalRoot);
+    const pluginRootExpansion = expandPluginRootGlob(map.plugin_root_glob, homeDir);
+    const findings = classifyDrift(map, effective, {
+      pluginRootExpansion, unreadableOrigins: unreadable, home: homeDir,
+    });
+
+    // The reconcile classifies against the TRACKED settings.json alone. A floor rule carried only
+    // in the untracked settings.local.json reads as covered in the union above, so the tracked file
+    // would stay incomplete while the report said converged — and the repo would then ship to every
+    // other clone and to CI without it.
+    let floorPlan = null;
+    let floorTarget = null;
+    if (answers.reconcileFloor) {
+      floorTarget = resolveTarget(physicalRoot);
+      if (floorTarget.present) {
+        const settingsObj = readTarget(floorTarget.path);
+        const trackedFindings = classifyDrift(map, readTrackedRules(settingsObj), {
+          pluginRootExpansion, unreadableOrigins: [], home: homeDir,
+        });
+        floorPlan = planAdditions({ findings: trackedFindings, map, settingsObj, pins });
+        floorPlan.settingsObj = settingsObj;
+        print('');
+        for (const line of renderPlan(floorPlan, { applied: false })) print(line);
+      } else {
+        // absent settings.json is the CREATE path's business, not this one's — the managed-file
+        // plan above already writes the full floor for it, and racing that would duplicate it
+        print('');
+        print('permission-floor reconcile: .claude/settings.json absent — left to the create path.');
+      }
+    }
+
+    // Refuse BEFORE anything is written. isYesMode is true whenever stdin is not a TTY, which also
+    // waives the --existing basename ceremony, so a piped invocation would otherwise mutate the
+    // permission floor unattended; --yes must be given EXPLICITLY. This sits above applyPlan
+    // deliberately — a "refused" verdict printed after the scaffold write had already landed reads
+    // as "nothing happened", which is the one thing it must not mean.
+    if (floorPlan && floorPlan.total > 0 && !isTTY && answers.yes !== true) {
+      throw new RefusalError(
+        'refusing --reconcile-floor without a terminal: pass --yes explicitly to confirm the write',
+        'reconcile-floor',
+      );
+    }
+
     if (answers.dryRun) {
       print('(dry-run: no write, no side effect, zero child processes spawned)');
       return { exitCode: 0, output: lines.join('\n') };
@@ -166,6 +218,12 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
     }
 
     applyPlan(plan);
+
+    if (floorPlan && floorPlan.total > 0) {
+      writeTargetAtomically(floorTarget.path, applyAdditions(floorPlan.settingsObj, floorPlan, { map, pins }));
+      print('');
+      for (const line of renderPlan(floorPlan, { applied: true })) print(line);
+    }
 
     if (slug) {
       ensureGitRepo(physicalRoot);
@@ -185,9 +243,6 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
       wireIdentity({ slug, name: identity.name, email: identity.email, targetRoot: physicalRoot, homeDir });
     }
 
-    const { effective, unreadable } = readEffectiveRules(physicalRoot);
-    const pluginRootExpansion = expandPluginRootGlob(map.plugin_root_glob, homeDir);
-    const findings = classifyDrift(map, effective, { pluginRootExpansion, unreadableOrigins: unreadable });
     if (findings.length > 0) {
       print('');
       print(`Permission-floor report (advisory, ${findings.length} finding(s)):`);
