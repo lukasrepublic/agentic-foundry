@@ -168,19 +168,15 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
 
     print(renderPreview({ plan, machineScopeWrites, map }));
 
-    // Drift is classified HERE — before the write phase and before the dry-run return — not after
-    // applyPlan where the advisory report used to compute it. Two things depend on the move: the
-    // reconcile must know what it would add in order to decide whether to write at all, and
-    // --dry-run must be able to report those rules, which it never could before because it returned
-    // above the only classifyDrift call in the file.
-    const { effective, unreadable } = readEffectiveRules(physicalRoot);
+    // Resolved HERE — before the write phase and before the dry-run return — because the reconcile
+    // below must know what it would add in order to decide whether to write at all, and --dry-run
+    // must be able to report those rules. That requirement is carried by the TRACKED classification
+    // a few lines down; the union classification the advisory report needs is derived after the
+    // write instead, for the reason stated there.
     const pluginRootExpansion = expandPluginRootGlob(map.plugin_root_glob, homeDir);
-    const findings = classifyDrift(map, effective, {
-      pluginRootExpansion, unreadableOrigins: unreadable, home: homeDir,
-    });
 
     // The reconcile classifies against the TRACKED settings.json alone. A floor rule carried only
-    // in the untracked settings.local.json reads as covered in the union above, so the tracked file
+    // in the untracked settings.local.json reads as covered in the union report below, so the tracked file
     // would stay incomplete while the report said converged — and the repo would then ship to every
     // other clone and to CI without it.
     let floorPlan = null;
@@ -256,6 +252,21 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
       wireIdentity({ slug, name: identity.name, email: identity.email, targetRoot: physicalRoot, homeDir });
     }
 
+    // The advisory report describes the state the operator is LEFT in, so it is classified from the
+    // files as they now stand — AFTER applyPlan and after any reconcile write. Classifying it up
+    // front instead makes it name rules that exist by the time it prints: on the reconcile path
+    // that is every rule just added, so the run reported `added allow=42, ask=16` and then listed
+    // all 58 as absent, which reads as the write having silently failed. The create path had the
+    // same defect whenever it wrote settings.json itself. Deriving it here cannot contradict the
+    // write above it, at the cost of re-reading two small files on the write path.
+    //
+    // This is only the UNION (settings.json + settings.local.json) report. The reconcile's own
+    // classification stays above the write and over the tracked file alone — consent has to be
+    // informed by what WILL be written, which is a different question from what remains after.
+    const { effective, unreadable } = readEffectiveRules(physicalRoot);
+    const findings = classifyDrift(map, effective, {
+      pluginRootExpansion, unreadableOrigins: unreadable, home: homeDir,
+    });
     if (findings.length > 0) {
       print('');
       print(`Permission-floor report (advisory, ${findings.length} finding(s)):`);
