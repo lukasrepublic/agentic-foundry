@@ -107,6 +107,17 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
    7. `push origin main` + `push origin vX.Y.Z`, **never force-push** (if a parallel push rejects,
       reconcile by MERGE).
 
+      **On a protected `main`, `push origin main` is REJECTED — even for the operator.** This
+      repo's `main` is Tier A (required contexts + `enforce_admins`), so R2 cannot be pushed
+      directly; the tag pushes fine. Observed on v1.4.0: the tag landed and verified while `main`
+      stayed a commit behind, leaving `main`'s `marketplace.json` naming the PREVIOUS release's
+      sha. The published artifact is unaffected (adopters resolve at the tag), but the unstable
+      `--ref main` install path then serves the previous version and the next cut starts from a
+      wrong baseline. So **create R and R2 on a BRANCH and PR them from the start** — two PRs, the
+      bump then the re-pin, because `source.sha` must name the commit AS IT LANDS on `main` and a
+      squash merge does not preserve a branch commit's SHA. Read main's HEAD after the bump PR
+      merges; that is the sha the re-pin PR pins. Tag only once R2 is on `main`.
+
    **Why the order matters.** An adopter installs by ref: `marketplace add <repo>#vX.Y.Z` resolves
    `marketplace.json` **at the tag** and installs the commit its `source.sha` names. Tagging before
    the re-pin leaves the tag serving the **previous** release's sha, so the install delivers the
@@ -123,7 +134,27 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
    no-op.
 5. **Downstream** — adopters pull via `claude plugin marketplace update <marketplace>` →
    `claude plugin update <plugin>@<marketplace>`. **The plugin id must be marketplace-qualified**: a bare
-   `claude plugin update foundry` fails with `Plugin "foundry" not found`. For this repo's own adopters
+   `claude plugin update foundry` fails with `Plugin "foundry" not found`.
+
+   **A TAG-PINNED registration needs RE-POINTING first — `marketplace update` alone is a no-op.**
+   `marketplace update` refreshes the cache **at the ref the marketplace is registered at**. When
+   that registration is `<owner>/<repo>@vX.Y.Z` (which is what the documented install line above
+   tells every adopter to run), it re-reads the OLD tag forever and `plugin update` reports
+   *"already at the latest version"* — naming the previous version, indefinitely. Publishing is not
+   delivery. Re-add the marketplace at the NEW tag, then update every scope:
+
+   ```
+   claude plugin marketplace add <owner>/<repo>@vX.Y.Z --scope user
+   claude plugin update <plugin>@<marketplace> --scope user
+   claude plugin update <plugin>@<marketplace> --scope project
+   ```
+
+   Verify by READING the refreshed cache — `~/.claude/plugins/marketplaces/<marketplace>/.claude-plugin/marketplace.json`
+   must show the new `version` AND the new `source.sha`; the CLI's own "success" line does not prove
+   the ref moved. Check **both scopes**: a stale project row shadows a fresh user one, so a
+   user-scope update can report success while the session keeps loading the old tree. Identify the
+   tree actually loaded by a version-unique path, never by process start time. Missed on the v1.4.1
+   cut, where the plugin sat at 1.4.0 through several "successful" update runs. For this repo's own adopters
    that is `claude plugin marketplace update agentic-foundry` → `claude plugin update foundry@agentic-foundry`
    (`claude plugin list` prints the qualified id if you are unsure).
    Then **verify the SHIPPED artifact, not the source tree** — run `/foundry:doctor` and any atom's
