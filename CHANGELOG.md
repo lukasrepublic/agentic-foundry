@@ -8,6 +8,63 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.4.2 — 2026-08-12
+
+### A `create-agentic-workspace` release; the plugin tree is unchanged
+
+This moves **`create-agentic-workspace` 0.4.1 → 0.4.2**. The plugin's own `scripts/`, `skills/`
+and `hooks/` are identical to v1.4.1 — an adopter who runs only `claude plugin update` gains
+nothing here. The version still moves because the tarball ledger keys the published CLI version off
+`plugin_version`, and the marketplace pin is what carries the new CLI to `npx`. Said plainly rather
+than implying a plugin-side change that is not in the diff.
+
+Both fixes were found by *using* v1.4.1 — the first by reconciling this repo's own workspace, the
+second by trying to run the test suite before pushing that fix.
+
+**The reconcile's advisory report contradicted the write it had just made.** `--reconcile-floor`
+classified permission drift *above* the write phase and printed the advisory report *below* it, so a
+run that had just added 42 `allow` + 16 `ask` rules ended with:
+
+```
+permission-floor reconcile: added allow=42, ask=16, deny=0
+
+Permission-floor report (advisory, 58 finding(s)):
+  [ask-absent]   {"class":"ask-absent","rule":"Bash(claude plugin tag:*)"}
+  [allow-absent] {"class":"allow-absent","rule":"…foundry-audit-prepare.py:*)"}
+  … 56 more, every one of them just written
+```
+
+An operator cannot tell that from a write that silently failed — the output was convincing enough
+that the write got re-verified against `git show HEAD:` before it was believed. The create path had
+the same defect whenever it wrote `settings.json` itself.
+
+The union classification's only consumer is that report, so it now runs where it is consumed: after
+the write, describing the state the operator is left in. The reconcile's *own* classification stays
+above the write and over the tracked file alone — consent has to be informed by what *will* be
+written, which is a different question from what remains after. Verified against byte-identical
+fixtures: 58 stale findings → 0, with identical `settings.json` written either way. Display-only.
+`cli/test/run-orchestration.test.mjs` adds the first coverage of `runCli`'s ordering — every
+primitive involved was already unit-tested and correct, and the defect lived in the sequence, which
+nothing exercised. (#112)
+
+**The test suite could not pass on a self-hosting checkout.** Two tests asserted `DOCTOR-GREEN` with
+the doctor's project dir at `REPO_ROOT`. The `control-plane` probe walks *ancestors* of that dir for
+a `foundry-project.json` naming the repo in `repos{}` — so the verdict depended on where the clone
+sat on disk: green on a standalone CI checkout, permanently red on one nested in the workspace that
+hosts it, which is how the framework is actually developed. Measured at `2 failed, 1640 passed`.
+
+Green in CI and red on the maintainer's machine is the worst way for an assertion to be wrong: it
+quietly retires "run the suite before you push", because once two failures are expected a real
+regression arrives camouflaged among them. Both now run from a neutral temp project dir with
+`CLAUDE_PLUGIN_ROOT` still the real tree — which is what `foundry-release-acceptance.py`'s own
+AC-RELACC-3 doctor check has always done, so this converges the tests on the shipped gate's answer
+rather than inventing one. A grep-shaped guard fails any future test that reintroduces the pattern.
+No coverage lost — the hosted-repo detection has its own hermetic test. (#113)
+
+**Security review:** not applicable — neither diff touches `.claude-plugin/`, `hooks/`, `skills/`,
+`agents/`, dependency manifests, or any auth/secret/token surface; `security-path-base` reported
+clean on both PRs without a review label.
+
 ## v1.4.1 — 2026-08-12
 
 ### Everything here was found by USING v1.4.0, not by reviewing it
