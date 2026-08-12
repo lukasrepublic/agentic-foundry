@@ -276,3 +276,22 @@ test('classify_pin_reads_only_the_foundry_entry', () => {
   assert.equal(classifyPin({ extraKnownMarketplaces: other }, PINS).state, 'absent');
   assert.equal(classifyPin({ extraKnownMarketplaces: PINNED }, PINS).state, 'pinned');
 });
+
+test('trust_handoff_tells_the_truth_on_the_reconcile_path', async () => {
+  // R8, answered live 2026-08-12: reconciling an ALREADY-TRUSTED workspace and restarting gave NO
+  // trust dialog — the 42 allow rules simply took effect. The standard hand-off says the dialog is
+  // the consent ceremony and the rules wait for it, which on that path is false and points the
+  // operator at a review that will not happen.
+  const { TRUST_HANDOFF_TEXT } = await import('../src/preview.mjs');
+  const scaffold = TRUST_HANDOFF_TEXT('/tmp/x', { isGitRepo: true });
+  const reconciled = TRUST_HANDOFF_TEXT('/tmp/x', { isGitRepo: true, reconciledExisting: true });
+
+  // the standard path still points at the dialog, because there it is genuinely the grant
+  assert.match(scaffold, /trust dialog is the consent ceremony/);
+  assert.match(scaffold, /take effect only after/);
+
+  // the reconcile path must NOT, and must say where consent actually happened
+  assert.doesNotMatch(reconciled, /take effect only after/);
+  assert.match(reconciled, /ALREADY TRUSTED/);
+  assert.match(reconciled, /no second consent ceremony/);
+});
