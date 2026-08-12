@@ -61,7 +61,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-doctor.py)",
       "tier": "allow",
-      "rationale": "bare invocation runs the thin 5-check health probe; read-only, fail-open; exact rule deliberately \u2014 flag-qualified forms fall through to a prompt so no allow-prefix can reach the --heal ceremony (security review 2026-08-02)."
+      "rationale": "bare invocation runs the thin 5-check health probe; read-only, fail-open; exact rule deliberately — flag-qualified forms fall through to a prompt so no allow-prefix can reach the --heal ceremony (security review 2026-08-02)."
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-env-hygiene.py:*)",
@@ -196,7 +196,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_repo_fleet.py validate:*)",
       "tier": "allow",
-      "rationale": "read-only manifest\u27f7reality\u27f7gitignore round-trip incl. the reverse scan; surfaces, never fixes."
+      "rationale": "read-only manifest⟷reality⟷gitignore round-trip incl. the reverse scan; surfaces, never fixes."
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_repo_registry.py:*)",
@@ -256,7 +256,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-stack-profile.py --relock:*)",
       "tier": "ask",
-      "rationale": "pinned ceremony (AC-PFM-3): re-writes the lock in place; leading flag verified prefix-keyable; the split tier with --validate/--load is safe ONLY because main() checks those flags before --relock \u2014 a combined invocation runs the earlier-checked verb (security review 2026-08-02)."
+      "rationale": "pinned ceremony (AC-PFM-3): re-writes the lock in place; leading flag verified prefix-keyable; the split tier with --validate/--load is safe ONLY because main() checks those flags before --relock — a combined invocation runs the earlier-checked verb (security review 2026-08-02)."
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-upstream-submit.py:*)",
@@ -271,12 +271,12 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_repo_fleet.py foreach:*)",
       "tier": "ask",
-      "rationale": "foreach fans an operator-supplied command over every present repo \u2014 arbitrary exec from the agent's hands prompts; the operator's own in-terminal use is unaffected."
+      "rationale": "foreach fans an operator-supplied command over every present repo — arbitrary exec from the agent's hands prompts; the operator's own in-terminal use is unaffected."
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_repo_fleet.py sync:*)",
       "tier": "ask",
-      "rationale": "sync clones/fetches from manifest-declared remotes \u2014 the factory's first network egress; the manifest write is the standing consent, the ask is the per-run operator moment (feat-foundry-workspace-repo-verbs). Subcommand split is reach-disjoint: argparse positional subcommands, first token decides the verb."
+      "rationale": "sync clones/fetches from manifest-declared remotes — the factory's first network egress; the manifest write is the standing consent, the ask is the per-run operator moment (feat-foundry-workspace-repo-verbs). Subcommand split is reach-disjoint: argparse positional subcommands, first token decides the verb."
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_repo_attach.py attach:*)",
