@@ -12,6 +12,10 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 
 ### Everything here was found by USING v1.4.0, not by reviewing it
 
+Two of the four are in `create-agentic-workspace` (0.4.0 → 0.4.1) and reached it the only way they
+could have: by running the tool against a real adopter workspace rather than reading it.
+
+
 **The trust hand-off named a consent ceremony that does not fire.** `bootstrap-cli` R8 has carried
 this as unverified since before the feature existed: does adding rules to an *already-trusted*
 workspace re-prompt, silently activate, or require re-trust? It was dormant while the CLI never
