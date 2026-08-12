@@ -10,6 +10,43 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 
 ## Unreleased
 
+### `create-agentic-workspace --reconcile-floor` converges an existing workspace
+
+`feat-foundry-adoption-permission-floor-reconcile`. The wizard already computed the whole answer for
+an existing workspace and refused to act on it: it ships the floor as a bundled constant, reads the
+target's effective rules, names every missing rule — then writes nothing, because settings.json goes
+through the whole-file never-clobber plan (exists and differs, so `drifted`, so untouched). Five of
+seven adopter handbooks are missing the entire floor as a result.
+
+The new opt-in flag adds the rules the classifier named. Nothing is removed, nothing reordered, no
+other top-level key touched. The delta is recomputed every run, so a second run is silent and no
+ledger records what the filesystem already answers.
+
+Three things worth knowing before using it:
+
+- **The pin travels with the grants.** Every bundled `allow` rule is wildcarded across the plugin
+  cache and is bounded only by the pinned marketplace `ref` the create path writes in the same file,
+  in the same write. Six of seven handbooks carry no marketplace entry at all, so the reconcile
+  **adds the pin when it is absent**, and **withholds the whole allow tier** when an entry exists but
+  is unpinned — `ask` and `deny` still apply, being strengthening rather than granting.
+- **The write set is the tracked file; the report is the union.** A floor rule carried only in the
+  untracked `settings.local.json` reads as covered, so the tracked file would stay incomplete while
+  the report said converged — and the repo would ship to every other clone and to CI without it.
+- **It requires an explicit `--yes` when there is no terminal.** Yes-mode is otherwise inferred from
+  a non-TTY stdin, which also waives the `--existing` basename ceremony; a piped invocation would
+  have mutated the permission floor unattended.
+
+The write is this CLI's first to a path that already exists, so none of the existing anti-clobber
+machinery applied to it: `applyPlan` opens `O_EXCL` and refuses by definition, `confinedJoin` passes
+an **in-root** symlink (and `.claude/settings.json` linked to `.claude/foundry-operators.json`
+resolves inside the root — the file whose key membership alone mints an authorizer), and
+truncate-then-write would lose the operator's permissions block and install pin on an interrupt. One
+mechanism answers all three: confinement join, **link-level** stat, temp-in-`.claude`, rename.
+
+Drift classification also moved above the write phase and above the `--dry-run` return. It had sat
+after `applyPlan`, which meant `--dry-run` never classified the floor at all.
+
+
 ### The drift classifier could not see a third of the floor
 
 `feat-foundry-onboarding-floor-drift-classification`. Both implementations of the permission-floor
