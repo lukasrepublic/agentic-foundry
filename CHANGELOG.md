@@ -8,6 +8,59 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## Unreleased
+
+### The drift classifier could not see a third of the floor
+
+`feat-foundry-onboarding-floor-drift-classification`. Both implementations of the permission-floor
+drift comparison — `cli/src/permissionFloor.mjs` and `scripts/foundry_permission_floor.py` — checked
+`ask` entries only for being **shadowed**, never for being **absent**. There was no `ask-absent`
+class. Measured against a real adopter workspace, the tools reported 46 findings and were silent
+about 16 more: every ceremony rule gone, with `/foundry:doctor` calling that dimension clean.
+
+Three additions to the vocabulary, in both implementations:
+
+- **`ask-absent`** — the missing third. An exact mirror of `deny-missing` against the `ask` tier.
+- **`tier-conflict`** — every absence test was tier-scoped, consulting only the effective tier the
+  map declares. A rule the operator deliberately placed in *another* tier reported absent while
+  plainly present, which would invite a consumer to add a second copy. Now reported and the false
+  absence suppressed. Which of two tiers governs is a precedence question this tooling deliberately
+  does not model, so the double declaration is surfaced rather than resolved.
+- **map shape validation** — the Node loader parsed and returned, with no `schema_version` and no
+  tier check; the Python twin already refused an out-of-enum tier, so the two disagreed on what
+  counted as a loadable map. Both now refuse.
+
+Both new classes are **informational**: an absent `allow` means more prompting, never less, and an
+absent `ask` is the same, so neither reaches the session-start banner. The actionable set is
+unchanged.
+
+`create-agentic-workspace` is unchanged in behaviour by this entry — it gains no flag and writes no
+new file. What changes is what its drift report can SEE, which is the precondition for the
+convergence write specified separately.
+
+### The two implementations did not actually agree
+
+They had always claimed to agree "by construction" on the shared subsumption rule. That claim was a
+comment. It is now a **differential fixture corpus** (`tests/fixtures/floor-drift-corpus.json`): every
+case runs through both classifiers and the two must name the identical rule set per class.
+
+It found a real divergence on the first comparison. Python canonicalized rules — dropping a leading
+interpreter word, expanding `~`/`$HOME`, folding away the `plugins/cache/<mp>/foundry/<ver>/`
+segment — and Node compared literal strings. For the input that actually occurs in the wild, the
+absolute version-resolved path the harness writes on ask-to-allow persist, the two disagreed:
+
+```
+effective  Bash(/Users/<u>/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-doctor.py:*)
+map        Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-doctor.py)
+           python: covered        node: absent
+```
+
+So the CLI reported 42 rules absent that the doctor could see were covered. The fold is now ported
+to Node, along with the **deny direction**, which refuses the fold and requires exact reach
+equality — Node had been reusing the allow-direction relation there, strictly more permissive than
+the twin. Blanket detection is likewise derived from the fold rather than from an enumerated set of
+three spellings.
+
 ## v1.3.1 — 2026-08-08
 
 ### Two gate defects the v1.3.0 cut hit live
