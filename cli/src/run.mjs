@@ -191,6 +191,18 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
       }
     }
 
+    // Refuse BEFORE anything is written. isYesMode is true whenever stdin is not a TTY, which also
+    // waives the --existing basename ceremony, so a piped invocation would otherwise mutate the
+    // permission floor unattended; --yes must be given EXPLICITLY. This sits above applyPlan
+    // deliberately — a "refused" verdict printed after the scaffold write had already landed reads
+    // as "nothing happened", which is the one thing it must not mean.
+    if (floorPlan && floorPlan.total > 0 && !isTTY && answers.yes !== true) {
+      throw new RefusalError(
+        'refusing --reconcile-floor without a terminal: pass --yes explicitly to confirm the write',
+        'reconcile-floor',
+      );
+    }
+
     if (answers.dryRun) {
       print('(dry-run: no write, no side effect, zero child processes spawned)');
       return { exitCode: 0, output: lines.join('\n') };
@@ -208,16 +220,6 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
     applyPlan(plan);
 
     if (floorPlan && floorPlan.total > 0) {
-      // isYesMode is true whenever stdin is not a TTY, which also waives the --existing basename
-      // ceremony — so a piped invocation would otherwise mutate the permission floor unattended.
-      // The reconcile requires --yes to have been given EXPLICITLY, keeping the automation path
-      // available and deliberate rather than inferred from the absence of a terminal.
-      if (!isTTY && answers.yes !== true) {
-        throw new RefusalError(
-          'refusing --reconcile-floor without a terminal: pass --yes explicitly to confirm the write',
-          'reconcile-floor',
-        );
-      }
       writeTargetAtomically(floorTarget.path, applyAdditions(floorPlan.settingsObj, floorPlan, { map, pins }));
       print('');
       for (const line of renderPlan(floorPlan, { applied: true })) print(line);

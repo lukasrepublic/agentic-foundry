@@ -63,10 +63,16 @@ export function readTrackedRules(settingsObj) {
  * path. Six of the seven adopter handbooks carry no marketplace entry at all. */
 export function classifyPin(settingsObj, pins) {
   const entry = ((settingsObj && settingsObj.extraKnownMarketplaces) || {})[pins.marketplace_name];
-  if (entry === undefined) return { state: 'absent' };
+  if (entry === undefined) return { state: 'absent', ref: null, skew: false };
   const ref = entry && entry.source && entry.source.ref;
   const pinned = typeof ref === 'string' && ref !== '' && !ref.includes('*') && entry.autoUpdate === false;
-  return { state: pinned ? 'pinned' : 'unpinned', ref: typeof ref === 'string' ? ref : null };
+  // A pin can be perfectly well-formed and still name a DIFFERENT plugin than the map these rules
+  // came from. The 42 allow rules are wildcarded across the cache and their per-script rationales
+  // were reviewed against THIS version's scripts; writing them over a workspace pinned at an older
+  // one grants the same paths against different code. Surfaced rather than refused — the operator's
+  // review of the plan is the control, and it can only work if the skew is on screen.
+  const skew = pinned && ref !== `v${pins.plugin_version}`;
+  return { state: pinned ? 'pinned' : 'unpinned', ref: typeof ref === 'string' ? ref : null, skew };
 }
 
 /** Compute the delta WITHOUT touching the filesystem. Returns
@@ -102,7 +108,7 @@ export function planAdditions({ findings, map, settingsObj, pins }) {
 
   const total = additions.allow.length + additions.ask.length + additions.deny.length;
   const blanket = findings.filter((f) => f.class === 'blanket-allow').map((f) => f.rule);
-  return { additions, total, pin, withheldAllow, blanket };
+  return { additions, total, pin, withheldAllow, blanket, pinsVersion: pins.plugin_version };
 }
 
 /** Apply a plan to a parsed settings object, returning a NEW object. Pure — no I/O.
@@ -207,6 +213,13 @@ export function renderPlan(plan, { applied }) {
   );
   if (plan.pin.state === 'absent') {
     lines.push(`  + marketplace pin added — the bundled allow rules are wildcarded across the plugin cache and are bounded only by it`);
+  } else if (plan.pin.state === 'pinned') {
+    // printed on EVERY pinned run, not only the skewed one: an operator cannot notice a mismatch
+    // that is never shown, and this is the branch where 42 grants are written without comment
+    lines.push(
+      `  · marketplace pinned at ${plan.pin.ref}; these rules come from the floor generated for v${plan.pinsVersion}` +
+        (plan.pin.skew ? ' — VERSION SKEW: the same wildcarded paths will resolve to that pin\'s scripts, not this one\'s' : ''),
+    );
   } else if (plan.withheldAllow) {
     lines.push(
       `  ! marketplace entry present but unpinned (ref=${plan.pin.ref === null ? 'none' : plan.pin.ref})` +

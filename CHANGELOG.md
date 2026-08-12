@@ -8,7 +8,7 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
-## Unreleased
+## v1.4.0 — 2026-08-12
 
 ### `create-agentic-workspace --reconcile-floor` converges an existing workspace
 
