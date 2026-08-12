@@ -123,6 +123,21 @@ export const QUESTION_TABLE = [
     interactive: false,
   },
   {
+    id: 'reconcileFloor',
+    flag: 'reconcile-floor',
+    type: 'boolean',
+    prompt: 'Add any missing permission-floor rules to this workspace?',
+    description:
+      'For an EXISTING workspace whose .claude/settings.json is missing floor\n' +
+      'rules. Adds only the rules the floor declares and this workspace lacks —\n' +
+      'nothing is removed, reordered, or overwritten, and no other setting is\n' +
+      'touched. Running it twice changes nothing the second time.\n' +
+      'Use --dry-run first to see the exact rules it would add.\n' +
+      'Enter alone means no. y, yes, true or 1 mean yes.',
+    default: false,
+    interactive: false,
+  },
+  {
     id: 'help',
     flag: 'help',
     type: 'boolean',
