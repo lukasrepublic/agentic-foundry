@@ -308,6 +308,7 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
     # Asserted as a MAPPING keyed by plugin_version, so a bump to one without the other is caught in
     # the release diff rather than after publish, when it is unfixable. Add a row per release cut.
     TARBALL_VERSION_BY_PLUGIN_PIN = {
+        "1.4.2": "0.4.2",
         "1.1.0": "0.1.0",
         "1.2.0": "0.2.0",
         "1.2.1": "0.2.1",
