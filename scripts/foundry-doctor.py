@@ -306,9 +306,13 @@ def check_permission_floor(plugin_root=None, project_dir=None, session_start=Fal
         result = pf.run_check(root, pdir, for_session_start=session_start)
     except pf.FloorMalformed as e:
         return False, _sanitize_detail(f"permission-floor.json malformed: {e}")
+    # One finding per LINE, not semicolon-joined into one. The module already returns `lines` as a
+    # list; flattening it produced a single ~4,000-character row once the vocabulary grew to ten
+    # classes — technically correct and practically unreadable, in the one probe whose entire job is
+    # operator visibility. `_run`'s renderer indents continuation lines.
     detail = result["summary"]
     if result["lines"]:
-        detail = detail + "; " + "; ".join(result["lines"])
+        detail = detail + "\n" + "\n".join(result["lines"])
     if result["outcome"] == "skip":
         return None, detail
     if result["outcome"] == "ok":
@@ -372,7 +376,13 @@ def main():
             mark = "XX "
         if ok is False:
             hard_fail = True
-        out_lines.append(f"  [{mark}] {name}: {detail}")
+        # A probe may return a multi-line detail (permission-floor does, one finding per line).
+        # The first line rides the check row; the rest are indented under it so a long finding set
+        # stays scannable instead of collapsing into one unreadable row.
+        head, _, rest = str(detail).partition("\n")
+        out_lines.append(f"  [{mark}] {name}: {head}")
+        for extra in rest.splitlines():
+            out_lines.append(f"           {extra}")
 
     header = "foundry doctor" + (" (session-start advisory)" if args.session_start else "")
     body = header + "\n" + "\n".join(out_lines)

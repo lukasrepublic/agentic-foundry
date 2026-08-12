@@ -20,7 +20,9 @@ if (rawArgv.length > 0 && !rawArgv[0].startsWith('--')) {
   argv = ['--dir', rawArgv[0], ...rawArgv.slice(1)];
 }
 
-const { exitCode, output } = await runCli(argv, {
+// runCli streams every line to `output` as it is produced (ER #95), so the returned string is a
+// transcript for callers, not something to print again here.
+const { exitCode } = await runCli(argv, {
   cwd: process.cwd(),
   isTTY: Boolean(process.stdin.isTTY),
   input: process.stdin,
@@ -29,5 +31,4 @@ const { exitCode, output } = await runCli(argv, {
   pkgDir,
 });
 
-process.stdout.write(`${output}\n`);
 process.exitCode = exitCode;
