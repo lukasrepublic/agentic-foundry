@@ -93,7 +93,20 @@ function expandPluginRootGlob(glob, homeDir) {
  * caught and turned into a refusal-shaped exit 1 (or, for a bug, exit 1 with the error message). */
 export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir }) {
   const lines = [];
-  const print = (s) => lines.push(s);
+  // ER #95 — STREAM, don't accumulate. This used to only push into `lines`, which bin printed
+  // after runCli returned, so every prompt fired against a blank screen: "Write the workspace as
+  // previewed above? [y/N]" was asked with nothing above it, and the preview — the file plan, the
+  // machine-scope writes OUTSIDE the target root, and the 62 permission rules — scrolled past
+  // afterwards. A confirmation whose subject is not yet on screen cannot be informed consent, and
+  // its mere presence claims a review that did not happen.
+  //
+  // It became load-bearing with --reconcile-floor. R8 was answered live: reconciling an
+  // already-trusted workspace fires NO trust dialog, so this prompt is the ONLY consent moment
+  // there is. `lines` is still accumulated because runCli's return contract exposes it.
+  const print = (s) => {
+    lines.push(s);
+    output.write(`${s}\n`);
+  };
 
   try {
     let parsed;
