@@ -327,20 +327,40 @@ def _extract_references(normative_text, own_ac_ids):
     return refs
 
 
+# BOTH corpus filename conventions, deliberately. `feat-*.md` alone silently excluded every
+# DELIVERY atom in any workspace that adopted the two-tree taxonomy:
+#
+#   delivery atoms  specs/<target_repo>/<grouping>/<capability>/spec-<target_repo>-<capability>.md
+#   audit corpus    specs/features/<product>/<domain>/<capability>/feat-<…>.md
+#
+# Reference closure (G-4) is corpus-WIDE by definition — it exists to prove every AC-ID and
+# feat-slug a spec's normative region cites resolves to a live atom. Indexing only one of the two
+# trees does not narrow the check, it INVERTS it: every cross-atom reference made by (or to) a
+# delivery atom resolves to nothing and is reported DANGLING. The gate then fails closed on a
+# FALSE POSITIVE, which is worse than not running at all — it blocks correct specs and teaches the
+# operator to route around the lint.
+#
+# Measured on one adopter corpus before this fix: 53 `feat-*.md` indexed, 65 `spec-*.md` invisible,
+# zero delivery-atom AC-IDs present — so `/foundry:spec-review` Phase 0 could not complete on ANY
+# delivery atom. A workspace using only the `feat-*` convention is unaffected.
+_SPEC_FILENAME_PREFIXES = ("feat-", "spec-")
+
+
 def _walk_specs(project_dir):
     root = os.path.join(project_dir, "specs")
     if not os.path.isdir(root):
         return
     for dirpath, _dirs, files in os.walk(root):
         for fn in files:
-            if fn.startswith("feat-") and fn.endswith(".md"):
+            if fn.endswith(".md") and fn.startswith(_SPEC_FILENAME_PREFIXES):
                 yield os.path.join(dirpath, fn)
 
 
 def _build_corpus_index(project_dir):
     """{'by_slug': {slug: path}, 'by_relpath': {rel: path}, 'by_ac_id': {ac_id: path}} over every
-    `feat-*.md` under `<project_dir>/specs/` (the direct spec-tree-scan fallback the design notes
-    call for). Tolerant of a per-spec malformed sibling contract (skip that spec's AC-IDs, keep
+    `feat-*.md` AND `spec-*.md` under `<project_dir>/specs/` — both trees of the corpus taxonomy
+    (audit corpus and delivery atoms respectively; see `_SPEC_FILENAME_PREFIXES`). Tolerant of a
+    per-spec malformed sibling contract (skip that spec's AC-IDs, keep
     scanning) — an unreadable CORPUS ROOT itself is the caller's problem (propagates as OSError)."""
     idx = {"by_slug": {}, "by_relpath": {}, "by_ac_id": {}}
     for path in _walk_specs(project_dir):

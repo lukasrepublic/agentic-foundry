@@ -113,6 +113,61 @@ class TestLintSpecReferenceClosure:
         ok, findings = sl.lint_spec(str(spec), project_dir=str(tmp_path))
         assert ok is True
 
+    def _seed_corpus_atom(self, tmp_path, filename, ac_id):
+        """Write one corpus atom (spec + sibling contract carrying `ac_id`) and return its dir."""
+        d = tmp_path / "specs" / "some" / "grouping" / "cap"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / filename).write_text(
+            "# Target atom\n\n<!-- normative -->\n"
+            f"- **{ac_id}** (Invariant): The thing SHALL always hold.\n"
+            "<!-- /normative -->\n", encoding="utf-8")
+        # AUTHORIZED, deliberately: a reference cited from the subject's own normative region is
+        # load-bearing, so `gate_reference_closure` refuses it if the target atom is unauthorized.
+        # That refusal is a SEPARATE, correct behaviour from the indexing bug under test here —
+        # without this trailer these tests would go green/red for the wrong reason.
+        (d / "acceptance-contract.yaml").write_text(
+            f"checkpoints:\n  - ac_id: {ac_id}\n    surface: \"file:x\"\n    locator: \"x\"\n"
+            "authorized:\n  operator_id: op_test\n  auth_seq: 1\n",
+            encoding="utf-8")
+        return d
+
+    def _subject_citing(self, tmp_path, ac_id):
+        spec = tmp_path / "subject.md"
+        spec.write_text(
+            "# Subject\n\n<!-- normative -->\n"
+            f"- **AC-SUBJ-1** (Requirement): When X, the system SHALL Y, per {ac_id}.\n"
+            "<!-- /normative -->\n", encoding="utf-8")
+        return spec
+
+    def test_reference_to_a_DELIVERY_atom_resolves(self, tmp_path):
+        """REGRESSION. `_walk_specs` used to yield only `feat-*.md`, so in a workspace using the
+        two-tree taxonomy — delivery atoms as `spec-<target_repo>-<capability>.md`, audit corpus as
+        `feat-*.md` — NO delivery atom was ever indexed and EVERY reference to one was reported
+        DANGLING. That is a fail-closed FALSE POSITIVE: it blocks correct specs, and it blocked
+        Phase 0 of `/foundry:spec-review` for all 65 delivery atoms of the corpus where it was
+        found."""
+        self._seed_corpus_atom(tmp_path, "spec-infra-some-capability.md", "AC-DELIV-1")
+        spec = self._subject_citing(tmp_path, "AC-DELIV-1")
+        ok, findings = sl.lint_spec(str(spec), project_dir=str(tmp_path))
+        assert ok is True, f"a reference to a spec-*.md delivery atom must resolve; got {findings}"
+        assert findings == []
+
+    def test_reference_to_an_AUDIT_CORPUS_atom_still_resolves(self, tmp_path):
+        """The other half of the same bijection — widening the walker must not drop `feat-*.md`."""
+        self._seed_corpus_atom(tmp_path, "feat-piiq-some-capability.md", "AC-AUDIT-1")
+        spec = self._subject_citing(tmp_path, "AC-AUDIT-1")
+        ok, findings = sl.lint_spec(str(spec), project_dir=str(tmp_path))
+        assert ok is True, f"a reference to a feat-*.md audit atom must still resolve; got {findings}"
+
+    def test_reference_to_a_NONEXISTENT_ac_still_fails_closed(self, tmp_path):
+        """Falsifiability: widening the walker must not make reference closure vacuous. An AC that
+        exists in NO atom of either tree must still be caught."""
+        self._seed_corpus_atom(tmp_path, "spec-infra-some-capability.md", "AC-DELIV-1")
+        spec = self._subject_citing(tmp_path, "AC-NOSUCH-9")
+        ok, findings = sl.lint_spec(str(spec), project_dir=str(tmp_path))
+        assert ok is False
+        assert any("DANGLING-REFERENCE" in f for f in findings)
+
 
 class TestLintSpecMissingFile:
     def test_missing_spec_fails_closed(self, tmp_path):
