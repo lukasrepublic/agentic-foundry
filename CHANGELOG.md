@@ -8,6 +8,47 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.4.1 — 2026-08-12
+
+### Everything here was found by USING v1.4.0, not by reviewing it
+
+Two of the four are in `create-agentic-workspace` (0.4.0 → 0.4.1) and reached it the only way they
+could have: by running the tool against a real adopter workspace rather than reading it.
+
+
+**The trust hand-off named a consent ceremony that does not fire.** `bootstrap-cli` R8 has carried
+this as unverified since before the feature existed: does adding rules to an *already-trusted*
+workspace re-prompt, silently activate, or require re-trust? It was dormant while the CLI never
+mutated a trusted workspace's allow set. `--reconcile-floor` made it the main path, and the first
+live run answered it — **silently activates**. 42 version-wildcarded `allow` rules took effect on
+session restart with no dialog at all.
+
+That made the CLI's own closing text false on exactly that path: *"the trust dialog is the consent
+ceremony, and the `allow` rules take effect only after you accept it."* Consent did happen — the
+rules were listed and confirmed — but at the CLI, not where the CLI said. The text is now
+conditional: the scaffold path is unchanged, because there the dialog genuinely is the grant; the
+reconcile path states that the workspace is already trusted and that the preview and confirmation
+were the only consent moment there will be.
+
+**Consent was asked before the plan existed** (ER #95). `runCli`'s `print()` pushed into an array
+that `bin` wrote *after* the run returned, while readline prompts wrote in real time — so
+`Write the workspace as previewed above? [y/N]` was asked against a blank screen, and the preview
+scrolled past afterwards. The unseen material is exactly the security-relevant part: the
+machine-scope writes **outside the target root**, and the 62 permission rules. Output now streams as
+it is produced; the preview and the reconcile plan both precede the confirmation. This was cosmetic
+until R8 was answered — now that prompt is the only consent surface on the reconcile path, which is
+what moved it from an annoyance to a defect.
+
+**A required merge check had a SIGPIPE race in its own version assertion** (ER #83).
+`shell-parse-bash32` failed intermittently *before parsing a single file*: `bash --version | head -1`
+under `set -euo pipefail`, where `head` closes the read end while the container is still writing. The
+pipe is gone; the assertion it guards is unchanged.
+
+**The doctor collapsed 58 findings into one row.** `check_permission_floor` semicolon-joined the
+module's line list into a single ~4,000-character string — in the one probe whose entire job is
+operator visibility, and v1.4.0's two new drift classes made it worse. Findings are now one per
+line, indented under the check: widest line 226 characters.
+
 ## v1.4.0 — 2026-08-12
 
 ### `create-agentic-workspace --reconcile-floor` converges an existing workspace

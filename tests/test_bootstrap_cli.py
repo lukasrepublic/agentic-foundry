@@ -329,6 +329,10 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         # v1.4.0 DOES carry a CLI change — the --reconcile-floor flag and the floorReconcile
         # module — so the tarball bumps for its own sake as well as for the pin it embeds.
         "1.4.0": "0.4.0",
+        # v1.4.1 carries CLI changes of its own — the consent-ordering fix (ER #95) and the
+        # reconcile-path trust hand-off — so the tarball bumps for its own sake as well as for
+        # the pin it embeds.
+        "1.4.1": "0.4.1",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (
