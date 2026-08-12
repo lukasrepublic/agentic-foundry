@@ -42,6 +42,14 @@ _EXISTING_PROBE_NAMES = (
 # ================================================================================================ #
 # fixture helpers
 # ================================================================================================ #
+TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _read(path):
+    with open(path, encoding="utf-8") as fh:
+        return fh.read()
+
+
 def _write_json(path, doc):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -208,21 +216,70 @@ def test_probe_is_registered_and_advisory_is_a_distinct_outcome(tmp_path):
     assert "XX" not in line[: line.index("]") + 1]
 
 
-def test_existing_probes_are_unchanged():
+def test_existing_probes_are_unchanged(tmp_path):
     src = _doctor_source()
     for name in _EXISTING_PROBE_NAMES:
         assert re.search(r'_run\(\s*"%s"' % re.escape(name), src), \
             f"registration literal changed/missing for {name!r}"
 
-    # The real repo's own tree/project — exactly what the operator-invoked run drives — must still
-    # be DOCTOR-GREEN, and none of the six pre-existing probes may render the new advisory mark.
-    r = _run_doctor(REPO_ROOT, plugin_root=REPO_ROOT)
+    # The REAL plugin tree must still be DOCTOR-GREEN, and none of the six pre-existing probes may
+    # render the new advisory mark. CLAUDE_PLUGIN_ROOT is REPO_ROOT, so manifest / hooks /
+    # skills-frontmatter / stack-profile all read that real tree — which is what this asserts.
+    #
+    # The PROJECT dir is a neutral temp dir, not REPO_ROOT. Pointing it at REPO_ROOT made the
+    # result depend on where the clone happens to SIT: control-plane walks ancestors for a
+    # `.claude/foundry-project.json` naming this repo in `repos{}`, so on a self-hosting checkout —
+    # the framework developed inside the workspace that hosts it, which is the normal arrangement
+    # for whoever works on this — the probe correctly RED-ed and this test could never pass
+    # locally. Green in CI, red on the maintainer's machine, is the worst way for an assertion to
+    # be wrong: it silently retires "run the suite before you push".
+    #
+    # No coverage is lost. The hosted-repo detection this incidentally exercised has its own
+    # hermetic test — test_control_plane_preflight.py::test_session_rooted_in_hosted_repo_is_red,
+    # which builds the nesting under tmp_path instead of depending on the checkout's location.
+    _seed_minimal_operator_registry(str(tmp_path))
+    r = _run_doctor(str(tmp_path), plugin_root=REPO_ROOT)
     assert "DOCTOR-GREEN" in r.stdout
     for name in _EXISTING_PROBE_NAMES:
         line = _line_for(r.stdout, name)
         mark = line.strip().split("]", 1)[0].lstrip("[").strip()
         assert mark in ("ok", "skip"), f"{name} probe outcome changed: {line!r}"
         assert mark != "adv"
+
+
+def test_no_doctor_green_assertion_is_driven_at_the_repo_root():
+    """A DOCTOR-GREEN assertion must never be rooted at REPO_ROOT.
+
+    The doctor's control-plane probe walks ANCESTORS of its project dir, so an assertion rooted at
+    the checkout inherits whatever the checkout is nested inside. Two tests were written that way
+    and were green in CI and permanently red on a self-hosting checkout — which is the failure mode
+    that quietly retires "run the suite before you push", because a real regression then arrives
+    alongside failures everyone has learned to expect.
+
+    Deliberately CRUDE and grep-shaped: it convicts on the call SHAPE rather than trying to prove
+    what a given run resolves to. A convicting rule that over-fires is cheap to fix at the call
+    site; an exonerating rule that under-fires is how the original defect survived review.
+    """
+    offenders = []
+    for fn in sorted(os.listdir(TESTS_DIR)):
+        if not (fn.startswith("test_") and fn.endswith(".py")):
+            continue
+        text = _read(os.path.join(TESTS_DIR, fn))
+        if "DOCTOR-GREEN" not in text:
+            continue
+        for i, line in enumerate(text.splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            if re.search(r"_run_doctor\(\s*REPO_ROOT\b", stripped) or \
+               re.search(r"CLAUDE_PROJECT_DIR\W+\]?\s*=\s*REPO_ROOT\b", stripped) or \
+               re.search(r"\bcwd\s*=\s*REPO_ROOT\b.*doctor", stripped):
+                offenders.append(f"{fn}:{i}: {stripped}")
+    assert not offenders, (
+        "DOCTOR-GREEN asserted with the project dir at REPO_ROOT — the verdict then depends on "
+        "where the clone sits on disk. Point CLAUDE_PROJECT_DIR at a tmp_path and keep "
+        "CLAUDE_PLUGIN_ROOT=REPO_ROOT:\n  " + "\n  ".join(offenders)
+    )
 
 
 def test_advisory_never_collapses_into_skip_or_ok(tmp_path):

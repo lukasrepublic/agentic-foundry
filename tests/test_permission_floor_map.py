@@ -535,13 +535,26 @@ def test_negative_controls_all_fire(tmp_path):
 # --------------------------------------------------------------------------------------------- #
 
 
-def test_doctor_green_regression():
+def test_doctor_green_regression(tmp_path):
     import subprocess
 
+    # Driven against the real plugin tree (CLAUDE_PLUGIN_ROOT) from a NEUTRAL project dir, never
+    # from REPO_ROOT itself — see the note on
+    # test_permission_floor_check.py::test_existing_probes_are_unchanged. Running it at REPO_ROOT
+    # made the verdict a function of where the clone sits on disk, so a self-hosting checkout
+    # failed here forever while CI stayed green.
+    os.makedirs(os.path.join(tmp_path, ".claude"), exist_ok=True)
+    with open(os.path.join(tmp_path, ".claude", "foundry-operators.json"), "w", encoding="utf-8") as fh:
+        json.dump({"schema_version": 1, "operators": {
+            "op_test": {"name": "T", "github": "t", "added_at": "2026-01-01"}}}, fh)
+    env = dict(os.environ)
+    env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
+    env["CLAUDE_PLUGIN_ROOT"] = REPO_ROOT
     result = subprocess.run(
         ["python3", os.path.join(REPO_ROOT, "scripts", "foundry-doctor.py")],
         capture_output=True,
         text=True,
-        cwd=REPO_ROOT,
+        cwd=str(tmp_path),
+        env=env,
     )
     assert "DOCTOR-GREEN" in result.stdout, f"doctor did not report GREEN:\n{result.stdout}\n{result.stderr}"
