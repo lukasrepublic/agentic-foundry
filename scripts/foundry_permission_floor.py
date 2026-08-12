@@ -78,11 +78,32 @@ RANK = (
     "stale-plugin-path",
     "allow-absent",
     "unclassified",
+    # AC-FDC-1 / AC-FDC-2, appended rather than inserted. Two reasons, and they agree:
+    #
+    # SUBSTANTIVE — both are INFORMATIONAL, on allow-absent's own reasoning. An absent `allow` is
+    # informational because its effect is MORE prompting, never less. An absent `ask` is the same:
+    # without the declaration the tool either falls to a broader allow — which is ask-shadowed, an
+    # actionable class that already fires — or carries no grant at all and prompts or refuses.
+    # Absent-ask alone opens nothing. A tier-conflict rule is PRESENT and deliberately placed by
+    # the operator; nothing is open there either. Neither belongs in the actionable band that
+    # reaches the session-start banner.
+    #
+    # MECHANICAL — the shipped suite pins the whole RANK order as one contiguous summary string
+    # ("blanket-allow=N, … allow-absent=N, unclassified=N"), and that suite is this atom's
+    # regression oracle and denied scope. Appending keeps _ACTIONABLE_RANKS byte-identical, so
+    # session-start output is unchanged, and _INFORMATIONAL_RANKS picks these up by slice.
+    "ask-absent",
+    "tier-conflict",
 )
 _ACTIONABLE_RANKS = frozenset(RANK[:6])
 _INFORMATIONAL_RANKS = frozenset(RANK[6:])
 
 CEREMONY_LEAD_LITERAL = "the front-authorization prompt is not firing"
+
+
+#: The one map schema_version this build understands (AC-FDC-4). Mirrored by the Node classifier's
+#: MAP_SCHEMA_VERSION; the two must move together or the differential corpus diverges.
+MAP_SCHEMA_VERSION = 1
 
 
 class FloorMalformed(Exception):
@@ -204,6 +225,15 @@ def load_permission_floor(plugin_root):
         raise FloorMalformed(f"permission-floor.json unparseable: {type(e).__name__}: {e}") from e
     if not isinstance(doc, dict):
         raise FloorMalformed("permission-floor.json is not a JSON object")
+    # AC-FDC-4. The tier enum below was already checked here; schema_version was not, so a map
+    # written to a future shape would be read optimistically under this build's assumptions. The
+    # tier field is load-bearing — it decides which effective tier an entry is compared against,
+    # and which tier a consumer writes it into — so an unknown shape is refused, not guessed at.
+    if doc.get("schema_version") != MAP_SCHEMA_VERSION:
+        raise FloorMalformed(
+            f"permission-floor.json schema_version {doc.get('schema_version')!r} is not the "
+            f"{MAP_SCHEMA_VERSION} this build understands"
+        )
     glob_pat = doc.get("plugin_root_glob")
     entries = doc.get("entries")
     if not isinstance(glob_pat, str) or not glob_pat:
@@ -372,6 +402,11 @@ def _classify(floor_doc, effective, unreadable_labels, home):
 
     lines_by_class = {c: [] for c in RANK}
     counts = {c: 0 for c in RANK}
+    # AC-FDC-6 — the structured surface the differential compares. Rendered lines are prose and
+    # differ between the two implementations by design; the RULE SET named per class is the thing
+    # that must agree. Holds MAP-derived rule text (plus, for blanket-allow, the same folded form
+    # the line already renders), so it discloses nothing the value-scoped model does not already.
+    rules_by_class = {c: [] for c in RANK}
 
     ask_entries = [e for e in entries if e["tier"] == "ask"]
     allow_entries = [e for e in entries if e["tier"] == "allow"]
@@ -402,7 +437,34 @@ def _classify(floor_doc, effective, unreadable_labels, home):
                 f"ask/deny: {names} — narrow this rule."
             )
             counts["blanket-allow"] += 1
+            rules_by_class["blanket-allow"].append(f"Bash({c['folded']})")
         swallowed_ask_rules = {e["rule"] for e in ask_entries}
+
+    # AC-FDC-2, computed BEFORE the absence classes because it suppresses them. A map entry whose
+    # exact rule text sits in a tier other than the one the map declares is PRESENT — deliberately
+    # placed — so reporting it absent would be false, and would invite a consumer to add a second
+    # copy. Exact text only, matching the Node twin: covers() needs a ':*'-terminated body to match
+    # at all, so a cross-tier duplicate of a non-wildcard rule is invisible to the shadowing tests
+    # too, which is the gap this class closes. AC-FDC-3: the origin label is carried, because the
+    # effective set unions the tracked settings.json with the untracked settings.local.json and a
+    # consumer must be able to tell which one satisfied the rule.
+    conflicted = set()
+    for e in entries:
+        for tier in ("allow", "ask", "deny"):
+            if tier == e["tier"]:
+                continue
+            found = [eff for eff in effective[tier] if eff["raw"] == e["rule"]]
+            if not found:
+                continue
+            conflicted.add(e["rule"])
+            labels = ", ".join(sorted({eff["label"] for eff in found}))
+            lines_by_class["tier-conflict"].append(
+                f"tier-conflict: {sanitize(e['rule'])!r} is declared {e['tier']!r} by the floor "
+                f"but present in {tier!r} ({labels}) — present and deliberate, so not reported "
+                "absent; resolve which tier you want it in."
+            )
+            counts["tier-conflict"] += 1
+            rules_by_class["tier-conflict"].append(e["rule"])
 
     for e in ask_entries:
         if e["rule"] in swallowed_ask_rules:
@@ -431,8 +493,34 @@ def _classify(floor_doc, effective, unreadable_labels, home):
             "tighten/remove the covering allow rule."
         )
         counts[klass] += 1
+        rules_by_class[klass].append(e["rule"])
+
+    # AC-FDC-1 — the exact mirror of deny-missing below, against the `ask` tier, which had no
+    # absence class at all. Measured before this landed: an empty effective set yielded 46 findings
+    # and named none of the 16 ask entries. Note what it does NOT consult: effective["allow"]. An
+    # ask entry covered by a broad allow is already named by ask-shadowed, and whether that allow
+    # defeats the ask at match time is the precedence question this module abstains from (R3) — so
+    # absence and shadowing are reported as the two independent facts they are.
+    for e in ask_entries:
+        if e["rule"] in conflicted:
+            continue
+        covering = [
+            eff
+            for eff in effective["ask"]
+            if eff["raw"] == e["rule"] or covers(eff["raw"], e["rule"], home=home)
+        ]
+        if covering:
+            continue
+        lines_by_class["ask-absent"].append(
+            f"ask-absent: {sanitize(e['rule'])!r} has no covering effective ask rule "
+            "(informational)."
+        )
+        counts["ask-absent"] += 1
+        rules_by_class["ask-absent"].append(e["rule"])
 
     for e in deny_entries:
+        if e["rule"] in conflicted:
+            continue
         covering = [eff for eff in effective["deny"] if deny_covers(eff["raw"], e["rule"])]
         if covering:
             continue
@@ -441,6 +529,7 @@ def _classify(floor_doc, effective, unreadable_labels, home):
             "add it to .claude/settings.json permissions.deny."
         )
         counts["deny-missing"] += 1
+        rules_by_class["deny-missing"].append(e["rule"])
 
     for label in unreadable_labels:
         lines_by_class["settings-unreadable"].append(
@@ -471,6 +560,8 @@ def _classify(floor_doc, effective, unreadable_labels, home):
                 counts["stale-plugin-path"] += 1
 
     for e in allow_entries:
+        if e["rule"] in conflicted:
+            continue
         mc = canonicalize(e["rule"], home=home)
         covering = [c for c in canon_allow if _covers_canon(c, mc)]
         if covering:
@@ -480,6 +571,7 @@ def _classify(floor_doc, effective, unreadable_labels, home):
             "(informational)."
         )
         counts["allow-absent"] += 1
+        rules_by_class["allow-absent"].append(e["rule"])
 
     unclassified_counter = {}
     for tier in ("allow", "ask", "deny"):
@@ -495,11 +587,27 @@ def _classify(floor_doc, effective, unreadable_labels, home):
         )
         counts["unclassified"] += n
 
+    # AC-FDC-7 — QUALIFIED, not suppressed. covers() returns false for a body that does not end
+    # ':*', so under `Bash(*)` every map entry still classifies absent: a consumer could converge
+    # all 62 rules and report success over a floor that rule defeats entirely. Suppressing the rest
+    # would hide the gap; marking them names both facts at once — here is the gap, and here is why
+    # closing it changes nothing until this rule is narrowed.
+    if blanket:
+        blanket_names = "; ".join(sorted({f"Bash({sanitize(c['folded'])})" for c in blanket}))
+        for klass in RANK:
+            if klass == "blanket-allow":
+                continue
+            lines_by_class[klass] = [
+                f"{ln} [qualified by blanket allow {blanket_names}]"
+                for ln in lines_by_class[klass]
+            ]
+
     ceremony_shadowed = counts["ask-shadowed-ceremony"] > 0 or (
         bool(blanket) and any(is_ceremony_entry(e) for e in ask_entries)
     )
 
-    return lines_by_class, counts, ceremony_shadowed
+    rules_by_class = {k: sorted(v) for k, v in rules_by_class.items()}
+    return lines_by_class, counts, ceremony_shadowed, rules_by_class
 
 
 def _render(lines_by_class, counts, ceremony_shadowed, for_session_start):
@@ -522,9 +630,13 @@ def _render(lines_by_class, counts, ceremony_shadowed, for_session_start):
             lines.append(sanitize(f"{klass}: +{remainder} more finding(s) truncated"))
 
     if for_session_start:
-        info_count = counts["allow-absent"] + counts["unclassified"]
+        # Derived from _INFORMATIONAL_RANKS rather than a second hand-written list, so a class
+        # added to the vocabulary cannot fall out of the count or out of the names (AC-FDC-1/-2
+        # each added one, and a hardcoded pair would have silently under-reported both).
+        info_classes = [k for k in RANK if k in _INFORMATIONAL_RANKS]
+        info_count = sum(counts[k] for k in info_classes)
         lines.append(sanitize(
-            f"{info_count} informational finding(s) (allow-absent, unclassified) — run "
+            f"{info_count} informational finding(s) ({', '.join(info_classes)}) — run "
             "`/foundry:doctor` (no --session-start) for detail"
         ))
 
@@ -554,10 +666,11 @@ def run_check(plugin_root, project_dir, home=None, for_session_start=False):
         )
         return {"outcome": "advisory", "summary": line, "lines": [], "counts": {}}
 
-    lines_by_class, counts, ceremony_shadowed = _classify(
+    lines_by_class, counts, ceremony_shadowed, rules_by_class = _classify(
         floor_doc, effective, unreadable_labels, home
     )
     summary, lines = _render(lines_by_class, counts, ceremony_shadowed, for_session_start)
     total = sum(counts.values())
     outcome = "ok" if total == 0 else "advisory"
-    return {"outcome": outcome, "summary": summary, "lines": lines, "counts": dict(counts)}
+    return {"outcome": outcome, "summary": summary, "lines": lines, "counts": dict(counts),
+            "rules": rules_by_class}
