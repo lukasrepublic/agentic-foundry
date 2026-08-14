@@ -41,9 +41,11 @@ Both were reproduced against v1.5.0 before the fix.
   found this and it is recorded rather than papered over. What that means concretely: an ungrounded
   `remove` declaration naming no live artifact is currently accepted on trust. What it does **not**
   mean is a widened scope — every `allowed_paths` entry admitted by the retirement tolerance has
-  already passed `_allowed_path_exists`, which makes the byte-identical `os.path.exists` call the
-  missing check would make, so the gap is confined to `remove` declarations not mirrored in
-  `allowed_paths`.
+  already been **evaluated by** `_allowed_path_exists` and found ABSENT, and that evaluation is the
+  byte-identical `os.path.exists` call the missing check would make. (Said that way deliberately:
+  "already passed `_allowed_path_exists`" reads as "passed the check", which inverts the argument —
+  the entry reached the tolerance precisely *because* the predicate returned False.) The gap is
+  therefore confined to `remove` declarations not mirrored in `allowed_paths`.
 - **The removal predicate applies the cross-dimension collision catch for ANY kind**, mirroring
   `net-new`. Gating it on grounded kinds (an earlier draft did) left
   `{kind: resource, identifier: "sessions", classification: remove}` silent while `sessions` is a

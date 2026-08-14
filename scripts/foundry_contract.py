@@ -628,11 +628,28 @@ def system_grounding_errors(contract_data: dict, snapshot: "dict | None") -> lis
             # through `kind` rather than through `classification`, and `resource` is exactly the kind
             # the allowed_paths tolerance keys on. For an ungrounded kind `matched` is always False,
             # so this reduces to the collision check and never fires on an ordinary file path.
-            if matched or cross:
+            if matched:
                 errors.append(
                     f"system_grounding: artifact kind={kind!r} identifier={identifier!r} declared "
                     f"'remove' but is still present in the live snapshot — declare 'exists' until the "
                     f"removal has landed, then amend to 'remove' at re-authorization (AC-RGR-3)"
+                )
+            elif cross:
+                # SEPARATE MESSAGE, and the separation is the point. The artifact was NOT found in its
+                # own dimension — its identifier collided whole-string with a live entity or module of
+                # ANOTHER one. Reporting that as "still present, declare 'exists'" sends the author in
+                # a circle: the ungrounded exists/alter arm is skipped, so the SG floor passes, and
+                # then `_retired_path_entries` withholds the tolerance and the allowed_paths floor
+                # refuses the same entry with a different message — neither naming the cause. That is
+                # a diagnostic asserting a remedy the floor has not established, which is the defect
+                # AC-RGR-7 fixes one message down in this same file (PR #122 security re-review).
+                errors.append(
+                    f"system_grounding: artifact kind={kind!r} identifier={identifier!r} declared "
+                    f"'remove', and while no {kind!r} by that name is in the snapshot, the identifier "
+                    f"collides whole-string with a LIVE entity or module. Declaring it removed would "
+                    f"record a live artifact as gone. Rename the identifier so it does not collide, "
+                    f"or drop this artifact from the block if it names nothing this atom retires "
+                    f"(an empty 'artifacts: []' is valid) (AC-RGR-3)"
                 )
             # ungrounded kinds carry no snapshot dimension, so absence is evaluated against the venue
             # root by `removal_grounding_errors` (AC-RGR-4) — the floor that HAS the venue root.

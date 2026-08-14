@@ -591,7 +591,18 @@ class TestRetirementGrounding:
         for ident in ("sessions", "app.users"):
             errors = contract.system_grounding_errors(_sg(_art("resource", ident, "remove")), snap)
             assert errors, f"resource/{ident} collides with a live artifact and must be REFUSED"
-            assert "still present" in errors[0]
+            # The CROSS-only case gets its OWN message. Reporting it as "still present, declare
+            # 'exists'" sends the author in a circle — that route passes the SG floor (the ungrounded
+            # exists/alter arm is skipped) and is then refused by the allowed_paths floor with a
+            # different message, neither naming the cause. Same defect class AC-RGR-7 fixes.
+            assert "collides whole-string" in errors[0], errors[0]
+            assert "declare 'exists'" not in errors[0], (
+                "the cross-only case must NOT be given the still-present remedy")
+        # …and the genuinely-still-present case keeps the amend-to-remove remedy
+        present = contract.system_grounding_errors(
+            _sg(_art("table", "sessions", "remove")), snap)
+        assert present and "still present in the live snapshot" in present[0]
+        assert "declare 'exists'" in present[0]
         # …and an ordinary retired file path must NOT trip it (no false positive)
         assert contract.system_grounding_errors(
             _sg(_art("resource", "e2e/staging-smoke.spec.ts", "remove")), snap) == []
