@@ -334,6 +334,10 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         # reconcile-path trust hand-off — so the tarball bumps for its own sake as well as for
         # the pin it embeds.
         "1.4.1": "0.4.1",
+        # v1.5.0 DOES carry a CLI change of its own, on top of the pin it embeds: the bundled
+        # `cli/permission-floor.json` gains one `allow` rule (the read-only command-deck module), so a
+        # newly scaffolded or reconciled workspace receives a different floor than 0.4.2 wrote.
+        "1.5.0": "0.5.0",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (
