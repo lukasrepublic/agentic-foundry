@@ -382,6 +382,31 @@ def test_manifest_text_is_data_and_paths_are_confined(corpus):
         monkeypatch.undo()
     assert "escaper" not in seen.get("ids", []), seen
 
+    # THE MIXED CASE is where the pruned Release construction actually carries weight: some atoms
+    # escape, some do not, and one confined atom DEPENDS on an escaping one. The all-escape case above
+    # only exercises safe_atoms == [].
+    _manifest(corpus, "prog-mix", [
+        {"id": "clean", "spec_ref": "specs/good/feat-good.md",
+         "contract_ref": "specs/good/acceptance-contract.yaml", "depends_on": []},
+        {"id": "escaper2", "spec_ref": "../outside/feat-x.md",
+         "contract_ref": "specs/good/acceptance-contract.yaml", "depends_on": []},
+        {"id": "dependent", "spec_ref": "specs/good/feat-good.md",
+         "contract_ref": "specs/good/acceptance-contract.yaml", "depends_on": ["escaper2"]},
+    ])
+    seen.clear()
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(cd.fr, "derive_run_state", _spy)
+    try:
+        mixed = cd.ready_set(cd.resolve_programme("prog-mix", project_dir=corpus), project_dir=corpus)
+    finally:
+        monkeypatch.undo()
+    assert "escaper2" not in seen["ids"], seen          # the escaping atom never reached the probes
+    assert "clean" in seen["ids"], seen                 # the confined ones still did
+    assert "clean" in mixed["ready"], mixed
+    # a dependent of an EXCLUDED atom must stay blocked, never silently runnable
+    assert "dependent" not in mixed["ready"], mixed
+    assert "escapes the corpus" in mixed["excluded"]["escaper2"], mixed
+
     # a NUL byte excludes that atom BY NAME rather than aborting the whole tick (a raised
     # ValueError out of the census is the silent-halt class this atom exists to remove)
     assert cd.confined("specs/a\x00/b.md", corpus) is False

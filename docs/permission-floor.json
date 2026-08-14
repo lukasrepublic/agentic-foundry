@@ -266,7 +266,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_command_deck.py:*)",
       "tier": "allow",
-      "rationale": "read-only programme resolution + ready-set/idle/wake derivation; writes nothing (asserted byte-level over a whole fixture tree by AC-CDW-6) and issues no merge, dispatch, or authorization. NOT write-free means side-effect-free: via foundry_release it runs read-only git plumbing (log/rev-parse) in a repo dir, and it exec_module's the in-tree wave planner. Manifest-named paths are confinement-checked BEFORE any derivation, so the dir git runs in cannot be steered out of the corpus"
+      "rationale": "read-only programme resolution + ready-set/idle/wake derivation; writes nothing (asserted byte-level over a whole fixture tree by AC-CDW-6) and issues no merge, dispatch, or authorization. NOT write-free means side-effect-free: via foundry_release it runs read-only git plumbing (log/rev-parse) in a repo dir, and it exec_module's the in-tree wave planner. Manifest-named spec_ref/contract_ref are confinement-checked BEFORE any derivation. NOT covered: the dir git runs in comes from the contract's own target_repo via _resolve_repo, whose unrecognized-key fallback can leave the corpus - pre-existing shipped behaviour, reached only through an already-confined, authorized contract"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_release.py accept:*)",
