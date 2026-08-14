@@ -35,9 +35,20 @@ Both were reproduced against v1.5.0 before the fix.
   per-artifact opt-out from it — a distinction four downstream consumers of that floor's verdicts
   inherit. Verified: a bogus removal classifies STALE in `foundry_grounding_conformance`, not grounded.
 - **New `removal_grounding_errors(data, repo_root)`** supplies the same fail-closed predicate for
-  UNGROUNDED kinds, where the snapshot carries no dimension. Without it a `kind: resource` retirement
-  — the kind every retired *file* uses, and therefore the kind both ERs are actually about — would be
-  unfalsifiable at every point in the atom's life while appearing checked.
+  UNGROUNDED kinds, where the snapshot carries no dimension — **but it is NOT YET WIRED, and that is
+  said plainly here rather than discovered later.** No caller invokes it: `foundry-authorize.py` is
+  outside this atom's authorized scope, so the call site is a follow-up. The PR-diff security review
+  found this and it is recorded rather than papered over. What that means concretely: an ungrounded
+  `remove` declaration naming no live artifact is currently accepted on trust. What it does **not**
+  mean is a widened scope — every `allowed_paths` entry admitted by the retirement tolerance has
+  already passed `_allowed_path_exists`, which makes the byte-identical `os.path.exists` call the
+  missing check would make, so the gap is confined to `remove` declarations not mirrored in
+  `allowed_paths`.
+- **The removal predicate applies the cross-dimension collision catch for ANY kind**, mirroring
+  `net-new`. Gating it on grounded kinds (an earlier draft did) left
+  `{kind: resource, identifier: "sessions", classification: remove}` silent while `sessions` is a
+  live table — a per-artifact opt-out reached through `kind` rather than `classification`, and
+  `resource` is exactly the kind the path tolerance keys on. Also found by the diff security review.
 - **`allowed_paths` grounding admits a retired path** when the same contract declares it removed
   (ER #121). Bounded three ways: `kind: resource` only (the schema now declares that
   identifier-to-path correspondence rather than leaving it inferred), literal paths only — never a

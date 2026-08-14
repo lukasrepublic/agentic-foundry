@@ -619,7 +619,16 @@ def system_grounding_errors(contract_data: dict, snapshot: "dict | None") -> lis
             # whole point of the member: without it `remove` falls through the chain, produces no
             # error in ANY state, and becomes a per-artifact opt-out from this floor whose relaxation
             # every downstream consumer of these verdicts inherits silently.
-            if kind in _SG_GROUNDED_KINDS and (matched or cross):
+            # NO KIND GATE, deliberately — mirrors the `net-new` arm above, which applies
+            # `matched or cross` kind-independently. `cross` is a whole-string collision against the
+            # snapshot's entity keys and module list, and a collision is evidence of PRESENCE no
+            # matter what kind the author declared. Gating it on _SG_GROUNDED_KINDS (an earlier draft
+            # did) left `{kind: resource, identifier: "sessions", classification: remove}` silent
+            # while `sessions` is a live table — a per-artifact opt-out from this floor reached
+            # through `kind` rather than through `classification`, and `resource` is exactly the kind
+            # the allowed_paths tolerance keys on. For an ungrounded kind `matched` is always False,
+            # so this reduces to the collision check and never fires on an ordinary file path.
+            if matched or cross:
                 errors.append(
                     f"system_grounding: artifact kind={kind!r} identifier={identifier!r} declared "
                     f"'remove' but is still present in the live snapshot — declare 'exists' until the "

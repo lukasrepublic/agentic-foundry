@@ -581,6 +581,22 @@ class TestRetirementGrounding:
         )
         print("RGR-3-NOOP-MUTANT-OK")
 
+    def test_removal_cross_dimension_collision_is_caught_for_any_kind(self):
+        """Security review of PR #122, Risk 2. An earlier draft gated `matched or cross` behind
+        `kind in _SG_GROUNDED_KINDS` for the remove arm, while the net-new arm applies it
+        kind-independently. That left a resource removal whose identifier collides with a LIVE table
+        or module silent — a per-artifact opt-out reached through `kind` instead of `classification`,
+        and `resource` is exactly the kind the allowed_paths tolerance keys on."""
+        snap = {"grounding_configured": True, "entities": {"sessions": {}}, "modules": ["app.users"]}
+        for ident in ("sessions", "app.users"):
+            errors = contract.system_grounding_errors(_sg(_art("resource", ident, "remove")), snap)
+            assert errors, f"resource/{ident} collides with a live artifact and must be REFUSED"
+            assert "still present" in errors[0]
+        # …and an ordinary retired file path must NOT trip it (no false positive)
+        assert contract.system_grounding_errors(
+            _sg(_art("resource", "e2e/staging-smoke.spec.ts", "remove")), snap) == []
+        print("RGR-3-CROSS-KIND-OK")
+
     # ── AC-RGR-4 — ungrounded kinds: the venue root is the oracle, still fail-closed ─────────────
     def test_ungrounded_kind_absence_is_checked_against_the_venue_root_2of2(self, tmp_path):
         root = _venue(tmp_path, "e2e/here.spec.ts")
