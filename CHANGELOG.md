@@ -8,12 +8,15 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
-## Unreleased
+## v1.5.0 — 2026-08-14
 
-**No `create-agentic-workspace` version change in this entry** — but the scaffold it writes does move by
-one line. `cli/permission-floor.json` is the package's bundled map, so a newly scaffolded or reconciled
-workspace now receives one additional `allow` rule (for the read-only module below). Said plainly rather
-than claiming the wizard is untouched, which an earlier draft of this entry did.
+**`create-agentic-workspace` 0.4.2 → 0.5.0.** The wizard's own code is unchanged, but what it *writes*
+moves by one line: `cli/permission-floor.json` is the package's bundled map, so a newly scaffolded or
+reconciled workspace receives one additional `allow` rule (for the read-only module below). The tarball
+therefore bumps for its own sake as well as for the marketplace pin it embeds — an unpinned
+`npx create-agentic-workspace` would otherwise keep scaffolding the previous floor. An earlier draft of
+this entry claimed the wizard was untouched; a later one claimed the package did not move. Both were
+wrong in the same direction, and the release suite is what settled it.
 
 ### The autonomous driver gets a clock, and "is there work?" stops being a judgement
 
