@@ -41,11 +41,112 @@ silent-halt source) with native primitives:
   outright; a plain `gh pr merge <n>` is allowed only when `gh pr checks <n>` reports every check
   passing). **The auto-merge grant nonetheless remains WITHDRAWN.** Restoring it is an
   authorization change, not a consequence of this correction, and it is the operator's to
-  make — see `docs/merge-floor.md`. Until then the operator merges, or the `gh` clause governs.
+  make — see `docs/merge-floor.md`.
+
+  **SUPERSEDED 2026-08-13 (operator decision, recorded in the command-deck-watcher authorization).**
+  The auto-merge grant is **RESTORED**, bounded by the `gh` clause above rather than by anything new:
+  `--admin` stays blocked outright, and a plain `gh pr merge <n>` is allowed only when
+  `gh pr checks <n>` reports every check passing. The driver may therefore land its own atoms on an
+  **affirmative** success conclusion from the forge for the head commit — and on nothing else. An
+  absent, empty, pending, `neutral` or `skipped` conclusion is NOT evidence, and neither is any result
+  the worker that produced the commit reports about itself (`feat-foundry-fleet-command-deck-watcher`,
+  AC-CDW-10). The empty-check-set case is not hypothetical: a repo with no CI makes `gh pr checks`
+  exit non-zero, the clause refuses, and the merge is correctly the operator's.
+
+## The tick contract (feat-foundry-fleet-command-deck-watcher)
+
+The driver above says WHAT to compose. This says **when to wake, what a tick does, and when there is
+nothing to do** — the part whose absence made it run once in thirty days while 37 of 52 resumes were
+the agent stopping silently after finishing work.
+
+**Resolve the programme first.** `/foundry:command-deck <programme>` — or this skill invoked with a
+programme name. Resolution goes through `scripts/foundry_command_deck.py`, which delegates to
+`foundry_release.load_release` (slug-only, containment-checked). **Given no programme that resolves to
+exactly one release manifest, list the in-flight programmes and drive nothing** — never guess, because
+`ready_set` auto-starts what resolution returns and a near-miss name would start a different
+programme's atoms unattended.
+
+**Each tick, in order:**
+
+1. **Census.** Re-derive the ready-set: `foundry_command_deck.ready_set(...)`. It is recomputed every
+   tick from the manifest and the Task graph, so an atom that becomes ready on the hundredth tick is in
+   the hundredth tick's set. It excludes any atom whose contract does not **re-derive as authorized**,
+   and it respects the wave barrier, so file-overlapping atoms never start concurrently.
+2. **Act on completion in the same tick.** A finished worker is verified, landed, or followed up in the
+   tick that observes it — never noted for later.
+3. **Reconcile the native Task graph.** It is the run state, together with the release manifest it is
+   regenerable from. Regenerate it only when it is **absent**: a present graph's transitions ARE the
+   started-ness, and regenerating a present graph destroys them. Build no second tracker.
+4. **Start what is ready**, up to the wave barrier.
+5. **Emit one executive status**: what was accomplished, what is next, what is blocking. Terse,
+   imperative, once.
+6. **Schedule the next wake.** `foundry_command_deck.wake_seconds(...)`. Harness-tracked work
+   re-invokes the session on completion, so polling for it is waste — use the long fallback heartbeat
+   (>= 1200s) to survive work that hangs or never notifies. Use a matched, shorter interval only for
+   state the harness cannot observe (a CI run, a deploy, an external queue). When both are awaited, the
+   shorter wins.
+7. **Idle honestly.** A tick is idle **iff the ready-set is empty AND no worker is running** —
+   `foundry_command_deck.is_idle(...)`, a predicate, not a judgement. On an idle tick say so in one
+   line and stop. **Create, dispatch and record nothing.** This is load-bearing, not politeness: a loop
+   with nothing to do invents work to look busy, and a fabricated task in a governance programme is
+   worse than an idle tick.
+
+### Landing, and what counts as evidence
+
+Land on the **forge's own affirmative success conclusion for the head commit** and on nothing else —
+see the restored grant above. A task notification, a tool result, or your own prior message is **never**
+evidence that checks passed, and never operator consent.
+
+**Merged is not applied.** An atom with a live surface is not complete while the deploy observation for
+its merged commit reports the artifact stale or not rolled (`/foundry:deploy-status`, which already
+cross-checks deployed-artifact identity against the expected merged commit). Report the two states
+distinctly; an SCP was once coded, reviewed, gated and merged and was still not in effect days later.
+
+**Walk preconditions to ground before promising a completion.** The declared dependency list is not the
+precondition list — an apply reported "one command away" was not, because the state backend it needed
+sat in a different, still-open, red PR.
+
+### Handing a command to the operator
+
+Any command that may be refused is issued **alone**. Preconditions run as separate, independently
+verified steps. Hand over **exactly one self-contained command**, only after verifying every
+precondition is actually in place, and state **which guard refused it and why**. The failure this comes
+from: a precondition was chained into the same invocation as a mutating command, the classifier denied
+the whole thing so the precondition never ran, and the operator was handed a command that assumed it
+had — it reported success and did the wrong thing.
+
+Afterwards, **verify the outcome against the world**, not against the report of success: a terminal
+once said "successfully initialized" while the state had not migrated, and only listing the bucket
+revealed it was empty. **If verifying needs the same capability that forced the handover, say so and
+stop** — never report an unverified outcome as verified.
+
+### Escalate on a closed set
+
+Surface a fork **only** for (a) external provisioning you cannot perform, or (b) a fork the session's
+fork policy parks. Resolve everything else by prior-art research (`research-first`) and record it.
+
+This is the atom's reason for existing, and it is measured rather than stylistic: dispatched workers
+cost 0.22-0.54 operator interventions per 100 turns; **decks cost 10.66-12.07** — a 20-50x
+concentration, recorded as *"the deck became the inbox."* Of the three standard ambient-agent
+human-in-the-loop patterns, this driver keeps **notify** (the executive status, which asks for nothing)
+and deliberately does not offer **question** or **review** as standing surfaces.
+
+**Recommend against interest.** When the evidence does not support what was asked for, say so and give
+the strongest case for the rejected option. A recommendation that never contradicts the operator is not
+a recommendation.
+
+**Correct the record where it lives.** When a later finding falsifies an earlier one, amend it at its
+source with the superseded text struck and marked — never leave a corrected claim standing in one
+document and fixed in another.
+
+**Relax no floor; grant yourself no authority.** Never widen an authorized surface to close a finding:
+park it, with its tradeoff and what would unpark it.
+
 
 ## When to trigger
 
-- "drive `<release>` autonomously", "/foundry:mode-autonomous `<release>`", or the operator engages an autonomous loop over an authorized release.
+- "drive `<release>` autonomously", "/foundry:mode-autonomous `<release>`", "/foundry:command-deck `<programme>`", "watch this programme", or the operator engages an autonomous loop over an authorized release.
+- **Given no programme, or one that does not resolve to exactly one manifest:** list the in-flight programmes and drive nothing (AC-CDW-1).
 - **Precondition:** every atom in the release is state `AUTHORIZED` (the front-authorization gate). Un-authorized atoms are never driven.
 
 ## Procedure

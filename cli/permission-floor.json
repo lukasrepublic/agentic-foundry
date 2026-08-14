@@ -264,6 +264,11 @@
       "rationale": "ceremony: --create arrives after other args, not prefix-keyable, so the whole script is ask"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_command_deck.py:*)",
+      "tier": "allow",
+      "rationale": "read-only programme resolution + ready-set/idle/wake derivation over the release manifest and the shipped run-state; writes nothing (asserted byte-level over a whole fixture tree by AC-CDW-6) and issues no merge, dispatch, or authorization"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_release.py accept:*)",
       "tier": "ask",
       "rationale": "ceremony: leading subcommand, appends a PRACTICE acceptance record"
