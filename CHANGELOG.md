@@ -8,6 +8,76 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## Unreleased
+
+**No `create-agentic-workspace` version change in this entry** — but the scaffold it writes does move by
+one line. `cli/permission-floor.json` is the package's bundled map, so a newly scaffolded or reconciled
+workspace now receives one additional `allow` rule (for the read-only module below). Said plainly rather
+than claiming the wizard is untouched, which an earlier draft of this entry did.
+
+### The autonomous driver gets a clock, and "is there work?" stops being a judgement
+
+`/foundry:mode-autonomous` already declared itself a wrap over native `/loop` + the release-wave
+Workflow + the native floor. It was correctly designed and it ran **once in thirty days across seven
+products**, because it said *what* to compose and never said when to wake, what a tick does, or when
+there is nothing to do. The 30-day mining found the binding constraint and it was not correctness:
+**37 of 52 resumes were the agent stopping silently after finishing work**, and ~37% of operator turns
+were the operator being the runtime — scheduler, clock, merge button. Correction ran 1.7-3.8%.
+
+This adds the missing half as a delta to that skill plus one resolution module, and it adds **no gate,
+no ledger and no tracker**. `scripts/foundry_command_deck.py` composes three shipped derivations rather
+than forking them — `load_release` (slug-only, containment-checked resolution), `derive_run_state`
+(per-atom authorization re-derived through `foundry_authz`, plus the dependency gate) and
+`compute_wave_plan` (wave grouping *including* declared-write-path overlap, so two atoms that touch the
+same tree never start concurrently). The genuinely new part is small: the in-flight listing, the wave
+barrier applied to a ready-set, and four predicates.
+
+**The two questions the driver got wrong are now computed, not judged.** `ready_set()` answers "what may
+I start" and `is_idle()` answers "is there anything to do" — idle **iff** the ready-set is empty AND no
+worker is running, driven over all four corners. An agent asked to judge whether a quiet tick is really
+quiet gets it wrong in both directions: halting while work waits, or inventing work to look busy. The
+first draft of this criterion was invocation-scoped and therefore *authorized the silent halt it was
+written to abolish* — an atom becoming ready on a later tick had no starting obligation, and the idle
+rule then mandated stop-forever-with-work-waiting. Caught at review; the criterion is now
+tick-independent by construction, with no cursor and no seen-set anywhere in the module.
+
+**The auto-merge grant is RESTORED** (operator decision 2026-08-13), superseding the withdrawal
+language in the skill, and bounded by the shipped `foundry-git-discipline.sh` clause rather than by
+anything new: `--admin` stays blocked outright and a plain merge needs every check passing. Landing
+evidence must be an **affirmative** success conclusion from the forge for the head commit — an absent,
+empty, pending, `neutral` or `skipped` conclusion is not evidence, and neither is anything the worker
+reports about its own work. The first draft constrained only where the evidence came *from*, which made
+it satisfiable by `neutral` — weaker than the hook beside it.
+
+**Escalation is a closed two-member set**, which is the atom's whole reason for existing: dispatched
+workers cost 0.22-0.54 operator interventions per 100 turns and **decks cost 10.66-12.07**, recorded as
+*"the deck became the inbox."* Of the three standard ambient-agent HITL patterns the driver keeps
+**notify** and does not offer **question** or **review** as standing surfaces.
+
+Also carried, each from an observed failure in one 12-hour run: merged is not applied (an atom with a
+live surface is not complete while `deploy-status` reports it stale or not rolled); hand the operator
+exactly one self-contained command with its preconditions verified first, naming which guard refused it;
+and verify the outcome against the world rather than against a report of success.
+
+**Six atoms were planned and five were dropped before any code** — two retracted at review as custom
+gate engines, which no mainstream delivery tool ships and which this repo deliberately does not, two
+because the capability already ships (the native Task graph; `deploy-status`' STALE/NOT-ROLLED cross-check), and one
+with the operator's no-new-gate-machinery decision. The records are in `.foundry/decisions/`.
+
+**Found while building, and worth a separate look:** **10 of the workspace's 15 release manifests are
+refused by `foundry_release.load_release`** — every ADL-era one carries top-level fields the validator
+rejects. The loader is real and used (5 do load), so this is corpus drift rather than a dead schema.
+This release's own manifest was fixed; the other nine were not touched.
+
+**Security review:** the diff adds one read-only derivation module, its tests, prose in a skill, **and a
+permission-floor `allow` entry with its digest pin, its bundled CLI mirror, and the differential corpus**
+— named here because the map edit is the part of this change most worth a reviewer's eye.
+`security-path-base` flags it on `^skills/`, by design — a SKILL.md is prompt-level executable surface.
+The module writes nothing (asserted by a byte-level before/after over the whole fixture tree), the
+merge-grant restoration is bounded by the existing hook and adds no new merge path, and manifest
+free-text is neutralized wherever it is rendered or forwarded because the native Task tools bypass
+PreToolUse.
+
 ## v1.4.2 — 2026-08-12
 
 ### A `create-agentic-workspace` release; the plugin tree is unchanged
