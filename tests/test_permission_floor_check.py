@@ -182,7 +182,10 @@ def _import_map_suite():
 # re-tiered. `docs/permission-floor.json` is contract-DENIED to the atom's implementer (a model may
 # not edit its own confinement), so both the map rows and this re-pin are coordinator work, the same
 # shape as PR #59's `c3406e5`.
-MERGE_BASE_ENTRIES_DIGEST = "32be6c67caf2c85288c68bdcd303bc25c935d941a5ae602a91a951c1ddad5dbd"
+# Updated in the SAME reviewed diff as the map edit it pins (the R8 rule this guard states).
+# The edit: one `allow` entry for `scripts/foundry_command_deck.py`, a read-only derivation module
+# that writes nothing and issues no merge, dispatch, or authorization.
+MERGE_BASE_ENTRIES_DIGEST = "49c7b0a41a366bda435c0f049afe098a22dfedd15ce7e1315647ba546e5809b6"
 
 
 # ================================================================================================ #
