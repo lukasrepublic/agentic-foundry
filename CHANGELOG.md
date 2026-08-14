@@ -8,6 +8,62 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## Unreleased
+
+**No `create-agentic-workspace` change in this entry, and the scaffold it writes is untouched.**
+Checked rather than assumed: the package bundles `cli/permission-floor.json` and its templates, not
+`schema/acceptance-contract.schema.json`, so the new classification member does not reach a newly
+scaffolded or reconciled workspace until that workspace's plugin is updated. Adopters get it from the
+plugin, which is version-keyed, not from the wizard.
+
+### Retirement is expressible — `classification: remove` (ER #120, ER #121)
+
+**An atom that retires an artifact used to become unamendable the moment it succeeded.** Two
+independent freeze floors refused it, and closing either alone left the atom stuck behind the other.
+Both were reproduced against v1.5.0 before the fix.
+
+- **`system_grounding.classification` gains a fourth member, `remove`** — declared in both the module
+  constant and the schema enum, which `test_classification_vocabulary_set_equality_read_as_json`
+  holds set-equal. Reading the schema as JSON rather than through `jsonschema.validate` is
+  deliberate: the JSON-Schema floor returns early when that library is unimportable, so a one-sided
+  edit is invisible in exactly the environment where it goes undetected — and it fails permissive.
+- **`remove` is FAIL-CLOSED ON ABSENCE, not a never-failing value.** Declared-removed-but-still-present
+  is refused, naming the honest alternative. The two-state problem is solved by the existing
+  lifecycle rather than a phase field: declare `exists` at first authorization, amend to `remove` at
+  re-authorization once the removal has landed. The amendment is the transition, hash-covered and
+  operator-reviewed. This is what keeps `remove` a member of the consistency floor instead of a
+  per-artifact opt-out from it — a distinction four downstream consumers of that floor's verdicts
+  inherit. Verified: a bogus removal classifies STALE in `foundry_grounding_conformance`, not grounded.
+- **New `removal_grounding_errors(data, repo_root)`** supplies the same fail-closed predicate for
+  UNGROUNDED kinds, where the snapshot carries no dimension. Without it a `kind: resource` retirement
+  — the kind every retired *file* uses, and therefore the kind both ERs are actually about — would be
+  unfalsifiable at every point in the atom's life while appearing checked.
+- **`allowed_paths` grounding admits a retired path** when the same contract declares it removed
+  (ER #121). Bounded three ways: `kind: resource` only (the schema now declares that
+  identifier-to-path correspondence rather than leaving it inferred), literal paths only — never a
+  glob, which would admit an unbounded subtree on one line — and withheld when another artifact
+  declares the same identifier alive.
+- **The zero-match diagnostic no longer asserts a cause it has not established.** It said "a stale
+  path prefix or typo", which this floor cannot distinguish from a deliberate removal, and offered
+  the wrong remedy for the latter. It now carries a named `observed:` part and a named `routes:` part
+  enumerating all three ways out, asserted structurally so a reword cannot reintroduce the claim.
+
+**Two stale comments corrected while in the file.** `allowed_paths` was described as "the one contract
+field the merge gate actually enforces set-containment against (CHECK-4)"; there is no bespoke merge
+gate — it was removed in v0.24.0 and the sentence outlived it. `allowed_paths` is today a
+*permission-granting* input three authorize-time floors consult to relax themselves, which is the
+opposite polarity and is why the retirement tolerance is bounded to literal paths. The
+`allowed_paths_grounding_errors` docstring also now records that AC-APG-2's "any other entry fails
+closed" is narrowed by the third admission path.
+
+**Correction to ER #120's own account, recorded because it makes the defect worse rather than better:**
+the ER states every classification is refused after a landed removal. Measured, `net-new` was
+*accepted* — so the framework left exactly one open path, and that path recorded a deleted artifact as
+one that does not yet exist, then froze the falsehood into the contract hash.
+
+Spec: `specs/features/foundry/gate-integrity/retirement-grounding/` (workspace), authorized
+`auth_seq 1`, `spec_sha256=6102dc33b4534b64…`.
+
 ## v1.5.0 — 2026-08-14
 
 **`create-agentic-workspace` 0.4.2 → 0.5.0.** The wizard's own code is unchanged, but what it *writes*

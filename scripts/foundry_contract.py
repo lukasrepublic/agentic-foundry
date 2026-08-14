@@ -467,7 +467,16 @@ def validate_contract_bytes(raw: bytes, spec_ac_ids: list[str] | None = None) ->
 
 _SG_KINDS = {"table", "column", "fk", "module", "queue", "event", "resource"}
 _SG_GROUNDED_KINDS = {"table", "column", "module"}
-_SG_CLASSIFICATIONS = {"exists", "alter", "net-new"}
+_SG_CLASSIFICATIONS = {"exists", "alter", "net-new", "remove"}
+# `remove` (ER #120/#121) is the RETIREMENT member: the artifact is GONE. It is fail-closed on
+# ABSENCE (AC-RGR-3) — declared-removed-but-still-present is REFUSED — which is what keeps it a
+# member of this floor rather than a per-artifact opt-out from it. The two-state problem (the atom
+# authorizes before implementation and re-authorizes after) is solved by the corpus's own lifecycle,
+# not by a phase field: declare `exists` at first authorization, amend to `remove` at re-authorization.
+# The amendment IS the transition, it is hash-covered, and the operator reviews it at the gate.
+# MUST stay set-equal to the schema enum (AC-RGR-1) — the JSON-Schema floor returns early when
+# `jsonschema` is unimportable, so a one-sided edit fails in the PERMISSIVE direction.
+_SG_REMOVE = "remove"
 
 
 def _system_grounding_structural_errors(data: dict) -> list[str]:
@@ -605,8 +614,80 @@ def system_grounding_errors(contract_data: dict, snapshot: "dict | None") -> lis
                     f"{classification!r} but is absent from the live snapshot (AC-SGC-4)"
                 )
             # ungrounded kinds (fk/queue/event/resource): predicate not evaluated (AC-SGC-8).
+        elif classification == _SG_REMOVE:
+            # AC-RGR-3 — FAIL-CLOSED ON ABSENCE, the mirror of AC-SGC-4 above. This branch is the
+            # whole point of the member: without it `remove` falls through the chain, produces no
+            # error in ANY state, and becomes a per-artifact opt-out from this floor whose relaxation
+            # every downstream consumer of these verdicts inherits silently.
+            if kind in _SG_GROUNDED_KINDS and (matched or cross):
+                errors.append(
+                    f"system_grounding: artifact kind={kind!r} identifier={identifier!r} declared "
+                    f"'remove' but is still present in the live snapshot — declare 'exists' until the "
+                    f"removal has landed, then amend to 'remove' at re-authorization (AC-RGR-3)"
+                )
+            # ungrounded kinds carry no snapshot dimension, so absence is evaluated against the venue
+            # root by `removal_grounding_errors` (AC-RGR-4) — the floor that HAS the venue root.
 
     return errors
+
+
+def removal_grounding_errors(data: dict, repo_root: "str | None") -> list[str]:
+    """AC-RGR-4: the venue-root half of the retirement predicate, for UNGROUNDED kinds.
+
+    `system_grounding_errors` holds the snapshot and can fail-close a grounded retirement on absence.
+    It cannot do the same for `kind: resource` — the kind every retired FILE uses, and therefore the
+    kind both motivating ERs are about — because the snapshot carries no dimension for it. Without
+    this function a resource retirement is unfalsifiable at every point in the atom's life while
+    appearing checked, and `allowed_paths_grounding_errors` then grants a scope tolerance on that
+    unfalsifiable declaration.
+
+    Pure and read-only: `os.path.exists` against the resolved venue root, executes nothing. Degrades
+    to `[]` when `repo_root` is None, mirroring every sibling floor (the CALLER warns).
+    """
+    if repo_root is None:
+        return []
+    errors: list[str] = []
+    for kind, identifier in _sg_removed_pairs(data):
+        if kind in _SG_GROUNDED_KINDS:
+            continue  # the snapshot floor owns these
+        if not _is_venue_relative_literal(identifier):
+            continue  # opaque identifier (fk/queue/event) — no filesystem oracle exists for it
+        if os.path.exists(os.path.join(repo_root, identifier)):
+            errors.append(
+                f"system_grounding: artifact kind={kind!r} identifier={identifier!r} declared "
+                f"'remove' but is still present under the venue root — declare 'exists' until the "
+                f"removal has landed, then amend to 'remove' at re-authorization (AC-RGR-4)"
+            )
+    return errors
+
+
+def _sg_removed_pairs(data: dict) -> set:
+    """The set of `(kind, identifier)` PAIRS this contract declares removed. Keyed on the pair, never
+    on the identifier alone (AC-RGR-6): the duplicate-declaration floor keys on the pair, so an
+    identifier-only key would let one artifact be declared alive under one kind and removed under
+    another and still collect the retirement tolerance."""
+    pairs: set = set()
+    sg = (data or {}).get("system_grounding")
+    if not isinstance(sg, dict):
+        return pairs
+    for art in sg.get("artifacts") or []:
+        if not isinstance(art, dict) or art.get("classification") != _SG_REMOVE:
+            continue
+        kind, identifier = art.get("kind"), art.get("identifier")
+        if isinstance(identifier, str) and identifier.strip():
+            pairs.add((kind, identifier))
+    return pairs
+
+
+def _is_venue_relative_literal(entry: str) -> bool:
+    """A repo-relative LITERAL path — no glob metacharacter, not absolute, no `..` traversal. The
+    same absolute/traversal predicate `_allowed_path_exists` and `_checkpoint_path_surfaces` use, so
+    a removal declaration can never reach outside the venue any more than they can."""
+    if not isinstance(entry, str) or not entry.strip():
+        return False
+    if _GLOB_META_RE.search(entry):
+        return False
+    return not (entry.startswith("/") or ".." in entry.split("/"))
 
 
 def resolve_grounding_snapshot(project_dir: "str | None"):
@@ -750,10 +831,16 @@ def doctor_row_baseline_errors(data: dict, repo_root: str | None) -> list[str]:
 # ── ER #179 — authorize-time allowed_paths reality-grounding (feat-foundry-authorize-allowed-paths-
 # ground) ───────────────────────────────────────────────────────────────────────────────────────
 #
-# A frozen `scope.allowed_paths` entry is the one contract field the merge gate actually enforces
-# set-containment against (CHECK-4, diff-scope containment). A stale prefix (`bin/…` where the real
-# path is `scripts/…`) or a typo in that field was previously undetectable at authorize time and
-# surfaced only at merge, after the build was complete. This floor grounds every `allowed_paths`
+# CORRECTED 2026-08-14 (ER #120/#121 review): this comment used to say `allowed_paths` is "the one
+# contract field the merge gate actually enforces set-containment against (CHECK-4)". THERE IS NO
+# BESPOKE MERGE GATE — it was removed in v0.24.0 (`docs/merge-floor.md`, CHANGELOG "No bespoke merge
+# gate"), and that sentence outlived it. `allowed_paths` is today a PERMISSION-GRANTING input that
+# three shipped authorize-time floors consult to relax themselves: surface⊆scope (ER #77), locator
+# grounding (AC-WLE-4), and wave-plan `--check`. That is the opposite polarity from a restricting
+# write-jail, and it is why AC-RGR-6's tolerance is bounded to literal paths.
+#
+# A stale prefix (`bin/…` where the real path is `scripts/…`) or a typo in that field was previously
+# undetectable at authorize time and surfaced only late. This floor grounds every `allowed_paths`
 # entry against the resolved venue root AT FREEZE TIME, mirroring `surface_scope_errors` (ER #77)
 # and `system_grounding_errors` (Atom C / #121) exactly: pure, read-only, executes nothing, and
 # degrades to `[]` (the CALLER prints a non-fatal warning) when `repo_root` is None — never wedging
@@ -829,26 +916,80 @@ def allowed_paths_grounding_errors(data: dict, repo_root: "str | None") -> list[
     An entry is admitted when it EXISTS (AC-APG-1: a literal path/dir, or a glob matching >=1 path
     under repo_root) OR is named by one of the atom's own path-shaped checkpoint surfaces (AC-APG-3,
     the infer-from-checkpoint tolerance — NOT a soundness guarantee; see the spec Residuals +
-    ER #184 for the uncaught both-places-consistent-typo class). Any other entry fails CLOSED
-    (AC-APG-2), naming the offending entry."""
+    ER #184 for the uncaught both-places-consistent-typo class) OR is declared retired by this
+    contract's own `system_grounding` (AC-RGR-6, ER #121 — a literal `kind: resource` identifier;
+    see `_retired_path_entries` for the three bounds). Any other entry fails CLOSED (AC-APG-2),
+    naming the offending entry.
+
+    AC-APG-2's fail-closed statement is NARROWED by the third admission path above. Said here because
+    the ER #179 spec reads "any other entry fails closed" and a reader who does not know about the
+    retirement route will believe it still holds unqualified."""
     if repo_root is None:
         return []
     errors: list[str] = []
     scope = (data or {}).get("scope") or {}
     allowed = [g for g in (scope.get("allowed_paths") or []) if isinstance(g, str)]
     checkpoint_paths = _checkpoint_path_surfaces(data)
+    retired = _retired_path_entries(data)
     for entry in allowed:
         if _allowed_path_exists(entry, repo_root):
             continue  # AC-APG-1
         if entry in checkpoint_paths:
             continue  # AC-APG-3: checkpoint-named declared-new tolerance
+        if entry in retired:
+            continue  # AC-RGR-6: this contract declares this exact path retired
         errors.append(
-            f"scope.allowed_paths entry {entry!r}: matches ZERO paths under the venue root and is "
-            f"not named by any of the atom's own path-shaped checkpoint surfaces (file:/test:) — a "
-            f"stale path prefix or typo (ER #179); fix the path, or seed a checkpoint surface naming "
-            f"it (declared-new) and re-check"
+            # AC-RGR-7 — STRUCTURED, and it no longer asserts a cause it has not established. The
+            # shipped text said "a stale path prefix or typo", which this floor cannot distinguish
+            # from a deliberate removal; it named the one case it was built for and sent the operator
+            # the wrong way for the other. Observation and routes are separate, named parts so that a
+            # reword cannot quietly reintroduce the assertion.
+            f"scope.allowed_paths entry {entry!r}: "
+            f"observed: matches ZERO paths under the venue root, is not named by any of the atom's "
+            f"own path-shaped checkpoint surfaces (file:/test:), and is not declared retired by this "
+            f"contract's system_grounding. "
+            f"routes: (1) fix the path if it is a stale prefix or a typo; "
+            f"(2) seed a checkpoint surface naming it, if the build creates it (declared-new); "
+            f"(3) declare it removed in system_grounding as "
+            f"{{kind: resource, identifier: {entry!r}, classification: remove}}, if this atom "
+            f"retired it (AC-RGR-6). "
+            f"(ER #179)"
         )
     return errors
+
+
+def _retired_path_entries(data: dict) -> set:
+    """AC-RGR-6: the set of `allowed_paths`-comparable LITERAL paths this contract declares retired.
+
+    Three bounds, each load-bearing:
+
+    * **`kind: resource` only.** The schema declares the identifier-to-path correspondence for that
+      kind alone; every other kind's identifier is a snapshot key or an opaque string, and reading
+      one as a path would be inventing a semantics.
+    * **Literals only, never globs.** A glob would admit an unbounded subtree on one unverifiable
+      line, into a field three shipped authorize-time floors (surface-scope, locator grounding,
+      wave-plan `--check`) consult to relax THEMSELVES. The floor being relaxed here exists to catch
+      single-path typos; the tolerance stays at that scale.
+    * **No contradicted identifier.** If any other artifact declares the same identifier with a
+      non-`remove` classification, the contract says the artifact is both alive and gone, and the
+      tolerance is withheld — the duplicate floor keys on `(kind, identifier)`, so those two
+      declarations are individually legal and only their combination is incoherent.
+    """
+    alive: set = set()
+    sg = (data or {}).get("system_grounding")
+    if isinstance(sg, dict):
+        for art in sg.get("artifacts") or []:
+            if isinstance(art, dict) and art.get("classification") not in (None, _SG_REMOVE):
+                ident = art.get("identifier")
+                if isinstance(ident, str):
+                    alive.add(ident)
+    return {
+        identifier
+        for kind, identifier in _sg_removed_pairs(data)
+        if kind == "resource"
+        and _is_venue_relative_literal(identifier)
+        and identifier not in alive
+    }
 
 
 # ── feat-foundry-walk-locator-executability (AC-WLE-4/-5) — authorize-time LOCATOR sanity ──────
