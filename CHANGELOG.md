@@ -10,8 +10,10 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 
 ## Unreleased
 
-**No `create-agentic-workspace` change in this entry** — the wizard and the scaffold it
-writes are untouched. This is plugin-side only: one skill delta, one read-only module, its tests.
+**No `create-agentic-workspace` version change in this entry** — but the scaffold it writes does move by
+one line. `cli/permission-floor.json` is the package's bundled map, so a newly scaffolded or reconciled
+workspace now receives one additional `allow` rule (for the read-only module below). Said plainly rather
+than claiming the wizard is untouched, which an earlier draft of this entry did.
 
 ### The autonomous driver gets a clock, and "is there work?" stops being a judgement
 
@@ -67,7 +69,9 @@ refused by `foundry_release.load_release`** — every ADL-era one carries top-le
 rejects. The loader is real and used (5 do load), so this is corpus drift rather than a dead schema.
 This release's own manifest was fixed; the other nine were not touched.
 
-**Security review:** the diff adds one read-only derivation module, its tests, and prose in a skill.
+**Security review:** the diff adds one read-only derivation module, its tests, prose in a skill, **and a
+permission-floor `allow` entry with its digest pin, its bundled CLI mirror, and the differential corpus**
+— named here because the map edit is the part of this change most worth a reviewer's eye.
 `security-path-base` flags it on `^skills/`, by design — a SKILL.md is prompt-level executable surface.
 The module writes nothing (asserted by a byte-level before/after over the whole fixture tree), the
 merge-grant restoration is bounded by the existing hook and adds no new merge path, and manifest

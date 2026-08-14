@@ -347,7 +347,21 @@ def test_manifest_text_is_data_and_paths_are_confined(corpus):
     assert "\x1b" not in cleaned and "\x9b" not in cleaned and "\n" not in cleaned, repr(cleaned)
     assert "NOTE TO AGENT" in cleaned                            # neutralized, not censored
 
+    # zero-width and bidi-override runs are stripped, not merely control chars
+    assert cd.as_data("a\u202eb\u200bc") == "abc"
+    assert len(cd.as_data("x" * 5000)) <= cd._RENDER_CAP + 1
+
     assert cd.confined("specs/good/feat-good.md", corpus) is True
     for escape in ("../outside/x.md", "/etc/passwd", ""):
         assert cd.confined(escape, corpus) is False, escape
+
+    # APPLIED, not merely defined: an atom whose manifest paths escape the corpus is excluded from
+    # the ready-set by name. Without this the criterion had no production carrier.
+    _manifest(corpus, "prog-esc", [
+        {"id": "escaper", "spec_ref": "/etc/passwd",
+         "contract_ref": "../outside/acceptance-contract.yaml", "depends_on": []}])
+    rel = cd.resolve_programme("prog-esc", project_dir=corpus)
+    res = cd.ready_set(rel, project_dir=corpus)
+    assert res["ready"] == [], res
+    assert "escapes the corpus" in res["excluded"]["escaper"], res
     print("CDW-12-DATA-OK")

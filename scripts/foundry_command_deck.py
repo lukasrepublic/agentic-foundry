@@ -61,9 +61,14 @@ _WAVE_SETTLED = frozenset({"merged", "superseded"})
 # invented five state names, none of which the loader accepts, and every programme read as not-in-flight.
 _INFLIGHT_RELEASE_STATES = frozenset(fr.STATES) - {"backlog", "completed"}
 
-# AC-CDW-12: manifest text is DATA. Control/ANSI/C1 neutralization, matching the shipped fleet
-# surfaces byte-for-byte so the scrub coverage cannot drift across the two.
+# AC-CDW-12: manifest text is DATA. Three controls, matching `foundry_permission_floor.py`'s
+# rendered-string handling — the control/ANSI/C1 class, the zero-width/bidi class, and a length cap.
+# The first draft carried only the control class while claiming parity with that surface; the regex
+# was byte-identical and the COVERAGE was not, which is how a bidi override or a zero-width run would
+# have rendered deceptively in the executive status the operator reads.
 _CTRL_RE = re.compile(r"(\x1b\[[0-9;]*[A-Za-z]|\x1b[@-Z\\-_]|[\x00-\x1f\x7f-\x9f])")
+_ZW_BIDI_RE = re.compile("[\u061c\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]")
+_RENDER_CAP = 200
 
 
 class CommandDeckError(Exception):
@@ -79,7 +84,8 @@ def as_data(value):
     stdout is, and it is never instructions."""
     if value is None:
         return ""
-    return _CTRL_RE.sub(" ", str(value))
+    out = _ZW_BIDI_RE.sub("", _CTRL_RE.sub(" ", str(value)))
+    return out if len(out) <= _RENDER_CAP else out[:_RENDER_CAP] + "…"
 
 
 def confined(rel_path, root):
@@ -108,7 +114,7 @@ def list_inflight(project_dir=None):
             continue
         try:
             rel = fr.load_release(rid, project_dir=project_dir)
-        except fr.ReleaseError as e:
+        except (fr.ReleaseError, OSError) as e:
             out.append({"id": as_data(rid), "description": "", "state": "unreadable",
                         "detail": as_data(str(e))})
             continue
@@ -192,8 +198,17 @@ def ready_set(release, *, project_dir=None, branch="main", run_rows=None):
         if not settled:
             open_wave = w if open_wave is None else min(open_wave, w)
 
+    corpus_root = fr._project_dir(project_dir)
     ready, excluded = [], {}
     for atom in release.atoms:
+        # AC-CDW-12, path arm — applied HERE and not merely defined. A manifest's `spec_ref` /
+        # `contract_ref` are validated upstream only as "non-empty string", and they flow into
+        # `open()` and (via target_repo) into `git -C <dir>`. An absolute path or a `..` escapes the
+        # corpus, because os.path.join discards the root when the second argument is absolute.
+        escaping = [f for f in (atom.spec_ref, atom.contract_ref) if not confined(f, corpus_root)]
+        if escaping:
+            excluded[atom.id] = "manifest path escapes the corpus: " + ", ".join(as_data(f) for f in escaping)
+            continue
         row = by_id.get(atom.id)
         if row is None:                                   # fail-closed: no derivation, no start
             excluded[atom.id] = "no run-state row derived"

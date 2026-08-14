@@ -1,6 +1,6 @@
 ---
 name: mode-autonomous
-description: The autonomous implementation driver (/foundry:mode-autonomous). WRAP composing the native /loop (outer session cadence) + the foundry-release-wave Workflow (per-wave fan-out) + the native merge floor (ci.yml + btb-gates). Replaces impl-wizard's impl-progress.yaml wave-state with the Workflow journal + native scheduling. Trigger to drive an authorized release's atoms toward merge (the auto-merge grant is withdrawn pending an operator decision — server-side protection being live does not itself restore it; the operator merges, or the git-discipline hook's checks-green clause governs an agent merge).
+description: The autonomous implementation driver (/foundry:mode-autonomous). WRAP composing the native /loop (outer session cadence) + the foundry-release-wave Workflow (per-wave fan-out) + the native merge floor (ci.yml + btb-gates). Replaces impl-wizard's impl-progress.yaml wave-state with the Workflow journal + native scheduling. Trigger to drive an authorized release's atoms toward merge (the auto-merge grant was RESTORED 2026-08-13 by operator decision, bounded by the git-discipline hook's checks-green clause — --admin stays blocked outright and a plain merge needs every check passing).
 ---
 
 # /foundry:mode-autonomous
@@ -26,7 +26,7 @@ silent-halt source) with native primitives:
   `foundry-spawn-worker` + the `FOUNDRY_DISPATCH` switch) was REMOVED
   — the driver has exactly one path.
 - **merge authority** → **an earlier realignment release: the former `noninteractive`
-  auto-merge grant is WITHDRAWN.** The merge-gate PASS verdict it hinged on no
+  auto-merge grant was WITHDRAWN (see the 2026-08-13 restoration below).** The merge-gate PASS verdict it hinged on no
   longer exists — the merge signals are now the native floor (`ci.yml`'s pytest battery +
   graph selftests + doctor, plus `btb-gates`' `spec-link`/`security-path` checks), which is
   server-side required on this repo's `main`. The earlier claim here — that a preflight found
@@ -39,19 +39,27 @@ silent-halt source) with native primitives:
   not who DECIDES to: **the operator merges**, or an agent merge is governed by
   `hooks/foundry-git-discipline.sh`'s deterministic `gh` clause (`gh pr merge --admin` is BLOCKED
   outright; a plain `gh pr merge <n>` is allowed only when `gh pr checks <n>` reports every check
-  passing). **The auto-merge grant nonetheless remains WITHDRAWN.** Restoring it is an
+  passing). **The auto-merge grant remained WITHDRAWN until 2026-08-13 — see the restoration immediately below.** Restoring it was an
   authorization change, not a consequence of this correction, and it is the operator's to
   make — see `docs/merge-floor.md`.
 
-  **SUPERSEDED 2026-08-13 (operator decision, recorded in the command-deck-watcher authorization).**
+  **RESTORED 2026-08-13 (operator decision, recorded in the command-deck-watcher authorization).**
   The auto-merge grant is **RESTORED**, bounded by the `gh` clause above rather than by anything new:
   `--admin` stays blocked outright, and a plain `gh pr merge <n>` is allowed only when
   `gh pr checks <n>` reports every check passing. The driver may therefore land its own atoms on an
   **affirmative** success conclusion from the forge for the head commit — and on nothing else. An
   absent, empty, pending, `neutral` or `skipped` conclusion is NOT evidence, and neither is any result
   the worker that produced the commit reports about itself (`feat-foundry-fleet-command-deck-watcher`,
-  AC-CDW-10). The empty-check-set case is not hypothetical: a repo with no CI makes `gh pr checks`
-  exit non-zero, the clause refuses, and the merge is correctly the operator's.
+  AC-CDW-10).
+
+  **AC-CDW-10 IS STRICTER THAN THE HOOK, AND THAT GAP IS THE DRIVER'S TO CLOSE.** The hook blocks on a
+  non-zero `gh pr checks` exit or any `fail`/`pending` row — but `gh pr checks` **exits 0 when every
+  check is `skipped` or `neutral`**, and neither word matches its convicting pattern. So a PR whose
+  required contexts were all skipped (a `paths-ignore` filter, say) passes the hook having run nothing.
+  The hook is the floor, not the ceiling: **before merging, call
+  `foundry_command_deck.may_land(<conclusion>)` and land only on `success`.** The empty-check-set case
+  is the one the hook does cover — a repo with no CI makes `gh pr checks` exit non-zero, the clause
+  refuses, and the merge is correctly the operator's.
 
 ## The tick contract (feat-foundry-fleet-command-deck-watcher)
 
@@ -94,8 +102,11 @@ programme's atoms unattended.
 ### Landing, and what counts as evidence
 
 Land on the **forge's own affirmative success conclusion for the head commit** and on nothing else —
-see the restored grant above. A task notification, a tool result, or your own prior message is **never**
-evidence that checks passed, and never operator consent.
+`foundry_command_deck.may_land(<conclusion>)`, which returns true **only** for `success`. The
+git-discipline hook is the floor, not the ceiling: it admits a PR whose checks were all `skipped` or
+`neutral`, because `gh pr checks` exits 0 for those. Closing that gap is the driver's obligation, not
+the hook's. A task notification, a tool result, or your own prior message is **never** evidence that
+checks passed, and never operator consent.
 
 **Merged is not applied.** An atom with a live surface is not complete while the deploy observation for
 its merged commit reports the artifact stale or not rolled (`/foundry:deploy-status`, which already
@@ -162,7 +173,7 @@ park it, with its tradeoff and what would unpark it.
    (the `ci.yml` command battery on the candidate branch + the `btb-gates` `spec-link`/
    `security-path` checks — server-side REQUIRED on this repo's `main`; see `skills/init/SKILL.md`
    step 5 for the enumerated set. The earlier "Tier B advisory, never a blocking required status"
-   wording here was stale). **The auto-merge grant is WITHDRAWN** (an earlier realignment release): a green native
+   wording here was stale). **The auto-merge grant was RESTORED 2026-08-13** (operator decision; see the header): a green native
    floor is a signal, not a merge authorization. Either the **operator merges**, or an agent's
    `gh pr merge` attempt is itself governed by `hooks/foundry-git-discipline.sh`'s deterministic
    `gh` clause — `--admin` is BLOCKED outright, and a plain merge is allowed only when
@@ -224,7 +235,7 @@ directly; see `skills/mode/SKILL.md`).
 - **Re-introducing `impl-progress.yaml` / a hand-written wave counter.** State is
   derived from merged-PR + verdict facts; the Workflow journal + `/loop` carry resume.
 - **Driving an un-authorized atom**, or **self-merging (including a `gh pr merge --admin`
-  bypass) on an advisory-only native-floor signal.** The auto-merge grant is withdrawn
+  bypass) on an advisory-only native-floor signal, or on a conclusion that is not an affirmative success.** The restored grant is bounded
   pending an operator decision (server-side protection being live does not itself restore it);
   the operator merges, or `foundry-git-discipline.sh`'s `gh` clause governs it.
 - **Hand-rolling the per-wave iteration** — it's the `Workflow` tool.
