@@ -8,7 +8,7 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
-## Unreleased
+## v1.5.0 — 2026-08-14
 
 **No `create-agentic-workspace` version change in this entry** — but the scaffold it writes does move by
 one line. `cli/permission-floor.json` is the package's bundled map, so a newly scaffolded or reconciled
