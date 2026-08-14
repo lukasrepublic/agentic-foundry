@@ -364,4 +364,25 @@ def test_manifest_text_is_data_and_paths_are_confined(corpus):
     res = cd.ready_set(rel, project_dir=corpus)
     assert res["ready"] == [], res
     assert "escapes the corpus" in res["excluded"]["escaper"], res
+
+    # CONFINEMENT PRECEDES THE DERIVATION: the shipped probes must never be handed an escaping path.
+    # Asserted by spying on the derivation and checking no escaping atom reached it.
+    seen = {}
+    real_derive = fr.derive_run_state
+
+    def _spy(release, **kw):
+        seen["ids"] = [a.id for a in release.atoms]
+        return real_derive(release, **kw)
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(cd.fr, "derive_run_state", _spy)
+    try:
+        cd.ready_set(cd.resolve_programme("prog-esc", project_dir=corpus), project_dir=corpus)
+    finally:
+        monkeypatch.undo()
+    assert "escaper" not in seen.get("ids", []), seen
+
+    # a NUL byte excludes that atom BY NAME rather than aborting the whole tick (a raised
+    # ValueError out of the census is the silent-halt class this atom exists to remove)
+    assert cd.confined("specs/a\x00/b.md", corpus) is False
     print("CDW-12-DATA-OK")

@@ -94,9 +94,13 @@ def confined(rel_path, root):
     `foundry_release.load_release` already applies to a release id."""
     if not isinstance(rel_path, str) or not rel_path or os.path.isabs(rel_path):
         return False
-    real_root = os.path.realpath(root)
-    real = os.path.realpath(os.path.join(real_root, rel_path))
-    return os.path.commonpath([real_root, real]) == real_root
+    try:
+        real_root = os.path.realpath(root)
+        real = os.path.realpath(os.path.join(real_root, rel_path))
+        return os.path.commonpath([real_root, real]) == real_root
+    except (OSError, ValueError):
+        # e.g. an embedded NUL byte, which makes os.lstat raise. Unresolvable is not confined.
+        return False
 
 
 # ───────────────────────────────────────────────────────────── AC-CDW-1/-2: programme resolution
@@ -185,8 +189,33 @@ def ready_set(release, *, project_dir=None, branch="main", run_rows=None):
       additionally separates atoms whose DECLARED WRITE PATHS overlap, which is the conflict a
       depends_on edge does not express and which unbounded fan-out would walk straight into.
     """
-    rows = run_rows if run_rows is not None else fr.derive_run_state(
-        release, project_dir=project_dir, branch=branch)
+    corpus_root = fr._project_dir(project_dir)
+
+    # AC-CDW-12, path arm — CONFINE FIRST, then derive. A manifest's `spec_ref`/`contract_ref` are
+    # validated upstream only as "non-empty string" and flow into `open()` and, via the contract's
+    # `target_repo`, into `git -C <dir>`. Confining AFTER the derivation would refuse the atom only
+    # once those reads and that subprocess had already happened with attacker-named paths — the check
+    # has to precede the reach, not merely precede the start.
+    escaped = {}
+    safe_atoms = []
+    for atom in release.atoms:
+        bad = [f for f in (atom.spec_ref, atom.contract_ref) if not confined(f, corpus_root)]
+        if bad:
+            escaped[atom.id] = "manifest path escapes the corpus: " + ", ".join(as_data(f) for f in bad)
+        else:
+            safe_atoms.append(atom)
+
+    if run_rows is not None:
+        rows = run_rows
+    elif escaped:
+        # Derive over a release carrying ONLY the confined atoms, so no escaping path is ever handed
+        # to the shipped probes. Dependency edges to an excluded atom stay unmet, which is correct:
+        # an atom whose dependency was refused must not become runnable.
+        pruned = fr.Release(release.id, release.description, release.state, safe_atoms,
+                            [aid for aid in release.order if aid not in escaped])
+        rows = fr.derive_run_state(pruned, project_dir=project_dir, branch=branch)
+    else:
+        rows = fr.derive_run_state(release, project_dir=project_dir, branch=branch)
     by_id = {r["id"]: r for r in rows}
     waves = wave_of(release)
 
@@ -198,16 +227,9 @@ def ready_set(release, *, project_dir=None, branch="main", run_rows=None):
         if not settled:
             open_wave = w if open_wave is None else min(open_wave, w)
 
-    corpus_root = fr._project_dir(project_dir)
-    ready, excluded = [], {}
+    ready, excluded = [], dict(escaped)
     for atom in release.atoms:
-        # AC-CDW-12, path arm — applied HERE and not merely defined. A manifest's `spec_ref` /
-        # `contract_ref` are validated upstream only as "non-empty string", and they flow into
-        # `open()` and (via target_repo) into `git -C <dir>`. An absolute path or a `..` escapes the
-        # corpus, because os.path.join discards the root when the second argument is absolute.
-        escaping = [f for f in (atom.spec_ref, atom.contract_ref) if not confined(f, corpus_root)]
-        if escaping:
-            excluded[atom.id] = "manifest path escapes the corpus: " + ", ".join(as_data(f) for f in escaping)
+        if atom.id in escaped:
             continue
         row = by_id.get(atom.id)
         if row is None:                                   # fail-closed: no derivation, no start

@@ -236,8 +236,8 @@ directly; see `skills/mode/SKILL.md`).
   derived from merged-PR + verdict facts; the Workflow journal + `/loop` carry resume.
 - **Driving an un-authorized atom**, or **self-merging (including a `gh pr merge --admin`
   bypass) on an advisory-only native-floor signal, or on a conclusion that is not an affirmative success.** The restored grant is bounded
-  pending an operator decision (server-side protection being live does not itself restore it);
-  the operator merges, or `foundry-git-discipline.sh`'s `gh` clause governs it.
+  by `foundry-git-discipline.sh`'s `gh` clause **plus** the affirmative-success rule that clause does
+  not carry: land on `success`, never on a `skipped`/`neutral` conclusion the hook happens to admit.
 - **Hand-rolling the per-wave iteration** — it's the `Workflow` tool.
 - **Auto-answering a security-flagged, authorization-adjacent, or ambiguous fork.** The carve-out
   is closed and fail-closed — never widen it, never treat an unclassifiable fork as reversible.

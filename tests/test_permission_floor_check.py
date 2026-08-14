@@ -185,7 +185,7 @@ def _import_map_suite():
 # Updated in the SAME reviewed diff as the map edit it pins (the R8 rule this guard states).
 # The edit: one `allow` entry for `scripts/foundry_command_deck.py`, a read-only derivation module
 # that writes nothing and issues no merge, dispatch, or authorization.
-MERGE_BASE_ENTRIES_DIGEST = "f04352b689640522119c9176099316c739b867a6b5fc5d476b568364f5afda0a"
+MERGE_BASE_ENTRIES_DIGEST = "02b6aba7f268ba732223cd5a80f72c2e875e94bc49506ccb53a446adf8edba86"
 
 
 # ================================================================================================ #

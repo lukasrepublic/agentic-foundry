@@ -266,7 +266,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_command_deck.py:*)",
       "tier": "allow",
-      "rationale": "read-only programme resolution + ready-set/idle/wake derivation over the release manifest and the shipped run-state; writes nothing (asserted byte-level over a whole fixture tree by AC-CDW-6) and issues no merge, dispatch, or authorization"
+      "rationale": "read-only programme resolution + ready-set/idle/wake derivation; writes nothing (asserted byte-level over a whole fixture tree by AC-CDW-6) and issues no merge, dispatch, or authorization. NOT write-free means side-effect-free: via foundry_release it runs read-only git plumbing (log/rev-parse) in a repo dir, and it exec_module's the in-tree wave planner. Manifest-named paths are confinement-checked BEFORE any derivation, so the dir git runs in cannot be steered out of the corpus"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_release.py accept:*)",
