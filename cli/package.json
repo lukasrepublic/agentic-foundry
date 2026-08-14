@@ -34,7 +34,7 @@
     "marketplace_name": "agentic-foundry",
     "marketplace_repo": "lukasrepublic/agentic-foundry",
     "plugin_name": "foundry",
-    "plugin_version": "1.4.2",
+    "plugin_version": "1.5.0",
     "pins_researched": "2026-08-02"
   }
 }
