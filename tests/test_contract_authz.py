@@ -459,3 +459,301 @@ def test_a_non_canonicalizing_writer_is_convicted():
     assert contract.contract_sha256_bytes(regressed) == contract.contract_sha256_bytes(raw), (
         "the old hash-equality check stayed green here — which is why it was replaced"
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# feat-foundry-gate-integrity-retirement-grounding (ER #120 + ER #121) — the RETIREMENT member.
+#
+# Both ERs were reproduced against v1.5.0 before the spec was written:
+#   ER #120  structural floor refused `classification: remove`; and after a landed drop, `exists` and
+#            `alter` both errored (AC-SGC-4) while `net-new` PASSED — so the only open path recorded a
+#            deleted artifact as one that does not yet exist, and froze that falsehood.
+#   ER #121  the retired path matched zero entries and the message asserted "a stale path prefix or
+#            typo" — a cause the floor cannot establish and the wrong remedy for a real removal.
+#
+# THE VACUITY THESE GUARD AGAINST: the shipped dispatch is `if net-new: … elif exists/alter: …` with
+# no else, so adding "remove" to the constant and the schema and touching NOTHING ELSE makes it fall
+# through both branches and error in NO state. That no-op satisfies every ACCEPTANCE assertion here.
+# `test_enum_only_no_op_implementation_is_convicted` is the row that tells them apart.
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+_SNAP_PRESENT = {"grounding_configured": True, "entities": {"sessions": {}}, "modules": []}
+_SNAP_ABSENT = {"grounding_configured": True, "entities": {"users": {}}, "modules": []}
+
+
+def _art(kind, identifier, classification):
+    return {"kind": kind, "identifier": identifier, "classification": classification}
+
+
+def _sg(*artifacts):
+    return {"system_grounding": {"artifacts": list(artifacts)}}
+
+
+def _venue(tmp_path, *present):
+    for rel in present:
+        p = tmp_path / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("x")
+    return str(tmp_path)
+
+
+def _apg(allowed, artifacts, root, checkpoints=None):
+    data = {"scope": {"allowed_paths": list(allowed)}, "checkpoints": checkpoints or []}
+    data.update(_sg(*artifacts))
+    return contract.allowed_paths_grounding_errors(data, root)
+
+
+class TestRetirementGrounding:
+    # ── AC-RGR-1 — set EQUALITY across both declarations, schema read as JSON ────────────────────
+    def test_classification_vocabulary_set_equality_read_as_json(self):
+        """Read the schema with json.load, NEVER through jsonschema.validate: the JSON-Schema floor
+        returns [] early when jsonschema is unimportable, so a one-sided edit is invisible in exactly
+        the environment where it goes undetected — and it fails in the PERMISSIVE direction."""
+        import json
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(here, "schema", "acceptance-contract.schema.json")) as fh:
+            schema = json.load(fh)
+        node = schema["properties"]["system_grounding"]["properties"]["artifacts"]["items"]
+        schema_enum = set(node["properties"]["classification"]["enum"])
+        assert schema_enum == contract._SG_CLASSIFICATIONS, (
+            f"schema enum {sorted(schema_enum)} != module constant "
+            f"{sorted(contract._SG_CLASSIFICATIONS)} — a one-sided edit (AC-RGR-1)"
+        )
+        assert "remove" in schema_enum
+        print("RGR-1-VOCAB-EQUAL-OK")
+
+    def test_one_sided_vocabulary_edit_is_convicted(self):
+        """MUTANT: the realistic bad implementation — edit the Python constant, forget the JSON
+        schema (or the reverse). The equality assertion above must go RED on it."""
+        for schema_enum, constant in (
+            ({"exists", "alter", "net-new"}, {"exists", "alter", "net-new", "remove"}),
+            ({"exists", "alter", "net-new", "remove"}, {"exists", "alter", "net-new"}),
+        ):
+            assert schema_enum != constant, "a one-sided edit must not compare equal"
+        print("RGR-1-MUTANT-OK")
+
+    # ── AC-RGR-2 — both named floors accept a removal for an ABSENT artifact ─────────────────────
+    def test_removal_accepted_by_structural_and_consistency_floors(self):
+        import json
+        payload = {
+            "spec_ref": "specs/x/feat-x.md", "spec_sha256": "0" * 64, "target_repo": "r",
+            "scope": {"allowed_paths": ["a"]},
+            "checkpoints": [{"ac_id": "AC-X-1", "surface": "cli:c",
+                             "locator": "python3 -m pytest -q",
+                             "expect": {"op": "matches", "value": "T", "baseline": "pre-change"}}],
+        }
+        payload.update(_sg(_art("table", "sessions", "remove")))
+        ok, errors, _ = contract.validate_contract_bytes(json.dumps(payload).encode())
+        assert not [e for e in errors if "classification" in e], errors
+        assert contract.system_grounding_errors(_sg(_art("table", "sessions", "remove")),
+                                                _SNAP_ABSENT) == []
+        print("RGR-2-ACCEPTED-2of2-OK")
+
+    # ── AC-RGR-3 — FAIL-CLOSED ON ABSENCE. The refusal half, which a no-op omits ─────────────────
+    def test_removal_of_a_still_present_artifact_is_refused(self):
+        errors = contract.system_grounding_errors(_sg(_art("table", "sessions", "remove")),
+                                                  _SNAP_PRESENT)
+        assert errors, "declared removed but still present must be REFUSED (AC-RGR-3)"
+        assert "still present" in errors[0]
+        assert "'exists'" in errors[0], "the refusal must name the honest alternative for this state"
+        print("RGR-3-FAILCLOSED-OK")
+
+    def test_enum_only_no_op_implementation_is_convicted(self):
+        """THE LOAD-BEARING MUTANT. Reproduces the enum-only implementation — both declarations gain
+        the value, `system_grounding_errors` untouched, so `remove` falls through the if/elif with no
+        branch — and requires the AC-RGR-3 property to go RED on it. Without this row the whole atom
+        is an enum edit wearing a predicate's spec."""
+        def no_op_floor(data, snapshot):
+            out = []
+            for a in data["system_grounding"]["artifacts"]:
+                if a["classification"] == "net-new" and a["identifier"] in snapshot["entities"]:
+                    out.append("net-new but already live")
+                elif a["classification"] in ("exists", "alter") and \
+                        a["identifier"] not in snapshot["entities"]:
+                    out.append("absent from the live snapshot")
+                # `remove` reaches no branch — the defect
+            return out
+
+        payload = _sg(_art("table", "sessions", "remove"))
+        assert no_op_floor(payload, _SNAP_PRESENT) == [], "the no-op is silent here, by construction"
+        assert contract.system_grounding_errors(payload, _SNAP_PRESENT), (
+            "the real implementation must REFUSE where the no-op is silent"
+        )
+        print("RGR-3-NOOP-MUTANT-OK")
+
+    def test_removal_cross_dimension_collision_is_caught_for_any_kind(self):
+        """Security review of PR #122, Risk 2. An earlier draft gated `matched or cross` behind
+        `kind in _SG_GROUNDED_KINDS` for the remove arm, while the net-new arm applies it
+        kind-independently. That left a resource removal whose identifier collides with a LIVE table
+        or module silent — a per-artifact opt-out reached through `kind` instead of `classification`,
+        and `resource` is exactly the kind the allowed_paths tolerance keys on."""
+        snap = {"grounding_configured": True, "entities": {"sessions": {}}, "modules": ["app.users"]}
+        for ident in ("sessions", "app.users"):
+            errors = contract.system_grounding_errors(_sg(_art("resource", ident, "remove")), snap)
+            assert errors, f"resource/{ident} collides with a live artifact and must be REFUSED"
+            # The CROSS-only case gets its OWN message. Reporting it as "still present, declare
+            # 'exists'" sends the author in a circle — that route passes the SG floor (the ungrounded
+            # exists/alter arm is skipped) and is then refused by the allowed_paths floor with a
+            # different message, neither naming the cause. Same defect class AC-RGR-7 fixes.
+            assert "collides whole-string" in errors[0], errors[0]
+            assert "declare 'exists'" not in errors[0], (
+                "the cross-only case must NOT be given the still-present remedy")
+        # …and the genuinely-still-present case keeps the amend-to-remove remedy
+        present = contract.system_grounding_errors(
+            _sg(_art("table", "sessions", "remove")), snap)
+        assert present and "still present in the live snapshot" in present[0]
+        assert "declare 'exists'" in present[0]
+        # …and an ordinary retired file path must NOT trip it (no false positive)
+        assert contract.system_grounding_errors(
+            _sg(_art("resource", "e2e/staging-smoke.spec.ts", "remove")), snap) == []
+        print("RGR-3-CROSS-KIND-OK")
+
+    # ── AC-RGR-4 — ungrounded kinds: the venue root is the oracle, still fail-closed ─────────────
+    def test_ungrounded_kind_absence_is_checked_against_the_venue_root_2of2(self, tmp_path):
+        root = _venue(tmp_path, "e2e/here.spec.ts")
+        present = contract.removal_grounding_errors(_sg(_art("resource", "e2e/here.spec.ts",
+                                                             "remove")), root)
+        assert present and "still present under the venue root" in present[0]
+        gone = contract.removal_grounding_errors(_sg(_art("resource", "e2e/gone.spec.ts",
+                                                          "remove")), root)
+        assert gone == []
+        assert contract.removal_grounding_errors(_sg(_art("resource", "e2e/here.spec.ts",
+                                                          "remove")), None) == []
+        print("RGR-4-VENUE-ORACLE-2of2-OK")
+
+    # ── AC-RGR-5 — the three existing classifications are unchanged, five cases ──────────────────
+    def test_existing_classifications_are_unchanged_5of5(self):
+        cases = [
+            (_sg(_art("table", "sessions", "net-new")), _SNAP_PRESENT, True),
+            (_sg(_art("queue", "sessions", "net-new")), _SNAP_PRESENT, True),   # CROSS dimension
+            (_sg(_art("table", "sessions", "exists")), _SNAP_ABSENT, True),
+            (_sg(_art("table", "sessions", "alter")), _SNAP_ABSENT, True),
+            (_sg(_art("resource", "x/y.ts", "alter")), _SNAP_ABSENT, False),    # ungrounded skip
+        ]
+        for i, (data, snap, expect_error) in enumerate(cases):
+            errors = contract.system_grounding_errors(data, snap)
+            assert bool(errors) is expect_error, f"case {i} regressed: {errors}"
+        print("RGR-5-UNCHANGED-5of5-OK")
+
+    def test_dropped_cross_dimension_branch_is_convicted(self):
+        """MUTANT: the cross-dimension collision catch is the floor's only kind-independent check,
+        lives solely inside the net-new branch, and NO pre-existing test drove it — so a dispatch
+        restructure to admit a fourth member can drop it with every other assertion still green."""
+        def without_cross(data, snapshot):
+            out = []
+            for a in data["system_grounding"]["artifacts"]:
+                matched = contract._sg_identifier_matches(
+                    a["kind"], a["identifier"], snapshot["entities"], set(snapshot["modules"]))
+                if a["classification"] == "net-new" and matched:   # `or cross` dropped
+                    out.append("already live")
+            return out
+
+        payload = _sg(_art("queue", "sessions", "net-new"))  # ungrounded kind => matched is False
+        assert without_cross(payload, _SNAP_PRESENT) == [], "the mutant is silent here"
+        assert contract.system_grounding_errors(payload, _SNAP_PRESENT), (
+            "the real floor must still catch the cross-dimension collision"
+        )
+        print("RGR-5-MUTANT-OK")
+
+    # ── AC-RGR-6 — the two floors agree, and the tolerance stays bounded ─────────────────────────
+    def test_zero_match_literal_admitted_when_its_removal_is_declared(self, tmp_path):
+        root = _venue(tmp_path, "e2e/kept.spec.ts")
+        retired = "e2e/staging-smoke.spec.ts"
+        assert _apg([retired], [_art("resource", retired, "remove")], root) == []
+        assert _apg([retired], [], root), "no declaration => still refused"
+        assert _apg([retired], [_art("resource", retired, "alter")], root), "'alter' is not a removal"
+        print("RGR-6-BOUND-OK")
+
+    def test_glob_entry_is_never_admitted_by_a_removal_declaration(self, tmp_path):
+        """A glob would admit an unbounded subtree on one unverifiable line, into a field three
+        shipped authorize-time floors consult to relax THEMSELVES. The floor being relaxed exists to
+        catch single-path typos; the tolerance stays at that scale."""
+        root = _venue(tmp_path, "e2e/kept.spec.ts")
+        # Every glob here must match ZERO paths in the fixture venue — otherwise it is admitted by
+        # AC-APG-1 (it really does ground) and never reaches the retirement route, so the assertion
+        # would prove nothing about the tolerance. `e2e/*.spec.ts` is deliberately NOT used: it
+        # matches kept.spec.ts.
+        for glob in (".github/workflows/**", "retired/*.spec.ts", "src/?.ts"):
+            assert not contract._allowed_path_exists(glob, root), (
+                f"{glob} must match zero paths for this assertion to be about the tolerance"
+            )
+            assert _apg([glob], [_art("resource", glob, "remove")], root), f"{glob} must be refused"
+        for outside in ("/etc/passwd", "../outside/x.ts"):
+            assert _apg([outside], [_art("resource", outside, "remove")], root)
+        print("RGR-6-GLOB-MUTANT-OK")
+
+    def test_removal_for_another_identifier_or_kind_confers_nothing(self, tmp_path):
+        root = _venue(tmp_path, "e2e/kept.spec.ts")
+        retired = "e2e/staging-smoke.spec.ts"
+        assert _apg([retired], [_art("resource", "e2e/other.spec.ts", "remove")], root), \
+            "a removal declared for a DIFFERENT identifier confers nothing"
+        assert _apg([retired], [_art("table", retired, "remove")], root), \
+            "a removal declared under a different KIND confers nothing (pair-keyed)"
+        assert _apg([retired], [_art("resource", retired, "remove"),
+                                _art("queue", retired, "exists")], root), \
+            "an identifier declared both removed and alive is contradicted — tolerance withheld"
+        print("RGR-6-SCOPE-MUTANT-OK")
+
+    # ── AC-RGR-7 — the diagnostic states an observation and routes, asserts no unestablished cause ─
+    def test_zero_match_message_has_observation_and_routes_parts(self, tmp_path):
+        root = _venue(tmp_path, "e2e/kept.spec.ts")
+        errors = _apg(["e2e/typo.spec.ts"], [], root)
+        assert len(errors) == 1
+        msg = errors[0]
+        assert "observed:" in msg and "routes:" in msg, "structured parts required"
+        obs, routes = msg.split("observed:", 1)[1].split("routes:", 1)
+        assert "ZERO paths" in obs
+        for n in ("(1)", "(2)", "(3)"):
+            assert n in routes, f"route {n} missing"
+        assert "classification: remove" in routes, "the removal route must be named"
+        assert msg.index("observed:") < msg.index("routes:")
+        print("RGR-7-STRUCTURED-OK")
+
+    def test_reworded_cause_assertion_is_convicted(self):
+        """MUTANT: a message that dropped the exact phrase but still asserts an unestablished cause.
+        A row asserting only the absence of 'stale path prefix or typo' passes this artifact."""
+        reworded = ("scope.allowed_paths entry 'x': matches ZERO paths — this usually indicates a "
+                    "mistyped prefix; fix the path and re-check")
+        assert "stale path prefix or typo" not in reworded, "the phrase-absence check passes it"
+        assert not ("observed:" in reworded and "routes:" in reworded), (
+            "the structural check convicts it — which is why AC-RGR-7 asserts parts, not absence"
+        )
+        print("RGR-7-REWORD-MUTANT-OK")
+
+    # ── AC-RGR-8 — non-vacuity ───────────────────────────────────────────────────────────────────
+    def test_retirement_criteria_are_exercised_not_vacuous(self, tmp_path):
+        """An empty artifacts list satisfies every negative above trivially. Assert the fixtures
+        actually declare removals and that an empty declaration grants nothing."""
+        root = _venue(tmp_path, "e2e/kept.spec.ts")
+        assert contract._sg_removed_pairs(_sg(_art("resource", "e2e/x.ts", "remove"))) == \
+            {("resource", "e2e/x.ts")}
+        assert contract._sg_removed_pairs(_sg()) == set()
+        assert contract._sg_removed_pairs({}) == set()
+        assert _apg(["e2e/gone.spec.ts"], [], root), "an empty block grants no tolerance"
+        assert contract.system_grounding_errors(_sg(_art("table", "sessions", "remove")),
+                                                _SNAP_PRESENT), "the refusal path is reachable"
+        print("RGR-8-NONVACUOUS-OK")
+
+
+# ── The UNFILTERED full-suite regression row (AC-RGR-5) ──────────────────────────────────────────
+# The frozen contract's locator for this row is `python3 -m pytest tests/test_contract_authz.py -q -s`
+# — the whole file, no `-k`. The prior contract draft made this row `-k`-filtered under a comment
+# saying a filtered row cannot see a regression it does not select for; it committed the defect it
+# named. So the token has to be emitted by the RUN, not by a selected test, and it must be emitted
+# only when nothing in the file failed.
+#
+# A session-scoped fixture teardown is the seam that works from inside a test module: pytest reads
+# hooks only from conftest.py/plugins, and conftest.py is outside this atom's allowed_paths. At
+# session teardown `request.session.testsfailed` reflects the whole run, so the token is printed if
+# and only if every test in the file passed.
+@pytest.fixture(scope="session")
+def _suite_green_token(request):
+    yield
+    if request.session.testsfailed == 0:
+        print("RGR-5-SUITE-GREEN-OK")
+
+
+def test_contract_authz_suite_green_token(_suite_green_token):
+    """Requests the session fixture whose TEARDOWN emits the suite token. This test asserts nothing
+    itself — deliberately: the assertion it would make ('the suite is green') is not knowable from
+    inside a test, which is exactly why the token is emitted at session teardown instead."""
