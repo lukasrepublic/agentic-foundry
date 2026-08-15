@@ -159,12 +159,12 @@
               "identifier": {
                 "type": "string",
                 "minLength": 1,
-                "description": "The artifact's live identifier. table -> snapshot.entities key; module -> snapshot.modules member; column -> '<entity>::<column>' (exactly one '::' separator)."
+                "description": "The artifact's live identifier. table -> snapshot.entities key; module -> snapshot.modules member; column -> '<entity>::<column>' (exactly one '::' separator). resource -> a repo-relative path under the venue root, comparable byte-for-byte to a scope.allowed_paths entry (AC-RGR-6 keys the retirement tolerance on this correspondence, so it is declared here rather than left to the reader). fk/queue/event -> an opaque non-empty string, not interpreted."
               },
               "classification": {
                 "type": "string",
-                "enum": ["exists", "alter", "net-new"],
-                "description": "The author-declared precondition: exists (reference), alter (mutate an existing artifact), or net-new (does not yet exist). Validated fail-closed against the live snapshot at freeze (AC-SGC-3/-4)."
+                "enum": ["exists", "alter", "net-new", "remove"],
+                "description": "The author-declared state of the artifact: exists (reference), alter (mutate an existing artifact), net-new (does not yet exist), or remove (has been removed by this atom). Validated fail-closed against the live snapshot at freeze (AC-SGC-3/-4), and `remove` fail-closed on ABSENCE (AC-RGR-3): declared-removed-but-still-present is refused, so a retirement is declared `exists` at first authorization and amended to `remove` at re-authorization once the removal has landed. For an ungrounded kind the snapshot carries no dimension, so the snapshot predicate does not evaluate the declaration; a whole-string collision with a live entity or module is still caught for any kind. NOT YET WIRED: `foundry_contract.removal_grounding_errors()` supplies the venue-root absence check for ungrounded kinds (AC-RGR-4), but no caller invokes it, so an ungrounded `remove` declaration that names no live artifact is currently accepted on trust."
               },
               "source_ref": {
                 "type": "string",
