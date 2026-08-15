@@ -169,6 +169,40 @@ def _front_authz_main() -> int:
                 print(f"  error: {e}", file=sys.stderr)
             return 1
 
+    # 2.65 feat-foundry-gate-integrity-retirement-grounding-wiring (AC-RGW-1..8) — the UNGROUNDED-KIND
+    # half of the retirement predicate. `system_grounding_errors` above fail-closes a `remove` for a
+    # GROUNDED kind (table/column/module) against the live snapshot; it cannot do the same for
+    # `kind: resource` — the kind every retired FILE uses, and therefore the kind ER #120/#121 were
+    # actually about — because the snapshot carries no dimension for it. `removal_grounding_errors`
+    # supplies that half against the venue root, and until this block existed it had NO CALLER: it
+    # shipped implemented, tested and inert, while the schema told authors the check ran.
+    #
+    # SLOT IS PINNED HERE, between 2.6 and 2.7 (AC-RGW-8). Not cosmetic: placing it before 2.6 would
+    # change which failure an operator sees when a broken grounding oracle and a bogus removal are both
+    # present — altering an existing floor's observable precedence without altering its verdict.
+    #
+    # `_venue_root` is READ, never re-resolved (AC-RGW-3). The tidy-looking refactor — lifting the 2.5
+    # resolution block into a helper — is forbidden by the spec, because any drift in its directory test
+    # or exception handling flips the root to None and mass-degrades ALL the floors at once, which no
+    # suite covers.
+    #
+    # Degrade follows 2.7/2.8 (warn AND still call), NOT 2.6 (skip entirely). 2.6 must skip because
+    # `resolve_grounding_snapshot(None)` silently re-resolves to the workspace root; this predicate has
+    # no such fallback and returns [] for None by construction. The warning names THIS check explicitly
+    # (AC-RGW-4) — the several sibling degrade warnings already on this path would otherwise satisfy a
+    # generic "a skip was disclosed" reading while this check's own skip stayed invisible.
+    if _venue_root is None:
+        print(f"  warn: retirement grounding degraded — venue root for target_repo {_tr!r} not "
+              "resolvable/cloned; declared removals of UNGROUNDED kinds (resource/fk/queue/event) are "
+              "NOT validated against the venue (AC-RGW-4)")
+    _rgw_errors = fc.removal_grounding_errors(_cdata, _venue_root)
+    if _rgw_errors:
+        print("FAIL (fail-closed): system_grounding declares a removal that has not landed (AC-RGW-1):",
+              file=sys.stderr)
+        for e in _rgw_errors:
+            print(f"  error: {e}", file=sys.stderr)
+        return 1
+
     # 2.7 ER #179 (AC-APG-1..5) — scope.allowed_paths reality-grounding, fail-closed at freeze. Reuses
     # the SAME _venue_root the 2.5 block above already resolved. Classifies each allowed_paths entry
     # as EXISTS (literal/dir/glob match under the venue root) or checkpoint-named declared-new
