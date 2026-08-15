@@ -750,10 +750,307 @@ class TestRetirementGrounding:
 def _suite_green_token(request):
     yield
     if request.session.testsfailed == 0:
+        # Two frozen contracts pin a whole-file suite token: retirement-grounding (RGR) and
+        # retirement-grounding-wiring (RGW). Both are satisfied by the same unfiltered run, so both
+        # are emitted here rather than by two near-identical fixtures.
         print("RGR-5-SUITE-GREEN-OK")
+        print("RGW-5-SUITE-GREEN-OK")
 
 
 def test_contract_authz_suite_green_token(_suite_green_token):
     """Requests the session fixture whose TEARDOWN emits the suite token. This test asserts nothing
     itself — deliberately: the assertion it would make ('the suite is green') is not knowable from
     inside a test, which is exactly why the token is emitted at session teardown instead."""
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+# feat-foundry-gate-integrity-retirement-grounding-wiring (AC-RGW-1..8) — the CALL SITE.
+#
+# `removal_grounding_errors` shipped with no caller: implemented, tested, inert, while the schema told
+# authors the check ran. These tests DRIVE THE FREEZE as a subprocess and assert on exit status and
+# stderr — never on source text (AC-RGW-6). A grep-for-the-call witness passes against a call placed
+# after an early return, which is precisely the defect class this atom repairs.
+#
+# CLAUDE_PROJECT_DIR hygiene is load-bearing: the driver falls back to os.getcwd(), so a harness that
+# forgets to set it resolves the venue root to the REAL repo and stats real paths — passing for the
+# wrong reason, on a check whose whole subject is a filesystem oracle. `_ws` always sets it.
+# ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+import json  # noqa: E402  (module-level import for the freeze-driving harness below)
+
+_AUTHORIZE = os.path.join(REPO_ROOT, "scripts", "foundry-authorize.py")
+
+
+def _ws(tmp_path, *, artifacts, allowed_paths, target_repo="workspace",
+        venue_files=(), workspace_files=(), venue_subdir=None):
+    """Materialize a throwaway workspace and return (ws_root, spec_path, contract_path).
+
+    `workspace_files` land at the workspace root; `venue_files` land under `venue_subdir` when a
+    multi-repo target is used (that is what lets AC-RGW-3 tell the two roots apart).
+    """
+    ws = tmp_path / "ws"
+    (ws / ".claude").mkdir(parents=True)
+    (ws / ".foundry").mkdir(parents=True)
+    (ws / "specs").mkdir(parents=True)
+    (ws / ".claude" / "foundry-operators.json").write_text(json.dumps(
+        {"schema_version": 1, "operators": {"op_test": {"name": "T", "git_email": "t@example.com"}}}))
+
+    for rel in workspace_files:
+        p = ws / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("x")
+
+    if venue_subdir:
+        venue = ws / venue_subdir
+        venue.mkdir(parents=True, exist_ok=True)
+        (ws / ".claude" / "foundry-project.json").write_text(json.dumps(
+            {"repos": {target_repo: {"path": venue_subdir}}}))
+        for rel in venue_files:
+            p = venue / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("x")
+
+    spec = ws / "specs" / "feat-x.md"
+    spec.write_text("# x\n\n<!-- normative -->\n\n- **AC-X-1** *(Invariant)*: a thing.\n\n"
+                    "<!-- /normative -->\n")
+
+    contract = {
+        "spec_ref": "specs/feat-x.md",
+        "spec_sha256": contract_mod_spec_sha(str(spec)),
+        "target_repo": target_repo,
+        "scope": {"allowed_paths": list(allowed_paths)},
+        "checkpoints": [{"ac_id": "AC-X-1", "surface": "cli:foundry-doctor",
+                         "locator": "python3 -m pytest -q",
+                         "expect": {"op": "matches", "value": "T", "baseline": "pre-change"}}],
+    }
+    if artifacts is not None:
+        contract["system_grounding"] = {"artifacts": list(artifacts)}
+    cpath = ws / "acceptance-contract.yaml"
+    cpath.write_text(yaml.safe_dump(contract))
+
+    # the §8 audit precondition — a row bound to this spec's content hash
+    (ws / ".foundry" / "audit-ledger.jsonl").write_text(json.dumps(
+        {"spec_sha256": contract["spec_sha256"], "spec_ref": "specs/feat-x.md",
+         "rounds": 1, "verdict": "plateau-clean"}) + "\n")
+    return str(ws), str(spec), str(cpath)
+
+
+def contract_mod_spec_sha(path):
+    return contract.spec_sha256(path)
+
+
+def _freeze(ws_root, spec, cpath):
+    """Drive the real freeze driver. DRY RUN — no `--yes` — so nothing is written; every assertion
+    here fails closed long before the write anyway."""
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=ws_root)
+    r = subprocess.run([sys.executable, _AUTHORIZE, "--spec", spec, "--contract", cpath,
+                        "--operator", "op_test", "--mode", "lean"],
+                       capture_output=True, text=True, env=env, cwd=ws_root)
+    return r.returncode, r.stdout + r.stderr
+
+
+def _art(kind, identifier, classification):
+    return {"kind": kind, "identifier": identifier, "classification": classification}
+
+
+class TestRetirementGroundingWiring:
+    # ── AC-RGW-1 — the check RUNS and fails closed ───────────────────────────────────────────────
+    def test_freeze_fails_closed_on_a_still_present_ungrounded_removal(self, tmp_path):
+        ws, spec, cpath = _ws(
+            tmp_path,
+            artifacts=[_art("resource", "e2e/still-here.spec.ts", "remove")],
+            allowed_paths=["e2e"],
+            workspace_files=["e2e/still-here.spec.ts"])
+        rc, out = _freeze(ws, spec, cpath)
+        assert rc != 0, f"a declared removal that has NOT landed must refuse the freeze\n{out}"
+        assert "AC-RGW-1" in out and "e2e/still-here.spec.ts" in out, out
+        print("RGW-1-FAILCLOSED-OK")
+
+    def test_freeze_admits_a_genuinely_absent_ungrounded_removal(self, tmp_path):
+        """The mirror. Without it the atom is satisfiable by a call that always fails, which would
+        wedge every legitimate retirement — invisible to a fail-closed-only assertion."""
+        ws, spec, cpath = _ws(
+            tmp_path,
+            artifacts=[_art("resource", "e2e/gone.spec.ts", "remove")],
+            allowed_paths=["e2e/gone.spec.ts"],
+            workspace_files=["e2e/kept.spec.ts"])
+        rc, out = _freeze(ws, spec, cpath)
+        assert rc == 0, f"a landed removal must freeze cleanly\n{out}"
+        print("RGW-1-CLEANPATH-OK")
+
+    # ── AC-RGW-2 — diagnostic completeness (NOT ordering; see the contract header) ───────────────
+    def test_retirement_violation_is_reported_not_masked(self, tmp_path):
+        ws, spec, cpath = _ws(
+            tmp_path,
+            artifacts=[_art("resource", "e2e/still-here.spec.ts", "remove")],
+            allowed_paths=["e2e", "totally/stale/prefix"],
+            workspace_files=["e2e/still-here.spec.ts"])
+        rc, out = _freeze(ws, spec, cpath)
+        assert rc != 0
+        assert "AC-RGW-1" in out, f"the retirement violation must be surfaced, not masked\n{out}"
+        print("RGW-2-REPORTED-OK")
+
+    # ── AC-RGW-3 — the VENUE root, not the workspace root ────────────────────────────────────────
+    def test_retirement_check_uses_the_venue_root_not_the_workspace_root(self, tmp_path):
+        """Artifact ABSENT in the venue, PRESENT at the workspace root under the same relative path.
+        A re-resolving implementation reads the workspace and refuses; the correct one admits."""
+        ws, spec, cpath = _ws(
+            tmp_path,
+            artifacts=[_art("resource", "e2e/ghost.spec.ts", "remove")],
+            allowed_paths=["e2e/ghost.spec.ts"],
+            target_repo="product",
+            venue_subdir="product-repo",
+            venue_files=["e2e/other.spec.ts"],
+            workspace_files=["e2e/ghost.spec.ts"])
+        rc, out = _freeze(ws, spec, cpath)
+        assert rc == 0, (
+            "the check must read the VENUE root; refusing here means it re-resolved to the "
+            f"workspace root, where the path still exists\n{out}")
+        print("RGW-3-VENUE-OK")
+
+    # ── AC-RGW-4 — unresolvable venue root degrades with an ATTRIBUTABLE disclosure ──────────────
+    def test_unresolvable_venue_root_degrades_with_an_attributable_warning(self, tmp_path):
+        """Both halves. The freeze must not block, AND the disclosure must be attributable to THIS
+        check — the driver already prints several sibling degrade warnings on this path, so a generic
+        'a skip was disclosed' assertion is green while this check's own skip stays invisible."""
+        ws, spec, cpath = _ws(
+            tmp_path,
+            artifacts=[_art("resource", "e2e/whatever.spec.ts", "remove")],
+            allowed_paths=["e2e/whatever.spec.ts"],
+            target_repo="absent-product")  # no foundry-project.json entry => venue root is None
+        rc, out = _freeze(ws, spec, cpath)
+        assert rc == 0, f"an unresolvable venue root must degrade, never block\n{out}"
+        assert "retirement grounding degraded" in out, (
+            f"the disclosure must be attributable to THIS check, not a sibling's\n{out}")
+        assert "AC-RGW-4" in out, out
+        print("RGW-4-DEGRADE-2of2-OK")
+
+    # ── AC-RGW-5 — contracts WITHOUT a removal are unaffected ────────────────────────────────────
+    def test_contracts_without_a_removal_freeze_identically(self, tmp_path):
+        for artifacts in (None, [], [_art("resource", "e2e/kept.spec.ts", "exists")]):
+            ws, spec, cpath = _ws(
+                tmp_path / f"case{abs(hash(str(artifacts))) % 9973}",
+                artifacts=artifacts,
+                allowed_paths=["e2e/kept.spec.ts"],
+                workspace_files=["e2e/kept.spec.ts"])
+            rc, out = _freeze(ws, spec, cpath)
+            assert rc == 0, f"a contract with no removal must be unaffected\n{out}"
+            assert "AC-RGW-1" not in out, out
+        print("RGW-5-UNCHANGED-OK")
+
+    # ── AC-RGW-7 — the shipped author-facing claim is no longer false ────────────────────────────
+    def test_schema_no_longer_claims_the_check_is_unwired(self):
+        with open(os.path.join(REPO_ROOT, "schema", "acceptance-contract.schema.json")) as fh:
+            schema = json.load(fh)
+        desc = (schema["properties"]["system_grounding"]["properties"]["artifacts"]["items"]
+                ["properties"]["classification"]["description"])
+        assert "NOT YET WIRED" not in desc, (
+            "the schema still tells authors the ungrounded check does not run")
+        assert "no caller invokes it" not in desc, desc
+        assert "venue root" in desc, "the description must say what the check actually does"
+        print("RGW-7-DOCTRUE-OK")
+
+    # ── AC-RGW-8 — the slot sits BETWEEN the grounding floor and the allowed_paths floor ─────────
+    def test_insertion_slot_sits_between_grounding_and_allowed_paths_2of2(self, tmp_path):
+        """Witnessed behaviourally, not positionally. (a) a grounded contradiction must still be
+        reported ahead of a bogus removal — 2.6 precedes; (b) a bogus removal must be reported ahead
+        of a stale allowed_paths prefix — 2.7 follows."""
+        ws, spec, cpath = _ws(
+            tmp_path / "a",
+            artifacts=[_art("resource", "e2e/still-here.spec.ts", "remove"),
+                       _art("resource", "e2e/still-here.spec.ts", "remove")],
+            allowed_paths=["e2e"],
+            workspace_files=["e2e/still-here.spec.ts"])
+        rc_a, out_a = _freeze(ws, spec, cpath)
+        assert rc_a != 0 and "AC-SGC-1" in out_a, (
+            f"a structural grounding error must still precede the retirement check\n{out_a}")
+
+        ws, spec, cpath = _ws(
+            tmp_path / "b",
+            artifacts=[_art("resource", "e2e/still-here.spec.ts", "remove")],
+            allowed_paths=["e2e", "stale/prefix/that/does/not/exist"],
+            workspace_files=["e2e/still-here.spec.ts"])
+        rc_b, out_b = _freeze(ws, spec, cpath)
+        assert rc_b != 0 and "AC-RGW-1" in out_b and "ER #179" not in out_b, (
+            f"the retirement check must precede the allowed_paths floor\n{out_b}")
+        print("RGW-8-SLOT-2of2-OK")
+
+    # ── AC-RGW-6 — THE REACHABILITY META. Materializes two unreachable-call implementations and
+    # requires the AC-RGW-1 witness to go RED on each. A source-grep witness passes both, which is why
+    # AC-RGW-6 bars that witness shape outright.
+    #
+    # THE MUTANTS ARE NON-TRIVIAL BY CONSTRUCTION: each mutated copy must STILL refuse an ER #179
+    # fixture. Without that, the cheapest satisfying mutant is an early `return 0` that disables every
+    # floor and proves nothing about THIS call's placement.
+    def test_unreachable_call_site_is_convicted_2of2(self, tmp_path):
+        src = open(_AUTHORIZE).read()
+        block_head = "    _rgw_errors = fc.removal_grounding_errors(_cdata, _venue_root)"
+        assert block_head in src, "the call site moved; this meta must be re-grounded"
+        start = src.index(block_head)
+        end = src.index("    # 2.7 ER #179", start)
+        block, before, after = src[start:end], src[:start], src[end:]
+
+        mutants = {
+            # (a) guarded by the WRONG branch — runs only when there is no venue to check against
+            "wrong_branch": before + "    if _venue_root is None:\n"
+                            + "".join("    " + ln if ln.strip() else ln
+                                      for ln in block.splitlines(keepends=True)) + after,
+            # (b) dead code — the shape of a call placed after an early return
+            "dead_code": before + "    if False:\n"
+                         + "".join("    " + ln if ln.strip() else ln
+                                   for ln in block.splitlines(keepends=True)) + after,
+        }
+
+        # SELF-GROUNDING BASELINE. Without this the meta is conditionally vacuous: both mutant
+        # assertions below hold TRIVIALLY if the call site is already dead, because mutating dead code
+        # changes nothing and `rc == 0` was never `rc != 0`. A sibling test happens to establish the
+        # red today, but a meta that depends on another test's fixture surviving is a green that can
+        # stop having been red without anything going red. Establish it here, against the UNMUTATED
+        # driver, on the very fixture the mutants are driven with. (PR #124 security review, Risk 1.)
+        ws0, spec0, cpath0 = _ws(
+            tmp_path / "baseline",
+            artifacts=[_art("resource", "e2e/still-here.spec.ts", "remove")],
+            allowed_paths=["e2e"],
+            workspace_files=["e2e/still-here.spec.ts"])
+        rc0, out0 = _freeze(ws0, spec0, cpath0)
+        assert rc0 != 0 and "AC-RGW-1" in out0, (
+            "the UNMUTATED driver must refuse this fixture, or the mutant convictions below prove "
+            f"nothing — they would be mutating already-dead code\n{out0}")
+
+        for name, mutated in mutants.items():
+            mdir = tmp_path / f"mutant_{name}"
+            mdir.mkdir(parents=True)
+            mpath = mdir / "foundry-authorize.py"
+            mpath.write_text(mutated)
+            # the driver does sys.path.insert(0, dirname(__file__)), so a bare copy cannot import its
+            # siblings — point PYTHONPATH at the real scripts/ instead of copying the whole tree
+            env_extra = {"PYTHONPATH": os.path.join(REPO_ROOT, "scripts")}
+
+            def drive(ws_root, spec, cpath):
+                env = dict(os.environ, CLAUDE_PROJECT_DIR=ws_root, **env_extra)
+                r = subprocess.run([sys.executable, str(mpath), "--spec", spec, "--contract", cpath,
+                                    "--operator", "op_test", "--mode", "lean"],
+                                   capture_output=True, text=True, env=env, cwd=ws_root)
+                return r.returncode, r.stdout + r.stderr
+
+            # the AC-RGW-1 fixture must STOP being refused — that is the conviction
+            ws, spec, cpath = _ws(
+                tmp_path / f"fx_{name}",
+                artifacts=[_art("resource", "e2e/still-here.spec.ts", "remove")],
+                allowed_paths=["e2e"],
+                workspace_files=["e2e/still-here.spec.ts"])
+            rc, out = drive(ws, spec, cpath)
+            assert rc == 0, (
+                f"mutant {name!r} was expected to make the check unreachable, but the freeze still "
+                f"refused — the meta is not convicting what it claims\n{out}")
+
+            # …and the mutant must remain NON-TRIVIAL: sibling floors still reachable
+            ws2, spec2, cpath2 = _ws(
+                tmp_path / f"sib_{name}",
+                artifacts=None,
+                allowed_paths=["totally/stale/prefix"])
+            rc2, out2 = drive(ws2, spec2, cpath2)
+            assert rc2 != 0 and "ER #179" in out2, (
+                f"mutant {name!r} disabled the sibling floors too, so it proves nothing about THIS "
+                f"call's placement\n{out2}")
+        print("RGW-6-REACHABLE-2of2-OK")

@@ -16,6 +16,42 @@ Checked rather than assumed: the package bundles `cli/permission-floor.json` and
 scaffolded or reconciled workspace until that workspace's plugin is updated. Adopters get it from the
 plugin, which is version-keyed, not from the wizard.
 
+### The ungrounded-kind retirement check now has a call site
+
+`removal_grounding_errors()` shipped in the entry below **implemented, tested and inert** — no caller.
+`foundry-authorize.py` was outside that atom's authorized scope, so the criterion it implements was
+unmet in the shipped flow while the schema description told authors the check ran. That description is
+corrected here, by the change that makes it true rather than by another retraction.
+
+- **New freeze block 2.65**, pinned between the system-grounding floor (2.6) and the `allowed_paths`
+  floor (2.7). Placing it earlier would change which failure an operator sees when a broken grounding
+  oracle and a bogus removal are both present.
+- **`kind: resource` retirements are now falsifiable.** A declared removal whose path still exists
+  refuses the freeze. That is the kind every retired *file* uses, and therefore the kind ER #120/#121
+  were actually about.
+- **Degrade follows 2.7/2.8, not 2.6** — warn *and* still call, because the predicate returns empty for
+  a null root by construction and has none of the workspace-fallback hazard that forces 2.6 to skip.
+  The warning names this check explicitly: the several sibling degrade warnings already on that path
+  would otherwise satisfy a generic "a skip was disclosed" reading while this check's own skip stayed
+  invisible.
+
+**An ordering claim was drafted, reviewed, measured false, and retracted before implementation.** The
+draft argued the check had to precede the `allowed_paths` floor so a bogus removal could not buy a scope
+tolerance. The two are mutually exclusive by construction — that floor consumes the declaration by exact
+string equality and only after the same `os.path.exists` call returned False. Both review lenses found
+it independently; the acceptance row built to convict the wrong ordering had no reachable case to drive
+and was deleted rather than weakened.
+
+**Known, and named rather than discovered later:** the predicate's path guard is blind to which
+ungrounded kind it sees, so an `fk`/`queue`/`event` identifier colliding with a real repo path now
+refuses a freeze even though the schema calls those identifiers opaque; and an absolute or traversing
+identifier is skipped silently where the sibling floors emit an error. Both belong to the atom that owns
+the predicate. Corpus survey run before landing: zero frozen contracts declare a removal, so nothing
+existing changes verdict.
+
+Spec: `specs/features/foundry/gate-integrity/retirement-grounding-wiring/` (workspace), authorized
+`auth_seq 1`, `spec_sha256=de51c7cb8b472d3f…`.
+
 ### Retirement is expressible — `classification: remove` (ER #120, ER #121)
 
 **An atom that retires an artifact used to become unamendable the moment it succeeded.** Two
