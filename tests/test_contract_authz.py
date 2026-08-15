@@ -1001,6 +1001,22 @@ class TestRetirementGroundingWiring:
                                    for ln in block.splitlines(keepends=True)) + after,
         }
 
+        # SELF-GROUNDING BASELINE. Without this the meta is conditionally vacuous: both mutant
+        # assertions below hold TRIVIALLY if the call site is already dead, because mutating dead code
+        # changes nothing and `rc == 0` was never `rc != 0`. A sibling test happens to establish the
+        # red today, but a meta that depends on another test's fixture surviving is a green that can
+        # stop having been red without anything going red. Establish it here, against the UNMUTATED
+        # driver, on the very fixture the mutants are driven with. (PR #124 security review, Risk 1.)
+        ws0, spec0, cpath0 = _ws(
+            tmp_path / "baseline",
+            artifacts=[_art("resource", "e2e/still-here.spec.ts", "remove")],
+            allowed_paths=["e2e"],
+            workspace_files=["e2e/still-here.spec.ts"])
+        rc0, out0 = _freeze(ws0, spec0, cpath0)
+        assert rc0 != 0 and "AC-RGW-1" in out0, (
+            "the UNMUTATED driver must refuse this fixture, or the mutant convictions below prove "
+            f"nothing — they would be mutating already-dead code\n{out0}")
+
         for name, mutated in mutants.items():
             mdir = tmp_path / f"mutant_{name}"
             mdir.mkdir(parents=True)
