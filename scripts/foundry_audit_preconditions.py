@@ -257,7 +257,18 @@ def gate_liveness(spec_path, *, project_dir=None, release_id=None):
 # ── G-4 — reference closure (AC-APC-3) ───────────────────────────────────────────────────────────
 
 _NORM_OPEN, _NORM_CLOSE = "<!-- normative -->", "<!-- /normative -->"
-_WIKI_REF_RE = re.compile(r"\[\[([A-Za-z0-9_-]+)\]\]")
+# A corpus wiki ref is `[[feat-<slug>]]` — the `feat-` prefix is REQUIRED, and is what separates a
+# citation from quoted link SYNTAX. Without it this pattern matched any `[[token]]`, so a spec that
+# merely DOCUMENTS wikilink syntax (`[[wikilink]]`, `[[link]]`, `[[Target]]`) was read as citing
+# three nonexistent atoms and fail-closed G-4 on its own prose — unavoidable for a corpus whose
+# subject matter is a wiki, since such a spec cannot describe its product without writing the token.
+# The PREFIX, not position, is the discriminator: measured across both live corpora, every
+# `feat-`-prefixed token is a genuine reference and every non-prefixed one is syntax, zero overlap.
+# Deliberately NOT a code-span exemption — real references are frequently backticked (e.g.
+# `[[feat-foundry-leak-scan-ls-remote-sink]]`, a genuinely DANGLING ref this gate must keep
+# catching), so masking code spans would trade a harmless false positive for a silent false
+# negative. Every spec file in the corpus is named `feat-*.md`, so the prefix is invariant.
+_WIKI_REF_RE = re.compile(r"\[\[(feat-[A-Za-z0-9_-]+)\]\]")
 _ATOM_CITE_RE = re.compile(r"\[Atom:\s*([^\]]+)\]")
 _AC_ID_RE = re.compile(r"\bAC(?:-[A-Z0-9]+)+-\d+\b")
 
