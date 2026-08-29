@@ -4,9 +4,10 @@
 # scripts/foundry-stack-profile.py) with the concrete plan/apply/verify/policy command strings + the Karpenter
 # blast-radius tiers, editing NEITHER the schema NOR the loader (exactly as node-web is a pure content atom).
 # The command strings are DATA: they are read by the id-plan/id-impact/id-verify/id-apply consumers and executed
-# later only through the CTX command-policy guard — NEVER by this pack. The read-only slots (plan/verify/policy)
-# are pinned to CTX-read-only verbs (the loader's read-role allowlist); `apply` is the mutation slot, posture-gated
-# downstream. The app-shaped blocks (static_validation/test_recipe/app_exercise_binding) are OMITTED — permitted
+# later — NEVER by this pack. The read-only slots (plan/verify/policy) are pinned to read-only verbs (the
+# loader's read-role allowlist, scripts/foundry-stack-profile.py:188); `apply` is the mutation slot, executed as
+# written by id-apply's router, bounded by the operator's own AWS-context IAM restrictions — not by a runtime
+# guard this framework carries. The app-shaped blocks (static_validation/test_recipe/app_exercise_binding) are OMITTED — permitted
 # for profile_kind:infra (the schema's draft-07-safe conditional drops them from `required` and requires
 # infra_binding instead). Faithful 2024-25 tooling: OpenTofu (`tofu`), a local `kustomize build`/`helm
 # template` RENDER (no cluster), `conftest`/OPA over rendered manifests. v2 (ADR C3): the pre-merge
@@ -18,7 +19,7 @@
 # realization (`argocd app get -o json`, Synced ∧ Healthy) is a separate v2b concern, not specced here.
 profile_kind: infra
 id: aws-eks-karpenter
-version: 0.5.2
+version: 0.5.3
 requires_core: ">=0.2"
 
 matches:
@@ -90,16 +91,30 @@ documentation: >-
 
 infra_binding:
   # plan — the READ-ONLY, LOCAL + deterministic, NO-cluster plan/diff over the CANDIDATE (v2, ADR C3).
-  # `tofu plan` computes the IaC delta for the tofu plane; the local `helm template` RENDER materializes the
-  # GitOps manifests so the pre-merge structured diff is the git-diff of the COMMITTED (rendered) manifests
-  # vs the merge-base (consumed by parse_gitops_changes), NOT `argocd app diff` (unified TEXT, live cluster
-  # state — forbidden as a structured pre-merge source). Both leading verbs (`tofu plan`, `helm template`)
-  # are read-role-allowlisted; neither reaches a cluster.
-  plan: "tofu plan -detailed-exitcode && helm template gitops/ > rendered/manifests.yaml"
-  # apply — the MUTATION slot (posture-gated downstream by the CTX runtime guard). tofu apply realizes the
-  # EKS/Karpenter infra itself; the k8s WORKLOADS realize via GitOps (merge → ArgoCD reconciles), NOT direct
-  # kubectl apply — see conventions.md §GitOps realization.
-  apply: "tofu apply -auto-approve"
+  # `tofu plan` computes the IaC delta for the tofu plane AND writes a SAVED PLAN to the literal path
+  # `.foundry/infra.tfplan` (AC-IDAGR-3) — the `apply` slot below applies THAT exact saved plan, never a
+  # freshly-computed one, so the apply performs exactly what was reviewed (OpenTofu binds a saved plan to
+  # the state it was created from by lineage + serial and fails closed, "Saved plan is stale", if the state
+  # has moved since). The local `helm template` RENDER materializes the GitOps manifests so the pre-merge
+  # structured diff is the git-diff of the COMMITTED (rendered) manifests vs the merge-base (consumed by
+  # parse_gitops_changes), NOT `argocd app diff` (unified TEXT, live cluster state — forbidden as a
+  # structured pre-merge source). Both leading verbs (`tofu plan`, `helm template`) are
+  # read-role-allowlisted; neither reaches a cluster. `.foundry/` is the repo-root runtime partition the
+  # shipped `.gitignore` already default-denies (`/.foundry/*`, and this path is not in its three-entry
+  # re-include allowlist) — load-bearing, because a saved plan carries configuration, state and every
+  # `TF_VAR_*`/variable value **in plaintext** (database passwords included): it must never be committed
+  # and never published as a build or CI artifact.
+  plan: "tofu plan -detailed-exitcode -out=.foundry/infra.tfplan && helm template gitops/ > rendered/manifests.yaml"
+  # apply — the MUTATION slot. This string is OPERATOR-AUTHORED and is EXECUTED AS WRITTEN, byte-for-byte,
+  # whenever decide_apply's total table routes a change to EXECUTE; the framework performs no substitution,
+  # interpolation or check on its content beyond the schema's non-empty-string shape. The bound on what it
+  # may do is the IAM restrictions of the AWS context the operator supplies — the framework does not verify,
+  # re-derive or second-guess them. `apply` consumes the SAME saved-plan file the `plan` slot wrote
+  # (`.foundry/infra.tfplan`, byte-identical, no placeholder token) — never `-auto-approve` over a freshly
+  # computed plan, so nothing re-plans at apply time. tofu apply realizes the EKS/Karpenter infra itself; the
+  # k8s WORKLOADS realize via GitOps (merge → ArgoCD reconciles), NOT direct kubectl apply — see
+  # conventions.md §GitOps realization.
+  apply: "tofu apply .foundry/infra.tfplan"
   # verify — the READ-ONLY post-apply re-check (v2): `tofu plan` must come back EMPTY (-detailed-exitcode
   # == 0 ⇒ no drift). Post-merge ArgoCD realization (Synced ∧ Healthy via `argocd app get -o json`) is a
   # SEPARATE v2b concern — NOT smuggled into this read slot (no `argocd app diff`/`get` here). Read-role verb.

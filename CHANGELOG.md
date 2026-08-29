@@ -10,6 +10,47 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 
 ## Unreleased
 
+### The apply gate loses its posture input and executes the change (feat-foundry-apply-gate-regrounding)
+
+**`decide_apply` no longer probes an ambient control plane for a posture — the operator supplies a
+correctly configured AWS context, and its IAM restrictions ARE the control.** The retired `ctx status
+--json` probe left the shipped gate inert on any machine without that CLI (`REFUSE` on every
+mutation); this atom subtracts the dependency rather than replacing it.
+
+- **Signature change (AC-IDAGR-10):** `decide_apply(*, changed_paths, infra_binding)` — the `posture`
+  parameter is gone, and `decide_apply` now derives the GitOps class ITSELF by calling
+  `classify_gitops` (unchanged, AC-IDAGR-5) rather than accepting a class its caller asserts. No
+  parameter offers a caller a way to supply or override the class.
+- **Two outcomes, one refusal, four conditions (AC-IDAGR-2):** `GENERATE_RUNBOOK` and the break-glass
+  `audited` flag are gone (AC-IDAGR-1), together with `RunbookPayload.executed_by`. A well-formed
+  `direct` change EXECUTEs unconditionally — the default path; a `gitops` change routes to
+  VERIFY_ONLY (a correctness routing — the ArgoCD controller owns reconciliation of that path, not a
+  permission check); REFUSE fires on exactly four mechanically unresolvable inputs, the new one being
+  a malformed `infra_binding.gitops_paths` (an empty list is well-formed).
+- **The shipped `aws-eks-karpenter` pack's `plan`/`apply` slots now carry a saved-plan sequence
+  (AC-IDAGR-3, v0.5.3):** `plan` writes `-out=.foundry/infra.tfplan`; `apply` applies that exact same
+  literal path, byte-identical, no placeholder token, no `-auto-approve` over a freshly computed plan.
+  `.foundry/` is the repo-root runtime partition the shipped `.gitignore` already default-denies
+  (AC-IDAGR-12) — load-bearing, because a saved plan carries every `TF_VAR_*`/state value in
+  plaintext and must never be committed or published as a build artifact.
+- **A rendered/logged `ApplyDecision` is secret-scrubbed (AC-IDAGR-11):** `foundry_id_apply.py` gains
+  a local `render_decision()` helper (mirroring, not importing, the sibling redaction surfaces) that
+  scrubs the rendered `command`/`verify`/`reason` strings; the EXECUTE branch's actually-run command
+  stays the frozen `infra_binding.apply` bytes, unaltered.
+- **Documentation corrected off the retired authority (AC-IDAGR-7/-8/-9):** the `apply` slot's two
+  description sites (`schema/stack-profile.schema.json`, the pack comment) now state it is
+  operator-authored, executed as written, and bounded by the operator's IAM context — never crediting
+  the loader's read-role check, which never inspects `apply`. The loader's own commentary
+  (`scripts/foundry-stack-profile.py`) now names itself the sole static floor on the read-only
+  `plan`/`verify`/`policy` slots rather than deferring to the retired runtime guard. The gate module's
+  own docstrings and comments are rewritten to describe only the surviving behaviour.
+- **`skills/id-apply/SKILL.md` rewritten (AC-IDAGR-6):** the procedure resolves the profile → decides
+  (the gate re-derives the class itself) → drives the branch; no session probe, no posture, no CTX.
+
+**No CTX-authority claim survives, and this atom deletes nothing.** `scripts/foundry_ctx_posture.py`
+is left untouched — it becomes unreferenced by this atom, and a sibling atom retires it separately so
+the tree stays green at each step.
+
 **No `create-agentic-workspace` change in this entry, and the scaffold it writes is untouched.**
 Checked rather than assumed: the package bundles `cli/permission-floor.json` and its templates, not
 `schema/acceptance-contract.schema.json`, so the new classification member does not reach a newly
