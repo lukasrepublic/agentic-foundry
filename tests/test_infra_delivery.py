@@ -21,7 +21,6 @@ from conftest import load_module
 plan_model = load_module("scripts/foundry_plan_model.py", "foundry_plan_model")
 realization = load_module("scripts/foundry_realization.py", "foundry_realization")
 id_apply = load_module("scripts/foundry_id_apply.py", "foundry_id_apply")
-ctx_posture = load_module("scripts/foundry_ctx_posture.py", "foundry_ctx_posture")
 id_alloc = load_module("scripts/foundry_id_alloc.py", "foundry_id_alloc")
 
 
@@ -324,23 +323,25 @@ class TestRealizationVerdict:
 
 
 # ==================================================================== foundry_id_apply.py ==== #
+# feat-foundry-apply-gate-regrounding — decide_apply lost `posture`, `GENERATE_RUNBOOK` and `audited`;
+# it now derives the GitOps class itself from `changed_paths` x `infra_binding` (AC-IDAGR-10) and
+# routes on a CLOSED four-refusal table (AC-IDAGR-2). See tests/test_stack_profile.py for the
+# AC-IDAGR-3/-7/-8/-12 checkpoints over the real shipped pack/schema/loader prose.
+
+import dataclasses
+import inspect
 
 _FROZEN_APPLY = "tofu apply -auto-approve"
 _FROZEN_VERIFY = "tofu plan -detailed-exitcode"
-_INFRA_BINDING = {"apply": _FROZEN_APPLY, "verify": _FROZEN_VERIFY, "gitops_paths": ("clusters/**", "argocd/*")}
-
-
-def _posture(decision, *, audited=False):
-    return ctx_posture.Posture(decision=decision, audited=audited)
+_INFRA_BINDING = {"apply": _FROZEN_APPLY, "verify": _FROZEN_VERIFY, "gitops_paths": ["clusters/**", "argocd/*"]}
 
 
 def _classify(paths):
     return id_apply.classify_gitops(changed_paths=paths, infra_binding=_INFRA_BINDING)
 
 
-def _decide(decision, paths, *, audited=False):
-    return id_apply.decide_apply(posture=_posture(decision, audited=audited),
-                                  gitops_class=_classify(paths), infra_binding=_INFRA_BINDING)
+def _decide(paths, infra_binding=_INFRA_BINDING):
+    return id_apply.decide_apply(changed_paths=paths, infra_binding=infra_binding)
 
 
 class TestIdApplyGate:
@@ -350,49 +351,360 @@ class TestIdApplyGate:
         assert _classify(["infra/vpc.tf", "clusters/prod/app.yaml"]) == id_apply.AMBIGUOUS
         assert _classify([]) == id_apply.AMBIGUOUS  # empty scope is ambiguous, never a vacuous pass.
 
-    def test_nonprod_execute_direct(self):
-        d = _decide("EXECUTE", ["infra/vpc.tf"])
-        assert d.action == id_apply.EXECUTE and d.audited is False
+    def test_direct_change_executes(self):
+        d = _decide(["infra/vpc.tf"])
+        assert d.action == id_apply.EXECUTE
         assert d.runbook is not None and d.runbook.command == _FROZEN_APPLY
 
-    def test_guarded_generate_runbook_is_frozen_and_no_mutating_verb_issued(self):
-        d = _decide("GENERATE", ["infra/vpc.tf"])
-        assert d.action == id_apply.GENERATE_RUNBOOK
-        assert d.runbook.command == _FROZEN_APPLY == _INFRA_BINDING["apply"]
-        assert d.runbook.verify == _INFRA_BINDING["verify"]
-        assert d.runbook.executed_by == "operator"
+    def test_gitops_is_verify_only_and_no_mutating_verb_issued(self):
+        d = _decide(["clusters/prod/app.yaml"])
+        assert d.action == id_apply.VERIFY_ONLY and d.runbook is None
         mutating = {"apply", "destroy", "delete", "replace", "install", "upgrade", "uninstall", "sync", "create"}
-        assert not (set(d.runbook.verify.split()) & mutating)
+        assert not (set(_FROZEN_VERIFY.split()) & mutating)
 
-    def test_gitops_is_verify_only_regardless_of_posture(self):
-        for decision in ("EXECUTE", "GENERATE"):
-            d = _decide(decision, ["clusters/prod/app.yaml"])
-            assert d.action == id_apply.VERIFY_ONLY and d.runbook is None
-
-    def test_refuse_posture_dominates(self):
-        assert _decide("REFUSE", ["infra/vpc.tf"]).action == id_apply.REFUSE
-        assert _decide("REFUSE", ["clusters/prod/app.yaml"]).action == id_apply.REFUSE
-
-    def test_ambiguous_scope_fails_closed_even_with_execute_posture(self):
-        assert _decide("EXECUTE", ["infra/vpc.tf", "clusters/prod/app.yaml"]).action == id_apply.REFUSE
-        assert _decide("EXECUTE", []).action == id_apply.REFUSE
-
-    def test_breakglass_execute_carries_audited_flag(self):
-        d = _decide("EXECUTE", ["infra/vpc.tf"], audited=True)
-        assert d.action == id_apply.EXECUTE and d.audited is True
+    def test_ambiguous_scope_fails_closed(self):
+        assert _decide(["infra/vpc.tf", "clusters/prod/app.yaml"]).action == id_apply.REFUSE
+        assert _decide([]).action == id_apply.REFUSE
 
     def test_decision_is_a_record_not_a_bare_enum(self):
-        d = _decide("EXECUTE", ["infra/vpc.tf"])
+        d = _decide(["infra/vpc.tf"])
         assert isinstance(d, id_apply.ApplyDecision)
-        assert hasattr(d, "action") and hasattr(d, "audited") and hasattr(d, "runbook")
-        g = _decide("GENERATE", ["infra/vpc.tf"])
-        assert isinstance(g.runbook, id_apply.RunbookPayload)
+        assert hasattr(d, "action") and hasattr(d, "runbook") and hasattr(d, "reason")
+        assert isinstance(d.runbook, id_apply.RunbookPayload)
 
     def test_fix_and_rerun_flips_from_refuse_to_execute(self):
-        before = _decide("REFUSE", ["infra/vpc.tf", "clusters/prod/app.yaml"])
-        after = _decide("EXECUTE", ["infra/vpc.tf"])
+        before = _decide(["infra/vpc.tf", "clusters/prod/app.yaml"])
+        after = _decide(["infra/vpc.tf"])
         assert before.action == id_apply.REFUSE
         assert after.action == id_apply.EXECUTE
+
+    # ── AC-IDAGR-1 — the record's shape carries no field whose only possible source was the retired
+    # posture probe: no `posture` parameter, no `GENERATE_RUNBOOK`, no `audited`, no nested
+    # `RunbookPayload.executed_by`.
+    def test_decision_record_carries_no_posture_derived_field(self):
+        assert _dead_shape_violations(
+            decide_apply_fn=id_apply.decide_apply,
+            apply_decision_cls=id_apply.ApplyDecision,
+            runbook_cls=id_apply.RunbookPayload,
+            module=id_apply,
+        ) == []
+        d = _decide(["infra/vpc.tf"])
+        assert not hasattr(d, "audited")
+        assert not hasattr(d.runbook, "executed_by")
+        print("IDAGR-1-RECORD-OK")
+
+    # ── AC-IDAGR-1 DEAD-SHAPE MUTANT — the four realistic no-ops, driven at 4of4. Each is a SYNTHETIC
+    # stand-in for exactly the shape a lazy "delete the posture branch" edit would leave behind; the
+    # SAME `_dead_shape_violations` witness used by the row above must convict every one of them.
+    def test_retained_dead_shape_is_convicted_4of4(self):
+        convicted = 0
+
+        # (1) posture kept as an ignored/defaulted parameter.
+        def mutant_decide_apply(*, posture=None, changed_paths, infra_binding):
+            return id_apply.decide_apply(changed_paths=changed_paths, infra_binding=infra_binding)
+
+        v1 = _dead_shape_violations(
+            decide_apply_fn=mutant_decide_apply, apply_decision_cls=id_apply.ApplyDecision,
+            runbook_cls=id_apply.RunbookPayload, module=id_apply)
+        assert v1, "a retained `posture` parameter must be convicted"
+        convicted += 1
+
+        # (2) `audited` retained as a permanently-false field on ApplyDecision.
+        MutantApplyDecision = dataclasses.make_dataclass(
+            "MutantApplyDecision", [("action", str), ("audited", bool, dataclasses.field(default=False)),
+                                     ("runbook", object, dataclasses.field(default=None)),
+                                     ("reason", str, dataclasses.field(default=""))])
+        v2 = _dead_shape_violations(
+            decide_apply_fn=id_apply.decide_apply, apply_decision_cls=MutantApplyDecision,
+            runbook_cls=id_apply.RunbookPayload, module=id_apply)
+        assert v2, "a retained `audited` field must be convicted"
+        convicted += 1
+
+        # (3) GENERATE_RUNBOOK left in the enum as an unreachable member.
+        class MutantModule:
+            GENERATE_RUNBOOK = "GENERATE_RUNBOOK"
+
+        v3 = _dead_shape_violations(
+            decide_apply_fn=id_apply.decide_apply, apply_decision_cls=id_apply.ApplyDecision,
+            runbook_cls=id_apply.RunbookPayload, module=MutantModule)
+        assert v3, "a retained `GENERATE_RUNBOOK` enum member must be convicted"
+        convicted += 1
+
+        # (4) the one a top-level field sweep misses: RunbookPayload.executed_by hardcoded "framework"
+        #     inside the NESTED record.
+        MutantRunbookPayload = dataclasses.make_dataclass(
+            "MutantRunbookPayload", [("command", str), ("verify", str),
+                                      ("executed_by", str, dataclasses.field(default="framework"))])
+        v4 = _dead_shape_violations(
+            decide_apply_fn=id_apply.decide_apply, apply_decision_cls=id_apply.ApplyDecision,
+            runbook_cls=MutantRunbookPayload, module=id_apply)
+        assert v4, "a retained nested `RunbookPayload.executed_by` must be convicted"
+        convicted += 1
+
+        assert convicted == 4
+        print("IDAGR-1-DEADSHAPE-MUTANT-4of4-OK")
+
+    # ── AC-IDAGR-2 — the whole table as a CLOSED enumeration, both directions in one row.
+    def test_router_is_total_with_exactly_four_refusing_inputs(self):
+        # direct EXECUTEs unconditionally — the default path, no second condition.
+        assert _decide(["infra/vpc.tf"]).action == id_apply.EXECUTE
+        # gitops VERIFY_ONLYs.
+        assert _decide(["clusters/prod/app.yaml"]).action == id_apply.VERIFY_ONLY
+        # (i) ambiguous, INCLUDING an empty changed_paths, refuses.
+        assert _decide(["infra/vpc.tf", "clusters/prod/app.yaml"]).action == id_apply.REFUSE
+        assert _decide([]).action == id_apply.REFUSE
+        # (ii) an out-of-set class value refuses (monkeypatch classify_gitops for this one call).
+        real_classify = id_apply.classify_gitops
+        try:
+            id_apply.classify_gitops = lambda *, changed_paths, infra_binding: "not-a-real-class"
+            assert _decide(["infra/vpc.tf"]).action == id_apply.REFUSE
+        finally:
+            id_apply.classify_gitops = real_classify
+        # (iii) a missing/empty required slot for the chosen branch refuses.
+        no_apply = dict(_INFRA_BINDING); del no_apply["apply"]
+        assert _decide(["infra/vpc.tf"], no_apply).action == id_apply.REFUSE
+        no_verify = dict(_INFRA_BINDING); del no_verify["verify"]
+        assert _decide(["infra/vpc.tf"], no_verify).action == id_apply.REFUSE
+        assert _decide(["clusters/prod/app.yaml"], no_verify).action == id_apply.REFUSE
+        # (iv) a malformed gitops_paths refuses — an EMPTY list is asserted WELL-FORMED in this SAME
+        # row, so the new condition cannot be implemented as "non-empty required".
+        empty_paths = dict(_INFRA_BINDING, gitops_paths=[])
+        assert _decide(["infra/vpc.tf"], empty_paths).action == id_apply.EXECUTE  # empty is well-formed.
+        absent_paths = {"apply": _FROZEN_APPLY, "verify": _FROZEN_VERIFY}
+        assert _decide(["infra/vpc.tf"], absent_paths).action == id_apply.REFUSE
+        not_a_list = dict(_INFRA_BINDING, gitops_paths="gitops/apps/**")
+        assert _decide(["infra/vpc.tf"], not_a_list).action == id_apply.REFUSE
+        blank_member = dict(_INFRA_BINDING, gitops_paths=["clusters/**", ""])
+        assert _decide(["infra/vpc.tf"], blank_member).action == id_apply.REFUSE
+        print("IDAGR-2-ROUTER-TOTAL-OK")
+
+    # ── AC-IDAGR-2 MALFORMED-GLOBS MUTANT — the one-character YAML slip: gitops_paths as a bare STRING.
+    # Pre-fix _gitops_globs(:88-94) silently yields () and classify_gitops then returns `direct` for
+    # every non-empty change, so a change under the string-typo'd glob would EXECUTE and race ArgoCD.
+    def test_malformed_gitops_paths_routed_to_execute_is_convicted(self):
+        typo_binding = dict(_INFRA_BINDING, gitops_paths="gitops/apps/**")
+
+        def mutant_decide_apply_no_iv_check(*, changed_paths, infra_binding):
+            # Reproduces the pre-fix behaviour: skip condition (iv) and derive the class directly —
+            # _gitops_globs silently yields () for a non-list, so classify_gitops returns `direct`.
+            gitops_class = id_apply.classify_gitops(changed_paths=changed_paths, infra_binding=infra_binding)
+            if gitops_class == id_apply.DIRECT:
+                return id_apply.ApplyDecision(
+                    action=id_apply.EXECUTE,
+                    runbook=id_apply.RunbookPayload(
+                        command=infra_binding["apply"], verify=infra_binding["verify"]),
+                    reason="mutant: no condition (iv) check")
+            return id_apply.ApplyDecision(action=id_apply.REFUSE, runbook=None, reason="mutant")
+
+        # the mutant routes a GitOps-glob-shaped change to EXECUTE — the defect this atom fixes.
+        assert mutant_decide_apply_no_iv_check(
+            changed_paths=["gitops/apps/root.yaml"], infra_binding=typo_binding).action == id_apply.EXECUTE
+        # the REAL decide_apply must REFUSE the same malformed input — this is the conviction.
+        assert id_apply.decide_apply(
+            changed_paths=["gitops/apps/root.yaml"], infra_binding=typo_binding).action == id_apply.REFUSE
+        print("IDAGR-2-MALFORMED-GLOBS-MUTANT-OK")
+
+    # ── AC-IDAGR-2 RESIDUAL-POLICY MUTANT — a well-formed `direct` change EXECUTEs under a matrix of
+    # irrelevant ambient conditions, convicting any implementation that kept or reintroduced a policy
+    # refusal (a prod test, an environment guard, an execution-context test).
+    def test_any_surviving_policy_refusal_is_convicted(self):
+        ambient_matrix = [
+            {}, {"env": "production"}, {"account": "111111111111", "production": True},
+            {"blast_tier": "HIGH"}, {"high_blast_acked": False}, {"approved": False},
+            {"execution_context": "ci"}, os.environ,
+        ]
+        for ambient in ambient_matrix:
+            sig = inspect.signature(id_apply.decide_apply)
+            kwargs = {"changed_paths": ["infra/vpc.tf"], "infra_binding": _INFRA_BINDING}
+            # decide_apply's signature has no slot for `ambient` at all — the matrix is asserted by
+            # NOT being able to inject it, plus the unconditional EXECUTE below.
+            assert set(sig.parameters) == {"changed_paths", "infra_binding"}
+            assert id_apply.decide_apply(**kwargs).action == id_apply.EXECUTE
+        print("IDAGR-2-NO-POLICY-MUTANT-OK")
+
+    # ── AC-IDAGR-2 REASON — VERIFY_ONLY's recorded reason states controller ownership, not a restriction.
+    def test_verify_only_reason_names_controller_ownership(self):
+        d = _decide(["clusters/prod/app.yaml"])
+        assert d.action == id_apply.VERIFY_ONLY
+        reason = d.reason.lower()
+        assert "controller" in reason and ("reconcil" in reason or "owns" in reason)
+        assert "restrict" not in reason and "permission" not in reason
+        print("IDAGR-2-REASON-OK")
+
+    # ── AC-IDAGR-4 — never-acquire: decide_apply runs NOTHING across the full input matrix, and the
+    # only mutating command any branch carries is the frozen infra_binding.apply BYTE-FOR-BYTE.
+    def test_decision_runs_nothing_and_emits_only_the_frozen_apply(self):
+        calls = []
+        id_apply.subprocess_run_injected_for_test = lambda *a, **k: calls.append((a, k))
+        try:
+            sentinel_binding = dict(_INFRA_BINDING, apply="tofu apply -auto-approve # SENTINEL-9f3c")
+            matrix = [
+                (["infra/vpc.tf"], sentinel_binding),
+                (["clusters/prod/app.yaml"], sentinel_binding),
+                ([], sentinel_binding),
+                (["infra/vpc.tf", "clusters/prod/app.yaml"], sentinel_binding),
+                (["infra/vpc.tf"], dict(sentinel_binding, gitops_paths="not-a-list")),
+            ]
+            for paths, binding in matrix:
+                id_apply.decide_apply(changed_paths=paths, infra_binding=binding)
+            assert calls == []  # decide_apply invoked nothing that runs a command.
+
+            d = id_apply.decide_apply(changed_paths=["infra/vpc.tf"], infra_binding=sentinel_binding)
+            assert d.action == id_apply.EXECUTE
+            assert d.runbook.command == sentinel_binding["apply"]  # byte-for-byte, no composition.
+        finally:
+            del id_apply.subprocess_run_injected_for_test
+        print("IDAGR-4-PURE-FROZEN-OK")
+
+    # ── AC-IDAGR-5 — REGRESSION FLOOR: classify_gitops's keyword-only signature, all three return
+    # values, and the empty-scope guard drive unchanged.
+    def test_classify_gitops_is_unchanged_4of4(self):
+        sig = inspect.signature(id_apply.classify_gitops)
+        assert all(p.kind == inspect.Parameter.KEYWORD_ONLY for p in sig.parameters.values())
+        assert set(sig.parameters) == {"changed_paths", "infra_binding"}
+        checked = 0
+        assert _classify(["infra/vpc.tf"]) == id_apply.DIRECT; checked += 1
+        assert _classify(["clusters/prod/app.yaml"]) == id_apply.GITOPS; checked += 1
+        assert _classify(["infra/vpc.tf", "clusters/prod/app.yaml"]) == id_apply.AMBIGUOUS; checked += 1
+        assert _classify([]) == id_apply.AMBIGUOUS; checked += 1  # the empty-scope guard.
+        assert checked == 4
+        print("IDAGR-5-CLASSIFIER-4of4-OK")
+
+    # ── AC-IDAGR-6 — the procedure skill: no posture/CTX reference survives, the IAM-context statement
+    # is present, and BOTH prompt-injection rules survive. Parsed by section, not a joined-text substring.
+    def test_id_apply_skill_names_no_posture_and_keeps_both_injection_rules(self):
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             "skills", "id-apply", "SKILL.md")
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        frontmatter, body = text.split("---", 2)[1:3]
+        assert "posture" not in text.lower()
+        assert "ctx-posture" not in text.lower()
+        assert "ctx status" not in text.lower()
+        sections = {}
+        current = None
+        for line in body.splitlines():
+            if line.startswith("## "):
+                current = line[3:].strip()
+                sections[current] = []
+            elif current is not None:
+                sections[current].append(line)
+        injection_section = "\n".join(sections.get("Prompt-injection discipline (load-bearing)", []))
+        assert "classify_gitops" in injection_section and "RE-DERIVED" in injection_section
+        assert "FROZEN" in injection_section and "infra_binding.apply" in injection_section
+        procedure_text = "\n".join(sections.get("The procedure", []))
+        assert "AWS" in procedure_text or "IAM" in procedure_text or "iam" in body.lower()
+        assert "iam restrictions" in body.lower()
+        assert "operator" in body.lower()
+        print("IDAGR-6-SKILL-OK")
+
+    # ── AC-IDAGR-9 — the gate module's OWN prose, all five regions, parsed per-region so a clean module
+    # docstring cannot pass for a stale branch table.
+    def test_gate_module_prose_describes_only_surviving_behaviour_5of5(self):
+        regions = _module_prose_regions(id_apply)
+        assert len(regions) == 5
+        for name, text in regions.items():
+            hits = _forbidden_prose_hits(text)
+            assert hits == [], f"region {name!r} carries forbidden prose: {hits}"
+        print("IDAGR-9-MODULE-PROSE-5of5-OK")
+
+    # ── AC-IDAGR-9 STALE-DOCSTRING MUTANT — restores decide_apply's four-branch posture table verbatim
+    # into its docstring while every behavioural row stays green; the AC-IDAGR-9 witness must go RED.
+    def test_a_restored_posture_table_docstring_is_convicted(self):
+        stale_docstring = (
+            "The table:\n"
+            "  (a)  posture.decision == REFUSE                              -> REFUSE (dominates).\n"
+            "  (b)  gitops_class == \"gitops\" AND posture != REFUSE           -> VERIFY_ONLY.\n"
+            "  (c)  posture.decision == EXECUTE AND gitops_class == \"direct\" -> EXECUTE (carries "
+            "posture.audited -- True for break-glass).\n"
+            "  (d)  posture.decision == GENERATE AND gitops_class == \"direct\" -> GENERATE_RUNBOOK "
+            "(SoD: authorized generator != executor)."
+        )
+        hits = _forbidden_prose_hits(stale_docstring)
+        assert hits, "a restored posture-table docstring must be convicted, not pass silently"
+        # and the SAME witness reports the real module clean, proving this isn't a vacuous ban.
+        assert _forbidden_prose_hits(id_apply.decide_apply.__doc__) == []
+        print("IDAGR-9-STALE-DOCSTRING-MUTANT-OK")
+
+    # ── AC-IDAGR-10 — the class is STRUCTURALLY underivable from a caller claim.
+    def test_decide_apply_derives_the_class_and_offers_no_override(self):
+        sig = inspect.signature(id_apply.decide_apply)
+        assert set(sig.parameters) == {"changed_paths", "infra_binding"}
+        assert "gitops_class" not in sig.parameters and "posture" not in sig.parameters
+        # the internal call is load-bearing: pin classify_gitops to "gitops" while the caller-implied
+        # class (from the paths alone) would have been "direct" -- the routing must follow the pin.
+        real_classify = id_apply.classify_gitops
+        try:
+            id_apply.classify_gitops = lambda *, changed_paths, infra_binding: id_apply.GITOPS
+            d = id_apply.decide_apply(changed_paths=["infra/vpc.tf"], infra_binding=_INFRA_BINDING)
+            assert d.action == id_apply.VERIFY_ONLY
+        finally:
+            id_apply.classify_gitops = real_classify
+        print("IDAGR-10-INTERNAL-DERIVE-OK")
+
+    # ── AC-IDAGR-11 — BOTH directions in one row: the rendered/logged form is scrubbed; the executed
+    # form (decision.runbook.command) is the frozen, UNALTERED bytes.
+    def test_rendered_decision_is_scrubbed_and_executed_command_is_not(self):
+        sentinel = "SENTINEL-db-pw-7f2a"
+        leaky_binding = dict(_INFRA_BINDING, apply=f"TF_VAR_db_password={sentinel} tofu apply -auto-approve")
+        d = id_apply.decide_apply(changed_paths=["infra/vpc.tf"], infra_binding=leaky_binding)
+        assert d.action == id_apply.EXECUTE
+        # the EXECUTE branch's runnable command is the frozen bytes, sentinel included, unaltered.
+        assert d.runbook.command == leaky_binding["apply"]
+        assert sentinel in d.runbook.command
+        rendered = id_apply.render_decision(d)
+        assert sentinel not in rendered["command"]
+        assert sentinel not in (rendered["reason"] or "")
+        print("IDAGR-11-SCRUB-RENDERED-ONLY-OK")
+
+
+def _dead_shape_violations(*, decide_apply_fn, apply_decision_cls, runbook_cls, module):
+    """The AC-IDAGR-1 witness: returns a list of violations (empty ⇒ clean) for exactly the four
+    realistic dead-shape no-ops named in the contract. Shared between the primary AC-IDAGR-1 row and
+    its mutant row so both drive the SAME check."""
+    violations = []
+    sig = inspect.signature(decide_apply_fn)
+    if "posture" in sig.parameters:
+        violations.append("decide_apply retains a `posture` parameter")
+    ad_fields = {f.name for f in dataclasses.fields(apply_decision_cls)}
+    if "audited" in ad_fields:
+        violations.append("ApplyDecision retains an `audited` field")
+    if hasattr(module, "GENERATE_RUNBOOK"):
+        violations.append("module retains a `GENERATE_RUNBOOK` member")
+    rb_fields = {f.name for f in dataclasses.fields(runbook_cls)}
+    if "executed_by" in rb_fields:
+        violations.append("RunbookPayload retains an `executed_by` field")
+    return violations
+
+
+_FORBIDDEN_PROSE_PHRASES = (
+    "posture", "generate_runbook", "break-glass", "breakglass", "segregation of duties",
+    "governs whether a prod mutation runs", "security-review surface", "ctx-posture", "ctx status",
+    " sod ", "sod split", "sod:",
+)
+
+
+def _forbidden_prose_hits(text):
+    lowered = (text or "").lower()
+    return [phrase for phrase in _FORBIDDEN_PROSE_PHRASES if phrase in lowered]
+
+
+def _module_prose_regions(module):
+    """The five AC-IDAGR-9 regions of scripts/foundry_id_apply.py, each isolated so a clean module
+    docstring cannot pass for a stale branch table hiding elsewhere."""
+    src = inspect.getsource(module)
+    enum_start = src.index("# The closed ApplyAction enum")
+    enum_end = src.index("@dataclass", enum_start)
+    return {
+        "module_docstring": module.__doc__ or "",
+        "enum_comments": src[enum_start:enum_end],
+        "dataclass_docstrings": (
+            (module.RunbookPayload.__doc__ or "") + "\n" + inspect.getsource(module.RunbookPayload)
+            + "\n" + (module.ApplyDecision.__doc__ or "") + "\n" + inspect.getsource(module.ApplyDecision)
+        ),
+        "decide_apply_docstring": module.decide_apply.__doc__ or "",
+        "decide_apply_body_comments": inspect.getsource(module.decide_apply),
+    }
 
 
 # ================================================================= foundry_id_alloc.py ==== #
@@ -570,3 +882,27 @@ def test_plan_model_policy_findings_importable_for_id_impact_change_tier():
     `foundry_plan_model.parse_policy_findings` being present and callable; the deep behavioral
     coverage lives in TestParsePolicyFindings above."""
     assert callable(getattr(plan_model, "parse_policy_findings", None))
+
+
+# ── The UNFILTERED full-suite regression row (AC-IDAGR-5's "FULL-FILE REGRESSION" checkpoint) ── #
+# The frozen contract's locator for this row is `python3 -m pytest tests/test_infra_delivery.py
+# tests/test_stack_profile.py -q -s` — BOTH files, no `-k`. A `-k`-filtered row cannot see a
+# regression it does not select for, so the token has to be emitted by the RUN, not by a selected
+# test, and only when nothing in the session failed.
+#
+# A session-scoped fixture teardown is the seam that works from inside a test module: pytest reads
+# hooks only from conftest.py/plugins, and conftest.py is outside this atom's allowed_paths (mirrors
+# tests/test_contract_authz.py's identical AC-RGR-5 row). At session teardown
+# `request.session.testsfailed` reflects the WHOLE session — both files, since both are passed on one
+# `pytest` invocation — so the token prints iff every test across both files passed.
+@pytest.fixture(scope="session")
+def _idagr_suite_green_token(request):
+    yield
+    if request.session.testsfailed == 0:
+        print("IDAGR-SUITE-GREEN-OK")
+
+
+def test_infra_delivery_suite_green_token(_idagr_suite_green_token):
+    """Requests the session fixture whose TEARDOWN emits the suite token. Asserts nothing itself —
+    deliberately: "the suite is green" is not knowable from inside a test, which is exactly why the
+    token is emitted at session teardown instead."""

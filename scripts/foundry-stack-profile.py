@@ -180,11 +180,12 @@ def infra_binding_of(doc):
     return None
 
 
-# Read-only leading-verb allowlist, MIRRORED from CTX's command-policy (AC-SPIB-2). The plan/verify/policy
-# slots are read-only; a mutating verb (tofu apply|destroy, kubectl apply|delete, helm install|upgrade) in a
-# read-only slot is REJECTED fail-closed (the static belt-and-suspenders; the authoritative floor is the CTX
-# runtime guard). Keyed by tool → the set of allowed read-only subcommands; a `*`-bearing entry (kubectl)
-# additionally requires a server-dry-run flag for the otherwise-mutating verbs.
+# Read-only leading-verb allowlist (AC-SPIB-2). The plan/verify/policy slots are read-only; a mutating
+# verb (tofu apply|destroy, kubectl apply|delete, helm install|upgrade) in a read-only slot is REJECTED
+# fail-closed — this loader check IS the sole static floor on those three slots; no external runtime
+# command-policy backs it, and none is claimed here. Keyed by tool → the set of allowed read-only
+# subcommands; a `*`-bearing entry (kubectl) additionally requires a server-dry-run flag for the
+# otherwise-mutating verbs.
 _READROLE_SLOTS = ("plan", "verify", "policy")
 _READONLY_VERBS = {
     "tofu": {"plan", "validate", "output", "fmt"},
@@ -218,11 +219,11 @@ def _tokens(cmd):
 
 
 # Shell connectors a slot command may chain on. We split on these and require EVERY segment to be read-only.
-# HEURISTIC connector-split (a static belt-and-suspenders), NOT a full shell parser: it splits on the bare
-# token forms of `&&`, `||`, `;`, and pipe `|`, so it does NOT catch a connector hidden inside a quoted arg
-# (e.g. `kubeconform "a && b"`) or other shell metacharacters. The AUTHORITATIVE enforcement remains the CTX
-# runtime command-policy guard; this loader-side check is the fail-closed mistake-catcher (a mutating verb
-# CHAINED after a read-only leading verb in a read-only slot is the bypass it closes).
+# HEURISTIC connector-split, NOT a full shell parser: it splits on the bare token forms of `&&`, `||`, `;`,
+# and pipe `|`, so it does NOT catch a connector hidden inside a quoted arg (e.g. `kubeconform "a && b"`) or
+# other shell metacharacters — this loader-side check is the SOLE static floor on the read-only slots, and
+# it is honestly a heuristic one rather than a full parser; no external runtime command-policy backs it (a
+# mutating verb CHAINED after a read-only leading verb in a read-only slot is the bypass it closes).
 _CONNECTOR_RE = re.compile(r"\s*(?:&&|\|\||;|\|)\s*")
 
 
