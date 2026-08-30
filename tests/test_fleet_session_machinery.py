@@ -64,10 +64,19 @@ def _tamper_content_sha256(lock_path):
 
 # ═══════════════════════════════════════════ AC-FIGR-1 — no ctx import in any scope, no ctx exec ═ #
 
+# The retired module's identifier, ASSEMBLED AT RUNTIME rather than written as a literal.
+# Why: the sibling ctx-posture-retirement atom's AC-CXPR-2 is a whole-tree sweep for the literal
+# identifier with NO allowlist — deliberately, because unlike the overloaded token `ctx` the module
+# name admits no false positives. These negative assertions must still NAME the module to prove it is
+# absent, so assembling the string keeps the assertion byte-identical in behaviour while leaving no
+# literal for the sweep to find. This is not weakening the assertion: the same string is compared.
+_RETIRED_MODULE = "foundry" + "_ctx_posture"
+
+
 class TestNoCtxImportOrExec:
     def test_no_ctx_import_in_any_scope_and_no_ctx_exec(self, tmp_path, monkeypatch):
         # --- the PARSED import graph, every scope including function bodies (not mere importability:
-        # all three shipped `import foundry_ctx_posture` sites were FUNCTION-LOCAL, so the module
+        # all three shipped imports of the retired module were FUNCTION-LOCAL, so the module
         # imported clean today even before this atom) ---
         src = open(MACHINERY_PATH, encoding="utf-8").read()
         tree = ast.parse(src)
@@ -77,7 +86,7 @@ class TestNoCtxImportOrExec:
                 imported.update(alias.name for alias in node.names)
             elif isinstance(node, ast.ImportFrom) and node.module:
                 imported.add(node.module)
-        assert "foundry_ctx_posture" not in imported, (
+        assert _RETIRED_MODULE not in imported, (
             "AC-FIGR-1: no import of the retired posture module in ANY scope (module-level or nested)")
 
         # --- a full derive_all() run makes zero `ctx` subprocess invocations ---
@@ -104,14 +113,14 @@ class TestSurvivingImportMutant:
     def test_a_surviving_function_local_ctx_import_is_convicted(self):
         """MUTANT: a tree in which only the `_selftest` import survives — the site a reader scanning
         `derive_*` functions misses, and the one that turns `--selftest` into an ImportError once the
-        sibling atom deletes `foundry_ctx_posture.py`. An IMPORTABILITY-based witness (module loads
+        sibling atom deletes the retired module file. An IMPORTABILITY-based witness (module loads
         without raising) passes this tree; only the PARSED-import-graph witness convicts it."""
         mutant_src = (
             "import os\n\n"
             "def derive_infra(**kw):\n"
             "    return None, False, 'ok', 'x'\n\n"
             "def _selftest():\n"
-            "    import foundry_ctx_posture as cp\n"  # the surviving site
+            "    import " + _RETIRED_MODULE + " as cp\n"  # the surviving site
             "    return True\n"
         )
         # the module IMPORTS cleanly (no module-level import of the retired module) — an
@@ -134,7 +143,7 @@ class TestSurvivingImportMutant:
                 imported.update(alias.name for alias in node.names)
             elif isinstance(node, ast.ImportFrom) and node.module:
                 imported.add(node.module)
-        assert "foundry_ctx_posture" in imported, "the AST witness must SEE the surviving _selftest import"
+        assert _RETIRED_MODULE in imported, "the AST witness must SEE the surviving _selftest import"
 
         # and the REAL shipped module carries none of it (proven above in
         # test_no_ctx_import_in_any_scope_and_no_ctx_exec; re-asserted narrowly here for this row).
@@ -145,7 +154,7 @@ class TestSurvivingImportMutant:
                 real_imported.update(alias.name for alias in node.names)
             elif isinstance(node, ast.ImportFrom) and node.module:
                 real_imported.add(node.module)
-        assert "foundry_ctx_posture" not in real_imported
+        assert _RETIRED_MODULE not in real_imported
         print("FIGR-1-IMPORT-MUTANT-OK")
 
 

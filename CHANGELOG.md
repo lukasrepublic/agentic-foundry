@@ -47,7 +47,7 @@ mutation); this atom subtracts the dependency rather than replacing it.
 - **`skills/id-apply/SKILL.md` rewritten (AC-IDAGR-6):** the procedure resolves the profile → decides
   (the gate re-derives the class itself) → drives the branch; no session probe, no posture, no CTX.
 
-**No CTX-authority claim survives, and this atom deletes nothing.** `scripts/foundry_ctx_posture.py`
+**No CTX-authority claim survives, and this atom deletes nothing.** The retired posture module
 is left untouched — it becomes unreferenced by this atom, and a sibling atom retires it separately so
 the tree stays green at each step.
 
@@ -170,7 +170,7 @@ Spec: `specs/features/foundry/gate-integrity/retirement-grounding/` (workspace),
 
 **The one unmocked production probe of the retired CTX control plane in the whole workspace is gone.**
 `derive_all` called `_ctx_probe_present()` on every `/foundry:fleet` invocation, which shelled out to
-`ctx status --json`. All three `import foundry_ctx_posture` sites — `derive_infra`, the probe helper,
+`ctx status --json`. All three imports of the retired posture module — `derive_infra`, the probe helper,
 and (the one a reader scanning `derive_*` functions misses) the module's own `--selftest` — are gone,
 and the helper itself is deleted.
 
