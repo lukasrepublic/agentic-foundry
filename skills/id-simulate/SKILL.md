@@ -1,6 +1,6 @@
 ---
 name: id-simulate
-description: 'The infra-delivery OFFLINE LOCAL-SIMULATION step (the new `simulate` step, between `id-test` and `id-plan`) — a PROCEDURE skill the generic agent runs ENTIRELY OFFLINE (no live cloud, no `ctx`) to author-and-prove the IaC corpus before the live pre-merge plan. Layer 1: `apply` the profile''s EXISTING primitive OpenTofu modules against LocalStack via `tflocal` (or a provider-endpoint override) — proving they APPLY, not merely validate, honest about the CE-vs-Pro coverage boundary. Layer 2: stand up an ephemeral `kind`/`k3d` cluster, install ArgoCD, and reconcile the app-of-apps with Karpenter-`kwok` + ESO-fake — proving the GitOps structure reconciles. It records the local-sim observation as a `.foundry/`-partitioned STEP-REPORT NOTE (`.foundry/id-simulate-report`). ADVISORY — it surfaces the observation; it does NOT gate, approve, or merge (the merge floor, branch protection + CI checks, see docs/merge-floor.md, is the merge authority), and (running no `tofu plan` against live state) it records a STEP-REPORT NOTE, NOT walk-evidence — the bespoke `emit_infra_walk_evidence` recorder this note is contrasted against was retired and does not exist in scripts/. OFFLINE — every Layer-1 `apply` is against the LocalStack endpoint (never a real AWS account); every Layer-2 `apply`/reconcile is against a throwaway local `kind`/`k3d` (never the guarded live cluster); it issues no live mutation, never runs `infra_binding.apply`, and never invokes `ctx-posture`.'
+description: 'The infra-delivery OFFLINE LOCAL-SIMULATION step (the new `simulate` step, between `id-test` and `id-plan`) — a PROCEDURE skill the generic agent runs ENTIRELY OFFLINE (no live cloud, no credentials) to author-and-prove the IaC corpus before the live pre-merge plan. Layer 1: `apply` the profile''s EXISTING primitive OpenTofu modules against LocalStack via `tflocal` (or a provider-endpoint override) — proving they APPLY, not merely validate, honest about the CE-vs-Pro coverage boundary. Layer 2: stand up an ephemeral `kind`/`k3d` cluster, install ArgoCD, and reconcile the app-of-apps with Karpenter-`kwok` + ESO-fake — proving the GitOps structure reconciles. It records the local-sim observation as a `.foundry/`-partitioned STEP-REPORT NOTE (`.foundry/id-simulate-report`). ADVISORY — it surfaces the observation; it does NOT gate, approve, or merge (the merge floor, branch protection + CI checks, see docs/merge-floor.md, is the merge authority), and (running no `tofu plan` against live state) it records a STEP-REPORT NOTE, NOT walk-evidence — the bespoke `emit_infra_walk_evidence` recorder this note is contrasted against was retired and does not exist in scripts/. OFFLINE — every Layer-1 `apply` is against the LocalStack endpoint (never a real AWS account); every Layer-2 `apply`/reconcile is against a throwaway local `kind`/`k3d` (never the guarded live cluster); it issues no live mutation and never runs `infra_binding.apply`.'
 ---
 
 # id-simulate — OFFLINE local-simulation craft (infra-delivery step, between `id-test` and `id-plan`)
@@ -8,8 +8,8 @@ description: 'The infra-delivery OFFLINE LOCAL-SIMULATION step (the new `simulat
 The `infra-delivery` step sequence (a documented procedure this skill family forms — no workflow engine or state-machine file ships) drives an infra change → merge. The **`simulate`** step runs **after**
 `id-test` (the Layer-0 policy/contract test) and **before** `id-plan` (the read-only pre-merge
 plan/diff seam). It is the **offline local-simulation** layer: a PROCEDURE skill the generic agent
-runs **entirely offline — with no live cloud and no `ctx`** — to **author-and-prove the whole IaC
-corpus before the live `ctx` plan**.
+runs **entirely offline — with no live cloud and no credentials** — to **author-and-prove the whole
+IaC corpus before the live pre-merge plan**.
 
 The Layer-0 steps (`id-validate` fmt/lint/render + `id-test` policy/contract tests) prove the change
 *validates* and *renders / policy-passes*; they **cannot** prove the primitive modules *apply* or that
@@ -18,16 +18,17 @@ of live cloud, the highest-value signal an adopter can get — by driving the pr
 against local simulators. It needs **no new `infra_binding` slot** (it drives the profile's already-named
 modules + `gitops_paths` tree offline).
 
-## OFFLINE — no live cloud, no `ctx` (the load-bearing safety invariant)
+## OFFLINE — no live cloud, no credentials (the load-bearing safety invariant)
 
 This step is **OFFLINE**. Every Layer-1 `apply` is against the **LocalStack endpoint** (`--endpoint-url`
 / a `tflocal` provider override + a `backend "local"` state) — it `apply`s the primitive modules to a
 *simulator*, **never** a real AWS account, and it is **not** the profile's `infra_binding.apply`
 live-mutation slot. Every Layer-2 `apply`/reconcile is against a **throwaway local `kind`/`k3d`**
-cluster — **never** the guarded live cluster. Because everything is local-only, `id-simulate` issues
-**no live-cloud mutation**, touches **no `ctx-posture`-gated live-mutation path**, and **never invokes
-`ctx-posture`** (mutation-only — an offline step relies on no live posture; it does not even require a
-`ctx` session, the offline layers run pre-`ctx`). It is the offline complement to the read-only
+cluster — **never** the guarded live cluster. Because everything is local-only, this step runs
+**entirely offline**: **no live cloud account, no live cluster, no credentials**, and it **issues
+no mutating command** against either. (Layer 2 does stand up a throwaway *local* `kind`/`k3d`
+cluster — that is the local simulator itself, never a live cluster or credentials of any kind.) It
+is the offline complement to the read-only
 `id-validate`/`id-test`: those never mutate *anything*; `id-simulate` mutates only *local simulators*,
 never live state.
 
@@ -64,8 +65,8 @@ throwaway `kind`/`k3d` cluster.
 ## Procedure (ordered local-sim steps — advisory, OFFLINE)
 
 Run these steps **in order**. Every `apply` is gated to a **simulator** (the LocalStack endpoint or the
-throwaway `kind`/`k3d` cluster); **nothing** here touches live cloud, the guarded cluster,
-`infra_binding.apply`, or `ctx-posture`.
+throwaway `kind`/`k3d` cluster); **nothing** here touches live cloud, the guarded cluster, or
+`infra_binding.apply`.
 
 1. **Resolve the active stack profile.** Resolve the active profile so the concrete primitive modules +
    the `infra_binding.gitops_paths` app-of-apps tree are known. **No new binding slot** is required —
@@ -79,7 +80,8 @@ throwaway `kind`/`k3d` cluster); **nothing** here touches live cloud, the guarde
 3. **Be honest about the LocalStack CE-vs-Pro coverage boundary.** Surface what local *cannot* prove:
    LocalStack **CE** applies VPC / EC2 / IAM, but **ECR is Pro-gated** (`501` on CE; applies under a
    Pro token); the **EKS control plane / EKS Pod Identity / real ALB / managed RDS + Valkey + DNS
-   cutover are never emulatable** — they are the live-`ctx` (Layer-3) concern, out of local scope. A
+   cutover are never emulatable** — they are the live-environment (Layer-3, `id-plan`/`id-apply`)
+   concern, out of local scope. A
    green local-sim is **not** a live guarantee. (Toolchain note: install the canonical **`tflocal`**
    pipx-isolated — a global pip install collides on `python-hcl2`; fall back to a tool-independent
    `localstack_override.tf` if `~/.local/bin` is PATH-shadowed.)
@@ -130,7 +132,7 @@ throwaway `kind`/`k3d` cluster); **nothing** here touches live cloud, the guarde
 
 ## Anti-patterns
 
-- **Any live-cloud mutation / a `ctx`-gated apply.** This skill **never** issues a `tofu apply` /
+- **Any live-cloud mutation.** This skill **never** issues a `tofu apply` /
   `kubectl apply` against the **live** / **guarded** / **prod** env, **never** runs the profile's
   `infra_binding.apply` mutation slot, and **never** touches a real AWS account or the guarded live
   cluster. Every `apply` is gated to LocalStack (`tflocal` / `--endpoint-url`) or the throwaway
@@ -139,15 +141,12 @@ throwaway `kind`/`k3d` cluster); **nothing** here touches live cloud, the guarde
   against live state and has no plan-evidence surface, so it records a **`.foundry/` step-report note**,
   **NOT** walk-evidence. `emit_infra_walk_evidence` itself no longer exists in `scripts/` (retired); the realization recorder (`emit_realization_evidence`) is real and belongs
   to `id-sync` / `id-verify` / `id-rollback`.
-- **Invoking `ctx-posture`.** `id-simulate` touches no posture-gated mutation path (it is offline), so
-  it **never invokes `ctx-posture`** (mutation-only) and does not even require a `ctx`
-  session — the offline layers run pre-`ctx`.
 - **Adding a new `infra_binding.simulate` (or any new) binding slot.** `id-simulate` drives the
   profile's **existing** modules + `gitops_paths` tree offline against the local simulators; it adds
   **no** schema / loader change.
 - **Mistaking a green local-sim for a live guarantee.** LocalStack CE / EKS-control-plane coverage gaps
-  are real (ECR Pro-gated, EKS never emulatable) — surface them, never hide them; the live-`ctx`
-  Layer-3 concern is out of local scope.
+  are real (ECR Pro-gated, EKS never emulatable) — surface them, never hide them; the live-environment
+  Layer-3 concern (`id-plan`/`id-apply`) is out of local scope.
 - **Claiming a machine-adjudicated GREEN verdict / self-certifying a PASS.** `id-simulate` is
   advisory; the merge floor (the adopter's branch protection + CI checks) owns the merge authority — no
   live component computes an automated verdict from this step's note (the `derive_walk_verdict`

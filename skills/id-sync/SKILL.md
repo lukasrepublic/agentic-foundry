@@ -53,9 +53,8 @@ Run these steps **in order**. Each is a step, not reference prose.
    *already-authorized merged* state; the framework only **triggers + reads**. Issue **no** `tofu
    apply`, **no** destructive prune, and **no** `--force`/`--prune` past the realization read.
 
-3. **Read the realized state (read-only, through the CTX guard).** Drive the active profile's
-   **`infra_binding.verify`** read-only checks against the **real** realized env, **read-only** and
-   through the CTX read-only guard:
+3. **Read the realized state (read-only).** Drive the active profile's
+   **`infra_binding.verify`** read-only checks against the **real** realized env, **read-only**:
    - the **post-apply `tofu plan`** (refreshed) — empty (`tofu plan == ∅`) iff reality now equals the
      merged IaC, the drift loop closed;
    - **BOTH ArgoCD axes** — query the app's `sync_status` AND `health_status` (e.g. `argocd app get

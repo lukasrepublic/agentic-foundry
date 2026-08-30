@@ -1,6 +1,6 @@
 ---
 name: id-implement
-description: 'The infra-delivery change-authoring craft (step 5) — author/edit the IaC for the intended change ON A BRANCH, kept in sync with the frozen intended-change manifest (the `tofu-plan` checkpoint''s operator-frozen `intended` set in the acceptance-contract). A PROCEDURE skill the generic agent runs inside a CTX session: it WRITES files (scaffold/edit the OpenTofu/Kubernetes IaC to the handbook conventions) and runs NO plan and mutates NOTHING. The load-bearing discipline: the authored IaC is BRANCH-QUARANTINED (never `main`) and NEVER-APPLY (no `tofu apply`/`kubectl apply`/live mutation here), and it stays in sync with the frozen `intended` set so the downstream read-only `id-plan` plan can attribute it for the operator/reviewer. Records a `.foundry/id-implement-report` authoring STEP-REPORT NOTE — NOT walk-evidence, NOT a verdict input (the bespoke `emit_infra_walk_evidence` plan recorder this note is contrasted against was retired and does not exist in scripts/). ADVISORY craft, NOT a gate — the merge floor (branch protection + CI checks, see docs/merge-floor.md) is the authority.'
+description: 'The infra-delivery change-authoring craft (step 5) — author/edit the IaC for the intended change ON A BRANCH, kept in sync with the frozen intended-change manifest (the `tofu-plan` checkpoint''s operator-frozen `intended` set in the acceptance-contract). A PROCEDURE skill the generic agent runs: it WRITES files (scaffold/edit the OpenTofu/Kubernetes IaC to the handbook conventions) and runs NO plan and mutates NOTHING. The load-bearing discipline: the authored IaC is BRANCH-QUARANTINED (never `main`) and NEVER-APPLY (no `tofu apply`/`kubectl apply`/live mutation here), and it stays in sync with the frozen `intended` set so the downstream read-only `id-plan` plan can attribute it for the operator/reviewer. Records a `.foundry/id-implement-report` authoring STEP-REPORT NOTE — NOT walk-evidence, NOT a verdict input (the bespoke `emit_infra_walk_evidence` plan recorder this note is contrasted against was retired and does not exist in scripts/). ADVISORY craft, NOT a gate — the merge floor (branch protection + CI checks, see docs/merge-floor.md) is the authority.'
 ---
 
 # id-implement — author the IaC for the intended change on a branch (infra-delivery step 5)
@@ -8,8 +8,8 @@ description: 'The infra-delivery change-authoring craft (step 5) — author/edit
 The `infra-delivery` step sequence (a documented procedure this skill family forms — no workflow engine or state-machine file ships) drives an infra change → merge. Step 5 is the **change-authoring**
 step. After the contract is frozen at authorize, this is where the generic agent **authors/edits the
 IaC** for the intended change — scaffold/edit the OpenTofu/Kubernetes files to the handbook
-conventions — **on a branch**. It is a PROCEDURE skill the generic agent **runs** inside a CTX
-session. It **runs NO plan and mutates NOTHING** — it writes *files*. The authored IaC is
+conventions — **on a branch**. It is a PROCEDURE skill the generic agent **runs**.
+It **runs NO plan and mutates NOTHING** — it writes *files*. The authored IaC is
 **branch-quarantined** (it never touches `main`, and it never `apply`s or otherwise mutates live
 cloud state), and it **NAMES the frozen intended-change manifest** (the `tofu-plan` checkpoint's
 operator-frozen `intended` set in the acceptance-contract) it must keep the edit **in sync** with —
@@ -36,10 +36,9 @@ guidance **FOR** the trusted operator, not a defense **against** them.
 **This skill authors files on a BRANCH and NEVER issues a mutating verb against live state.** The
 write is **branch-quarantined** — it **never pushes `main`** — and there is **no `tofu apply`** (nor
 `kubectl apply`, nor any `create`/`delete`/`put`/`modify`/`apply`/reconcile) anywhere in this
-procedure. Authoring IaC *files* is not a live-env mutation, so the whole procedure runs **unchanged
-in guarded prod**. The actual mutation is the **separate posture-gated step-12 `id-apply`** path, and
-the merge (merge-is-deploy) is the operator-gated pivot. A change isn't realized until merge → this
-step **never applies and never pushes `main`**.
+procedure. Authoring IaC *files* is not a live-env mutation. The actual mutation is the
+**separate step-12 `id-apply`** path, and the merge (merge-is-deploy) is the operator-gated pivot. A
+change isn't realized until merge → this step **never applies and never pushes `main`**.
 
 ## Authors in sync with the frozen intended-change manifest
 
@@ -80,7 +79,7 @@ above are absolute.
 
 ## Procedure (ordered change-authoring steps — advisory)
 
-Run these steps **in order** inside the CTX session. The step writes IaC *files* on a branch; it runs
+Run these steps **in order**. The step writes IaC *files* on a branch; it runs
 no plan and issues no mutating verb.
 
 1. **Resolve the active stack profile + the frozen contract.** Resolve the active stack profile so the
@@ -89,7 +88,7 @@ no plan and issues no mutating verb.
 2. **Author/edit the IaC on a branch, to the handbook conventions.** Scaffold/edit the
    OpenTofu/Kubernetes files for the intended change, on a **branch** (never `main`), matching the
    handbook conventions. **Write *files* only** — run **no plan** and issue **no mutating verb** (no
-   `tofu apply`/`kubectl apply`/live mutation; mutation is the posture-gated `id-apply` step).
+   `tofu apply`/`kubectl apply`/live mutation; mutation is the separate `id-apply` step).
 3. **Keep the edit in sync with the frozen `intended` manifest.** Ensure each authored
    add/change/replace/destroy maps to an action in the frozen **`intended`** set. An edit realizing an
    **unfrozen** action is **out of contract** → **re-author or re-authorize** (widening `intended` is
@@ -119,7 +118,7 @@ no plan and issues no mutating verb.
 
 - **Applying / mutating / pushing `main`.** This skill **never** issues `tofu apply` / `kubectl
   apply` / any mutating verb against live state, and **never pushes `main`** — it authors *files* on a
-  branch (the branch-quarantined never-apply invariant). Mutation is the posture-gated `id-apply`
+  branch (the branch-quarantined never-apply invariant). Mutation is the separate `id-apply`
   step; merge is the operator-gated pivot.
 - **Naming `emit_infra_walk_evidence` as this step's recorder.** This step runs **no plan** and has
   **no `plan_results`** — it records the **`.foundry/id-implement-report`** authoring step-report

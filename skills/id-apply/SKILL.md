@@ -14,9 +14,11 @@ outcome that falls out, fail-closed.
 
 **The operator supplies the AWS context.** The operator has already configured a correctly-scoped AWS
 context (credentials + connectivity); its **IAM restrictions ARE the control** on what the mutating
-command may do. The framework relies on that context and does **not** model, verify, re-derive or
-second-guess it — no login, no assume-role, no VPN, no connectivity probe. The framework **never
-mutates** in the VERIFY_ONLY / REFUSE branches.
+command may do, and that control is **outside the framework's scope** — the framework relies on it and
+does **not** model, verify, re-derive or second-guess it. The framework **never acquires credentials or
+connectivity**: it runs no `aws sso login`, no `aws configure`, no assume-role, and establishes no VPN —
+those are the operator's job, done before this skill ever runs. The framework **never mutates** in the
+VERIFY_ONLY / REFUSE branches.
 
 ## When to trigger
 
@@ -65,11 +67,16 @@ function that derives the class itself) — this procedure drives the I/O around
      frozen `infra_binding.apply` exactly as written, then runs the read-only `infra_binding.verify`
      to confirm the applied state. The command's bound is the operator's AWS-context IAM
      restrictions — the framework carries no check on what the command may do beyond the profile
-     schema's non-empty-string shape.
-   - **VERIFY_ONLY** (`gitops`): the ArgoCD controller owns reconciliation of this path — running the
-     apply as well would race the controller's next sync, not add a mutation. This is a
-     **correctness** routing, not a permission check. The framework runs **only** the read-only
-     `infra_binding.verify`. Nothing is mutated by the framework.
+     schema's non-empty-string shape. The profile's `plan` slot already wrote the saved plan with
+     `-out=.foundry/infra.tfplan`; the `apply` slot here consumes that same literal
+     `.foundry/infra.tfplan` — never a re-plan at apply time. This is a **correctness** property, not
+     a gate: applying the saved file means the framework applies **exactly what was planned**, with no
+     angle-bracket placeholder standing in for the path in either rendering.
+   - **VERIFY_ONLY** (`gitops`): the change falls under the profile's `infra_binding.gitops_paths`, so
+     the **ArgoCD controller reconciles it** — a direct apply here would **fight the controller**
+     rather than add a mutation it hasn't already made. This is a **correctness** routing, not a
+     permission check. The framework runs **only** the read-only `infra_binding.verify`. Nothing is
+     mutated by the framework.
    - **REFUSE** (an `ambiguous` class including an empty scope, an out-of-set class value, a
      missing/empty required `infra_binding` slot, or a malformed `gitops_paths` declaration):
      **nothing is emitted or run**. Fail-closed — surface the reason to the operator.

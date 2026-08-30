@@ -1,6 +1,6 @@
 ---
 name: id-verify
-description: 'The read-only infra-delivery POST-MERGE seam (step 14) — the PROCEDURE the generic agent runs AFTER a change is realized (applied / ArgoCD-reconciled) to prove it LANDED and is STABLE, entirely read-only. Resolves the active profile, drives the profile''s infra_binding.verify through the CTX guard (read-only — no mutating verb), and RECORDS the post-merge observations as a `.foundry/`-partitioned step-report note. The empty-plan re-check (tofu plan == ∅ + coverage>0) is the headline observation — the skill does NOT self-certify (the id-plan invariant), and honest disclosure: the bespoke `emit_infra_walk_evidence`/`derive_infra_walk_verdict` recorder + verdict machinery this skill used to name as its backend/adjudicator were retired and do not exist in scripts/. ArgoCD synced+healthy + deployed-artifact identity are RECORDED as ADVISORY post-merge observations (surfaced in the report; deferred to the post-deploy realization frame). The read-only counterpart of id-plan on the realize side. ADVISORY craft + read-only against the env; surfaces, never auto-fixes; does NOT gate, approve, or merge — the merge floor (branch protection + CI checks, see docs/merge-floor.md) is the authority.'
+description: 'The read-only infra-delivery POST-MERGE seam (step 14) — the PROCEDURE the generic agent runs AFTER a change is realized (applied / ArgoCD-reconciled) to prove it LANDED and is STABLE, entirely read-only. Resolves the active profile, drives the profile''s infra_binding.verify (read-only — no mutating verb), and RECORDS the post-merge observations as a `.foundry/`-partitioned step-report note. The empty-plan re-check (tofu plan == ∅ + coverage>0) is the headline observation — the skill does NOT self-certify (the id-plan invariant), and honest disclosure: the bespoke `emit_infra_walk_evidence`/`derive_infra_walk_verdict` recorder + verdict machinery this skill used to name as its backend/adjudicator were retired and do not exist in scripts/. ArgoCD synced+healthy + deployed-artifact identity are RECORDED as ADVISORY post-merge observations (surfaced in the report; deferred to the post-deploy realization frame). The read-only counterpart of id-plan on the realize side. ADVISORY craft + read-only against the env; surfaces, never auto-fixes; does NOT gate, approve, or merge — the merge floor (branch protection + CI checks, see docs/merge-floor.md) is the authority.'
 ---
 
 # id-verify — the read-only POST-MERGE seam (infra-delivery step 14)
@@ -43,9 +43,9 @@ Run these steps **in order**. Each is a step, not reference prose.
    read-only **`infra_binding.verify`** command set.
    This is the **command source**; do NOT invent commands or hard-code a verdict bar.
 
-2. **Run `infra_binding.verify` READ-ONLY (through the CTX guard).** Drive the active profile's
+2. **Run `infra_binding.verify` READ-ONLY.** Drive the active profile's
    **`infra_binding.verify`** post-apply checks against the **real** realized environment, **entirely
-   read-only** and through the CTX read-only guard:
+   read-only**:
    - the **post-apply `tofu plan`** (refreshed) — the **empty-plan re-check** (`tofu plan == ∅`):
      reality now equals the merged IaC, the drift loop closed;
    - **ArgoCD synced + healthy** — query the app's sync status + health (e.g. `argocd app get`),

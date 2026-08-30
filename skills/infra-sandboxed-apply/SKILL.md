@@ -1,6 +1,6 @@
 ---
 name: infra-sandboxed-apply
-description: 'The SANDBOX-APPLY-CONVERGENCE-PROCEDURE (feat-foundry-infra-live-seam-sandboxed-apply) — an UNATTENDED, real `tofu apply` in a THROWAWAY sandbox account followed by a post-apply convergence proof (`apply -> re-plan == ∅`), originally designed to emit a dedicated `sandbox-apply` walk-evidence surface for the since-retired bespoke merge gate (see the DORMANT note). EXPLICIT CLI ORCHESTRATION (never native `tofu test`, which is opaque — no saved plan / `-detailed-exitcode` / plan-JSON): `tofu init` (throwaway backend) -> resolve the applying identity from the OpenTofu PROVIDER''s OWN `aws_caller_identity` in the SAME provider config that applies (NEVER a sidecar `aws` CLI) -> `decide_sandbox_apply` (pure, fail-closed; REFUSE unless the provider-evaluated id is a `^\d{12}$` member of the committed `.foundry/sandbox-accounts.json` allowlist, no provider credential override, posture==EXECUTE, the policy gate passes, and the pre-apply plan is non-empty) -> arm the crash-backstop `tofu destroy` trap BEFORE any mutation -> `plan -out=planfile -lock-timeout=120s` -> `show -json planfile` -> the MANDATORY policy gate over the saved plan (absent/error/fail all REFUSE, no ack escape) -> `apply -lock-timeout=120s planfile` (exit≠0 partial-apply is a COMPUTED FAIL, not a crash) -> `show -json > state.json` (coverage) -> `plan -out=replan` -> `show -json replan` -> assert convergence (exit-0 AND an empty parsed resource-change set, via the shipped `foundry_plan_model.parse_actions_detail`) -> an EXPLICIT captured `tofu destroy` (its real exit sets the recorded `teardown` status; runs on GREEN, convergence-FAIL, AND apply-FAIL) -> `emit_infra_walk_evidence` on every computed outcome. Composes with — never re-builds — the shipped posture gate + SoD execute/generate split (`foundry_id_apply`): the sandboxed apply IS the EXECUTE branch bound to the sandbox account; prod always stays `GENERATE_RUNBOOK`. ADVISORY craft procedure FOR the trusted operator — it does NOT gate, approve, or merge; the merge floor (the adopter''s branch protection + CI, docs/merge-floor.md) is the merge authority. CURRENTLY DORMANT (named honestly): the `decide_sandbox_apply`/`emit_infra_walk_evidence` primitives this procedure drives, and its drop-in doctor selftest, were not shipped (no surviving implementation) in scripts/ — this SKILL.md is design intent for a re-implementation against the current floor (ci.yml + btb-gates), not a live procedure today.'
+description: 'The SANDBOX-APPLY-CONVERGENCE-PROCEDURE (feat-foundry-infra-live-seam-sandboxed-apply) — an UNATTENDED, real `tofu apply` in a THROWAWAY sandbox account followed by a post-apply convergence proof (`apply -> re-plan == ∅`), originally designed to emit a dedicated `sandbox-apply` walk-evidence surface for the since-retired bespoke merge gate (see the DORMANT note). EXPLICIT CLI ORCHESTRATION (never native `tofu test`, which is opaque — no saved plan / `-detailed-exitcode` / plan-JSON): `tofu init` (throwaway backend) -> resolve the applying identity from the OpenTofu PROVIDER''s OWN `aws_caller_identity` in the SAME provider config that applies (NEVER a sidecar `aws` CLI) -> `decide_sandbox_apply` (pure, fail-closed; REFUSE unless the provider-evaluated id is a `^\d{12}$` member of the committed `.foundry/sandbox-accounts.json` allowlist, no provider credential override, the policy gate passes, and the pre-apply plan is non-empty) -> arm the crash-backstop `tofu destroy` trap BEFORE any mutation -> `plan -out=planfile -lock-timeout=120s` -> `show -json planfile` -> the MANDATORY policy gate over the saved plan (absent/error/fail all REFUSE, no ack escape) -> `apply -lock-timeout=120s planfile` (exit≠0 partial-apply is a COMPUTED FAIL, not a crash) -> `show -json > state.json` (coverage) -> `plan -out=replan` -> `show -json replan` -> assert convergence (exit-0 AND an empty parsed resource-change set, via the shipped `foundry_plan_model.parse_actions_detail`) -> an EXPLICIT captured `tofu destroy` (its real exit sets the recorded `teardown` status; runs on GREEN, convergence-FAIL, AND apply-FAIL) -> `emit_infra_walk_evidence` on every computed outcome. Composes with — never re-builds — the shipped EXECUTE/VERIFY_ONLY/REFUSE apply router (`foundry_id_apply`): the sandboxed apply IS an EXECUTE bound to the throwaway sandbox account, allowlist-checked; the operator''s real environments are never a reachable target of this procedure. ADVISORY craft procedure FOR the trusted operator — it does NOT gate, approve, or merge; the merge floor (the adopter''s branch protection + CI, docs/merge-floor.md) is the merge authority. CURRENTLY DORMANT (named honestly): the `decide_sandbox_apply`/`emit_infra_walk_evidence` primitives this procedure drives, and its drop-in doctor selftest, were not shipped (no surviving implementation) in scripts/ — this SKILL.md is design intent for a re-implementation against the current floor (ci.yml + btb-gates), not a live procedure today.'
 ---
 
 # /foundry:infra-sandboxed-apply — the sandbox-apply convergence procedure
@@ -22,9 +22,11 @@ sandbox account**, then proves the post-apply state is a **fixed point** — a r
 **empty** — and was designed to emit the proof on a dedicated `sandbox-apply` walk-evidence surface consumed by
 the since-retired bespoke merge gate (see the dormancy note below — none of that machinery ships today).
 
-**It NEVER applies to prod.** The sandboxed apply is authorized **only** against the sandbox account
-binding (the shipped `id-apply` EXECUTE branch, non-prod); a guarded/prod target always routes to
-`GENERATE_RUNBOOK` via the shipped posture gate. Nothing in this procedure widens that boundary.
+**It NEVER touches a real environment.** The sandboxed apply is authorized **only** against the
+sandbox account binding named in the committed allowlist (an `id-apply` EXECUTE bound to that
+throwaway account) — the allowlist check in step 4/7 REFUSEs any other target outright, and this
+procedure never runs `infra_binding.apply` against any AWS context the operator has configured for
+real infrastructure. Nothing in this procedure widens that boundary.
 
 ## When to trigger
 
@@ -86,13 +88,13 @@ walk-evidence this framework emits).
    override is **FORBIDDEN** on the sandbox binding.
 4. **Decide (pure) — `decide_sandbox_apply`.** Call
    `decide_sandbox_apply(provider_account_id=…, allowlist=<parsed .foundry/sandbox-accounts.json>,
-   provider_has_cred_override=…, posture=<ctx-posture decision>, policy_outcome=<from step 6>,
+   provider_has_cred_override=…, policy_outcome=<from step 6>,
    preplan_exit=<from step 5>)` → `{action ∈ {REFUSE, PROCEED}, reason}`. **PROCEED** ONLY when the
    provider id is a `^\d{12}$` member of a WELL-FORMED allowlist (absent/empty/unparseable file, or
    ANY entry that is empty/a wildcard `*`/not 12 digits, invalidates the WHOLE file — fail-closed, no
-   `""`/`"*"` over-match), no credential override, posture==EXECUTE, `policy_outcome==pass`, AND
-   `preplan_exit==2`. On **REFUSE**: emit no mutation, route to the shipped posture gate
-   (`GENERATE_RUNBOOK`), and stop — no destroy is needed (nothing was armed to destroy yet).
+   `""`/`"*"` over-match), no credential override, `policy_outcome==pass`, AND
+   `preplan_exit==2`. On **REFUSE**: emit no mutation, surface the reason to the operator, and stop —
+   no destroy is needed (nothing was armed to destroy yet).
 5. **Arm the crash-backstop trap, then the pre-apply plan.** Register `tofu destroy -auto-approve ||
    true` in a shell `trap 'EXIT'` (or CI `always()`) — this is a **best-effort backstop ONLY** for the
    harness-dies-mid-run case; it is never the recorded-status source. THEN run
@@ -108,8 +110,8 @@ walk-evidence this framework emits).
    structured report of failed rules → `policy_outcome=fail` → REFUSE, recorded distinctly. A clean
    pass (exit 0, zero failures) → `policy_outcome=pass` — the ONLY value that permits the apply.
 7. **`decide_sandbox_apply` gate.** Re-run step 4's decision with the now-resolved
-   `policy_outcome`/`preplan_exit`. Anything other than PROCEED → REFUSE (route to
-   `GENERATE_RUNBOOK`, still run the explicit destroy if any mutation was already armed — it was not,
+   `policy_outcome`/`preplan_exit`. Anything other than PROCEED → REFUSE (emit no mutation, surface
+   the reason, still run the explicit destroy if any mutation was already armed — it was not,
    at this point).
 8. **Apply the EXACT gated plan.** `tofu apply -lock-timeout=120s planfile` (never re-plan-and-apply —
    the plan-as-immutable-artifact the policy gate evaluated is consumed verbatim). Capture the exit
