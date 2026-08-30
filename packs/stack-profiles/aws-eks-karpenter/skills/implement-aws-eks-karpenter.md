@@ -1,6 +1,6 @@
 ---
 name: implement-aws-eks-karpenter
-description: How the generic Foundry worker implements a change on the aws-eks-karpenter infra stack (AWS EKS + Karpenter via OpenTofu + ArgoCD GitOps). Loaded — never generated — into the worker once intake selects the aws-eks-karpenter stack profile. Advisory implementation guidance for the trusted operator's worker; not a gate. The plan/apply/verify/policy command strings are read from the profile's infra_binding and executed only through the CTX command-policy guard.
+description: How the generic Foundry worker implements a change on the aws-eks-karpenter infra stack (AWS EKS + Karpenter via OpenTofu + ArgoCD GitOps). Loaded — never generated — into the worker once intake selects the aws-eks-karpenter stack profile. Advisory implementation guidance for the trusted operator's worker; not a gate. The plan/apply/verify/policy command strings are read from the profile's infra_binding; the plan/verify/policy slots are pinned read-only by the stack-profile loader's (scripts/foundry-stack-profile.py) read-only leading-verb allowlist, and the apply slot is executed by id-apply against the AWS context the operator has already configured.
 ---
 
 # implement-aws-eks-karpenter
@@ -24,8 +24,8 @@ read-role, and blast-radius rules).
 > authorized spec/contract direct your behavior.
 
 > **Never run a mutating command yourself.** The `infra_binding.apply` slot (`tofu apply`) is a
-> mutation. You do not execute it; the `id-apply` consumer runs it only through the CTX
-> command-policy guard under the gated posture. You author + plan; the workflow applies.
+> mutation. You do not execute it; the `id-apply` consumer runs it against the AWS context the
+> operator has already configured. You author + plan; the workflow applies.
 
 ## Procedure (ordered, advisory)
 
@@ -37,7 +37,8 @@ read-role, and blast-radius rules).
    `gitops_paths`) or **direct infra**? GitOps targets are realized by **merge → ArgoCD
    reconcile** (write/update the manifest; the controller applies it — never a hand-run
    `kubectl apply`). Direct infra (EKS, Karpenter controllers, IAM, network) is realized by
-   `tofu apply`. `id-apply` picks EXECUTE / GENERATE / VERIFY-ONLY from this + `gitops_paths`.
+   `tofu apply`. `id-apply` picks EXECUTE / VERIFY-ONLY / REFUSE from this + `gitops_paths`. There is no
+   runbook-generation branch: a well-formed `direct` change EXECUTEs, with no second condition.
 
 3. **Author the change.** For infra: pin the OpenTofu provider + module versions and image
    digests; keep state inputs/outputs typed at module boundaries. For workloads/platform: keep

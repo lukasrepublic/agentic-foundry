@@ -1,76 +1,71 @@
 #!/usr/bin/env python3
-"""foundry_id_apply — the posture-gated APPLY gate: the one place the framework may MUTATE infra, and
-only as the CTX posture permits (feat-foundry-id-apply).
+"""foundry_id_apply — the infra APPLY router: the one place the framework runs a mutating infra
+command, and it runs the frozen `infra_binding.apply` string exactly as the operator authored it
+(feat-foundry-apply-gate-regrounding).
 
-`id-apply` composes two inputs into a closed `ApplyDecision`:
-  * the `ctx-posture` resolver's `Posture` (decision ∈ {EXECUTE, GENERATE, REFUSE}, audited: bool) — the
-    operator-owned CTX session posture (trusted under the cooperating-operator model); AND
-  * the change's GitOps CLASS, RE-DERIVED here from the frozen change-scope (`changed_paths`) × the
-    profile's `infra_binding.gitops_paths` glob set — NOT a caller-supplied boolean (the §8 Critical:
-    software-delivery never trusts a self-reported flag for a routing decision).
+`decide_apply` composes two inputs into a closed `ApplyDecision`:
+  * the frozen change scope (`changed_paths`); AND
+  * the profile's `infra_binding` — from which `decide_apply` ITSELF derives the GitOps CLASS by
+    calling `classify_gitops(changed_paths=..., infra_binding=...)` — NOT a caller-supplied class
+    (the §8 Critical: software-delivery never trusts a self-reported flag for a routing decision).
+    The signature offers no parameter by which a caller can supply or override the class.
 
-The decision table is TOTAL and fail-closed; REFUSE dominates; there is NO path from an
-absent/ambiguous/unclassified input to a silent mutation. `decide_apply` is PURE — decision only, no
-I/O, runs no command. The runbook content (EXECUTE / GENERATE_RUNBOOK) is the FROZEN
-`infra_binding.apply` string (operator-authored + audited at profile-authorize time) — never freeform
-text the gate could be tricked into emitting. Post-apply verification is the DISTINCT
-`infra_binding.verify` slot (read-only), never a second `plan` call.
+The table is TOTAL: a well-formed `direct` change EXECUTEs unconditionally — the DEFAULT path, with
+no second condition anywhere; a well-formed `gitops` change routes to VERIFY_ONLY — a CORRECTNESS
+routing (the ArgoCD controller owns reconciliation of that path and a direct apply would race it on
+its next sync), never a permission check; and REFUSE fires on exactly FIVE mechanically unresolvable
+inputs — an ambiguous/unclassifiable scope (including an EMPTY one), an out-of-set class value, a
+missing/empty required `infra_binding` slot for the branch chosen, a malformed `gitops_paths`
+declaration, or a `changed_paths` member whose FORM is not a well-formed relative POSIX path — never
+on a judgement about the change's content.
 
-Threat model — TRUSTED OPERATOR (memory `staged-security-threat-model`). A fail-closed gate over machine
-inputs: any unresolved/ambiguous input → REFUSE (never a silent mutation). It governs whether a prod
-mutation runs → SECURITY-REVIEW surface (floor #3). The framework NEVER engages break-glass and NEVER
-mutates in the GENERATE_RUNBOOK / VERIFY_ONLY / REFUSE branches. Forgery of `Posture` is bounded
-out-of-threat-model at the human root of trust; v1 adds no Posture-attestation mechanism.
-
-v1 scope: posture × gitops only. The blast-tier / `high_blast_acked` coupling is deferred to v2
-(Q4a/Q4b) — this module carries NO blast_tier parameter.
+`decide_apply` is PURE — decision only, no I/O, runs no command. The EXECUTE command is the FROZEN
+`infra_binding.apply` string, operator-authored at profile-authorize time — never freeform text this
+router could be tricked into emitting. The operator supplies a correctly configured AWS context whose
+IAM restrictions ARE the control on what that command may do; this module never acquires credentials,
+establishes connectivity, or verifies/re-derives/second-guesses the operator's context, and it probes
+nothing ambient — the router's only inputs are the frozen change scope and the profile.
 """
 import fnmatch
+import posixpath
+import re
 from dataclasses import dataclass
 
 # The closed ApplyAction enum — every branch of the total table resolves to exactly one of these.
-EXECUTE = "EXECUTE"                  # non-prod / break-glass, non-GitOps: the framework runs infra_binding.apply.
-GENERATE_RUNBOOK = "GENERATE_RUNBOOK"  # guarded prod, non-GitOps: EMIT the frozen apply runbook for the operator.
-VERIFY_ONLY = "VERIFY_ONLY"         # GitOps (non-REFUSE): the ArgoCD controller mutates; the framework verifies.
-REFUSE = "REFUSE"                   # the most-restrictive outcome (stale / unreachable / ambiguous / unmatched).
+EXECUTE = "EXECUTE"          # direct (non-GitOps): the framework runs the frozen infra_binding.apply.
+VERIFY_ONLY = "VERIFY_ONLY"  # gitops: the ArgoCD controller mutates; the framework only verifies.
+REFUSE = "REFUSE"            # the input's FORM was mechanically unresolvable — never a judgement call.
 
-# The closed GitOps classification enum (re-derived; never caller-asserted).
+# The closed GitOps classification enum (re-derived by decide_apply itself; never caller-asserted).
 GITOPS = "gitops"        # changed_paths non-empty AND all fall under a gitops_paths glob.
 DIRECT = "direct"        # changed_paths non-empty AND none falls under a gitops_paths glob.
 AMBIGUOUS = "ambiguous"  # mixed/unmatched — OR an EMPTY changed_paths (the vacuous-quantifier guard) → REFUSE.
 
-# The posture-decision values consumed from the ctx-posture resolver's Posture.decision (read-only).
-_POSTURE_EXECUTE = "EXECUTE"
-_POSTURE_GENERATE = "GENERATE"
-_POSTURE_REFUSE = "REFUSE"
-
 
 @dataclass(frozen=True)
 class RunbookPayload:
-    """The constrained runbook payload for an EXECUTE / GENERATE_RUNBOOK decision.
+    """The runbook payload carried by an EXECUTE decision.
 
-    `command` is EXACTLY the profile's frozen `infra_binding.apply` string — the same operator-authored,
-    profile-authorize-time-audited command the EXECUTE branch would run, here handed to the operator
-    (GENERATE_RUNBOOK) or run by the framework (EXECUTE). It is NOT freeform text the gate could be
-    tricked into emitting. `verify` is the DISTINCT read-only `infra_binding.verify` slot — the
-    post-apply confirmation the framework runs read-only (NOT a second `plan` call). `executed_by`
-    records the SoD split (`framework` for EXECUTE, `operator` for GENERATE_RUNBOOK)."""
-    command: str          # == infra_binding.apply (frozen; never freeform).
-    verify: str           # == infra_binding.verify (distinct read-only slot; never .plan).
-    executed_by: str      # "framework" (EXECUTE) | "operator" (GENERATE_RUNBOOK).
+    `command` is EXACTLY the profile's frozen `infra_binding.apply` string — the same
+    operator-authored command the EXECUTE branch runs, never freeform text this router composes or
+    text lifted from a change, PR body or spec. `verify` is the DISTINCT read-only
+    `infra_binding.verify` slot — the post-apply confirmation the framework runs read-only, never a
+    second `plan` call."""
+    command: str   # == infra_binding.apply (frozen; never freeform).
+    verify: str    # == infra_binding.verify (distinct read-only slot; never .plan).
 
 
 @dataclass(frozen=True)
 class ApplyDecision:
-    """The closed apply DECISION record (resolving the §8 enum-vs-payload contradiction): an `action`
-    enum, the break-glass `audited` flag carried from the Posture, and the `runbook` payload.
+    """The closed apply DECISION record: an `action` enum and the `runbook` payload it carries.
 
-    `runbook` is None for VERIFY_ONLY and REFUSE (nothing is emitted/run). For EXECUTE and
-    GENERATE_RUNBOOK it is a RunbookPayload whose `command` is the FROZEN `infra_binding.apply` and whose
-    `verify` is the distinct read-only `infra_binding.verify` — never freeform. `reason` is a
-    human-readable trace of which table row fired (audit-ledger evidence)."""
+    `runbook` is None for VERIFY_ONLY and REFUSE (nothing is emitted/run). For EXECUTE it is a
+    RunbookPayload whose `command` is the FROZEN `infra_binding.apply` and whose `verify` is the
+    distinct read-only `infra_binding.verify` — never freeform. `reason` is a human-readable trace of
+    which table row fired (audit-ledger evidence). The operator's AWS-context IAM restrictions bound
+    what an EXECUTE command may do; this record carries no judgement about that and no field records
+    one — there is nothing here for the framework to attest to beyond which row fired."""
     action: str
-    audited: bool = False
     runbook: "RunbookPayload | None" = None
     reason: str = ""
 
@@ -134,59 +129,149 @@ def classify_gitops(*, changed_paths, infra_binding):
 
 
 def _refuse(reason):
-    return ApplyDecision(action=REFUSE, audited=False, runbook=None, reason=reason)
+    return ApplyDecision(action=REFUSE, runbook=None, reason=reason)
 
 
-def decide_apply(*, posture, gitops_class, infra_binding):
-    """Map a (Posture × re-derived gitops_class) onto a closed `ApplyDecision` by a TOTAL, fail-closed
-    table — REFUSE DOMINATES; no path from an absent/ambiguous/unclassified input to a silent mutation
-    (AC-IDAPP-1/-2). PURE — decision only; no I/O; runs no command.
+def _gitops_paths_declared_well_formed(infra_binding):
+    """AC-IDAGR-2 condition (iv): `infra_binding.gitops_paths` must be a list whose members are all
+    non-empty strings. An EMPTY list is WELL-FORMED — it declares "no GitOps paths". An absent key, a
+    non-list value (a one-character YAML slip: a bare string instead of a list), or any non-string /
+    empty member is malformed and REFUSEs.
+
+    Checked here — BEFORE the class is derived — rather than inside `classify_gitops`, because
+    `classify_gitops` is pinned unchanged (AC-IDAGR-5) and its `_gitops_globs` helper silently yields
+    `()` for exactly this malformed input, after which `classify_gitops` returns `direct` for every
+    non-empty change: a malformed `gitops_paths` would otherwise route a controller-managed change to
+    a direct apply that races ArgoCD rather than refusing."""
+    raw = _binding_get(infra_binding, "gitops_paths")
+    if not isinstance(raw, list):
+        return False
+    return all(isinstance(g, str) and g for g in raw)
+
+
+def _changed_paths_well_formed(changed_paths):
+    """Condition (v): every member of `changed_paths` must be REPO-RELATIVE and free of surrounding
+    whitespace — the form `classify_gitops`'s globs are written against.
+
+    Why this is a REFUSE and not a normalization: `_under_any_glob` strips only a single leading
+    `./`, so an absolute path (`/repo/gitops/apps/root.yaml`), a leading/trailing-whitespace path, or
+    a doubled separator matches NO `gitops_paths` glob. A change that is entirely controller-managed
+    would then classify `direct` and, with the posture layer gone, EXECUTE the frozen apply with no
+    second condition. Silently rewriting a caller's paths would be guessing at intent; refusing on
+    the FORM is the same class of mechanical unresolvability as the other four conditions and adds no
+    policy judgement. `classify_gitops` is pinned unchanged (AC-IDAGR-5), so the check lives here.
+    An EMPTY/None `changed_paths` is NOT rejected here — it is the vacuous-quantifier guard's job,
+    handled as condition (i) via `classify_gitops` returning AMBIGUOUS.
+
+    A POSITIVE-form assertion, not a denylist of three spellings. An earlier draft `continue`d on a
+    non-string member and let `""` through, on the reasoning that `classify_gitops` filters both. That
+    reasoning was WRONG, and the review caught it: the filter drops the member SILENTLY, so
+    `[b"clusters/prod/app.yaml", "infra/vpc.tf"]` classifies `direct` on the surviving member alone and
+    EXECUTEs against a scope that included a controller-managed manifest — the very defect this check
+    exists to close. Anything not a well-formed relative POSIX path now refuses.
+
+    `posixpath.normpath` collapses `././`, `//` and `a/../b` in one predicate, so the check is not a
+    guess-list of spellings. `posixpath` (not `os.path`) is deliberate: the module imports nothing from
+    the `os` family, and a non-vacuous witness in the test suite enforces that."""
+    # The CONTAINER first: a bare `str` iterates CHARACTER BY CHARACTER, so `changed_paths="app.yaml"`
+    # would present members ["a","p","p",…] — none matching a slash-free glob like `*.yaml` — and
+    # classify `direct` for a wholly controller-managed change. Per-member form checks cannot see this.
+    if changed_paths is not None and not isinstance(changed_paths, (list, tuple, set, frozenset)):
+        return False
+    for p in (changed_paths or []):
+        if not isinstance(p, str) or not p:
+            return False                       # bytes / None / "" — never silently dropped.
+        if p != p.strip() or "\\" in p:        # padded, or a Windows separator the globs never match.
+            return False
+        if not p.isprintable():
+            # Zero-width and other Cf/format characters are NOT whitespace, so `.strip()` leaves them
+            # and `normpath` preserves them — `​clusters/x.yaml` would match no glob and classify
+            # `direct`. `isprintable()` is False for the whole Cf category, which closes that family.
+            return False
+        # Mirror `_under_any_glob`: ONE leading `./` is normalized off there, so it is a well-formed
+        # form here too and must not be refused. Everything beyond that must already be normal.
+        probe = p[2:] if p.startswith("./") else p
+        # The FIRST COMPONENT test — not `startswith("../")`. `".."` and `"."` are normpath FIXED
+        # POINTS and neither starts with `"../"`, so an earlier draft let both through. `"."` denotes
+        # the whole repo, which INCLUDES the controller-managed paths, so a `["."]` scope classified
+        # `direct` and EXECUTEd — the same routing-form bypass this condition exists to close, missing
+        # by exactly one spelling. Splitting on `/` subsumes the absolute and `../` cases too.
+        if not probe or probe.split("/")[0] in (".", "..") or probe.startswith("/"):
+            return False                       # whole-repo, escaping, or absolute.
+        if probe != posixpath.normpath(probe):
+            return False                       # non-normal (`././`, `//`, `a/../b`, trailing `/`).
+    return True
+
+
+def decide_apply(*, changed_paths, infra_binding):
+    """Map the FROZEN change scope × the profile's `infra_binding` onto a closed `ApplyDecision` by a
+    TOTAL, fail-closed table (AC-IDAGR-2). `decide_apply` derives the GitOps class itself
+    (AC-IDAGR-10) — `changed_paths` and `infra_binding` are the only inputs; there is no parameter by
+    which a caller can supply or override the class.
 
     The table:
-      (a)  posture.decision == REFUSE                              → REFUSE (dominates).
-      (a′) gitops_class == "ambiguous"                             → REFUSE (an unclassifiable change is
-           never routed to a mutation — fail-closed, no guessing — INCLUDING an empty changed_paths).
-      (b)  gitops_class == "gitops" AND posture ≠ REFUSE           → VERIFY_ONLY (the ArgoCD controller
-           realizes it; the framework only verifies read-only — issues NO mutating verb).
-      (c)  posture.decision == EXECUTE AND gitops_class == "direct" → EXECUTE (runs infra_binding.apply;
-           carries posture.audited — True for break-glass).
-      (d)  posture.decision == GENERATE AND gitops_class == "direct" → GENERATE_RUNBOOK (emits the FROZEN
-           infra_binding.apply runbook for the operator to run in CTX; framework verifies read-only).
-      else → REFUSE (the table is total; any unmatched/unknown input fail-closes).
+      (iv) `infra_binding.gitops_paths` absent / not a list of non-empty strings  → REFUSE (checked
+           FIRST, before the class is derived — an empty list is well-formed and passes this check).
+      (v)  `changed_paths` is not a list/tuple/set, or any member's FORM is not a well-formed
+           relative POSIX path                                                     → REFUSE (checked
+           BEFORE the class is derived; see `_changed_paths_well_formed`). This row is easy to miss
+           when reading only the code below — it is listed here so a maintainer does not take the
+           call at the top of the body for an undocumented extra and delete it.
+      (i)  the derived class == "ambiguous" (including an EMPTY changed_paths)    → REFUSE.
+      (ii) the derived class is outside {"gitops","direct"}                        → REFUSE.
+      (b)  class == "gitops"   → VERIFY_ONLY (the ArgoCD controller realizes it; the framework issues
+           only the read-only `infra_binding.verify` — a correctness routing, not a permission).
+      (c)  class == "direct"   → EXECUTE (runs the frozen infra_binding.apply). This is the DEFAULT
+           path: reachable for ANY well-formed direct change, with no further condition.
+      (iii) either branch's required `infra_binding` slot (`verify`, or `apply` + `verify` for direct)
+           is missing/empty                                                        → REFUSE.
 
-    The EXECUTE / GENERATE_RUNBOOK runbook `command` is EXACTLY the frozen `infra_binding.apply` (never
-    freeform); `verify` is the DISTINCT read-only `infra_binding.verify` slot. If either required slot is
-    missing/empty for a branch that needs them, the decision fail-closes to REFUSE rather than emitting a
-    half-formed runbook.
+    The EXECUTE runbook `command` is EXACTLY the frozen `infra_binding.apply` (never freeform);
+    `verify` is the DISTINCT read-only `infra_binding.verify` slot. Pure — decision only, no I/O, runs
+    no command; acquires no credential and establishes no connectivity.
     """
-    decision = getattr(posture, "decision", None)
+    # (iv) a malformed gitops_paths declaration refuses before the class is derived.
+    if not _gitops_paths_declared_well_formed(infra_binding):
+        return _refuse(
+            "infra_binding.gitops_paths is absent or not a list of non-empty strings "
+            "(an empty list is well-formed) → fail-closed REFUSE"
+        )
 
-    # (a) REFUSE dominates — a stale/unreachable/refused posture never mutates.
-    if decision == _POSTURE_REFUSE:
-        return _refuse("posture REFUSE dominates (stale/unreachable/unmatched CTX)")
+    # (v) a malformed PATH FORM refuses before the class is derived — an absolute or whitespace-padded
+    #     member silently matches no glob, which would flip a controller-managed change to `direct`.
+    if not _changed_paths_well_formed(changed_paths):
+        return _refuse(
+            "changed_paths contains a member that is not repo-relative and stripped "
+            "(absolute, whitespace-padded, or containing '//') → fail-closed REFUSE"
+        )
 
-    # (a′) an unclassifiable change (mixed/unmatched, OR empty changed_paths) never routes to a mutation.
+    gitops_class = classify_gitops(changed_paths=changed_paths, infra_binding=infra_binding)
+
+    # (i) an unclassifiable change (mixed/unmatched, OR empty changed_paths) never routes to a mutation.
     if gitops_class == AMBIGUOUS:
         return _refuse("gitops_class ambiguous (mixed/unmatched/empty changed_paths) → fail-closed REFUSE")
 
-    # Guard against an unknown gitops_class value (only gitops/direct survive past (a′)).
+    # (ii) guard against an out-of-set gitops_class value (only gitops/direct survive past (i)).
     if gitops_class not in (GITOPS, DIRECT):
         return _refuse(f"unrecognized gitops_class {gitops_class!r} → fail-closed REFUSE")
 
-    # (b) GitOps (non-REFUSE posture) → VERIFY_ONLY. The ArgoCD controller mutates; the framework issues
-    #     ONLY the read-only verify. REFUSE was already handled above, so posture is EXECUTE or GENERATE.
+    # (b) gitops → VERIFY_ONLY. The ArgoCD controller owns reconciliation of this path; a direct apply
+    #     would race it on its next sync. This is a CORRECTNESS routing, not a restriction.
     if gitops_class == GITOPS:
-        verify = _binding_get(infra_binding, "verify")
-        if not isinstance(verify, str) or not verify.strip():
+        verify_cmd = _binding_get(infra_binding, "verify")
+        if not isinstance(verify_cmd, str) or not verify_cmd.strip():
             return _refuse("VERIFY_ONLY needs infra_binding.verify, missing/empty → fail-closed REFUSE")
         return ApplyDecision(
             action=VERIFY_ONLY,
-            audited=False,
             runbook=None,
-            reason="gitops change, posture non-REFUSE → VERIFY_ONLY (controller realizes; framework verifies)",
+            reason=(
+                "gitops change: the ArgoCD controller owns reconciliation of this path and a direct "
+                "apply would race it on its next sync → VERIFY_ONLY (a correctness routing)"
+            ),
         )
 
-    # From here gitops_class == DIRECT. The mutation branches need BOTH the frozen apply + the verify slot.
+    # (c) direct → EXECUTE. The default path — reachable unconditionally for any well-formed direct
+    #     change. Both the apply and verify slots are required to compose the runbook.
     apply_cmd = _binding_get(infra_binding, "apply")
     verify_cmd = _binding_get(infra_binding, "verify")
     if not isinstance(apply_cmd, str) or not apply_cmd.strip():
@@ -194,23 +279,42 @@ def decide_apply(*, posture, gitops_class, infra_binding):
     if not isinstance(verify_cmd, str) or not verify_cmd.strip():
         return _refuse("direct change needs infra_binding.verify, missing/empty → fail-closed REFUSE")
 
-    # (c) non-prod / break-glass EXECUTE + direct → the framework runs the frozen apply (carry audited).
-    if decision == _POSTURE_EXECUTE:
-        return ApplyDecision(
-            action=EXECUTE,
-            audited=bool(getattr(posture, "audited", False)),
-            runbook=RunbookPayload(command=apply_cmd, verify=verify_cmd, executed_by="framework"),
-            reason="posture EXECUTE + direct → framework runs frozen infra_binding.apply",
-        )
+    return ApplyDecision(
+        action=EXECUTE,
+        runbook=RunbookPayload(command=apply_cmd, verify=verify_cmd),
+        reason="direct change → EXECUTE (the default path): the framework runs the frozen infra_binding.apply",
+    )
 
-    # (d) guarded-prod GENERATE + direct → emit the frozen apply runbook for the OPERATOR (SoD).
-    if decision == _POSTURE_GENERATE:
-        return ApplyDecision(
-            action=GENERATE_RUNBOOK,
-            audited=False,
-            runbook=RunbookPayload(command=apply_cmd, verify=verify_cmd, executed_by="operator"),
-            reason="posture GENERATE + direct → emit frozen runbook for operator (SoD); framework verifies",
-        )
 
-    # else — any unmatched/unknown posture.decision → fail-closed REFUSE (the table is total).
-    return _refuse(f"unmatched posture.decision {decision!r} → fail-closed REFUSE")
+# ─────────────────────────────────────────────────────────── AC-IDAGR-11: render/scrub (local only) ── #
+# MIRRORS the shape of scripts/foundry-fleet-session-machinery.py:43-55 (_SECRET_RE) — NOT imported;
+# that file is out of this atom's scope and the gate carries no cross-surface import. The scrub applies
+# ONLY to the rendered/logged copy; the EXECUTE branch's runnable command stays the frozen
+# infra_binding.apply bytes, unaltered, because a redacted command is not a runnable one.
+_SECRET_RE = re.compile(
+    r"(?i)(?:sk-[a-z0-9]{16,}|ghp_[a-z0-9]{20,}|gh[opusr]_[a-z0-9]{20,}"
+    r"|aws_secret[^\s]*|AKIA[0-9A-Z]{16}|[A-Za-z0-9+/]{40,}={0,2}"
+    r"|(?:password|secret|token|api[_-]?key)\s*[:=]\s*\S+)"
+)
+
+
+def _scrub(value):
+    """Secret-scrub a single rendered string. Non-strings pass through unchanged."""
+    if not isinstance(value, str):
+        return value
+    return _SECRET_RE.sub("«redacted»", value)
+
+
+def render_decision(decision):
+    """Render an `ApplyDecision` for DISPLAY, a log line, or audit-ledger evidence (AC-IDAGR-11). The
+    returned dict's `command` / `verify` / `reason` strings are secret-scrubbed copies — NEVER the
+    bytes `decide_apply` returned in `decision.runbook.command`, which the EXECUTE branch runs
+    verbatim. Call this ONLY for the rendered/logged form; never substitute its output for
+    `decision.runbook.command` when running the command."""
+    runbook = decision.runbook
+    return {
+        "action": decision.action,
+        "reason": _scrub(decision.reason),
+        "command": _scrub(runbook.command) if runbook is not None else None,
+        "verify": _scrub(runbook.verify) if runbook is not None else None,
+    }

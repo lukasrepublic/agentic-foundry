@@ -5,7 +5,9 @@ Implements feat-foundry-fleet-session-machinery (v1.1). Beyond *what* a session 
 session-registry work-context overlay), a one-operator-many-sessions supervisor needs *how the
 machinery is running it*: the isolation (collision/blast surface), where
 it sits in the front-auth→gate→merge readiness pipeline, the mode, whether it trips the security
-floor, and (for infra) its blast-radius + ctx-posture + target repo.
+floor, and (for infra) its blast-radius + target repo. `infra` is re-sourced from the committed
+stack-profile lock (`resolve_lock` + `profile_kind: infra`) — feat-foundry-fleet-infra-discriminator-
+regrounding — rather than a live CTX-CLI probe; it is now project-scoped, not session-scoped.
 
 These are SYSTEM STATE, not human intent → this atom DERIVES them and attaches a typed machinery
 sub-record to each session-registry record by `session_id`. It is READ-ONLY (computes, never mutates)
@@ -59,32 +61,34 @@ def _clean(v):
 ISOLATION_DOMAIN = ("direct_main", "worktree_on_main", "worktree", "unknown")
 GATE_DOMAIN = ("unauthorized", "authorized", "pr_open", "gate_pass", "gate_block", "merged", "unknown")
 SECURITY_DOMAIN = ("clear", "needs_review")
-CTX_DOMAIN = ("EXECUTE", "GENERATE", "REFUSE", None)            # uppercase — the source's exact domain
 BLAST_DOMAIN = ("low", "medium", "high", None)
 MERGE_AUTONOMY_DOMAIN = ("regular", "lean", None)               # the contract's ACTUAL domain
 STAGE_DOMAIN = ("lean", "scale", None)
 
 # DEFAULT-DENY known-SAFE sets — the canonical vocabulary the roster (AC-ROST-6) + OSP render (AC-OSP-5)
 # DEFAULT-DENY against. A value renders clear ONLY when it is in its field's known-safe set; everything
-# else — unknown, gate_block, direct_main, worktree_on_main, needs_review, high, REFUSE, ANY null/novel
-# token, AND a break-glass EXECUTE — is attention. Exposed so consumers do not re-declare (drift guard).
+# else — unknown, gate_block, direct_main, worktree_on_main, needs_review, high, ANY null/novel token —
+# is attention. Exposed so consumers do not re-declare (drift guard).
+# AC-FIGR-3: `ctx_posture` is REMOVED (not renamed) — the posture concept it discriminated no longer
+# exists in the framework, so a renamed-but-unsourced field would be permanently null, therefore
+# permanently attention under this very table's default-deny rule.
 KNOWN_SAFE = {
     "gate_readiness": frozenset({"authorized", "gate_pass", "merged"}),
     "isolation": frozenset({"worktree"}),
     "security_flag": frozenset({"clear"}),
-    "ctx_posture": frozenset({"EXECUTE", "GENERATE"}),          # EXECUTE clear ONLY when not break-glass
     "blast_radius": frozenset({"low", "medium"}),
 }
 
 
-def is_field_clear(field, value, *, break_glass=False):
+def is_field_clear(field, value):
     """The shared DEFAULT-DENY predicate. True iff `value` is an explicit known-SAFE value for `field`.
-    `target_repo` is clear iff it resolved to a non-empty string. `ctx_posture: EXECUTE` is clear ONLY
-    when not break-glass. Every other / unknown / novel / null risk value ⇒ attention (False)."""
+    `target_repo` is clear iff it resolved to a non-empty string. Every other / unknown / novel / null
+    risk value ⇒ attention (False).
+
+    AC-FIGR-3: no longer accepts a `break_glass` keyword — its only consumer (`ctx_posture`) is
+    removed, not renamed, so there is no field left for it to special-case."""
     if field == "target_repo":
         return isinstance(value, str) and bool(value.strip())
-    if field == "ctx_posture" and value == "EXECUTE" and break_glass:
-        return False
     return value in KNOWN_SAFE.get(field, frozenset())
 
 
@@ -258,31 +262,50 @@ def derive_target_repo(atom_or_spec, corpus_root):
     return None, "ok", "contract declares no target_repo (single-repo / self-host)"
 
 
-# ----------------------------------------------------------------------------- ctx-posture + blast
-def derive_infra(*, present, ctx_state=None, blast_tier=None):
-    """AC-SMACH-5 (conditional, infra-only, READ-ONLY). The infra fields populate ONLY when the session
-    has DERIVABLE infra context (`present` — a CTX session resolved). For a non-infra session both are
-    `null` (the discriminated outcome distinguishes non-infra from infra-but-no-impact-run).
+# ----------------------------------------------------------------------------- infra discriminator (AC-FIGR-2/4/6)
+def _stack_profile_module():
+    """Load scripts/foundry-stack-profile.py as a sibling module (mirrors the registry import in
+    `derive_all` below) — read-only, no subprocess."""
+    import importlib.util
+    p = os.path.join(HERE, "foundry-stack-profile.py")
+    spec = importlib.util.spec_from_file_location("foundry_stack_profile", p)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
-    `present=False`                → blast_radius=null, ctx_posture=null  (non-infra; source_unavailable)
-    `present=True` + ctx_state      → ctx_posture = resolve_posture(ctx_state).decision; a present-but-
-                                      stale/bad CTX resolves to REFUSE (the source's own fail-closed
-                                      value, NEVER squashed to null); break-glass (audited prod-EXECUTE)
-                                      sets break_glass=True so consumers render it as attention, never a
-                                      benign EXECUTE.
-    blast_radius: the id-impact tier (advisory, may be stale) or null when no run — NEVER a false low.
 
-    Returns (blast_radius, ctx_posture, break_glass, outcome, reason)."""
-    if not present:
-        return None, None, False, "source_unavailable", "no CTX session (non-infra)"
-    import foundry_ctx_posture as cp
-    posture = cp.resolve_posture(ctx_state) if ctx_state is not None else cp.Posture(cp.REFUSE, reason="no ctx_state")
-    ctx_posture = posture.decision
-    break_glass = bool(getattr(posture, "audited", False))
+def derive_infra(*, project_dir, blast_tier=None, root=None, plugin_root=None):
+    """AC-FIGR-2/4/6 (was AC-SMACH-5's ctx-posture-sourced infra block). The infra discriminator is
+    RE-SOURCED from the committed stack-profile lock instead of a live CTX-CLI probe: it calls the
+    shipped `resolve_lock(project_dir)` and tests `profile_kind` on each resolved profile — `infra`
+    true exactly when a resolved profile declares `profile_kind: infra`. Reads only committed files;
+    executes no subprocess. The discriminator is now PROJECT-scoped, not session-scoped (a genuine,
+    disclosed meaning change — see the spec's Clarifications).
+
+    `blast_tier` is UNCHANGED by this atom: the id-impact tier (advisory) if a caller supplies one,
+    else null. No live call site supplies it today, and this atom does not change that.
+
+    `resolve_lock` raises `StackProfileError` on EVERY failure it detects (a missing lock, a malformed
+    entry, a version/requires_core mismatch, a tampered content sha256 pin, …). AC-FIGR-6: the two
+    failure states are caught here and DISTINGUISHED, and neither is allowed to escape this function:
+      * no stack-profile.lock at `project_dir`      → infra False, outcome `source_unavailable`
+      * a lock present but `resolve_lock` raises     → infra False, outcome `degraded`, reason carries
+                                                        the resolver's own message (e.g. a tampered/
+                                                        drifted pin) — a present-but-broken pin is a
+                                                        different fact from no pin at all.
+    Both reasons name the lock. Returns (blast_radius, infra, outcome, reason)."""
+    sp = _stack_profile_module()
     blast = blast_tier if blast_tier in ("low", "medium", "high") else None
-    reason = _clean(posture.reason)
-    outcome = "ok" if ctx_posture in ("EXECUTE", "GENERATE") and not break_glass else "degraded"
-    return blast, ctx_posture, break_glass, outcome, reason
+    lpath = sp.lock_path(project_dir)
+    if not os.path.isfile(lpath):
+        return blast, False, "source_unavailable", f"no stack-profile.lock at {_clean(lpath)} (non-infra)"
+    try:
+        resolved = sp.resolve_lock(project_dir, root=root, plugin_root=plugin_root)
+    except sp.StackProfileError as e:
+        return (blast, False, "degraded",
+                f"stack-profile.lock at {_clean(lpath)} does not resolve: {_clean(str(e))}")
+    infra = any(sp.profile_kind(doc) == "infra" for doc in resolved)
+    return blast, infra, "ok", f"stack-profile.lock at {_clean(lpath)} resolves ({len(resolved)} profile(s) pinned)"
 
 
 # ----------------------------------------------------------------------------- assembly
@@ -294,13 +317,20 @@ def unavailable_record(session_id, reason):
 
 def derive_machinery(rec, *, corpus_root, invoking_sid=None,
                      git_topo=None, pr_state=None,
-                     diff_paths=None, infra_present=False, ctx_state=None,
-                     blast_tier=None, stage_override=None):
-    """AC-SMACH-1/2/5: assemble the typed machinery sub-record for one session-registry record,
-    joined by `session_id`. Corpus-derived verdicts use the record's `atom_or_spec`; the session-
-    declared env fields (`isolation`, infra) are the INVOKING process's own. A purely
-    ADDITIVE overlay — it adds fields, never overrides a registry/native field. All probes are injectable
-    (hermetic selftest); the live `main` supplies real read-only probes."""
+                     diff_paths=None, blast_tier=None, stage_override=None,
+                     infra_result=None, stack_profile_root=None, stack_profile_plugin_root=None):
+    """AC-SMACH-1/2/5, AC-FIGR-2/4/6: assemble the typed machinery sub-record for one session-registry
+    record, joined by `session_id`. Corpus-derived verdicts use the record's `atom_or_spec`; the
+    session-declared env fields (`isolation`, `security_flag`) are the INVOKING process's own and are
+    NEVER inherited by another session's row (fail toward attention cross-session). A purely ADDITIVE
+    overlay — it adds fields, never overrides a registry/native field. All probes are injectable
+    (hermetic selftest); the live `main` supplies real read-only probes.
+
+    `infra` is DIFFERENT from `isolation`/`security_flag`: it is PROJECT-scoped, not session-scoped
+    (AC-FIGR-2's Clarification) — every row in an infra-profile project reads `infra: true`, invoking
+    session or not, because the source (`resolve_lock(corpus_root)`) does not vary by session. Pass a
+    pre-computed `infra_result` (the `derive_infra(...)` 4-tuple) to avoid re-resolving the lock once
+    per record — `derive_all` below resolves it exactly once, before its per-session loop."""
     sid = rec.get("session_id")
     if not sid:
         return unavailable_record(sid, "registry record has no session_id (join miss)")
@@ -312,15 +342,16 @@ def derive_machinery(rec, *, corpus_root, invoking_sid=None,
     gate, gate_o, gate_r = derive_gate_readiness(atom, corpus_root, pr_state)
     mode, mode_o, mode_r = derive_mode(atom, corpus_root, stage_override)
     # security_flag is derived from the INVOKING process's governance-visible diff (the single diff probe),
-    # so it is invoking-process-only exactly like isolation/infra — a cross-session row must NOT inherit the
-    # invoking session's verdict (that would stamp a false `clear` on another session, a fail-closed
-    # violation). Cross-session ⇒ needs_review/source_unavailable (fail toward attention).
+    # so it is invoking-process-only like isolation — a cross-session row must NOT inherit the invoking
+    # session's verdict (that would stamp a false `clear` on another session, a fail-closed violation).
+    # Cross-session ⇒ needs_review/source_unavailable (fail toward attention).
     sec, sec_o, sec_r = derive_security_flag(diff_paths) if is_invoking else (
         "needs_review", "source_unavailable", "diff is the invoking process's (null cross-session)")
     repo, repo_o, repo_r = derive_target_repo(atom, corpus_root)
-    blast, ctx, break_glass, infra_o, infra_r = (
-        derive_infra(present=infra_present, ctx_state=ctx_state, blast_tier=blast_tier)
-        if is_invoking else (None, None, False, "source_unavailable", "infra context is the invoking process's"))
+    if infra_result is None:
+        infra_result = derive_infra(project_dir=corpus_root, blast_tier=blast_tier,
+                                    root=stack_profile_root, plugin_root=stack_profile_plugin_root)
+    blast, infra_val, infra_o, infra_r = infra_result
 
     return {
         "session_id": sid,
@@ -331,11 +362,7 @@ def derive_machinery(rec, *, corpus_root, invoking_sid=None,
         "security_flag": sec,
         "target_repo": repo,
         "blast_radius": blast,
-        "ctx_posture": ctx,
-        "break_glass": break_glass,
-        # infra presence is the INVOKING process's CTX probe — do not leak it onto cross-session rows
-        # (blast_radius/ctx_posture are already null cross-session; keep `infra` consistent).
-        "infra": bool(infra_present) if is_invoking else False,
+        "infra": infra_val,
         # discriminated outcome per source (AC-SMACH-5): ok | degraded | source_unavailable + reason.
         "sources": {
             "isolation": {"outcome": iso_o, "reason": _clean(iso_r)},
@@ -371,24 +398,6 @@ def _git_topo(cwd):
     return {"git_dir": git_dir, "git_common_dir": common, "branch": branch, "default_branch": default}
 
 
-def _ctx_probe_present():
-    """Classify CTX presence for the infra discriminator (AC-SMACH-5). Returns (present, ctx_state):
-      * ctx binary absent / no active session → (False, None)  — non-infra
-      * CTX session present (even stale/bad)   → (True, state)  — infra context exists (REFUSE if bad)
-    Read-only (only `ctx status --json`)."""
-    try:
-        import foundry_ctx_posture as cp
-    except Exception:
-        return False, None
-    state = cp.probe_ctx()
-    if state.reachable:
-        return True, state
-    d = (state.detail or "")
-    if d.startswith("ctx probe failed to run") or d == "no active CTX session (active_env is null)":
-        return False, None      # genuinely no CTX → non-infra
-    return True, state          # present-but-bad → infra context exists → REFUSE
-
-
 def _governance_diff_paths(topo):
     """Best-effort governance-visible diff path set (PR/pushed-branch vs canonical base). Returns the
     changed-path list or None (un-derivable ⇒ fail-closed needs_review). Read-only."""
@@ -406,8 +415,12 @@ def _governance_diff_paths(topo):
         return None
 
 
-def derive_all(corpus_root, invoking_sid=None, registry_result=None):
-    """Live entry: join machinery onto every session-registry record. Read-only end-to-end."""
+def derive_all(corpus_root, invoking_sid=None, registry_result=None, *, root=None, plugin_root=None):
+    """Live entry: join machinery onto every session-registry record. Read-only end-to-end.
+
+    `root`/`plugin_root` are optional test-injection knobs threaded to `derive_infra`'s
+    `resolve_lock(..., root=, plugin_root=)` call (production leaves both None — the shipped
+    CLAUDE_PLUGIN_ROOT-relative defaults)."""
     if registry_result is None:
         import importlib.util
         p = os.path.join(HERE, "foundry-fleet-session-registry.py")
@@ -424,19 +437,23 @@ def derive_all(corpus_root, invoking_sid=None, registry_result=None):
     # scrubbed display value as an operational path is the repo-vs-key anti-pattern; a scrubbed path would
     # silently degrade isolation/diff to fail-closed). We are the invoking process, so os.getcwd() is it.
     topo = _git_topo(os.getcwd())
-    infra_present, ctx_state = _ctx_probe_present()
     diff_paths = _governance_diff_paths(topo)
+    # AC-FIGR-2/6: the infra discriminator is PROJECT-scoped (resolve_lock(corpus_root)) — resolved
+    # ONCE here, before the per-session loop, exactly where the CTX probe it replaces used to resolve
+    # (AC-FIGR-6's grounding note). derive_infra never raises — it catches StackProfileError itself and
+    # returns a discriminated `degraded`/`source_unavailable` outcome — so an escaping exception here
+    # can no longer take the whole roster down the way an unwrapped resolve_lock call would.
+    infra_result = derive_infra(project_dir=corpus_root, root=root, plugin_root=plugin_root)
     for rec in registry_result.get("sessions", []):
         m = derive_machinery(rec, corpus_root=corpus_root, invoking_sid=invoking_sid,
                              git_topo=topo, pr_state=None,
-                             diff_paths=diff_paths, infra_present=infra_present, ctx_state=ctx_state)
+                             diff_paths=diff_paths, infra_result=infra_result)
         out["machinery"][rec.get("session_id")] = m
     return out
 
 
 # ----------------------------------------------------------------------------- selftest (hermetic)
 def _selftest():
-    import foundry_ctx_posture as cp
     results = []
 
     def check(token, ok):
@@ -464,11 +481,11 @@ def _selftest():
         topo_wtmain = {"git_dir": "/wt/.git/worktrees/w", "git_common_dir": "/main/.git",
                        "branch": "main", "default_branch": "main"}
         m = derive_machinery(rec, corpus_root=corpus, invoking_sid=sid, git_topo=topo_wtmain,
-                             pr_state=None, diff_paths=["scripts/foundry-fleet-roster.py"],
-                             infra_present=False)
+                             pr_state=None, diff_paths=["scripts/foundry-fleet-roster.py"])
         typed = (m["session_id"] == sid and set(m).issuperset(
             {"isolation", "gate_readiness", "mode", "security_flag",
-             "target_repo", "blast_radius", "ctx_posture", "sources"}))
+             "target_repo", "blast_radius", "infra", "sources"})
+            and "ctx_posture" not in m and "break_glass" not in m)
         mode_ok = m["mode"] == {"stage": "lean", "merge_autonomy": "lean"}
         gate_ok = m["gate_readiness"] == "authorized"        # corpus authorized-trailer, no PR
         # a MISSING-block (join miss) is its own discriminated state, not a populated record.
@@ -487,10 +504,11 @@ def _selftest():
         m_cross = derive_machinery(rec, corpus_root=corpus, invoking_sid=other,
                                    diff_paths=["scripts/foundry-fleet-roster.py"])  # rec is NOT the invoker
         # every invoking-process-only field is null/attention cross-session — incl. security_flag (a clean
-        # invoking diff must NOT stamp a false `clear` on another session's row) and infra.
+        # invoking diff must NOT stamp a false `clear` on another session's row). `infra` is DELIBERATELY
+        # NOT part of this floor any more (AC-FIGR-2's Clarification) — it is project-scoped, not
+        # session-scoped, so it is the SAME value on every row regardless of which session invoked.
         cross_null = (m_cross["isolation"] == "unknown"
-                      and m_cross["ctx_posture"] is None and m_cross["security_flag"] == "needs_review"
-                      and m_cross["infra"] is False)
+                      and m_cross["security_flag"] == "needs_review")
         cross_corpus = m_cross["gate_readiness"] == "authorized"   # corpus verdict still derives
         # the module exposes NO reader of the build-provenance marker / foundry-project.json.
         src = open(os.path.abspath(__file__), encoding="utf-8").read()
@@ -510,21 +528,22 @@ def _selftest():
         sec_supply = derive_security_flag([".claude-plugin/plugin.json"])[0] == "needs_review"
         sec_clear = derive_security_flag(["scripts/foundry-fleet-roster.py"])[0] == "clear"
         sec_binary = set(SECURITY_DOMAIN) == {"clear", "needs_review"}        # no `unknown` escape
-        # ctx_posture preserves REFUSE (present-but-stale CTX), never squashed to null:
-        stale = cp.CtxState(reachable=False, detail="CTX state not OK (stale_state='STALE'); refuse")
-        ctx_refuse = derive_infra(present=True, ctx_state=stale)[1] == "REFUSE"
-        # break-glass (audited prod-EXECUTE) is flagged, not a benign EXECUTE-clear:
-        bg = cp.CtxState(reachable=True, active_env="prod", production_flag=True, guard_state="OFF",
-                         stale_state="OK")
-        b_blast, b_ctx, b_break, _o, _r = derive_infra(present=True, ctx_state=bg)
-        bg_attn = (b_ctx == "EXECUTE" and b_break is True
-                   and is_field_clear("ctx_posture", b_ctx, break_glass=b_break) is False)
+        # AC-FIGR-6: a lock present but unresolvable (a tampered/malformed entry) fails toward
+        # attention (`degraded`), never a raise — proven with a syntactically-broken lock here (the
+        # pytest suite additionally drives this through a REAL tampered content-sha256 pin; AC-FIGR-5).
+        lock_dir = os.path.join(corpus, ".foundry")
+        os.makedirs(lock_dir, exist_ok=True)
+        with open(os.path.join(lock_dir, "stack-profile.lock"), "w") as f:
+            f.write("not valid json")
+        broken_blast, broken_infra, broken_o, broken_r = derive_infra(project_dir=corpus)
+        lock_degrades = broken_infra is False and broken_o == "degraded" and "stack-profile.lock" in broken_r
+        os.remove(os.path.join(lock_dir, "stack-profile.lock"))
         # target_repo unresolved ⇒ attention (not clear)
         repo_attn = is_field_clear("target_repo", derive_target_repo(spec_key, corpus)[0]) is False
         check("AC-SMACH-3 gate-and-security-fail-closed",
               gate_noatom and gate_nocontract and gate_gherror and gate_block_attn and no_false_pass
               and sec_undiff and sec_authpath and sec_supply and sec_clear and sec_binary
-              and ctx_refuse and bg_attn and repo_attn)
+              and lock_degrades and repo_attn)
 
         # === AC-SMACH-4: isolation from git topology AND branch; flagged-by-default ==========
         direct = derive_isolation({"git_dir": "/main/.git", "git_common_dir": "/main/.git",
@@ -544,14 +563,22 @@ def _selftest():
         check("AC-SMACH-4 isolation-from-git-direct-flagged",
               direct and wtmain and wt_safe and nongit and ambiguous and no_dispatch_wt and flagged)
 
-        # === AC-SMACH-5: conditional, additive, read-only, sanitized, differentiated ========
-        # non-infra session → both infra fields null (distinct from infra-but-no-run).
-        non_infra = derive_infra(present=False) == (None, None, False, "source_unavailable", "no CTX session (non-infra)")
-        # infra-present, healthy dev CTX, no impact run → EXECUTE + blast null (not a false low).
-        dev = cp.CtxState(reachable=True, active_env="dev", production_flag=False, guard_state="ON",
-                          stale_state="OK")
-        i_blast, i_ctx, i_break, i_o, _ir = derive_infra(present=True, ctx_state=dev, blast_tier=None)
-        infra_run = (i_ctx == "EXECUTE" and i_blast is None and i_o == "ok")
+        # === AC-SMACH-5 / AC-FIGR-2/6: conditional, additive, read-only, sanitized, differentiated ==
+        # AC-FIGR-2: no stack-profile.lock at the project dir ⇒ infra False, source_unavailable, naming
+        # the lock — the discriminator's absent-source floor. (The resolving-lock ⇒ infra True/False
+        # and the tampered-pin ⇒ degraded cases are driven over the REAL shipped packs/ tree, which
+        # this hermetic selftest does not depend on — AC-FIGR-5's pytest suite covers them fully.)
+        no_lock_blast, no_lock_infra, no_lock_o, no_lock_r = derive_infra(project_dir=corpus)
+        non_infra = (no_lock_blast is None and no_lock_infra is False
+                    and no_lock_o == "source_unavailable" and "stack-profile.lock" in no_lock_r)
+        # no subprocess is executed deriving it (AC-FIGR-1/2): read-only, no `ctx` exec.
+        no_exec = True
+        try:
+            import unittest.mock as _mock
+            with _mock.patch("subprocess.run", side_effect=AssertionError("must not exec")):
+                derive_infra(project_dir=corpus)
+        except AssertionError:
+            no_exec = False
         # discriminated outcome per source present on a record.
         disc = (m["sources"]["gate_readiness"]["outcome"] == "ok"
                 and m_cross["sources"]["isolation"]["outcome"] == "source_unavailable")
@@ -567,7 +594,7 @@ def _selftest():
         # additive overlay: the record adds fields, never an override key matching a native/registry field.
         additive = "repo" not in m and "name" not in m and "native_summary" not in m
         check("AC-SMACH-5 conditional-additive-readonly-sanitized",
-              non_infra and infra_run and disc and sanitized and tr_clean and additive)
+              non_infra and no_exec and disc and sanitized and tr_clean and additive)
 
     ok = all(v for _, v in results)
     print("FLEET-SESSION-MACHINERY-SELFTEST-" + ("GREEN" if ok else "RED"))

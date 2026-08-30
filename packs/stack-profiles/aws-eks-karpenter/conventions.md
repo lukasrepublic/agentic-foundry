@@ -10,8 +10,8 @@ in-cluster manifests. These are the *genuine* commands and shapes such a stack u
 > authorized at the normal `/foundry:authorize` gate. These conventions are an **advisory
 > mistake-catcher FOR the trusted operator**, not a defense AGAINST them. The `infra_binding`
 > command strings are **data** — they are read by the `id-plan` / `id-impact` / `id-verify` /
-> `id-apply` consumers and executed later only through the **CTX command-policy guard**, never
-> by this pack.
+> `id-apply` consumers and executed later against the **AWS context the operator has already
+> configured**, never by this pack.
 
 ## Layers
 
@@ -48,15 +48,16 @@ There are **two realization paths**, and the `apply` slot documents both:
   manifest paths under `gitops_paths` is reconciled by the ArgoCD controller — **never** a direct
   `kubectl apply`. The controller is the only thing that mutates the cluster for those paths.
 
-`id-apply` reads the profile's `gitops_paths` **plus the change target** to pick the
-**EXECUTE** (`tofu apply` for non-GitOps infra), **GENERATE** (write the manifest + let ArgoCD
-reconcile), or **VERIFY-ONLY** (already-GitOps-managed) branch. The GitOps-verify-only decision
-is sourced **here** (the paths) + the change classification — not from `ctx-posture`.
+`id-apply` re-derives the GitOps class from the profile's `gitops_paths` **plus the change scope**
+to pick the **EXECUTE** (`tofu apply` for non-GitOps infra) or **VERIFY_ONLY** (already-GitOps-managed,
+so the ArgoCD controller reconciles it and a direct apply would fight the controller) branch. The
+GitOps-vs-direct decision is sourced **here** (the paths) + the change classification.
 
 ## Read-only command discipline (the `infra_binding` read-role)
 
-The `plan`, `verify`, and `policy` slots are **read-only** and pinned to CTX-read-only leading
-verbs — the loader's read-role allowlist rejects a mutating verb in any of them. They are
+The `plan`, `verify`, and `policy` slots are **read-only**, pinned by the **stack-profile loader's
+read-only leading-verb allowlist** (`scripts/foundry-stack-profile.py`) — that loader's own static
+validation rejects a mutating verb in any of them; no external runtime enforcement backs it. They are
 **local + deterministic + NO-cluster** (v2, ADR C3): the pre-merge structured evidence comes from
 the candidate-vs-merge-base diff, **never a live cluster read**.
 
@@ -77,8 +78,8 @@ the candidate-vs-merge-base diff, **never a live cluster read**.
 **`argocd app diff` is forbidden as a structured pre-merge source in EVERY read slot** (plan,
 verify, AND policy) — the stale live-cluster source must not be smuggled into any of them.
 
-Only **`apply`** (`tofu apply`) is a mutation, and it is posture-gated downstream by the CTX
-runtime guard — this profile never runs it.
+Only **`apply`** (`tofu apply`) is a mutation, and it is executed downstream by `id-apply` against
+the AWS context the operator has already configured — this profile never runs it.
 
 ## Policy-as-code gating (the `infra_binding.policy` Rego pack)
 

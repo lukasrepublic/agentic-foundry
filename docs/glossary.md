@@ -58,9 +58,12 @@ The vocabulary, in one place. Terms link to the doc that owns them.
 - **"§8" / `btb-gates`** — internal code names that survive in shipped strings ("§8" in the
   deep-audit binder's output; `btb-gates.yml` as a workflow filename). Treat both as proper
   nouns — they carry no meaning beyond naming the thing that prints them.
-- **CTX / `ctx`** — an adopter-supplied guarded-execution session wrapper convention (the
-  `ctx status --json` probe `foundry_ctx_posture.py` reads). If you don't run such a wrapper,
-  the posture resolver fails closed to the safe branch — nothing assumes it exists.
+- **Guarded-exec wrapper / `cloud_cli_exec_guard`** — an **adopter-supplied** wrapper convention
+  the `hooks/foundry-cloud-cli-exec-guard.sh` hook matches bare `aws`/`kubectl`/`tofu` invocations
+  against. The hook is **config-gated and fail-INERT**: with no wrapper declared, it blocks nothing.
+  It is **defense-in-depth against the framework's own mistakes**, not a security boundary — the
+  operator's **IAM restrictions on the AWS context they supply** are the control the framework
+  actually relies on.
 - **`software-delivery` / `infra-delivery` (sd-* / id-*)** — two documented step SEQUENCES:
   procedure families the sd-*/id-* skills form, walked by the operator/agent in order.
   "Step N" labels a skill's position in the sequence — there is no shipped workflow engine

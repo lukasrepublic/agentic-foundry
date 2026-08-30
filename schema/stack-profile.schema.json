@@ -145,7 +145,7 @@
       "required": ["plan", "apply", "verify", "policy", "gitops_paths", "blast_radius"],
       "properties": {
         "plan": {"type": "string", "minLength": 1, "description": "READ-ONLY plan command string (e.g. `tofu plan`)."},
-        "apply": {"type": "string", "minLength": 1, "description": "The MUTATION command string (e.g. `tofu apply`) — posture-gated by the CTX runtime guard."},
+        "apply": {"type": "string", "minLength": 1, "description": "The MUTATION command string (e.g. `tofu apply`) — operator-authored, executed as written when decide_apply's total table routes to EXECUTE. The bound on what it may do is the IAM restrictions of the AWS context the operator supplies; beyond this shape (a non-empty string), the framework carries no check on its content."},
         "verify": {"type": "string", "minLength": 1, "description": "READ-ONLY post-state verify command string (e.g. `kubectl get … --dry-run=server` / `argocd app get`)."},
         "policy": {"type": "string", "minLength": 1, "description": "READ-ONLY policy-as-code command string (e.g. `conftest test` / `helm template … | conftest`)."},
         "gitops_paths": {

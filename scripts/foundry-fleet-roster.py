@@ -90,9 +90,12 @@ def _machinery_cols(mrec):
     if not mrec or mrec.get("status") == "unavailable":
         return {"unavailable": True, "iso": "⚠ machinery unavailable", "gate": "", "wf": ""}
 
-    def deny(field, value, *, break_glass=False):
+    def deny(field, value):
         # clear ONLY for an explicit known-safe value; every other/unknown/novel/null ⇒ ⚠.
-        if mach.is_field_clear(field, value, break_glass=break_glass):
+        # AC-FIGR-3: the retired posture field's audit-flag keyword this helper used to forward is
+        # gone — that field is REMOVED (not renamed) from the machinery record, so there is nothing
+        # left for a keyword to special-case here.
+        if mach.is_field_clear(field, value):
             return str(value)
         return f"⚠{value}" if value is not None else "⚠—"
 
@@ -196,13 +199,13 @@ def _selftest():
             "workflow": {"id": "software-delivery", "position": 5, "total": 13},
             "isolation": "worktree", "gate_readiness": "gate_pass",
             "mode": {"stage": "lean", "merge_autonomy": "lean"}, "security_flag": "clear",
-            "target_repo": None, "blast_radius": None, "ctx_posture": None, "break_glass": False,
+            "target_repo": None, "blast_radius": None,
             "infra": False, "sources": {}},
         "12340000-0000-4000-8000-000000000000": {
             "session_id": "12340000-0000-4000-8000-000000000000", "status": "ok",
             "workflow": None, "isolation": "direct_main", "gate_readiness": "unknown",
             "mode": {"stage": "lean", "merge_autonomy": None}, "security_flag": "needs_review",
-            "target_repo": None, "blast_radius": None, "ctx_posture": None, "break_glass": False,
+            "target_repo": None, "blast_radius": None,
             "infra": False, "sources": {}},
     }
     rows = build_rows(ok_fixture, machinery)

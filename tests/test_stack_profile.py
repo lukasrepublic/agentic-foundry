@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
+import subprocess
 
 import pytest
 import yaml
@@ -458,3 +460,197 @@ class TestProfileVersionImmutability:
             doc = yaml.safe_load(f)
         assert "standing-versions" not in doc
         assert sp._standing_versions_sha256_of(pack_dir, doc) is None
+
+
+# ================================== feat-foundry-apply-gate-regrounding (AC-IDAGR-3/-7/-8/-12) ==== #
+# The saved-plan sequence + the honest apply-slot / read-role commentary, asserted over the REAL
+# shipped aws-eks-karpenter pack, schema and loader — never a synthetic fixture, per the contract's
+# own bound (exactly the enumerated sites).
+
+AWS_EKS_YAML_PATH = os.path.join(PACKS_DIR, "aws-eks-karpenter", "stack-profile.yaml")
+SCHEMA_PATH = os.path.join(REPO_ROOT, "schema", "stack-profile.schema.json")
+LOADER_PATH = os.path.join(REPO_ROOT, "scripts", "foundry-stack-profile.py")
+
+
+def _real_infra_binding():
+    doc, _path, _sha = sp.load_profile("aws-eks-karpenter", root=REPO_ROOT, plugin_root=REPO_ROOT)
+    return sp.infra_binding_of(doc)
+
+
+def _plan_out_arg(plan_cmd):
+    m = re.search(r"-out=(\S+)", plan_cmd)
+    assert m, f"plan slot carries no -out= flag: {plan_cmd!r}"
+    return m.group(1)
+
+
+def _apply_planfile_arg(apply_cmd):
+    toks = apply_cmd.split()
+    assert toks[:2] == ["tofu", "apply"], f"apply slot does not lead with 'tofu apply': {apply_cmd!r}"
+    assert len(toks) == 3, f"apply slot carries more than the bare saved-plan path: {apply_cmd!r}"
+    return toks[2]
+
+
+_PLACEHOLDER_RE = re.compile(r"<[^<>\s]+>")  # an angle-bracket token like <planfile> — NOT a bare `>` redirect.
+
+
+def _assert_saved_plan_no_placeholder(plan_cmd, apply_cmd):
+    """The AC-IDAGR-3 witness: raises AssertionError on ANY of — a placeholder token in either slot,
+    the plan/apply saved-plan paths disagreeing, or the path not being the pinned literal."""
+    assert not _PLACEHOLDER_RE.search(plan_cmd), f"plan slot carries a placeholder token: {plan_cmd!r}"
+    assert not _PLACEHOLDER_RE.search(apply_cmd), f"apply slot carries a placeholder token: {apply_cmd!r}"
+    plan_path = _plan_out_arg(plan_cmd)
+    apply_path = _apply_planfile_arg(apply_cmd)
+    assert plan_path == apply_path, f"plan -out= path {plan_path!r} != apply planfile path {apply_path!r}"
+    assert plan_path == ".foundry/infra.tfplan", f"the planfile path is not the pinned literal: {plan_path!r}"
+
+
+def _raw_yaml_text():
+    with open(AWS_EKS_YAML_PATH, encoding="utf-8") as f:
+        return f.read()
+
+
+def _slot_comment_text(marker_start, marker_end):
+    text = _raw_yaml_text()
+    start = text.index(marker_start)
+    end = text.index(marker_end, start)
+    return text[start:end]
+
+
+def _plan_slot_comment_text():
+    return _slot_comment_text("  # plan — the READ-ONLY", '  plan: "')
+
+
+def _apply_slot_comment_text():
+    return _slot_comment_text("  # apply — the MUTATION slot", '  apply: "')
+
+
+def _schema_apply_description():
+    with open(SCHEMA_PATH, encoding="utf-8") as f:
+        schema = json.load(f)
+    return schema["properties"]["infra_binding"]["properties"]["apply"]["description"]
+
+
+class TestSavedPlanSequence:
+    def test_infra_pack_applies_a_literal_saved_plan_with_no_placeholder(self):
+        ib = _real_infra_binding()
+        _assert_saved_plan_no_placeholder(ib["plan"], ib["apply"])
+        # no planning option, no -auto-approve over a freshly computed plan: apply is EXACTLY
+        # `tofu apply <the saved plan>`, nothing else.
+        assert ib["apply"] == "tofu apply .foundry/infra.tfplan"
+        assert "-auto-approve" not in ib["apply"]
+        print("IDAGR-3-SAVED-PLAN-OK")
+
+    def test_a_placeholder_token_in_either_slot_is_convicted(self):
+        # the REAL slots pass clean.
+        ib = _real_infra_binding()
+        _assert_saved_plan_no_placeholder(ib["plan"], ib["apply"])
+        # the exact notation the sibling prose atom had used, rewritten into BOTH slots.
+        mutant_plan = "tofu plan -detailed-exitcode -out=<planfile> && helm template gitops/ > rendered/manifests.yaml"
+        mutant_apply = "tofu apply <planfile>"
+        with pytest.raises(AssertionError):
+            _assert_saved_plan_no_placeholder(mutant_plan, ib["apply"])
+        with pytest.raises(AssertionError):
+            _assert_saved_plan_no_placeholder(ib["plan"], mutant_apply)
+        print("IDAGR-3-PLACEHOLDER-MUTANT-OK")
+
+
+def _apply_site_claims(text):
+    t = (text or "").lower()
+    return {
+        "operator_authored": "operator-authored" in t or "operator authored" in t,
+        "executed_as_written": "executed as written" in t,
+        "iam_bound": "iam restriction" in t or "iam context" in t or ("iam" in t and "restrict" in t),
+        "credits_readrole": ("read-role" in t) or ("readrole" in t) or ("_readrole_slots" in t),
+    }
+
+
+def _assert_apply_site_honest(text):
+    """The AC-IDAGR-7 witness: raises AssertionError if the site is missing one of the three required
+    claims, OR if it attributes the apply slot's bound to the loader's read-role check (false — that
+    check is scoped to plan/verify/policy and never inspects apply, AC-IDAGR-8's own sites say so)."""
+    claims = _apply_site_claims(text)
+    assert claims["operator_authored"], f"site missing the operator-authored claim: {text!r}"
+    assert claims["executed_as_written"], f"site missing the executed-as-written claim: {text!r}"
+    assert claims["iam_bound"], f"site missing the IAM-bound claim: {text!r}"
+    assert not claims["credits_readrole"], f"site falsely credits the loader's read-role check: {text!r}"
+
+
+class TestApplySlotSitesNameTheIamBound:
+    def test_apply_slot_sites_name_the_operator_iam_bound_2of2(self):
+        schema_desc = _schema_apply_description()
+        pack_comment = _apply_slot_comment_text()
+        checked = 0
+        _assert_apply_site_honest(schema_desc); checked += 1
+        _assert_apply_site_honest(pack_comment); checked += 1
+        assert checked == 2
+        print("IDAGR-7-APPLY-SITES-2of2-OK")
+
+    def test_crediting_the_readrole_check_for_the_apply_slot_is_convicted(self):
+        # cross-checked mechanically: `apply` is NOT in the loader's read-role slot set, so crediting
+        # it here is a FALSE correction, not a redundant-but-harmless one.
+        assert "apply" not in sp._READROLE_SLOTS
+        mutant = (
+            "The MUTATION command string (e.g. `tofu apply`) — operator-authored, executed as written, "
+            "protected by the loader's read-role allowlist (scripts/foundry-stack-profile.py:188), and "
+            "bounded by the operator's IAM restrictions."
+        )
+        # the mutant carries all three honest claims too, so ONLY the false-floor credit convicts it.
+        claims = _apply_site_claims(mutant)
+        assert claims["operator_authored"] and claims["executed_as_written"] and claims["iam_bound"]
+        with pytest.raises(AssertionError):
+            _assert_apply_site_honest(mutant)
+        # the REAL sites still pass.
+        _assert_apply_site_honest(_schema_apply_description())
+        _assert_apply_site_honest(_apply_slot_comment_text())
+        print("IDAGR-7-FALSE-FLOOR-MUTANT-OK")
+
+
+def _loader_readrole_commentary_blocks():
+    with open(LOADER_PATH, encoding="utf-8") as f:
+        text = f.read()
+    b1_start = text.index("# Read-only leading-verb allowlist")
+    b1_end = text.index("_READROLE_SLOTS = (", b1_start)
+    b2_start = text.index("# Shell connectors a slot command may chain on.")
+    b2_end = text.index("_CONNECTOR_RE = re.compile", b2_start)
+    return text[b1_start:b1_end], text[b2_start:b2_end]
+
+
+def _names_sole_static_floor_no_external_authority(text):
+    t = (text or "").lower()
+    sole_floor = "sole static floor" in t
+    no_external_authority = not any(p in t for p in (
+        "authoritative floor is the ctx", "authoritative enforcement remains the ctx",
+        "ctx runtime guard", "ctx's command-policy", "ctx command-policy", "mirrored from ctx",
+    ))
+    return sole_floor and no_external_authority
+
+
+class TestReadRoleCommentaryNamesTheLoaderAsTheFloor:
+    def test_readrole_commentary_names_the_loader_as_the_sole_static_floor_2of2(self):
+        block1, block2 = _loader_readrole_commentary_blocks()
+        checked = 0
+        assert _names_sole_static_floor_no_external_authority(block1); checked += 1
+        assert _names_sole_static_floor_no_external_authority(block2); checked += 1
+        # block2 keeps its existing honest statement of the connector-split heuristic's own limits.
+        assert "heuristic" in block2.lower() and "not a full shell parser" in block2.lower()
+        assert checked == 2
+        print("IDAGR-8-READROLE-SITES-2of2-OK")
+
+
+class TestPlanArtifactConfinement:
+    def test_plan_artifact_is_confined_to_the_ignored_runtime_partition(self):
+        ib = _real_infra_binding()
+        plan_path = _plan_out_arg(ib["plan"])
+        assert plan_path == ".foundry/infra.tfplan"
+        # computed against the REAL shipped .gitignore, not asserted as a literal string — a later
+        # change to the managed block computes RED rather than passing on a stale copy.
+        result = subprocess.run(["git", "check-ignore", "-q", plan_path], cwd=REPO_ROOT)
+        assert result.returncode == 0, f"{plan_path} is NOT ignored by the shipped .gitignore"
+        reincluded = subprocess.run(["git", "check-ignore", "-q", ".foundry/README.md"], cwd=REPO_ROOT)
+        assert reincluded.returncode != 0, "sanity: the three re-included paths must NOT be ignored"
+        assert plan_path not in (".foundry/README.md", ".foundry/build-provenance.yaml",
+                                  ".foundry/stack-profile.lock")
+        comment = _plan_slot_comment_text().lower()
+        assert "plaintext" in comment
+        assert "never" in comment and ("commit" in comment or "publish" in comment)
+        print("IDAGR-12-PLAN-CONFINED-OK")
