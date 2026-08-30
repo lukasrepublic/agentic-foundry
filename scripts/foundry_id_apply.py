@@ -173,6 +173,11 @@ def _changed_paths_well_formed(changed_paths):
     `posixpath.normpath` collapses `././`, `//` and `a/../b` in one predicate, so the check is not a
     guess-list of spellings. `posixpath` (not `os.path`) is deliberate: the module imports nothing from
     the `os` family, and a non-vacuous witness in the test suite enforces that."""
+    # The CONTAINER first: a bare `str` iterates CHARACTER BY CHARACTER, so `changed_paths="app.yaml"`
+    # would present members ["a","p","p",…] — none matching a slash-free glob like `*.yaml` — and
+    # classify `direct` for a wholly controller-managed change. Per-member form checks cannot see this.
+    if changed_paths is not None and not isinstance(changed_paths, (list, tuple, set, frozenset)):
+        return False
     for p in (changed_paths or []):
         if not isinstance(p, str) or not p:
             return False                       # bytes / None / "" — never silently dropped.
@@ -186,8 +191,15 @@ def _changed_paths_well_formed(changed_paths):
         # Mirror `_under_any_glob`: ONE leading `./` is normalized off there, so it is a well-formed
         # form here too and must not be refused. Everything beyond that must already be normal.
         probe = p[2:] if p.startswith("./") else p
-        if not probe or probe.startswith(("/", "../")) or probe != posixpath.normpath(probe):
-            return False                       # absolute, escaping, or non-normal (`././`, `//`, `a/../b`).
+        # The FIRST COMPONENT test — not `startswith("../")`. `".."` and `"."` are normpath FIXED
+        # POINTS and neither starts with `"../"`, so an earlier draft let both through. `"."` denotes
+        # the whole repo, which INCLUDES the controller-managed paths, so a `["."]` scope classified
+        # `direct` and EXECUTEd — the same routing-form bypass this condition exists to close, missing
+        # by exactly one spelling. Splitting on `/` subsumes the absolute and `../` cases too.
+        if not probe or probe.split("/")[0] in (".", "..") or probe.startswith("/"):
+            return False                       # whole-repo, escaping, or absolute.
+        if probe != posixpath.normpath(probe):
+            return False                       # non-normal (`././`, `//`, `a/../b`, trailing `/`).
     return True
 
 
