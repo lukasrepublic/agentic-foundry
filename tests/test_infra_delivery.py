@@ -4,7 +4,7 @@ infra-realization-gate, id-apply, id-allocation-mutex, id-impact-change-tier}.py
 Ports the real behavioral assertions those five drop-in selftests drove directly against the
 shipped infra-delivery decision modules: `scripts/foundry_plan_model.py` (the three canonical
 IaC-change plane parsers), `scripts/foundry_realization.py` (the post-deploy LANDED/NOT_LANDED
-verdict), `scripts/foundry_id_apply.py` (the posture-gated apply gate) + `foundry_ctx_posture.py`,
+verdict), `scripts/foundry_id_apply.py` (the re-grounded apply gate),
 and `scripts/foundry_id_alloc.py` (the flock-guarded ID-allocation mutex, real os.fork()
 concurrency). CLI/doctor scaffolding is dropped; the computed fixtures/assertions are kept.
 """
