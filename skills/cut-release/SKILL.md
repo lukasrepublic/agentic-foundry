@@ -144,7 +144,7 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
    delivery. Re-add the marketplace at the NEW tag, then update every scope:
 
    ```
-   claude plugin marketplace add lukasrepublic/agentic-foundry#v1.5.0 --scope user
+   claude plugin marketplace add lukasrepublic/agentic-foundry#v1.6.0 --scope user
    claude plugin update foundry@agentic-foundry --scope user
    claude plugin update foundry@agentic-foundry --scope project
    ```

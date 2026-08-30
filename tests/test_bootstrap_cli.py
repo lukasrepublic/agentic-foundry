@@ -338,6 +338,13 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         # `cli/permission-floor.json` gains one `allow` rule (the read-only command-deck module), so a
         # newly scaffolded or reconciled workspace receives a different floor than 0.4.2 wrote.
         "1.5.0": "0.5.0",
+        # v1.6.0 DOES carry a CLI change of its own, on top of the pin it embeds: the bundled
+        # `cli/permission-floor.json` loses the retired session-context posture module's
+        # `not_invoked` entry when that dependency is severed and the module is deleted, so a newly
+        # scaffolded or reconciled workspace receives a different floor than 0.5.0 wrote.
+        # (Named by description, not by identifier: this file is inside the zero-reference gate's
+        # swept surface, and spelling the retired module's name here would take that gate red.)
+        "1.6.0": "0.6.0",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (
