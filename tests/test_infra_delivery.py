@@ -491,9 +491,9 @@ class TestIdApplyGate:
             [" clusters/prod/app.yaml"],                   # whitespace-padded
             ["clusters//prod/app.yaml"],                   # doubled separator — NOTE: this row is the
             #   one exception to the blanket rationale above. `fnmatch` translates `clusters/**` to
-            #   `clusters/.*.*`, which DOES match a doubled separator, so without (v) this input routes
+            #   `(?s:clusters/.*)\\Z` (consecutive `*` are compressed since 3.8), which DOES match a doubled separator, so without (v) this input routes
             #   VERIFY_ONLY rather than EXECUTE. It is still non-vacuous (REFUSE vs VERIFY_ONLY), but it
-            #   does not demonstrate the EXECUTE bypass the other eight rows do.
+            #   does not demonstrate the EXECUTE bypass the other twelve rows do.
             ["././clusters/prod/app.yaml"],                # non-normal beyond one leading ./
             ["a/../clusters/prod/app.yaml"],               # traversal
             ["clusters\\prod\\app.yaml"],                  # Windows separator
@@ -591,7 +591,6 @@ class TestIdApplyGate:
             # green even if the module grew a real `subprocess.run`. Assert on STRUCTURE instead —
             # the module's own source and import graph — so the property is actually guarded.
             src = pathlib.Path(id_apply.__file__).read_text(encoding="utf-8")
-            tree = ast.parse(src)
             def _imports_of(source):
                 out = set()
                 for node in ast.walk(ast.parse(source)):
