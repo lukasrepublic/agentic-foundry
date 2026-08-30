@@ -8,7 +8,26 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
-## Unreleased
+## v1.6.0
+
+**The CTX control-plane dependency is severed.** The framework no longer probes, requires, or
+references an external environment control plane. Infra mutations run on standard `aws` / `tofu` /
+`kubectl` over IaC against the AWS context the OPERATOR has already configured — and the operator's
+IAM restrictions ARE the control, out of the framework's scope. It never acquires credentials,
+establishes connectivity, or second-guesses that context.
+
+Before this release, with no `ctx` binary on PATH the posture probe fail-closed to REFUSE, so
+`id-apply` refused **every** infra mutation on any machine without that CLI.
+
+The posture layer is **deleted, not replaced**: no prod-vs-non-prod branch, no guard state, no
+break-glass, no runbook-generation outcome. `decide_apply` now derives the GitOps class itself from
+the frozen change scope and routes on three outcomes — EXECUTE (the default path for a well-formed
+direct change), VERIFY_ONLY (a **correctness** routing where the ArgoCD controller owns the path, not
+a permission check), and REFUSE on five mechanically unresolvable inputs.
+
+Shipped with a standing exit gate that proves the removal and keeps it proven, and with the
+`cloud-cli-exec-guard` reclassified honestly as defense-in-depth rather than a security boundary.
+
 
 ### A zero-reference exit gate proves the retired session-context framework stays gone (feat-foundry-ctx-zero-reference-gate)
 
@@ -43,12 +62,17 @@ mutation); this atom subtracts the dependency rather than replacing it.
   parameter is gone, and `decide_apply` now derives the GitOps class ITSELF by calling
   `classify_gitops` (unchanged, AC-IDAGR-5) rather than accepting a class its caller asserts. No
   parameter offers a caller a way to supply or override the class.
-- **Two outcomes, one refusal, four conditions (AC-IDAGR-2):** `GENERATE_RUNBOOK` and the break-glass
+- **Two outcomes, one refusal, five conditions (AC-IDAGR-2):** `GENERATE_RUNBOOK` and the break-glass
   `audited` flag are gone (AC-IDAGR-1), together with `RunbookPayload.executed_by`. A well-formed
   `direct` change EXECUTEs unconditionally — the default path; a `gitops` change routes to
   VERIFY_ONLY (a correctness routing — the ArgoCD controller owns reconciliation of that path, not a
-  permission check); REFUSE fires on exactly four mechanically unresolvable inputs, the new one being
-  a malformed `infra_binding.gitops_paths` (an empty list is well-formed).
+  permission check); REFUSE fires on exactly five mechanically unresolvable inputs — the two added
+  here being a malformed `infra_binding.gitops_paths` (an empty list is well-formed) and a
+  `changed_paths` whose FORM is not a list/tuple/set of well-formed relative POSIX paths. The fifth
+  came from the gating security review: an absolute, padded, backslash-separated, non-printable or
+  non-normal member (including the `.` / `..` whole-repo and escaping spellings) matches no
+  `gitops_paths` glob, so without it a wholly controller-managed change classified `direct` and
+  EXECUTEd against a scope covering ArgoCD-owned manifests.
 - **The shipped `aws-eks-karpenter` pack's `plan`/`apply` slots now carry a saved-plan sequence
   (AC-IDAGR-3, v0.5.3):** `plan` writes `-out=.foundry/infra.tfplan`; `apply` applies that exact same
   literal path, byte-identical, no placeholder token, no `-auto-approve` over a freshly computed plan.
