@@ -77,8 +77,9 @@ function that derives the class itself) — this procedure drives the I/O around
      rather than add a mutation it hasn't already made. This is a **correctness** routing, not a
      permission check. The framework runs **only** the read-only `infra_binding.verify`. Nothing is
      mutated by the framework.
-   - **REFUSE** (an `ambiguous` class including an empty scope, an out-of-set class value, a
-     missing/empty required `infra_binding` slot, or a malformed `gitops_paths` declaration):
+   - **REFUSE** — five conditions: an `ambiguous` class including an empty scope, an out-of-set class
+     value, a missing/empty required `infra_binding` slot, a malformed `gitops_paths` declaration, or
+     a `changed_paths` whose **form** is not a list/tuple/set of well-formed relative POSIX paths:
      **nothing is emitted or run**. Fail-closed — surface the reason to the operator.
 4. **Log the rendered form, never the executed one.** When the decision is displayed, logged, or
    carried into audit-ledger evidence, log `foundry_id_apply.render_decision(decision)`'s
@@ -100,8 +101,23 @@ function that derives the class itself) — this procedure drives the I/O around
   whitespace-padded, backslash-separated, non-printable (zero-width and friends), non-normal
   (`././`, `//`, `a/../b`, trailing `/`), or a whole-repo/escaping spelling (`.`, `..`) REFUSEs,
   because such a path matches no `gitops_paths` glob and would misclassify a controller-managed change
-  as `direct`. Collect with `git diff --name-only -z -c core.quotePath=false` so a non-ASCII filename
-  is not C-quoted into a backslash form that refuses.
+  as `direct`.
+- **Collect the scope at the REPO ROOT, with paths relative to it.** This is the one input class the
+  form check structurally cannot catch: a *well-formed* relative path with the *wrong base*. If the
+  session cwd is `clusters/`, or the operator has `diff.relative=true` configured, a change touching
+  only `clusters/prod/applications/app.yaml` is emitted as `prod/applications/app.yaml` — which passes
+  every form clause, matches no `gitops_paths` glob, and routes a wholly ArgoCD-managed change to
+  EXECUTE. Collect with:
+
+  ```
+  cd "$(git rev-parse --show-toplevel)"
+  git -c core.quotePath=false diff --name-only -z --no-relative <merge-base>..<candidate>
+  ```
+
+  `-c` is a **`git`** option and must precede the subcommand — after it, `git diff` consumes `-c` as
+  the combined-diff flag and the setting is parsed as a revision. `--no-relative` defeats a configured
+  `diff.relative`; `core.quotePath=false` stops a non-ASCII filename being C-quoted into a backslash
+  form the check refuses.
 - **The command run is the FROZEN `infra_binding.apply`** — never freeform, never composed, never
   substituted or interpolated by the framework or the agent driving it.
 - **The post-apply check is the DISTINCT read-only `infra_binding.verify` slot** — not a second

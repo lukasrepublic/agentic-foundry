@@ -212,6 +212,11 @@ def decide_apply(*, changed_paths, infra_binding):
     The table:
       (iv) `infra_binding.gitops_paths` absent / not a list of non-empty strings  → REFUSE (checked
            FIRST, before the class is derived — an empty list is well-formed and passes this check).
+      (v)  `changed_paths` is not a list/tuple/set, or any member's FORM is not a well-formed
+           relative POSIX path                                                     → REFUSE (checked
+           BEFORE the class is derived; see `_changed_paths_well_formed`). This row is easy to miss
+           when reading only the code below — it is listed here so a maintainer does not take the
+           call at the top of the body for an undocumented extra and delete it.
       (i)  the derived class == "ambiguous" (including an EMPTY changed_paths)    → REFUSE.
       (ii) the derived class is outside {"gitops","direct"}                        → REFUSE.
       (b)  class == "gitops"   → VERIFY_ONLY (the ArgoCD controller realizes it; the framework issues
