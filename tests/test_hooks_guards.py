@@ -47,11 +47,11 @@ def _eval_guard(cmd, wrapper, tools="aws,kubectl,tofu,terraform,helm,argocd", ex
 
 
 def test_cloud_guard_blocks_bare_cloud_cli():
-    assert _eval_guard("aws s3 ls", wrapper="ctx run --").startswith("BLOCK")
+    assert _eval_guard("aws s3 ls", wrapper="exec-wrapper run --").startswith("BLOCK")
 
 
 def test_cloud_guard_allows_wrapped_invocation():
-    assert _eval_guard("ctx run -- aws s3 ls", wrapper="ctx run --") == "ALLOW"
+    assert _eval_guard("exec-wrapper run -- aws s3 ls", wrapper="exec-wrapper run --") == "ALLOW"
 
 
 def test_cloud_guard_inert_without_wrapper():
@@ -101,7 +101,7 @@ def test_separator_matrix_glued(sep, cmd):
     # (`cmd` is substituted only at the tail, after "Command: "), so a prefix check on raw stdout
     # is robust for every row, embedded newline included.
     p = _run_hook("foundry-cloud-cli-exec-guard.sh",
-                  args=("--eval", cmd, "ctx run --", "aws,kubectl,tofu,terraform,helm,argocd", ""))
+                  args=("--eval", cmd, "exec-wrapper run --", "aws,kubectl,tofu,terraform,helm,argocd", ""))
     assert p.stdout.startswith("BLOCK"), (
         f"separator {sep!r} (glued form {cmd!r}) did not BLOCK: stdout={p.stdout!r} stderr={p.stderr!r}"
     )
@@ -131,7 +131,7 @@ def _write_exec_guard_seam(project_dir, wrapper, guarded_tools=None, offline_exe
 def test_live_seam_blocks_configured(tmp_path):
     project_dir = tmp_path / "project-with-seam"
     project_dir.mkdir()
-    _write_exec_guard_seam(project_dir, wrapper="ctx run --")
+    _write_exec_guard_seam(project_dir, wrapper="exec-wrapper run --")
     payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "aws s3 ls"}})
     p = _run_hook("foundry-cloud-cli-exec-guard.sh", stdin_text=payload,
                  extra_env={"CLAUDE_PROJECT_DIR": str(project_dir)})

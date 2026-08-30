@@ -345,10 +345,6 @@
       "rationale": "library: no argparse/__main__; acceptance-contract schema/hash helpers imported by other scripts"
     },
     {
-      "script": "foundry_ctx_posture.py",
-      "rationale": "library: no argparse/__main__; command-policy posture helpers imported by id-* skills"
-    },
-    {
       "script": "foundry_graph.py",
       "rationale": "library: no argparse/__main__; citation-graph primitives imported by the graph CLIs"
     },

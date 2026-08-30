@@ -25,7 +25,7 @@ serves, its governance state, and any operator-reported why/pending-decision/blo
   novel/out-of-vocabulary token** — renders `⚠` (attention), never blank-as-green. A row whose machinery
   block is entirely missing renders `⚠ machinery unavailable`. `WF·step` is honestly **sparse** — the
   workflow pointer is the invoking session's own, so it shows for that row and "—" for others. The fuller
-  machinery (mode, security-flag, infra blast/ctx-posture, target-repo) is **drilldown** in `--json`;
+  machinery (mode, security-flag, infra blast radius, target-repo) is **drilldown** in `--json`;
 - a one-line summary = the native Haiku summary suffixed with the foundry atom/step.
 
 It is **read-only** (renders, never acts; runs in **any** session — operator or worker — with no dispatch
