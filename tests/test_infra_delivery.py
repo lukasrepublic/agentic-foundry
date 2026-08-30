@@ -448,7 +448,7 @@ class TestIdApplyGate:
         print("IDAGR-1-DEADSHAPE-MUTANT-4of4-OK")
 
     # ── AC-IDAGR-2 — the whole table as a CLOSED enumeration, both directions in one row.
-    def test_router_is_total_with_exactly_four_refusing_inputs(self):
+    def test_router_is_total_with_exactly_five_refusing_inputs(self):
         # direct EXECUTEs unconditionally — the default path, no second condition.
         assert _decide(["infra/vpc.tf"]).action == id_apply.EXECUTE
         # gitops VERIFY_ONLYs.
@@ -479,6 +479,27 @@ class TestIdApplyGate:
         assert _decide(["infra/vpc.tf"], not_a_list).action == id_apply.REFUSE
         blank_member = dict(_INFRA_BINDING, gitops_paths=["clusters/**", ""])
         assert _decide(["infra/vpc.tf"], blank_member).action == id_apply.REFUSE
+        # (v) a changed_paths member whose FORM is not a well-formed relative POSIX path refuses.
+        # Each of these matches NO gitops glob, so without (v) a WHOLLY controller-managed change
+        # classifies `direct` and EXECUTEs — the defect this condition exists to close. The bytes and
+        # empty-string rows are the sharp ones: classify_gitops SILENTLY DROPS an invalid member, so
+        # the surviving `infra/vpc.tf` alone would decide the route.
+        for bad in (
+            [b"clusters/prod/app.yaml", "infra/vpc.tf"],   # non-string member, silently dropped
+            ["", "infra/vpc.tf"],                          # empty member, silently dropped
+            ["/repo/clusters/prod/app.yaml"],              # absolute
+            [" clusters/prod/app.yaml"],                   # whitespace-padded
+            ["clusters//prod/app.yaml"],                   # doubled separator
+            ["././clusters/prod/app.yaml"],                # non-normal beyond one leading ./
+            ["a/../clusters/prod/app.yaml"],               # traversal
+            ["clusters\\prod\\app.yaml"],                  # Windows separator
+            ["​clusters/prod/app.yaml"],              # zero-width: NOT whitespace, survives strip()
+        ):
+            assert _decide(bad).action == id_apply.REFUSE, f"(v) must refuse {bad!r}"
+        # …and (v) must NOT over-refuse: ONE leading `./` is the form _under_any_glob normalizes off,
+        # so it stays well-formed and routes normally on BOTH branches.
+        assert _decide(["./clusters/prod/app.yaml"]).action == id_apply.VERIFY_ONLY
+        assert _decide(["./infra/vpc.tf"]).action == id_apply.EXECUTE
         print("IDAGR-2-ROUTER-TOTAL-OK")
 
     # ── AC-IDAGR-2 MALFORMED-GLOBS MUTANT — the one-character YAML slip: gitops_paths as a bare STRING.
@@ -568,11 +589,24 @@ class TestIdApplyGate:
                 f"the decision module must import nothing that can reach a shell; got {imported}")
             assert not re.search(r"\b(system|popen|execv?p?e?|spawn\w*)\s*\(", src), (
                 "no exec-family call may appear in the decision module's source")
-            # And the negative control: the same witness convicts a module that DOES import one.
-            mutant = ast.parse("import subprocess\ndef decide_apply(**kw):\n    return None\n")
-            mutant_imports = {a.name for n in ast.walk(mutant)
-                              if isinstance(n, ast.Import) for a in n.names}
-            assert mutant_imports & {"subprocess"}, "the witness must SEE a real subprocess import"
+            # NEGATIVE CONTROL (security review R-D): drive the SAME collector over mutant sources,
+            # not a parallel re-implementation. An earlier draft built the mutant's import set with a
+            # separate inline comprehension that handled ast.Import only — so it proved an ad-hoc
+            # comprehension works, not that the witness above does, and left the ImportFrom branch
+            # (which is what catches `from subprocess import run`) exercised by nothing.
+            def _imports_of(source):
+                out = set()
+                for n in ast.walk(ast.parse(source)):
+                    if isinstance(n, ast.Import):
+                        out.update(a.name.split(".")[0] for a in n.names)
+                    elif isinstance(n, ast.ImportFrom) and n.module:
+                        out.add(n.module.split(".")[0])
+                return out
+            assert _imports_of(src) == imported, "the control must drive the SAME collector"
+            for mutant in ("import subprocess\n",
+                           "from subprocess import run\n",
+                           "def f():\n    import subprocess\n"):
+                assert _imports_of(mutant) & {"subprocess"}, f"witness must SEE: {mutant!r}"
 
             d = id_apply.decide_apply(changed_paths=["infra/vpc.tf"], infra_binding=sentinel_binding)
             assert d.action == id_apply.EXECUTE

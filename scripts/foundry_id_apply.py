@@ -13,10 +13,11 @@ command, and it runs the frozen `infra_binding.apply` string exactly as the oper
 The table is TOTAL: a well-formed `direct` change EXECUTEs unconditionally — the DEFAULT path, with
 no second condition anywhere; a well-formed `gitops` change routes to VERIFY_ONLY — a CORRECTNESS
 routing (the ArgoCD controller owns reconciliation of that path and a direct apply would race it on
-its next sync), never a permission check; and REFUSE fires on exactly four mechanically unresolvable
+its next sync), never a permission check; and REFUSE fires on exactly FIVE mechanically unresolvable
 inputs — an ambiguous/unclassifiable scope (including an EMPTY one), an out-of-set class value, a
-missing/empty required `infra_binding` slot for the branch chosen, or a malformed `gitops_paths`
-declaration — never on a judgement about the change's content.
+missing/empty required `infra_binding` slot for the branch chosen, a malformed `gitops_paths`
+declaration, or a `changed_paths` member whose FORM is not a well-formed relative POSIX path — never
+on a judgement about the change's content.
 
 `decide_apply` is PURE — decision only, no I/O, runs no command. The EXECUTE command is the FROZEN
 `infra_binding.apply` string, operator-authored at profile-authorize time — never freeform text this
@@ -26,6 +27,7 @@ establishes connectivity, or verifies/re-derives/second-guesses the operator's c
 nothing ambient — the router's only inputs are the frozen change scope and the profile.
 """
 import fnmatch
+import posixpath
 import re
 from dataclasses import dataclass
 
@@ -159,12 +161,33 @@ def _changed_paths_well_formed(changed_paths):
     the FORM is the same class of mechanical unresolvability as the other four conditions and adds no
     policy judgement. `classify_gitops` is pinned unchanged (AC-IDAGR-5), so the check lives here.
     An EMPTY/None `changed_paths` is NOT rejected here — it is the vacuous-quantifier guard's job,
-    handled as condition (i) via `classify_gitops` returning AMBIGUOUS."""
+    handled as condition (i) via `classify_gitops` returning AMBIGUOUS.
+
+    A POSITIVE-form assertion, not a denylist of three spellings. An earlier draft `continue`d on a
+    non-string member and let `""` through, on the reasoning that `classify_gitops` filters both. That
+    reasoning was WRONG, and the review caught it: the filter drops the member SILENTLY, so
+    `[b"clusters/prod/app.yaml", "infra/vpc.tf"]` classifies `direct` on the surviving member alone and
+    EXECUTEs against a scope that included a controller-managed manifest — the very defect this check
+    exists to close. Anything not a well-formed relative POSIX path now refuses.
+
+    `posixpath.normpath` collapses `././`, `//` and `a/../b` in one predicate, so the check is not a
+    guess-list of spellings. `posixpath` (not `os.path`) is deliberate: the module imports nothing from
+    the `os` family, and a non-vacuous witness in the test suite enforces that."""
     for p in (changed_paths or []):
-        if not isinstance(p, str):
-            continue  # non-strings are filtered by classify_gitops and land in (i).
-        if p != p.strip() or p.startswith("/") or "//" in p:
+        if not isinstance(p, str) or not p:
+            return False                       # bytes / None / "" — never silently dropped.
+        if p != p.strip() or "\\" in p:        # padded, or a Windows separator the globs never match.
             return False
+        if not p.isprintable():
+            # Zero-width and other Cf/format characters are NOT whitespace, so `.strip()` leaves them
+            # and `normpath` preserves them — `​clusters/x.yaml` would match no glob and classify
+            # `direct`. `isprintable()` is False for the whole Cf category, which closes that family.
+            return False
+        # Mirror `_under_any_glob`: ONE leading `./` is normalized off there, so it is a well-formed
+        # form here too and must not be refused. Everything beyond that must already be normal.
+        probe = p[2:] if p.startswith("./") else p
+        if not probe or probe.startswith(("/", "../")) or probe != posixpath.normpath(probe):
+            return False                       # absolute, escaping, or non-normal (`././`, `//`, `a/../b`).
     return True
 
 
