@@ -202,6 +202,23 @@ and the helper itself is deleted.
 Spec: `specs/features/foundry/fleet/infra-discriminator-regrounding/` (workspace), authorized
 `auth_seq 1`.
 
+### The retired CTX posture module is deleted (infra-delivery/ctx-posture-retirement)
+
+**The framework's last hard dependency on the retired `ctx` CLI is gone.** The posture module
+shelled out to `ctx status --json` and, with no `ctx` on `PATH`, fail-closed to `REFUSE` — refusing
+every infra mutation on any machine without that binary. The two sibling atoms above severed every
+consumer first; this atom deletes the now-unreferenced module itself.
+
+- **The retired posture module and its dedicated test file are deleted outright.**
+- **The `not_invoked` entry naming the deleted script is removed from both permission-floor mirrors**
+  (`cli/permission-floor.json`, `docs/permission-floor.json`), which remain byte-identical.
+- `docs/glossary.md` needed no edit — the prose-decoupling atom above already removed the CTX entry.
+- A whole-tree, no-allowlist sweep confirms the module's identifier now has zero occurrences in
+  either spelling anywhere in the shipped tree (`tests/test_ctx_removal_absence.py`).
+
+Spec: `specs/features/foundry/infra-delivery/ctx-posture-retirement/` (workspace), authorized
+`auth_seq 1`.
+
 ## v1.5.0 — 2026-08-14
 
 **`create-agentic-workspace` 0.4.2 → 0.5.0.** The wizard's own code is unchanged, but what it *writes*
