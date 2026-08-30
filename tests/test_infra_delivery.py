@@ -10,8 +10,11 @@ concurrency). CLI/doctor scaffolding is dropped; the computed fixtures/assertion
 """
 from __future__ import annotations
 
+import ast
 import json
 import os
+import pathlib
+import re
 import sys
 
 import pytest
@@ -548,6 +551,28 @@ class TestIdApplyGate:
             for paths, binding in matrix:
                 id_apply.decide_apply(changed_paths=paths, infra_binding=binding)
             assert calls == []  # decide_apply invoked nothing that runs a command.
+
+            # NON-VACUITY (security review R3). `calls == []` above is true BY CONSTRUCTION: the
+            # module never reads `subprocess_run_injected_for_test`, so that assertion would stay
+            # green even if the module grew a real `subprocess.run`. Assert on STRUCTURE instead —
+            # the module's own source and import graph — so the property is actually guarded.
+            src = pathlib.Path(id_apply.__file__).read_text(encoding="utf-8")
+            tree = ast.parse(src)
+            imported = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    imported.update(a.name.split(".")[0] for a in node.names)
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    imported.add(node.module.split(".")[0])
+            assert not (imported & {"subprocess", "os", "shutil", "pty", "popen2"}), (
+                f"the decision module must import nothing that can reach a shell; got {imported}")
+            assert not re.search(r"\b(system|popen|execv?p?e?|spawn\w*)\s*\(", src), (
+                "no exec-family call may appear in the decision module's source")
+            # And the negative control: the same witness convicts a module that DOES import one.
+            mutant = ast.parse("import subprocess\ndef decide_apply(**kw):\n    return None\n")
+            mutant_imports = {a.name for n in ast.walk(mutant)
+                              if isinstance(n, ast.Import) for a in n.names}
+            assert mutant_imports & {"subprocess"}, "the witness must SEE a real subprocess import"
 
             d = id_apply.decide_apply(changed_paths=["infra/vpc.tf"], infra_binding=sentinel_binding)
             assert d.action == id_apply.EXECUTE

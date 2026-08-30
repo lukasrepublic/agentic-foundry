@@ -147,6 +147,27 @@ def _gitops_paths_declared_well_formed(infra_binding):
     return all(isinstance(g, str) and g for g in raw)
 
 
+def _changed_paths_well_formed(changed_paths):
+    """Condition (v): every member of `changed_paths` must be REPO-RELATIVE and free of surrounding
+    whitespace — the form `classify_gitops`'s globs are written against.
+
+    Why this is a REFUSE and not a normalization: `_under_any_glob` strips only a single leading
+    `./`, so an absolute path (`/repo/gitops/apps/root.yaml`), a leading/trailing-whitespace path, or
+    a doubled separator matches NO `gitops_paths` glob. A change that is entirely controller-managed
+    would then classify `direct` and, with the posture layer gone, EXECUTE the frozen apply with no
+    second condition. Silently rewriting a caller's paths would be guessing at intent; refusing on
+    the FORM is the same class of mechanical unresolvability as the other four conditions and adds no
+    policy judgement. `classify_gitops` is pinned unchanged (AC-IDAGR-5), so the check lives here.
+    An EMPTY/None `changed_paths` is NOT rejected here — it is the vacuous-quantifier guard's job,
+    handled as condition (i) via `classify_gitops` returning AMBIGUOUS."""
+    for p in (changed_paths or []):
+        if not isinstance(p, str):
+            continue  # non-strings are filtered by classify_gitops and land in (i).
+        if p != p.strip() or p.startswith("/") or "//" in p:
+            return False
+    return True
+
+
 def decide_apply(*, changed_paths, infra_binding):
     """Map the FROZEN change scope × the profile's `infra_binding` onto a closed `ApplyDecision` by a
     TOTAL, fail-closed table (AC-IDAGR-2). `decide_apply` derives the GitOps class itself
@@ -174,6 +195,14 @@ def decide_apply(*, changed_paths, infra_binding):
         return _refuse(
             "infra_binding.gitops_paths is absent or not a list of non-empty strings "
             "(an empty list is well-formed) → fail-closed REFUSE"
+        )
+
+    # (v) a malformed PATH FORM refuses before the class is derived — an absolute or whitespace-padded
+    #     member silently matches no glob, which would flip a controller-managed change to `direct`.
+    if not _changed_paths_well_formed(changed_paths):
+        return _refuse(
+            "changed_paths contains a member that is not repo-relative and stripped "
+            "(absolute, whitespace-padded, or containing '//') → fail-closed REFUSE"
         )
 
     gitops_class = classify_gitops(changed_paths=changed_paths, infra_binding=infra_binding)

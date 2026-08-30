@@ -37,7 +37,8 @@ read-role, and blast-radius rules).
    `gitops_paths`) or **direct infra**? GitOps targets are realized by **merge → ArgoCD
    reconcile** (write/update the manifest; the controller applies it — never a hand-run
    `kubectl apply`). Direct infra (EKS, Karpenter controllers, IAM, network) is realized by
-   `tofu apply`. `id-apply` picks EXECUTE / GENERATE / VERIFY-ONLY from this + `gitops_paths`.
+   `tofu apply`. `id-apply` picks EXECUTE / VERIFY-ONLY / REFUSE from this + `gitops_paths`. There is no
+   runbook-generation branch: a well-formed `direct` change EXECUTEs, with no second condition.
 
 3. **Author the change.** For infra: pin the OpenTofu provider + module versions and image
    digests; keep state inputs/outputs typed at module boundaries. For workloads/platform: keep
