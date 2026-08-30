@@ -91,10 +91,17 @@ function that derives the class itself) — this procedure drives the I/O around
 
 ## Invariants (machine-proofed in tests/test_infra_delivery.py)
 
-- **REFUSE fires only on mechanically unresolvable input.** An unclassifiable (mixed/unmatched/empty)
-  change, an out-of-set class value, a missing/empty required slot, or a malformed `gitops_paths`
-  declaration REFUSEs — never a silent EXECUTE or VERIFY_ONLY route, and nothing else refuses: a
-  well-formed `direct` change EXECUTEs unconditionally.
+- **REFUSE fires only on mechanically unresolvable input — on FIVE conditions.** An unclassifiable
+  (mixed/unmatched/empty) change, an out-of-set class value, a missing/empty required slot, a
+  malformed `gitops_paths` declaration, or a `changed_paths` whose **form** is not a list/tuple/set of
+  well-formed relative POSIX paths, each REFUSEs — never a silent EXECUTE or VERIFY_ONLY route, and
+  nothing else refuses: a well-formed `direct` change EXECUTEs unconditionally.
+- **Collect the change scope in the form the router accepts.** A member that is absolute,
+  whitespace-padded, backslash-separated, non-printable (zero-width and friends), non-normal
+  (`././`, `//`, `a/../b`, trailing `/`), or a whole-repo/escaping spelling (`.`, `..`) REFUSEs,
+  because such a path matches no `gitops_paths` glob and would misclassify a controller-managed change
+  as `direct`. Collect with `git diff --name-only -z -c core.quotePath=false` so a non-ASCII filename
+  is not C-quoted into a backslash form that refuses.
 - **The command run is the FROZEN `infra_binding.apply`** — never freeform, never composed, never
   substituted or interpolated by the framework or the agent driving it.
 - **The post-apply check is the DISTINCT read-only `infra_binding.verify` slot** — not a second

@@ -328,7 +328,7 @@ class TestRealizationVerdict:
 # ==================================================================== foundry_id_apply.py ==== #
 # feat-foundry-apply-gate-regrounding — decide_apply lost `posture`, `GENERATE_RUNBOOK` and `audited`;
 # it now derives the GitOps class itself from `changed_paths` x `infra_binding` (AC-IDAGR-10) and
-# routes on a CLOSED four-refusal table (AC-IDAGR-2). See tests/test_stack_profile.py for the
+# routes on a CLOSED five-refusal table (AC-IDAGR-2). See tests/test_stack_profile.py for the
 # AC-IDAGR-3/-7/-8/-12 checkpoints over the real shipped pack/schema/loader prose.
 
 import dataclasses
@@ -489,17 +489,30 @@ class TestIdApplyGate:
             ["", "infra/vpc.tf"],                          # empty member, silently dropped
             ["/repo/clusters/prod/app.yaml"],              # absolute
             [" clusters/prod/app.yaml"],                   # whitespace-padded
-            ["clusters//prod/app.yaml"],                   # doubled separator
+            ["clusters//prod/app.yaml"],                   # doubled separator — NOTE: this row is the
+            #   one exception to the blanket rationale above. `fnmatch` translates `clusters/**` to
+            #   `clusters/.*.*`, which DOES match a doubled separator, so without (v) this input routes
+            #   VERIFY_ONLY rather than EXECUTE. It is still non-vacuous (REFUSE vs VERIFY_ONLY), but it
+            #   does not demonstrate the EXECUTE bypass the other eight rows do.
             ["././clusters/prod/app.yaml"],                # non-normal beyond one leading ./
             ["a/../clusters/prod/app.yaml"],               # traversal
             ["clusters\\prod\\app.yaml"],                  # Windows separator
             ["​clusters/prod/app.yaml"],              # zero-width: NOT whitespace, survives strip()
+            ["."],                                         # normpath FIXED POINT: denotes the whole repo,
+            [".."],                                        #   which INCLUDES the controller-managed paths
+            ["./."], ["./.."],                             #   — and neither starts with "../"
+            ["a/.."],                                      # resolves to "." by another spelling
         ):
             assert _decide(bad).action == id_apply.REFUSE, f"(v) must refuse {bad!r}"
         # …and (v) must NOT over-refuse: ONE leading `./` is the form _under_any_glob normalizes off,
         # so it stays well-formed and routes normally on BOTH branches.
         assert _decide(["./clusters/prod/app.yaml"]).action == id_apply.VERIFY_ONLY
         assert _decide(["./infra/vpc.tf"]).action == id_apply.EXECUTE
+        # CONTAINER type, which no per-member check can see: a bare `str` iterates CHARACTER by
+        # character, so with a slash-free glob every "member" misses and the whole thing routes direct.
+        slashless = dict(_INFRA_BINDING, gitops_paths=["*.yaml"])
+        assert id_apply.decide_apply(changed_paths="app.yaml",
+                                     infra_binding=slashless).action == id_apply.REFUSE
         print("IDAGR-2-ROUTER-TOTAL-OK")
 
     # ── AC-IDAGR-2 MALFORMED-GLOBS MUTANT — the one-character YAML slip: gitops_paths as a bare STRING.
@@ -579,12 +592,15 @@ class TestIdApplyGate:
             # the module's own source and import graph — so the property is actually guarded.
             src = pathlib.Path(id_apply.__file__).read_text(encoding="utf-8")
             tree = ast.parse(src)
-            imported = set()
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    imported.update(a.name.split(".")[0] for a in node.names)
-                elif isinstance(node, ast.ImportFrom) and node.module:
-                    imported.add(node.module.split(".")[0])
+            def _imports_of(source):
+                out = set()
+                for node in ast.walk(ast.parse(source)):
+                    if isinstance(node, ast.Import):
+                        out.update(a.name.split(".")[0] for a in node.names)
+                    elif isinstance(node, ast.ImportFrom) and node.module:
+                        out.add(node.module.split(".")[0])
+                return out
+            imported = _imports_of(src)   # the WITNESS itself — the mutants below drive this same code
             assert not (imported & {"subprocess", "os", "shutil", "pty", "popen2"}), (
                 f"the decision module must import nothing that can reach a shell; got {imported}")
             assert not re.search(r"\b(system|popen|execv?p?e?|spawn\w*)\s*\(", src), (
@@ -594,15 +610,6 @@ class TestIdApplyGate:
             # separate inline comprehension that handled ast.Import only — so it proved an ad-hoc
             # comprehension works, not that the witness above does, and left the ImportFrom branch
             # (which is what catches `from subprocess import run`) exercised by nothing.
-            def _imports_of(source):
-                out = set()
-                for n in ast.walk(ast.parse(source)):
-                    if isinstance(n, ast.Import):
-                        out.update(a.name.split(".")[0] for a in n.names)
-                    elif isinstance(n, ast.ImportFrom) and n.module:
-                        out.add(n.module.split(".")[0])
-                return out
-            assert _imports_of(src) == imported, "the control must drive the SAME collector"
             for mutant in ("import subprocess\n",
                            "from subprocess import run\n",
                            "def f():\n    import subprocess\n"):
