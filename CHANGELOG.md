@@ -166,6 +166,42 @@ one that does not yet exist, then froze the falsehood into the contract hash.
 Spec: `specs/features/foundry/gate-integrity/retirement-grounding/` (workspace), authorized
 `auth_seq 1`, `spec_sha256=6102dc33b4534b64…`.
 
+### `/foundry:fleet` stops executing `ctx status` on every run — the infra discriminator is re-sourced from the stack-profile lock
+
+**The one unmocked production probe of the retired CTX control plane in the whole workspace is gone.**
+`derive_all` called `_ctx_probe_present()` on every `/foundry:fleet` invocation, which shelled out to
+`ctx status --json`. All three `import foundry_ctx_posture` sites — `derive_infra`, the probe helper,
+and (the one a reader scanning `derive_*` functions misses) the module's own `--selftest` — are gone,
+and the helper itself is deleted.
+
+- **The `infra` discriminator is re-sourced from the committed stack-profile lock**
+  (`resolve_lock(project_dir)` + `profile_kind: infra`) instead of a live CTX session probe. This is a
+  genuine, disclosed meaning change: `infra` is now **project-scoped, not session-scoped** — every
+  session row in an infra-profile project reads `infra: true`, not only the invoking session's own
+  row, because the source no longer varies by session. Nothing downstream gates on it; it is a display
+  discriminator.
+- **`ctx_posture` and `break_glass` are REMOVED, not renamed.** With the posture concept itself retired,
+  a renamed field would be permanently null and, under the roster's own default-deny rule, permanently
+  rendered as attention on every row forever. Removed from the machinery record, the `KNOWN_SAFE`
+  default-deny table, `is_field_clear`'s signature (no longer accepts a `break_glass` keyword), the
+  roster's `deny()` helper, and both roster selftest fixtures.
+- **`resolve_lock` raises `StackProfileError` on every failure it detects, including a tampered content
+  sha256 pin — the call site now catches it and distinguishes two failure states** rather than letting
+  either escape: no lock at the project dir ⇒ `infra` false, `source_unavailable`; a lock present but
+  unresolvable ⇒ `infra` false, `degraded`, carrying the resolver's own message. Both name the lock.
+  `derive_all` resolves the discriminator exactly once, before its per-session loop — the same position
+  the removed CTX probe resolved at — so an unwrapped call there would have taken the whole roster down
+  on a single tampered pin rather than degrading one field.
+- **First pytest coverage for `scripts/foundry-fleet-session-machinery.py`** (`tests/test_fleet_session_
+  machinery.py`) — the two fleet modules had none before this atom, which is how the live `ctx status`
+  exec survived unnoticed in a production path this long. The module's own `--selftest` still runs
+  clean (`FLEET-SESSION-MACHINERY-SELFTEST-GREEN`) but is not treated as a substitute.
+- `blast_radius` stays inert (no live call site supplies `blast_tier`); this atom neither fixes nor
+  worsens that.
+
+Spec: `specs/features/foundry/fleet/infra-discriminator-regrounding/` (workspace), authorized
+`auth_seq 1`.
+
 ## v1.5.0 — 2026-08-14
 
 **`create-agentic-workspace` 0.4.2 → 0.5.0.** The wizard's own code is unchanged, but what it *writes*
