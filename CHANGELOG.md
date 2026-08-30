@@ -57,6 +57,54 @@ Checked rather than assumed: the package bundles `cli/permission-floor.json` and
 scaffolded or reconciled workspace until that workspace's plugin is updated. Adopters get it from the
 plugin, which is version-keyed, not from the wizard.
 
+### The shipped prose is re-grounded on operator-supplied AWS context (feat-foundry-ctx-prose-decoupling)
+
+**Every remaining reference to the retired session-context framework and its posture gate, across
+26 files, is rewritten to describe the reality the sibling code atoms ship: the framework EXECUTES
+standard `tofu`/`kubectl`/`aws` against the AWS context the operator has already configured, and
+that context's IAM restrictions are the control — outside the framework's scope.** There is no
+posture, no prod-vs-non-prod branch, no guard state, no break-glass, no runbook-for-guarded-prod.
+Prose asserting any of those is deleted, not restated in new words.
+
+- **`skills/id-apply/SKILL.md`:** states the operator-supplied AWS context, names `aws sso login` /
+  `aws configure` / assume-role / VPN as things the framework never does, frames the GitOps-vs-direct
+  routing as a correctness concern (the ArgoCD controller reconciles a GitOps path; a direct apply
+  there would fight the controller), and states the saved-plan sequence (`-out=.foundry/infra.tfplan`
+  → `apply .foundry/infra.tfplan`, the literal path in both renderings, no placeholder) as applying
+  exactly what was planned.
+- **`skills/id-promote/SKILL.md` rewritten (13 `ctx` lines / 18 forbidden-phrase lines closed):** the
+  frontmatter `description` and body now describe promotion as re-deriving the change scope and the
+  GitOps class per environment and driving `id-apply`'s real two-input `decide_apply(changed_paths,
+  infra_binding)` — never the removed `posture`/`blast_tier`/`high_blast_acked` arguments, never
+  `GENERATE_RUNBOOK`. The EXECUTE branch runs against the AWS context the operator has configured for
+  the target environment.
+- **The four offline/read-only steps keep their offline claim, session framing dropped
+  (`id-validate`, `id-test`, `id-simulate`, `id-architect`):** each still states the step runs
+  entirely offline — no live cloud account, no cluster, no credentials, no mutating command.
+  `id-validate`/`id-test` keep the frozen `## Offline (no-guarded-exec) mode` heading verbatim
+  (`AC-IDOFF-1`); `id-test`'s now-dead `## No posture path — never invokes ctx-posture` section is
+  deleted outright, not reworded.
+- **`docs/glossary.md`:** the CTX term entry is replaced by a `guarded-exec wrapper` /
+  `cloud_cli_exec_guard` entry — adopter-supplied, config-gated and fail-INERT, defense-in-depth, not
+  a security boundary; the operator's IAM restrictions are the control.
+- **`hooks/foundry-cloud-cli-exec-guard.sh` reclassified, not weakened:** its header now states
+  plainly it is adopter-configured defense-in-depth against the framework's own mistakes and
+  explicitly not a security boundary, sharpening the existing "one tier weaker than the MAC systems"
+  hedge rather than inventing a new downgrade. Its matcher, activation rule, and block behaviour are
+  byte-unchanged. The doc example wrapper is now the vendor-neutral `exec-wrapper` placeholder
+  (`tests/test_hooks_guards.py`'s fixtures updated to match, guard suite unchanged in behaviour).
+- **`skills/infra-sandboxed-apply/SKILL.md` (dormant design intent, no live implementation):**
+  `decide_sandbox_apply`'s described signature loses the `posture` input and its REFUSE branch no
+  longer routes to the deleted `GENERATE_RUNBOOK` enum; it states the REFUSE outcome directly.
+- **Eleven files carry a pure deletion** (`id-drift`, `id-rollback`, `id-discover`, `id-plan`,
+  `id-verify`, `id-import`, `id-implement`, `id-baseline`, `id-sync`, `fleet`,
+  `agents/infra-engineer.md`): the session/posture/guard clause is struck with nothing invented in
+  its place — the step simply runs the command.
+- **New `tests/test_infra_prose_grounding.py`** carries every criterion above (35 tests) plus the
+  false-positive allowlist's survival proof (the statusline pressure bar, `block_ctx`, `_FOUNDRY_CTX`,
+  the `spec-audit.js` reviser param, the tier-preflight local, the stack-profile loop local, and the
+  `ctx-*` context skills all remain verbatim — none of these were ever CTX references).
+
 ### Retirement is expressible — `classification: remove` (ER #120, ER #121)
 
 **An atom that retires an artifact used to become unamendable the moment it succeeded.** Two

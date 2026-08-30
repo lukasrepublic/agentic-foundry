@@ -37,9 +37,11 @@
 # when unconfigured. The fail-closed / ambiguity-blocks behaviour engages ONLY once a valid
 # `wrapper` IS resolved.
 #
-# THREAT MODEL — TRUSTED OPERATOR, honest limit. A command-string guard, NOT a sandbox.
-# It is one tier weaker than the MAC systems it is sometimes compared to: those bind to the
-# executed object at the kernel exec() boundary, this matches text before anything runs.
+# CLASSIFICATION — TRUSTED OPERATOR; NOT A SECURITY BOUNDARY. This is an ADOPTER-CONFIGURED,
+# config-gated, fail-INERT command-string guard: DEFENSE-IN-DEPTH against the framework's OWN
+# mistakes, not a control an adversary is assumed to face. It is one tier weaker than the MAC
+# systems it is sometimes compared to: those bind to the executed object at the kernel exec()
+# boundary, this matches text before anything runs.
 # OUT OF SCOPE, and NOT closed holes: shell indirection (`bash -c "<tool> …"`, `eval`,
 # `$(echo tool) …`, variable indirection, aliases); a guarded tool reachable under a DIFFERENT
 # NAME (copy/symlink, write-then-exec); intra-word quote/escape splicing (`aw"s"`, `\aws`);
@@ -47,10 +49,11 @@
 # (`flock /tmp/lock aws …`). It catches the realistic direct/piped/prefixed paths — the
 # motivating incident (a bare direct `tofu apply`) IS caught.
 #
-# The pattern that closes the whole class is CREDENTIAL SCOPING (the wrapper being the only
-# thing that materializes live cloud credentials, so a bare invocation fails on authentication
-# however it is spelled) — filed as an open enhancement request against this guard series.
-# Do not extend this matcher with another spelling variant before that research runs.
+# THE LOAD-BEARING CONTROL IS THE OPERATOR'S AWS-CONTEXT IAM / CREDENTIAL SCOPING, not this
+# matcher. The operator supplies a correctly-scoped AWS context; its IAM restrictions bound
+# what ANY command — guarded, unwrapped, or spelled a way this matcher does not catch — can
+# actually do. This guard exists to catch an accidental bare invocation before it reaches that
+# boundary; it is not a substitute for it, and it is not asked to be.
 set -uo pipefail
 
 # --eval (SELFTEST ONLY) — drive the matcher hermetically over a throwaway command-string
@@ -199,19 +202,19 @@ WRAPPER_WORDS = {"sudo", "env", "time", "xargs", "command", "builtin", "exec", "
                  "unbuffer", "script", "runuser", "su"}
 
 # Wrapper-form tokens: `<wrapper> exec [--flag…] <tool>`. The wrapper value may itself be a
-# multi-word command (`ctx exec`); the canonical reference form is `<wrapper-words> exec`.
+# multi-word command (`exec-wrapper exec`); the canonical reference form is `<wrapper-words> exec`.
 # We treat the configured wrapper as its leading token sequence, then expect literal `exec`,
 # then ≥0 `--flag`/`-f` option tokens, then the guarded tool. Tokenize the wrapper value.
 try:
     wrapper_toks = [t.lower() for t in shlex.split(wrapper, posix=True)]
 except Exception:
     wrapper_toks = [t.lower() for t in wrapper.split()]
-# The reference convention is `<cmd> exec <tool>` — e.g. wrapper="ctx exec". Derive the
+# The reference convention is `<cmd> exec <tool>` — e.g. wrapper="exec-wrapper exec". Derive the
 # wrapper-word prefix (everything; if the operator already included `exec` as the last token,
 # treat the run up to and including `exec` as the routing prefix; else require an `exec` token
 # after the wrapper words).
 if wrapper_toks and wrapper_toks[-1] == "exec":
-    route_prefix = wrapper_toks[:]            # e.g. ["ctx","exec"]
+    route_prefix = wrapper_toks[:]            # e.g. ["exec-wrapper","exec"]
 else:
     route_prefix = wrapper_toks + ["exec"]    # require the literal `exec` subverb
 

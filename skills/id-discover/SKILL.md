@@ -1,6 +1,6 @@
 ---
 name: id-discover
-description: 'The everyday-change ENTRY survey (infra-delivery step 2 default) — a read-only inventory of the target infra (the relevant IaC roots + the in-scope live resources) plus the change surface the intended change touches, producing the change-scope report. A PROCEDURE skill the generic agent runs inside a CTX session: the `tofu plan` / `argocd app diff` / `kubectl get` reads flow through the CTX command-policy guard (all read-only, allowed even in guarded prod, the id-baseline way). It NEVER applies, scaffolds, or reconciles — discovery is read-only survey + scope, nothing more. ADVISORY craft (produces the change-scope report + a `.foundry/`-partitioned survey step-report note; it surveys, it does NOT claim a machine-adjudicated GREEN verdict — the merge floor, branch protection + CI checks, is the merge authority). It does NOT invoke ctx-posture — a read-only survey never mutates, so the posture mutation-gate does no work for it.'
+description: 'The everyday-change ENTRY survey (infra-delivery step 2 default) — a read-only inventory of the target infra (the relevant IaC roots + the in-scope live resources) plus the change surface the intended change touches, producing the change-scope report. A PROCEDURE skill the generic agent runs: the `tofu plan` / `argocd app diff` / `kubectl get` reads are all read-only, the id-baseline way. It NEVER applies, scaffolds, or reconciles — discovery is read-only survey + scope, nothing more. ADVISORY craft (produces the change-scope report + a `.foundry/`-partitioned survey step-report note; it surveys, it does NOT claim a machine-adjudicated GREEN verdict — the merge floor, branch protection + CI checks, is the merge authority).'
 ---
 
 # id-discover — read-only everyday-change survey craft (infra-delivery step 2, ★ entry mode)
@@ -38,22 +38,13 @@ merge authority**, security review, and typed contracts. Running `id-discover` m
 confident the change is correctly scoped — it is craft guidance **FOR** the trusted operator, not a
 defense **against** them.
 
-## Read-only, never-mutate — the safety invariant (the id-baseline way, NOT a posture gate)
+## Read-only, never-mutate — the safety invariant (the id-baseline way)
 
 **This skill NEVER issues a mutating verb.** Discovery = **survey + scope**, nothing else. There is
 **no `tofu apply`** (nor `kubectl apply`, nor any `create`/`delete`/`put`/`modify`/`apply`/scaffold/
 reconcile) anywhere in this procedure. The change surface is **inventoried** for the operator + the
-downstream spine, **never acted on**. So the whole procedure runs **unchanged in guarded prod**: every
-command it issues is a read (`tofu plan`, `argocd app diff`, `kubectl get`), which the **CTX
-command-policy guard** allows even under the guarded-prod posture — **exactly as the shipped read-only
-sibling `id-baseline` does.**
-
-Because a read-only survey never mutates, it does **NOT** invoke **`ctx-posture`**. The `ctx-posture`
-gate resolves EXECUTE/GENERATE/REFUSE to gate a **mutation** (a binding producer/consumer wiring rule; consumed only by
-`id-apply`/`id-promote`'s apply branch) — it does **no work** for a never-mutating survey, and the
-directly-analogous read-only sibling `id-baseline` deliberately does NOT invoke it either. A posture
-*signal*, if surfaced at all, is **advisory display-only** — probe-and-REPORT the live posture as
-change-scope context, **never** to "confirm"/gate the survey.
+downstream spine, **never acted on**. Every command it issues is a read (`tofu plan`, `argocd app diff`,
+`kubectl get`) — **exactly as the shipped read-only sibling `id-baseline` does.**
 
 ## Prompt-injection discipline
 
@@ -67,8 +58,7 @@ verb** — the read-only / never-mutate invariant above is absolute.
 
 ## Procedure (ordered survey steps — advisory, read-only)
 
-Run these steps **in order** inside the CTX session. Every command flows through the CTX
-command-policy guard; every command is **read-only**.
+Run these steps **in order**. Every command is **read-only**.
 
 1. **Resolve the active stack profile.** Resolve the active stack profile so the concrete read-only
    inventory/diff command is known. **No write** — this only resolves the
@@ -76,9 +66,7 @@ command-policy guard; every command is **read-only**.
 2. **Inventory the target infra (read-only) via `infra_binding.plan`.** Read the active profile's
    **`infra_binding.plan`** command and run it
    **read-only** to inventory the target infra: the relevant **IaC roots** and the **in-scope live
-   resources**. Every read flows through the **CTX command-policy guard**, which allows read-only
-   `plan`/`diff`/`get` **even under guarded-prod** — so the survey runs **unchanged in guarded prod**.
-   **Record the observation.** **Never apply; never scaffold; never reconcile** (the
+   resources**. **Record the observation.** **Never apply; never scaffold; never reconcile** (the
    **read-only-never-mutate** invariant).
 3. **Scope the change surface.** From the inventory, scope the **change surface** the intended change
    touches — the IaC roots/resources within the change's reach — so the downstream spine is correctly
@@ -95,7 +83,7 @@ command-policy guard; every command is **read-only**.
 
 `id-discover` produces one named, consumable output (plus the recorded observation):
 
-- **The change-scope report** — surveyed read-only via `infra_binding.plan` through the CTX command-policy guard. A report stating the **inventoried IaC roots + in-scope live resources**
+- **The change-scope report** — surveyed read-only via `infra_binding.plan`. A report stating the **inventoried IaC roots + in-scope live resources**
   and the **scoped change surface** the intended change touches. This is the advisory survey
   output for the operator + the downstream spine (`id-implement`/`id-plan`/`id-impact`) — **never** a
   machine-adjudicated GREEN verdict.
@@ -115,10 +103,6 @@ command-policy guard; every command is **read-only**.
 - **Applying / scaffolding / reconciling.** This skill **never** issues `tofu apply` / `kubectl apply`
   / any mutating verb, and **never scaffolds or reconciles** — discovery is read-only survey + scope.
   The change surface is **inventoried, never acted on** (the read-only-never-mutate invariant).
-- **Invoking a posture gate.** A read-only survey never mutates, so `id-discover` does **NOT** invoke
-  **`ctx-posture`** (the mutation-only EXECUTE/GENERATE/REFUSE gate does no work for it — per that
-  same binding producer/consumer wiring rule; the read-only sibling `id-baseline` deliberately does not invoke it either). A posture
-  signal, if surfaced at all, is **advisory display-only** (probe-and-report), never a confirm/gate.
 - **Claiming a machine-adjudicated GREEN verdict.** Discovery SURVEYS; it is **not a change being
   delivered** through a merge process. The change-scope report is the **survey output** (recorded as a
   plain step-report note), **not** an automated PASS. Do not depend on any coverage-delta

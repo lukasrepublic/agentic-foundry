@@ -30,8 +30,11 @@ turn-off is structurally the last wave. Three verbs over an adopter-filled progr
       never trusts the persisted flag — GO is re-derived from live re-checks at turn-off time.
 
 Threat model — TRUSTED OPERATOR (staged model). Slot commands are operator-authored DATA the gate
-drives (the infra_binding precedent); they are read-only BY CONTRACT (the gate cannot verify that,
-the CTX guard governs in-session runs). The floors (canary, vacuous-scan, waiver-blind phase) are
+drives (the infra_binding precedent); they are read-only BY CONTRACT (the gate cannot verify that
+itself). The operator's AWS-context IAM / credential scoping is the load-bearing control on what
+any such command can actually do; the adopter-configured `hooks/foundry-cloud-cli-exec-guard.sh`
+is defense-in-depth against the framework's own mistakes there, config-gated and fail-INERT, and
+explicitly NOT a security boundary. The floors (canary, vacuous-scan, waiver-blind phase) are
 enforced HERE via the typed verdict contract, not left to adopter discipline.
 """
 from __future__ import annotations

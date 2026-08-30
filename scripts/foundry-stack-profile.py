@@ -182,8 +182,8 @@ def infra_binding_of(doc):
 
 # Read-only leading-verb allowlist (AC-SPIB-2). The plan/verify/policy slots are read-only; a mutating
 # verb (tofu apply|destroy, kubectl apply|delete, helm install|upgrade) in a read-only slot is REJECTED
-# fail-closed — this loader check IS the sole static floor on those three slots; no external runtime
-# command-policy backs it, and none is claimed here. Keyed by tool → the set of allowed read-only
+# fail-closed — this loader's own static validation IS the sole static floor on those three slots; no
+# external runtime enforcement backs it, and none is claimed here. Keyed by tool → the set of allowed read-only
 # subcommands; a `*`-bearing entry (kubectl) additionally requires a server-dry-run flag for the
 # otherwise-mutating verbs.
 _READROLE_SLOTS = ("plan", "verify", "policy")
@@ -222,7 +222,7 @@ def _tokens(cmd):
 # HEURISTIC connector-split, NOT a full shell parser: it splits on the bare token forms of `&&`, `||`, `;`,
 # and pipe `|`, so it does NOT catch a connector hidden inside a quoted arg (e.g. `kubeconform "a && b"`) or
 # other shell metacharacters — this loader-side check is the SOLE static floor on the read-only slots, and
-# it is honestly a heuristic one rather than a full parser; no external runtime command-policy backs it (a
+# it is honestly a heuristic one rather than a full parser; no external runtime enforcement backs it (a
 # mutating verb CHAINED after a read-only leading verb in a read-only slot is the bypass it closes).
 _CONNECTOR_RE = re.compile(r"\s*(?:&&|\|\||;|\|)\s*")
 
@@ -263,7 +263,7 @@ def _readonly_command_ok(cmd):
     """True iff `cmd` is read-only as a WHOLE (AC-SPIB-2). A slot command may CHAIN segments on shell
     connectors (e.g. the legitimate `kubeconform … && conftest test …` policy slot, or `tofu plan && helm
     template …`); EVERY non-empty segment must independently pass the read-only leading-verb check. This
-    closes the command-policy bypass where a read-only leading verb (kubeconform) is chained with a trailing
+    closes the chained-mutation bypass where a read-only leading verb (kubeconform) is chained with a trailing
     MUTATING verb (`… && kubectl apply -f x.yaml`, `… ; tofu destroy`) — the trailing segment is examined and
     REJECTS. Fail-closed: an empty command, or ANY empty/unparseable segment (e.g. a dangling `&&`), ⇒ False."""
     if not (cmd or "").strip():
