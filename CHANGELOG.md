@@ -10,6 +10,28 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 
 ## Unreleased
 
+### A zero-reference exit gate proves the retired session-context framework stays gone (feat-foundry-ctx-zero-reference-gate)
+
+**The CTX-REMOVAL program's exit criterion: an allowlist-aware whole-tracked-tree sweep, additive
+and test-only, that computes RED on any reference to the retired framework anywhere in the repo and
+GREEN over the shipped tree.** `tests/test_reference_sweep.py` + its fixture
+`tests/fixtures/reference-sweep/retired-framework-sweep.yaml` add one pytest module and one
+fixture; no shipped script, hook, schema, skill or workflow is edited.
+
+- The catch-all token is a bare case-insensitive substring, deliberately not word-boundaried, so
+  the gate has no false negatives at the file level. The discrimination a word boundary cannot do
+  — telling an unrelated "context" abbreviation from a literal reference into the retired module,
+  which are the same shape — is done by an occurrence-keyed allowlist instead, one reasoned entry
+  per tolerated identifier.
+- Per-element negative controls across five surface classes (a skill, a published doc, a pack
+  file, a script, a hook) and per-site anti-blanket proofs across eight overloaded-abbreviation
+  sites both compute RED on an injected synthetic reference — a green that was never red proves
+  nothing.
+- Every allowlist entry is proven load-bearing: it covers a real occurrence, and removing it alone
+  turns the sweep RED naming that entry.
+- A `--root <tree>` mode runs the identical frozen sweep over any checkout; the `agentic-handbook`
+  checkout re-verifies at zero references.
+
 ### The apply gate loses its posture input and executes the change (feat-foundry-apply-gate-regrounding)
 
 **`decide_apply` no longer probes an ambient control plane for a posture — the operator supplies a
