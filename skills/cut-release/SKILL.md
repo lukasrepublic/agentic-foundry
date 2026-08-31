@@ -55,8 +55,8 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
    > **`marketplace.json` does NOT bump here (deliberate — feat-foundry-install-line-unpinning,
    > AC-ILU-11).** Its `version` and `source.ref` bump moves to the **re-pin commit R2** in step 3,
    > landing TOGETHER with `source.sha` — not in R. Bumping the catalogue's advertised version in R,
-   > ahead of the commit that carries it (R2), would mean the default branch never advertises a
-   > catalogue version its own pinned commit does not carry: an adopter resolving a tagless
+   > ahead of the commit that carries it (R2), would make the default branch advertise a
+   > catalogue version its own pinned commit does NOT carry: an adopter resolving a tagless
    > registration mid-cut would be told about a version R2 has not shipped yet. Deferring the bump
    > closes that window. `test_manifests_agree` (`tests/test_docs_claims.py`) tolerates the resulting
    > one-release lag between R and R2, but still refuses a `marketplace.json` that gets AHEAD of

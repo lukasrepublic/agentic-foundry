@@ -62,10 +62,12 @@ data** — it never tags, never pushes, never closes issues itself. You execute 
    git tag -a vX.Y.Z -m 'agentic-foundry vX.Y.Z'                          # on R2
    python3 scripts/foundry-cut-release.py --tree . --version X.Y.Z --verify-tag
    # → TAG-PIN-COHERENT before you push anything
-   git push origin main && git push origin vX.Y.Z
-# On a repo whose main is protected with enforce_admins, the main push is REFUSED for everyone.
-# Create R and R2 on a branch and land each by PR instead; the tag still pushes. Tagging while
-# main lags leaves the catalogue naming the previous release -- see skills/cut-release/SKILL.md.                         # never force
+   # On a repo whose main is protected with enforce_admins the main push is REFUSED for everyone.
+   # Create R and R2 on a branch and land each by PR -- TWO PRs, the bump then the re-pin, because
+   # source.sha must name the commit AS IT LANDS on main and a squash landing does not preserve a
+   # branch commit's SHA. Read main's HEAD after the bump PR merges; that is the sha the re-pin PR
+   # pins. Tag only once R2 is on main. See skills/cut-release/SKILL.md.
+   git push origin main && git push origin vX.Y.Z                          # never force
    ```
 
    **Why this order.** An adopter installs by ref, which resolves `marketplace.json` **at the

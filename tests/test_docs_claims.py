@@ -852,3 +852,34 @@ def test_no_journey_narration_in_shipped_docs():
             offenders.append(rel)
     assert not offenders, f"journey narration reintroduced in: {offenders}"
 
+
+# ── the remove/add argument asymmetry ──────────────────────────────────────────────────────────
+# SETTLED BY EXECUTION 2026-08-31 against an isolated CLAUDE_CONFIG_DIR, not by reading docs:
+#   claude plugin marketplace remove lukasrepublic/agentic-foundry
+#     -> "Marketplace 'lukasrepublic/agentic-foundry' not found"  AND THE REGISTRATION SURVIVES
+#   claude plugin marketplace remove agentic-foundry              -> succeeds
+# `remove` (and `update`) take the registered marketplace NAME; `add` takes the owner/repo SOURCE.
+# docs/troubleshooting.md shipped the slug form, so its recovery errored at the remove step, left
+# the stale registration in place, and the subsequent `add` then refused with "its network source
+# differs from the one declared" -- wedging the operator inside the unwedging procedure.
+# That evidence lived only in one session transcript; this test is what makes it survive.
+def test_marketplace_remove_takes_the_name_and_add_takes_the_source():
+    """`marketplace remove` names the marketplace; `marketplace add` names owner/repo. Not swappable."""
+    import glob as _glob
+    offenders = []
+    roots = [os.path.join(REPO_ROOT, "docs"), os.path.join(REPO_ROOT, "skills")]
+    files = [f for r in roots for f in _glob.glob(os.path.join(r, "**", "*.md"), recursive=True)]
+    assert files, "no shipped docs/skills markdown found -- the scan would be vacuous"
+    seen_remove = 0
+    for path in files:
+        with open(path, encoding="utf-8") as fh:
+            for n, line in enumerate(fh, 1):
+                if "marketplace remove" in line:
+                    seen_remove += 1
+                    if re.search(r"marketplace remove\s+\S*/", line):
+                        offenders.append("%s:%d passes an owner/repo slug to remove" % (path, n))
+                if re.search(r"marketplace add\s+", line) and not re.search(
+                        r"marketplace add\s+\S*/", line) and "<" not in line:
+                    offenders.append("%s:%d passes a bare name to add" % (path, n))
+    assert seen_remove, "no `marketplace remove` instruction found -- the scan would be vacuous"
+    assert not offenders, "marketplace remove/add argument forms are swapped:\n" + "\n".join(offenders)
