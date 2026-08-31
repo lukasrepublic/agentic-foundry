@@ -31,6 +31,10 @@
 #                               value; there is no second default anywhere else in the script.
 #   --ref <ref>                 pin the marketplace add to an explicit ref (tag or branch) — e.g. a
 #                               pinned release tag; overrides --channel for this invocation
+#                               NOTE: the default registration is TAGLESS, so the catalogue
+#                               re-resolves from the marketplace's default branch. This step cannot
+#                               write `autoUpdate` (it may use only the claude CLI), so the platform
+#                               default governs unattended re-resolution. Pass --ref to freeze it.
 #   --channel <stable|edge>     stable (the default): registers the marketplace TAGLESS, against the
 #                               currently-published index — no release-tag literal is composed into
 #                               the source argument (feat-foundry-installer-unpinning). The ARTIFACT

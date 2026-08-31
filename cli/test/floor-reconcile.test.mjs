@@ -345,3 +345,36 @@ test('ref_present_but_wildcarded_still_unpinned', () => {
   const wildcarded = { [PINS.marketplace_name]: { source: { source: 'github', repo: PINS.marketplace_repo, ref: '*' }, autoUpdate: false } };
   assert.equal(classifyPin({ extraKnownMarketplaces: wildcarded }, PINS).state, 'unpinned');
 });
+
+// ── PR #132 security review: widening "no ref" must not widen to "any entry" ───────────────────
+// Each case below classified `unpinned` (and so hit the withheld-allow brake) BEFORE this atom.
+// The tagless widening must not silently promote them to `pinned` — that would turn a warning
+// into a reassurance, which is the specific regression the review caught.
+const pinOf = (entry) => classifyPin({ extraKnownMarketplaces: { [PINS.marketplace_name]: entry } }, PINS).state;
+
+test('a_tagless_entry_naming_a_foreign_repo_is_not_pinned', () => {
+  assert.equal(pinOf({ source: { source: 'github', repo: 'attacker/lookalike' } }), 'unpinned');
+  // and the genuine one still is, so the check is not simply refusing everything
+  assert.equal(pinOf({ source: { source: 'github', repo: PINS.marketplace_repo } }), 'pinned');
+});
+
+test('a_structurally_malformed_entry_is_not_pinned', () => {
+  for (const bad of [{}, 'x', [], null, 42, { source: 'github' }, { source: null }]) {
+    assert.equal(pinOf(bad), 'unpinned', `malformed entry classified pinned: ${JSON.stringify(bad)}`);
+  }
+});
+
+test('a_non_github_source_is_not_pinned', () => {
+  assert.equal(pinOf({ source: { source: 'git', repo: PINS.marketplace_repo } }), 'unpinned');
+  assert.equal(pinOf({ source: { source: 'url', repo: PINS.marketplace_repo } }), 'unpinned');
+});
+
+test('a_truthy_non_true_autoUpdate_is_not_pinned', () => {
+  const ours = { source: { source: 'github', repo: PINS.marketplace_repo } };
+  for (const au of [1, 'true', {}, []]) {
+    assert.equal(pinOf({ ...ours, autoUpdate: au }), 'unpinned', `autoUpdate ${JSON.stringify(au)} classified pinned`);
+  }
+  // absent and explicit-false remain pinned (AC-IUP-4/AC-IUP-5)
+  assert.equal(pinOf(ours), 'pinned');
+  assert.equal(pinOf({ ...ours, autoUpdate: false }), 'pinned');
+});

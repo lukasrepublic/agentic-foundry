@@ -636,9 +636,9 @@ def test_bootstrap_registers_with_auto_update_false(tmp_path, existing_repo):
     js = (
         "import { classifyPin } from './src/floorReconcile.mjs';\n"
         "const settingsObj = { extraKnownMarketplaces: { %s: %s } };\n"
-        "const pins = { marketplace_name: %s, plugin_version: '9.9.9' };\n"
+        "const pins = { marketplace_name: %s, marketplace_repo: %s, plugin_version: '9.9.9' };\n"
         "console.log(JSON.stringify(classifyPin(settingsObj, pins)));\n"
-    ) % (json.dumps(name), json.dumps(verified_real_entry), json.dumps(name))
+    ) % (json.dumps(name), json.dumps(verified_real_entry), json.dumps(name), json.dumps(marketplace))
     node_proc = subprocess.run(
         ["node", "--input-type=module", "-e", js],
         cwd=str(REPO_ROOT / "cli"), capture_output=True, text=True, timeout=15,

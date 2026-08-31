@@ -78,6 +78,13 @@ silently withheld for every adopter as a side effect; its skew report is fixed t
 "pinned at null". `.github/workflows/btb-gates-base.yml`'s security-path alternation now covers all
 three files. The artifact pin (`source.sha`) is unchanged throughout.
 
+**Known residual (shell installer only).** `claude plugin marketplace add` exposes no `autoUpdate`
+flag and writes no such key, and `toolchain-install` is constrained by a frozen invariant to need
+only the `claude` binary — so it cannot write one either. The npx CLI writes the explicit `false`.
+For a shell-installed adopter the platform default therefore governs whether the catalogue
+re-resolves from the default branch unattended, and that default is not established anywhere in
+this repository. Pass `--ref <tag>` if you want the old frozen-index behaviour.
+
 ## v1.6.0
 
 **The CTX control-plane dependency is severed.** The framework no longer probes, requires, or

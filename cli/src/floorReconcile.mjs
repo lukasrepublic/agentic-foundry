@@ -72,9 +72,24 @@ export function classifyPin(settingsObj, pins) {
   // autoUpdate check from `=== false` to `!== true`: the shell installer has no --autoUpdate flag
   // on `claude plugin marketplace add` and a verified isolated run wrote no such key at all, so an
   // ABSENT autoUpdate must read the same as an explicit `false` — never merely tolerate `true`.
-  const refAbsent = ref === undefined;
-  const refWellFormed = refAbsent || (typeof ref === 'string' && ref !== '' && !ref.includes('*'));
-  const pinned = refWellFormed && entry.autoUpdate !== true;
+  //
+  // SECURITY REVIEW (PR #132): widening "no ref" to `pinned` must NOT also widen it to "any entry".
+  // Property access on a primitive yields undefined rather than throwing, so `{}`, `"x"` and `[]`
+  // all reach refAbsent -- and NOTHING here compared the entry's own repo to ours, so a tagless
+  // entry naming a FOREIGN repository under our key would classify pinned and be granted the 42
+  // wildcarded cache allow rules, with the report REASSURING the operator about a manifest that is
+  // not ours. Before this atom that input hit the brake and warned. An entry must therefore be a
+  // plain object naming OUR github source before "no ref" can mean anything. `autoUpdate` is
+  // accepted only as absent-or-false: `!== true` admitted truthy coercions (1, "true") that the
+  // platform may honour as auto-update-on, which is wider than AC-IUP-5's text.
+  const isPlainObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
+  const src = isPlainObject(entry) && isPlainObject(entry.source) ? entry.source : null;
+  const isOurSource = !!src && src.source === 'github' && src.repo === pins.marketplace_repo;
+  const refAbsent = isOurSource && ref === undefined;
+  const refWellFormed = isOurSource
+    && (refAbsent || (typeof ref === 'string' && ref !== '' && !ref.includes('*')));
+  const autoUpdateOk = entry && (entry.autoUpdate === undefined || entry.autoUpdate === false);
+  const pinned = refWellFormed && autoUpdateOk;
   // A pin can be perfectly well-formed and still name a DIFFERENT plugin than the map these rules
   // came from. The 42 allow rules are wildcarded across the cache and their per-script rationales
   // were reviewed against THIS version's scripts; writing them over a workspace pinned at an older
