@@ -51,7 +51,8 @@ SECURITY_PATH_PATTERN = (
     r"(auth|secret|credential|token|provenance|signing|\.rego$)|^\.github/|^hooks/|"
     r"^\.claude-plugin/|(^|/)(standing-versions|profile-version-ledger)|"
     r"(^|/)(requirements[^/]*\.txt|package(-lock)?\.json|pyproject\.toml|Pipfile[^/]*|"
-    r"go\.(mod|sum)|Cargo\.(toml|lock))$|^skills/|^agents/|^rulesets/|^scripts/foundry_tier_preflight"
+    r"go\.(mod|sum)|Cargo\.(toml|lock))$|^skills/|^agents/|^rulesets/|^scripts/foundry_tier_preflight|"
+    r"^scripts/foundry-bootstrap\.sh$|^cli/src/permissionFloor\.mjs$|^cli/src/floorReconcile\.mjs$"
 )
 _SECURITY_PATH_RE = re.compile(SECURITY_PATH_PATTERN)
 

@@ -48,8 +48,10 @@ default branch's checked-in `.claude-plugin/marketplace.json` for the `plugins[]
 plain revision (never an annotated-tag object), is an ancestor of the default branch, and the
 `.claude-plugin/plugin.json` checked in at that revision declares the same version the catalogue
 advertises. Wired into `.github/workflows/ci.yml` as a step scoped to push-to-`main` only — never
-on pull requests, since the version-bump PR in the release runbook legitimately advertises the new
-version before the re-pin PR lands the matching pin.
+on pull requests, because the check grades `refs/heads/main` and a pull-request checkout leaves a
+detached HEAD with no such local ref, so it would fail closed on every PR. (An earlier draft of this
+note justified the scoping by a release window in which the version bump landed ahead of its pin;
+the sibling install-line atom re-sequenced the cut so that window no longer exists.)
 
 This is a **detective** control, not a preventive one: it reports an incoherent default branch
 after the fact; it does not stop one from being pushed.
@@ -58,6 +60,31 @@ after the fact; it does not stop one from being pushed.
 atom; the scaffold it writes is untouched.
 
 Spec: `specs/features/foundry/governance/main-catalogue-coherence/` (workspace), authorized.
+
+### Both installers register the marketplace tagless (feat-foundry-installer-unpinning)
+
+**The two INSTALLERS that compose the marketplace registration stop freezing it, in code.**
+`scripts/foundry-bootstrap.sh`'s default `toolchain-install` and the `npx create-agentic-workspace`
+CLI (`cli/src/permissionFloor.mjs`) both used to compose an explicit release-tag ref onto the
+registration unconditionally — `feat-foundry-installer-unpinning` closes the code-path half the
+sibling docs-only change above could not: the shell installer's default plan now registers the
+marketplace tagless (`--ref`/`--channel edge` still compose an exact ref, unchanged), and the npx
+CLI's composed `extraKnownMarketplaces` entry drops `source.ref` entirely, restoring the shape its
+own already-authorized `AC-BCL-4(b)` declares. `permissionFloor.mjs` carries, in writing, the
+supersession of the prior PR #61 security-review Block that added `ref` in the first place — read
+it before touching that file again. `cli/src/floorReconcile.mjs`'s pinned-state predicate is taught
+that a tagless entry **naming this marketplace's own github source**, with `autoUpdate` absent or
+`false`, is pinned (not unpinned) — a foreign, malformed, or auto-updating entry still withholds, so the allow-tier grant is not
+silently withheld for every adopter as a side effect; its skew report is fixed to never claim
+"pinned at null". `.github/workflows/btb-gates-base.yml`'s security-path alternation now covers all
+three files. The artifact pin (`source.sha`) is unchanged throughout.
+
+**Known residual (shell installer only).** `claude plugin marketplace add` exposes no `autoUpdate`
+flag and writes no such key, and `toolchain-install` is constrained by a frozen invariant to need
+only the `claude` binary — so it cannot write one either. The npx CLI writes the explicit `false`.
+For a shell-installed adopter the platform default therefore governs whether the catalogue
+re-resolves from the default branch unattended, and that default is not established anywhere in
+this repository. Pass `--ref <tag>` if you want the old frozen-index behaviour.
 
 ## v1.6.0
 

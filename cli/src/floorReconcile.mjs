@@ -65,14 +65,60 @@ export function classifyPin(settingsObj, pins) {
   const entry = ((settingsObj && settingsObj.extraKnownMarketplaces) || {})[pins.marketplace_name];
   if (entry === undefined) return { state: 'absent', ref: null, skew: false };
   const ref = entry && entry.source && entry.source.ref;
-  const pinned = typeof ref === 'string' && ref !== '' && !ref.includes('*') && entry.autoUpdate === false;
+  // feat-foundry-installer-unpinning (AC-IUP-5). Both installers now register the marketplace
+  // TAGLESS by default (AC-IUP-1/AC-IUP-3), so "no ref" must classify as pinned, not unpinned — an
+  // ABSENT ref is well-formed (refAbsent), distinct from a malformed EXPLICIT one (empty string, or
+  // carrying a wildcard, both still refused below). AC-IUP-4's Clarifications also widen the
+  // autoUpdate check from `=== false` to `!== true`: the shell installer has no --autoUpdate flag
+  // on `claude plugin marketplace add` and a verified isolated run wrote no such key at all, so an
+  // ABSENT autoUpdate must read the same as an explicit `false` — never merely tolerate `true`.
+  //
+  // SECURITY REVIEW (PR #132): widening "no ref" to `pinned` must NOT also widen it to "any entry".
+  // Property access on a primitive yields undefined rather than throwing, so `{}`, `"x"` and `[]`
+  // all reach refAbsent -- and NOTHING here compared the entry's own repo to ours, so a tagless
+  // entry naming a FOREIGN repository under our key would classify pinned and be granted the 42
+  // wildcarded cache allow rules, with the report REASSURING the operator about a manifest that is
+  // not ours. Before this atom that input hit the brake and warned. An entry must therefore be a
+  // plain object naming OUR github source before "no ref" can mean anything. `autoUpdate` is
+  // accepted only as absent-or-false: `!== true` admitted truthy coercions (1, "true") that the
+  // platform may honour as auto-update-on, which is wider than AC-IUP-5's text.
+  const isPlainObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
+  const src = isPlainObject(entry) && isPlainObject(entry.source) ? entry.source : null;
+  // Both operands undefined must NOT compare equal: a pin block that lost marketplace_repo
+  // would otherwise make every source carrying no repo key classify as ours.
+  const ourRepo = typeof pins.marketplace_repo === 'string' && pins.marketplace_repo !== ''
+    ? pins.marketplace_repo : null;
+  // GitHub owner/repo is CASE-INSENSITIVE, so `LukasRepublic/agentic-foundry` is the SAME
+  // repository. Comparing byte-exact would classify it unpinned and tell the operator "not ours",
+  // which is false. Normalize both sides; the comparison stays exact-match otherwise.
+  // Gate on the ASCII shape GitHub can actually issue BEFORE folding. toLowerCase() is
+  // locale-independent but NOT injective: U+212A KELVIN SIGN folds to ASCII 'k', and this repo's
+  // name contains one -- so "lu\u212Aasrepublic/agentic-foundry" would fold equal and read as
+  // ours. No such string can name a real GitHub repository, so it buys a false reassurance rather
+  // than attacker-controlled code; the shape gate closes the class outright, including whatever
+  // confusable the next Unicode revision adds.
+  const REPO_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+  const sameRepo = typeof src?.repo === 'string' && REPO_RE.test(src.repo) && !!ourRepo
+    && src.repo.toLowerCase() === ourRepo.toLowerCase();
+  const isOurSource = !!src && sameRepo && src.source === 'github';
+  const refAbsent = isOurSource && ref === undefined;
+  const refWellFormed = isOurSource
+    && (refAbsent || (typeof ref === 'string' && ref !== '' && !ref.includes('*')));
+  const autoUpdateOk = entry && (entry.autoUpdate === undefined || entry.autoUpdate === false);
+  const pinned = refWellFormed && autoUpdateOk;
   // A pin can be perfectly well-formed and still name a DIFFERENT plugin than the map these rules
   // came from. The 42 allow rules are wildcarded across the cache and their per-script rationales
   // were reviewed against THIS version's scripts; writing them over a workspace pinned at an older
   // one grants the same paths against different code. Surfaced rather than refused — the operator's
-  // review of the plan is the control, and it can only work if the skew is on screen.
-  const skew = pinned && ref !== `v${pins.plugin_version}`;
-  return { state: pinned ? 'pinned' : 'unpinned', ref: typeof ref === 'string' ? ref : null, skew };
+  // review of the plan is the control, and it can only work if the skew is on screen. AC-IUP-8: a
+  // tagless (refAbsent) entry has nothing to compare against a version, so it can never be "skewed"
+  // — computing `ref !== vX` against a null ref would otherwise fire the warning on every run.
+  const skew = pinned && !refAbsent && ref !== `v${pins.plugin_version}`;
+  // The foreign/malformed-source case must not render as an ordinary ref-shaped 'unpinned':
+  // its remediation ("pin the marketplace") can NEVER clear it, because refWellFormed requires
+  // isOurSource. Carry the reason so renderPlan can say the thing the operator can act on.
+  const reason = pinned ? null : (!isOurSource ? 'source' : (!autoUpdateOk ? 'autoUpdate' : 'ref'));
+  return { state: pinned ? 'pinned' : 'unpinned', ref: typeof ref === 'string' ? ref : null, skew, reason };
 }
 
 /** Compute the delta WITHOUT touching the filesystem. Returns
@@ -215,15 +261,26 @@ export function renderPlan(plan, { applied }) {
     lines.push(`  + marketplace pin added — the bundled allow rules are wildcarded across the plugin cache and are bounded only by it`);
   } else if (plan.pin.state === 'pinned') {
     // printed on EVERY pinned run, not only the skewed one: an operator cannot notice a mismatch
-    // that is never shown, and this is the branch where 42 grants are written without comment
+    // that is never shown, and this is the branch where 42 grants are written without comment.
+    // AC-IUP-8: a TAGLESS entry (plan.pin.ref === null, the default registration as of
+    // feat-foundry-installer-unpinning) must never render as "pinned at null" — say what actually
+    // bounds it instead. classifyPin's `skew` is already forced false for this case, so the
+    // trailing VERSION SKEW clause never appends here.
+    const refDisplay = plan.pin.ref === null
+      ? 'the default catalogue (tagless index; the artifact commit stays fixed by the manifest\'s source.sha)'
+      : plan.pin.ref;
     lines.push(
-      `  · marketplace pinned at ${plan.pin.ref}; these rules come from the floor generated for v${plan.pinsVersion}` +
+      `  · marketplace pinned at ${refDisplay}; these rules come from the floor generated for v${plan.pinsVersion}` +
         (plan.pin.skew ? ' — VERSION SKEW: the same wildcarded paths will resolve to that pin\'s scripts, not this one\'s' : ''),
     );
   } else if (plan.withheldAllow) {
     lines.push(
-      `  ! marketplace entry present but unpinned (ref=${plan.pin.ref === null ? 'none' : plan.pin.ref})` +
-        ' — allow-tier rules WITHHELD; ask and deny still applied. Pin the marketplace, then re-run.',
+      plan.pin.reason === 'source' || plan.pin.reason === 'autoUpdate'
+        ? `  ! the marketplace entry ${plan.pin.reason === 'autoUpdate' ? 'sets autoUpdate to something other than false' : "does not name this marketplace's github source"}` +
+          ' — allow-tier rules WITHHELD; ask and deny still applied. Pinning will NOT clear this:' +
+          ' the registered source itself is not ours. Inspect the entry before re-running.'
+        : `  ! marketplace entry present but unpinned (ref=${plan.pin.ref === null ? 'none' : plan.pin.ref})` +
+          ' — allow-tier rules WITHHELD; ask and deny still applied. Pin the marketplace, then re-run.',
     );
   }
   for (const rule of plan.blanket) {
