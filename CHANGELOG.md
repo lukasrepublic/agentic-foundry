@@ -8,6 +8,30 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## Unreleased
+
+**The documented install line stops freezing the adopter's catalogue.** Every documented
+marketplace-add install line (README, QUICKSTART, troubleshooting, the brownfield how-to, and the
+release runbook itself) registers the marketplace **tagless** now — no version literal on the
+source argument. A tag-pinned registration lands verbatim in an adopter's `settings.json` and every
+subsequent upgrade command re-reads that frozen ref forever, truthfully reporting "already at the
+latest version" even after a new release publishes: publishing was never delivery. The artifact pin
+(`source.sha` in `.claude-plugin/marketplace.json`) is unchanged and remains the real supply-chain
+control.
+
+The release runbook (`skills/cut-release/SKILL.md`) is rewritten to match: the complete adopter
+upgrade is now one command, run forever; the marketplace.json catalogue bump (version + `source.ref`)
+moves from the release commit into the re-pin commit, together with `source.sha`, so the default
+branch never advertises a catalogue version its own pinned commit does not carry; an existing
+tag-pinned adopter gets a one-time migration instead of a per-release re-point. The shipped-doc
+install-pin checks are inverted to match (a version literal on the registration now fails, not
+passes), each carrying a negative control proving the inversion discriminates.
+
+**Scope note:** this does not, by itself, deliver the one-command upgrade for every onboarding
+path. The `npx create-agentic-workspace` pre-session bootstrap and the existing-repo installer
+still compose a pinned source in code; the sibling `feat-foundry-installer-unpinning` carries
+that half.
+
 ## v1.6.0
 
 **The CTX control-plane dependency is severed.** The framework no longer probes, requires, or

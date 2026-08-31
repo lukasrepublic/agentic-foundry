@@ -35,10 +35,56 @@ def _marketplace():
 
 
 # ------------------------------------------------------------------ the version identity --
+def _version_tuple(v):
+    return tuple(int(x) for x in v.split("."))
+
+
+def _manifests_agreement_failures(plugin_version, mp_version, mp_ref):
+    """RELAXED by feat-foundry-install-line-unpinning (AC-ILU-11/12): the deferred-bump sequencing
+    lands the `marketplace.json` version/ref bump in the re-pin commit R2, ONE COMMIT AFTER the
+    release commit R bumps `plugin.json` alone (so R never advertises a catalogue version whose
+    pinned commit does not carry it). marketplace.json MAY therefore lag plugin.json -- but it must
+    never LEAD it (a catalogue can't advertise a version cut before its own commit exists), and
+    `source.ref` must always name the catalogue's OWN advertised version, never plugin.json's.
+    Pure and parameterized (no repo I/O) so both the real-tree test below and the synthetic-lag
+    test (AC-ILU-12) drive the same comparison."""
+    failures = []
+    if _version_tuple(mp_version) > _version_tuple(plugin_version):
+        failures.append(
+            "marketplace.json (%s) is AHEAD of plugin.json (%s)" % (mp_version, plugin_version)
+        )
+    want_ref = "v" + mp_version
+    if mp_ref != want_ref:
+        failures.append(
+            "marketplace source.ref %r != %r (its own advertised version)" % (mp_ref, want_ref)
+        )
+    return failures
+
+
 def test_manifests_agree():
     mp = _marketplace()
-    assert mp["version"] == _plugin_version(), "plugin.json and marketplace.json disagree"
-    assert mp["source"]["ref"] == "v" + _plugin_version(), "marketplace ref must be vVERSION"
+    failures = _manifests_agreement_failures(_plugin_version(), mp["version"], mp["source"]["ref"])
+    assert not failures, "; ".join(failures)
+
+
+def test_marketplace_may_lag_plugin_version_between_r_and_r2():
+    """AC-ILU-12: a tree in which marketplace.json lags plugin.json by one release -- the exact
+    shape the deferred sequencing (AC-ILU-11) produces between the release commit R (plugin.json
+    bumped alone) and the re-pin commit R2 (marketplace.json bumped, together with source.sha) --
+    SHALL PASS, while still requiring source.ref to equal 'v' prefixed to the catalogue's OWN
+    (lagging) advertised version, and still refusing a catalogue that gets AHEAD of plugin.json."""
+    # the R-state shape: plugin.json ahead, marketplace.json lagging by one release, but internally
+    # self-consistent (ref names its own version) -- MUST PASS.
+    failures = _manifests_agreement_failures("1.7.0", "1.6.0", "v1.6.0")
+    assert not failures, "a one-release lag must PASS: %r" % (failures,)
+
+    # a lagging catalogue whose ref does NOT name its own version must still fail.
+    failures = _manifests_agreement_failures("1.7.0", "1.6.0", "v1.7.0")
+    assert failures, "a marketplace ref naming a version it does not carry must still fail"
+
+    # a catalogue that gets AHEAD of plugin.json (the nonsensical direction) must still fail.
+    failures = _manifests_agreement_failures("1.6.0", "1.7.0", "v1.7.0")
+    assert failures, "marketplace.json must never advertise a version plugin.json has not reached"
 
 
 def test_permission_floor_names_the_shipped_plugin_version():
@@ -62,14 +108,18 @@ def test_permission_floor_names_the_shipped_plugin_version():
 
 
 def test_every_install_pin_matches_the_manifests():
-    """Every `marketplace add …#vX.Y.Z` snippet in user-facing docs pins the shipped version.
-    The exact drift that shipped once: README pinning one version while claiming another."""
-    want = "#v" + _plugin_version()
+    """INVERTED by feat-foundry-install-line-unpinning (AC-ILU-3). WHAT CHANGED AND WHY: a
+    `marketplace add lukasrepublic/agentic-foundry#vX.Y.Z` snippet pins the marketplace
+    REGISTRATION (the index), which lands verbatim in an adopter's settings.json and makes every
+    later `claude plugin update` re-read that FROZEN ref forever -- truthfully reporting "already
+    at the latest version" even after a new tag publishes. This function's NAME is unchanged
+    (checkpoints reference it by node id); its polarity is reversed, not deleted: user-facing docs
+    now SHALL carry no version-literal install pin at all, so a re-introduced one still fails CI.
+    NOTE this is deliberately EXCLUDED from `_PREEXISTING_DOCS_CLAIMS_CASES` below -- see that
+    tuple's comment."""
     for doc in (README, QUICKSTART, TROUBLESHOOTING):
         pins = re.findall(r"marketplace add lukasrepublic/agentic-foundry(#v[\d.]+)", _read(doc))
-        assert pins, f"{os.path.basename(doc)} has no install pin to check"
-        for pin in pins:
-            assert pin == want, f"{os.path.basename(doc)} pins {pin}, shipped is {want}"
+        assert not pins, f"{os.path.basename(doc)} still pins the registration to {pins}"
 
 
 def test_readme_status_matches_the_manifests():
@@ -647,9 +697,16 @@ def test_docs_truth_negative_controls_all_fire():
 
 
 # --- AC-DTR-4 -- additive-only: every pre-existing case still defined, byte-identical body -----
+# `test_manifests_agree` and `test_every_install_pin_matches_the_manifests` are DELIBERATELY
+# ABSENT from this list. feat-foundry-install-line-unpinning (AC-ILU-3/11/12) is an explicitly
+# authorized, contract-driven change to both function bodies -- an inversion and a relaxation, not
+# an accidental weakening -- and this "unweakened" guard exists to catch the LATTER, not to freeze
+# a body a later, authorized atom is chartered to change. Both function NAMES stay in the suite
+# (checkpoints reference them by node id); only their exemption from byte-identity tracking here is
+# new. See tests/test_bootstrap_install_pin.py's matching note on AC-BIP-13/AC-ILU-3, and the memory
+# note "Atom-scoped checks decay on merge" for why a merge-base diff assertion cannot outlive its
+# own atom's authorized follow-on.
 _PREEXISTING_DOCS_CLAIMS_CASES = (
-    "test_manifests_agree",
-    "test_every_install_pin_matches_the_manifests",
     "test_readme_status_matches_the_manifests",
     "test_changelog_has_a_section_for_the_shipped_version",
     "test_test_count_claim_is_true",

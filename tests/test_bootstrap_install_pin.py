@@ -415,14 +415,68 @@ def test_help_documents_every_option():
 
 
 # ──────────────────────────────────────────────────────────────────── AC-BIP-13 ──
+# INVERTED by feat-foundry-install-line-unpinning (AC-ILU-3). WHAT CHANGED AND WHY: a documented
+# `claude plugin marketplace add <marketplace>#vX.Y.Z` line pins the marketplace REGISTRATION
+# (the INDEX), not merely the artifact -- and that registration lands verbatim in an adopter's
+# `settings.json`. Every subsequent `claude plugin update` then re-reads the catalogue AT THAT
+# FROZEN REF forever, truthfully reporting "already at the latest version (X)" even after a new
+# tag publishes. `plugins[].source.sha` (untouched by this atom) remains the real artifact pin;
+# see the spec's "Two pins were conflated" section. This function's NAME is unchanged (checkpoints
+# reference it by node id); its polarity is reversed, not deleted -- a re-introduced version
+# literal on a documented install line still fails CI, it just fails the OPPOSITE assertion.
+
+def _version_pinned_offenders(instructions, marketplace):
+    """(rel, line) pairs among `instructions` whose marketplace-add source names `marketplace`
+    (THIS repo's own marketplace slug, e.g. "lukasrepublic/agentic-foundry") with a version
+    literal (`#...`) attached to it -- the pinned-registration defect AC-ILU-1/2/3 forbid. A
+    source naming some OTHER marketplace (an adopter's own worked example, a different project)
+    is not this repository's registration and is never convicted here."""
+    pin_re = re.compile(r"marketplace add %s#\S+" % re.escape(marketplace))
+    return [(rel, line) for rel, line in instructions if pin_re.search(line)]
+
 
 def test_documented_install_commands_name_the_shipped_pin():
+    """INVERTED (feat-foundry-install-line-unpinning, AC-ILU-3): no documented marketplace-add
+    source naming THIS repo's own marketplace may carry a version literal. See the module-level
+    comment above this function for why."""
     instructions = _documented_install_instructions(REPO_ROOT)
     assert instructions, "no documented install instructions found (must be non-empty)"
-    ref = _script_constant(REPO_ROOT, "DEFAULT_MARKETPLACE_REF")
-    for rel, line in instructions:
-        assert re.search(r"#%s\b" % re.escape(ref), line), \
-            "%s: %r does not name the shipped pinned ref %s" % (rel, line, ref)
+    marketplace = _script_constant(REPO_ROOT, "DEFAULT_MARKETPLACE")
+    offenders = _version_pinned_offenders(instructions, marketplace)
+    assert not offenders, (
+        "documented install line(s) still pin this repo's marketplace REGISTRATION to a version "
+        "literal (the exact defect AC-ILU-1/2/3 remove -- see spec "
+        "'install-line-unpinning'): %r" % (offenders,)
+    )
+
+
+# ──────────────────────────────────────────────────────────────────── AC-ILU-4 ──
+# THE ANTI-VACUITY ROW. Proves the inverted check above discriminates a pinned documented install
+# line from a tagless one, rather than being green for free because no shipped doc happens to
+# carry a pin today.
+
+def test_injected_version_literal_convicts_the_documented_install_check(tmp_path):
+    """Copies a documented install line's SHAPE into a THROWAWAY file under tmp_path (never a real
+    shipped doc), injects a version literal onto its marketplace-add source, and asserts
+    `_version_pinned_offenders` convicts it -- while a tagless sibling line, written into the same
+    throwaway tree, is NOT convicted. Both assertions must hold for the inversion to be trusted:
+    without the first, the check could be vacuously green; without the second, it could be
+    unconditionally red."""
+    marketplace = _script_constant(REPO_ROOT, "DEFAULT_MARKETPLACE")
+    tagless_line = "claude plugin marketplace add %s" % marketplace
+    pinned_line = tagless_line + "#v9.9.9-injected"
+
+    (tmp_path / "pinned.md").write_text("```bash\n%s\n```\n" % pinned_line, encoding="utf-8")
+    (tmp_path / "clean.md").write_text("```bash\n%s\n```\n" % tagless_line, encoding="utf-8")
+
+    instructions = _documented_install_instructions(tmp_path)
+    assert len(instructions) == 2, instructions
+
+    offending_files = {rel for rel, _ in _version_pinned_offenders(instructions, marketplace)}
+    assert "pinned.md" in offending_files, \
+        "an injected version literal was NOT convicted by the inverted check"
+    assert "clean.md" not in offending_files, \
+        "a tagless sibling line was wrongly convicted -- the check is unconditionally red"
 
 
 # ──────────────────────────────────────────────────────────────────── AC-BIP-14 ──

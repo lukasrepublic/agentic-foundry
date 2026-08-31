@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CUT = os.path.join(REPO_ROOT, "scripts", "foundry-cut-release.py")
@@ -176,6 +177,81 @@ def test_suite_runner_env_is_scrubbed_of_pytest_addopts(tmp_path):
     finally:
         os.environ.pop("PYTEST_ADDOPTS", None)
     assert ok is False, "PYTEST_ADDOPTS from the environment silently weakened the gate: %s" % detail
+
+
+# ------------------------------------------------------------ AC-ILU-13 (feat-foundry-install-line-unpinning) --
+def _add_preceding_changelog_entry(tree, preceding_version):
+    """Appends a `## v<preceding_version> — test` section AFTER the target's own section (the
+    `_tree` fixture writes exactly one) and commits, so `_immediately_preceding_release` has a real
+    CHANGELOG-recorded prior release to find -- grounding the target-or-preceding tolerance in the
+    project's own recorded history rather than a bare semver guess."""
+    path = Path(tree) / "CHANGELOG.md"
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\n## v%s — test\n\n- entry\n" % preceding_version,
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(tree), "add", "-A"], capture_output=True, text=True, timeout=30)
+    subprocess.run(["git", "-C", str(tree), "commit", "-qm", "preceding changelog entry"],
+                   capture_output=True, text=True, timeout=30)
+
+
+def test_deferred_catalogue_bump_is_not_refused(tmp_path):
+    """AC-ILU-13: the deferred-bump sequencing AC-ILU-11 prescribes -- release commit R bumps
+    plugin.json ALONE, leaving marketplace.json's version/ref deliberately at the PREVIOUS release
+    (the bump lands one commit later, in the re-pin commit R2) -- must NOT be refused on that basis,
+    and the publish plan must still be emitted. Before this atom, preflight's
+    'marketplace.json version == target' AND 'marketplace source.ref == vTARGET' preconditions BOTH
+    refused every such tree with "bump BOTH manifests", making the prescribed sequencing
+    unexecutable against the gate that enforces it -- this covers both halves explicitly."""
+    m = _mod()
+    # R-shape: plugin.json at the target, marketplace.json deliberately left at the
+    # CHANGELOG-recorded PRECEDING release (both version and source.ref lagging, self-consistent
+    # with each other) -- exactly what AC-ILU-11's deferred sequencing produces.
+    tree = _tree(tmp_path / "deferred", version="9.9.9", plugin_v="9.9.9",
+                 mp_v="9.9.8", mp_ref="v9.9.8")
+    _add_preceding_changelog_entry(tree, "9.9.8")
+    r = m.cut_release(tree, "9.9.9",
+                      acceptance_fn=lambda **_k: {"verdict": "pass"},
+                      er_state_fn=lambda *_a, **_k: {},
+                      suite_runner=_real_runner)
+    assert r["state"] == "ready", (
+        "a deferred catalogue bump must not be refused: %r" % (r.get("failures"),)
+    )
+    assert r["plan"], "a deferred catalogue bump must still emit the publish plan"
+    metadata = [c for c in r["preflight"] if c[0] != m.SUITE_CHECK_LABEL]
+    assert all(c[1] for c in metadata), (
+        "the deferred (lagging-but-self-consistent) marketplace.json must pass every metadata "
+        "precondition: %r" % (metadata,)
+    )
+
+    # the converse: marketplace.json AHEAD of target must still refuse -- proving the relaxation
+    # tolerates the recorded PRECEDING release only, not an arbitrary mismatch.
+    ahead_tree = _tree(tmp_path / "ahead", version="9.9.9", plugin_v="9.9.9",
+                       mp_v="10.0.0", mp_ref="v10.0.0")
+    pf = m.preflight(ahead_tree, "9.9.9", suite_runner=lambda _t: (0, "1 passed", ""))
+    assert any(not c[1] for c in pf), "marketplace.json AHEAD of target must still refuse"
+
+    # a marketplace.json lagging by MORE than the one recorded preceding release must still
+    # refuse -- "never arbitrary": only target or the immediately-preceding release is tolerated.
+    too_far_tree = _tree(tmp_path / "too-far", version="9.9.9", plugin_v="9.9.9",
+                         mp_v="9.9.7", mp_ref="v9.9.7")
+    _add_preceding_changelog_entry(too_far_tree, "9.9.8")   # the recorded preceding release is 9.9.8, not 9.9.7
+    pf3 = m.preflight(too_far_tree, "9.9.9", suite_runner=lambda _t: (0, "1 passed", ""))
+    assert any(not c[1] for c in pf3), \
+        "a marketplace.json further behind than the one recorded preceding release must still refuse"
+
+    # THE SOURCE.REF HALF, EXPLICITLY (the coordinator's correction): a marketplace.json whose
+    # version is the tolerated preceding release, but whose OWN source.ref does not name that same
+    # version, must still refuse -- self-consistency is still required on the ref side too, proving
+    # a future change that re-tightens only the version check (and not source.ref) is convicted.
+    inconsistent_tree = _tree(tmp_path / "inconsistent", version="9.9.9", plugin_v="9.9.9",
+                              mp_v="9.9.8", mp_ref="v9.9.9")
+    _add_preceding_changelog_entry(inconsistent_tree, "9.9.8")
+    pf2 = m.preflight(inconsistent_tree, "9.9.9", suite_runner=lambda _t: (0, "1 passed", ""))
+    assert any(not c[1] for c in pf2), \
+        "a marketplace.json source.ref naming a version it does not itself carry must still refuse"
+    ref_check = next(c for c in pf2 if c[0] == "marketplace source.ref == vTARGET")
+    assert ref_check[1] is False, "the source.ref self-consistency check specifically must refuse"
 
 
 def test_antitaut_same_tree_green_test_proceeds(tmp_path):

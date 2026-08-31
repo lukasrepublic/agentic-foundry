@@ -588,25 +588,94 @@ def worktree_clean(tree):
     return True, "clean"
 
 
+def _semver_tuple(s):
+    """(major, minor, patch) ints from a 'X.Y.Z' string, or None when unparseable. Never raises --
+    an absent/malformed version must read as 'cannot compare', not crash the preflight."""
+    try:
+        parts = tuple(int(p) for p in (s or "").split("."))
+    except (TypeError, ValueError):
+        return None
+    return parts if len(parts) == 3 else None
+
+
+def _changelog_versions(tree):
+    """Every `## vX.Y.Z` version CHANGELOG.md's own headings name, in the candidate tree, as
+    (version_tuple, version_string) pairs. Grounds 'the immediately-preceding release' in the
+    project's own recorded history rather than a semver-arithmetic guess -- a guess cannot know
+    whether the prior cut bumped patch, minor or major."""
+    path = os.path.join(tree, "CHANGELOG.md")
+    if not os.path.isfile(path):
+        return []
+    with open(path, encoding="utf-8") as f:
+        body = f.read()
+    out = []
+    for m in re.finditer(r"(?m)^##\s+v(\d+\.\d+\.\d+)(?=[\s—]|$)", body):
+        t = _semver_tuple(m.group(1))
+        if t is not None:
+            out.append((t, m.group(1)))
+    return out
+
+
+def _immediately_preceding_release(tree, version):
+    """The highest CHANGELOG-recorded version STRICTLY LESS than `version`, read from the candidate
+    tree, or None when there is none (e.g. the very first release). By the time preflight runs, R
+    already carries the just-authored `## vTARGET` CHANGELOG section (step 1 of the runbook), so
+    this naturally excludes it and returns the release cut immediately before it."""
+    target_t = _semver_tuple(version)
+    if target_t is None:
+        return None
+    candidates = [(t, s) for t, s in _changelog_versions(tree) if t < target_t]
+    if not candidates:
+        return None
+    return max(candidates)[1]
+
+
 def preflight(tree, version, *, suite_runner=None):
-    """The ordered cut preconditions as [(check, ok, detail)]. ok iff plugin==marketplace==version ∧
-    source.ref==v<version> ∧ CHANGELOG has the `## v<version>` section ∧ the candidate tree's suite passes.
+    """The ordered cut preconditions as [(check, ok, detail)]. ok iff plugin==target ∧
+    marketplace.json names EITHER target OR the immediately-preceding CHANGELOG-recorded release
+    (feat-foundry-install-line-unpinning, AC-ILU-11/13: its version/ref bump is DEFERRED to the
+    re-pin commit R2, so a release commit R may deliberately leave marketplace.json at the PREVIOUS
+    release -- never an arbitrary one) ∧ marketplace.json's own source.ref names its own advertised
+    version ∧ CHANGELOG has the `## v<version>` section ∧ the candidate tree's suite passes.
     DOCTOR-GREEN is the acceptance gate's job and is NOT re-checked here (no reimplemented gate logic).
 
     ORDERING IS LOAD-BEARING (AC-RSG-3): the four cheap metadata checks are evaluated FIRST and, if any
     fails, this returns WITHOUT running the suite -- a typo'd version still refuses in milliseconds instead
     of paying two-to-three minutes to be told what a string compare already knew.
+
+    NOTE on the two marketplace.json check LABELS below (feat-foundry-install-line-unpinning,
+    AC-ILU-13): the label strings are UNCHANGED from before this atom -- they are a frozen expected
+    list in the sibling atom feat-foundry-cut-release-reconcile's fixture
+    (tests/fixtures/release/cut-release-reconcile-sweep.yaml, AC-CRRC-6), which is out of THIS
+    atom's allowed_paths and denied here. Only the underlying boolean condition changed (strict
+    equality -> target-or-immediately-preceding-release), which that fixture does not inspect. The
+    "(bump BOTH manifests)" label wording is now stale prose the deferred sequencing has outgrown;
+    reconciling it needs a coordinated edit across both atoms' frozen fixtures and is out of this
+    atom's scope -- flagged for the operator/a follow-up ER rather than silently worked around. Both
+    checks' DETAIL text (the third tuple element, not frozen by that fixture) no longer instructs
+    "bump BOTH manifests" -- see below.
     """
     v = read_versions(tree)
     tag = f"v{version}"
     cl_present = changelog_has_section(tree, version)
+    preceding = _immediately_preceding_release(tree, version)
+    allowed_mp_versions = {ver for ver in (version, preceding) if ver is not None}
+    mp_version_ok = v["marketplace"] in allowed_mp_versions
+    mp_ref_self_consistent = (
+        v["marketplace"] is not None and v["marketplace_ref"] == f"v{v['marketplace']}"
+    )
     cheap = [
         ("plugin.json version == target",
          v["plugin"] == version, f"plugin.json={v['plugin']!r} target={version!r}"),
         ("marketplace.json version == target (bump BOTH manifests)",
-         v["marketplace"] == version, f"marketplace.json={v['marketplace']!r} target={version!r}"),
+         mp_version_ok,
+         f"marketplace.json={v['marketplace']!r} target={version!r} allowed={sorted(allowed_mp_versions)!r} "
+         f"-- the immediately-preceding CHANGELOG-recorded release is TOLERATED (the bump may be "
+         f"deferred to the re-pin commit R2); any OTHER version, ahead or further behind, refuses"),
         ("marketplace source.ref == vTARGET",
-         v["marketplace_ref"] == tag, f"source.ref={v['marketplace_ref']!r} expected={tag!r}"),
+         mp_ref_self_consistent,
+         f"source.ref={v['marketplace_ref']!r} marketplace.json version={v['marketplace']!r} -- "
+         f"must name marketplace.json's OWN advertised version, target or the tolerated preceding one"),
         ("CHANGELOG.md has the ## vTARGET section",
          cl_present, f"## {tag} section: present={cl_present}"),
         # AC-TPC-9: the tree must be CLEAN. The reorder creates R2 (and places the tag on it) after
