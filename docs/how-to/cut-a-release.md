@@ -33,8 +33,9 @@ data** — it never tags, never pushes, never closes issues itself. You execute 
    **`.claude-plugin/marketplace.json` does NOT bump here.** Its `version` and `source.ref`
    move to the re-pin commit **R2** below, landing together with `source.sha` — never in R
    (`feat-foundry-install-line-unpinning`). Bumping the catalogue in R, ahead of the commit that
-   carries it, would mean the default branch never advertises a catalogue version whose pinned
-   commit does not carry it — see the **Prep** step of
+   carries it, would make the default branch advertise a catalogue version whose pinned commit does
+   NOT carry it — so an adopter resolving a tagless registration mid-cut is told about a version R2
+   has not shipped yet, and is served the previous release. See the version-bump step of
    [`skills/cut-release/SKILL.md`](../../skills/cut-release/SKILL.md) for the full reasoning.
 
 2. **Run the gate:**
@@ -61,7 +62,10 @@ data** — it never tags, never pushes, never closes issues itself. You execute 
    git tag -a vX.Y.Z -m 'agentic-foundry vX.Y.Z'                          # on R2
    python3 scripts/foundry-cut-release.py --tree . --version X.Y.Z --verify-tag
    # → TAG-PIN-COHERENT before you push anything
-   git push origin main && git push origin vX.Y.Z                         # never force
+   git push origin main && git push origin vX.Y.Z
+# On a repo whose main is protected with enforce_admins, the main push is REFUSED for everyone.
+# Create R and R2 on a branch and land each by PR instead; the tag still pushes. Tagging while
+# main lags leaves the catalogue naming the previous release -- see skills/cut-release/SKILL.md.                         # never force
    ```
 
    **Why this order.** An adopter installs by ref, which resolves `marketplace.json` **at the

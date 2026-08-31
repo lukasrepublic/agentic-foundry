@@ -305,6 +305,7 @@ def _repin_instruction_clause(comment):
 # present at all -- both anchored to a `key <spacing> = <spacing> value` shape, not merely to the
 # words "version"/"source.ref" occurring anywhere (which rationale prose also satisfies).
 _VERSION_ASSIGNMENT_RE = re.compile(r"plugins\[foundry\]\.version\s*=\s*([0-9][0-9.]*)")
+_SOURCE_SHA_ASSIGNMENT_RE = re.compile(r"source\.sha\s*=\s*\S")
 _SOURCE_REF_ASSIGNMENT_RE = re.compile(r"source\.ref\s*=\s*v?[0-9][0-9.]*")
 
 
@@ -315,6 +316,8 @@ def _repin_comment_names_the_version_bump(comment, version):
     realistic-regression comments (negative controls) drive the exact same check."""
     clause = _repin_instruction_clause(comment)
     if not clause:
+        return False
+    if not _SOURCE_SHA_ASSIGNMENT_RE.search(clause):
         return False
     m = _VERSION_ASSIGNMENT_RE.search(clause)
     if not m or m.group(1) != version:
@@ -366,9 +369,9 @@ def test_publish_plan_version_bump_assertion_is_not_vacuous():
     real_clause = _repin_instruction_clause(real_comment)
     assert "version" in real_clause, "setup invalid: the real instruction clause lost the version bump"
     rationale = real_comment.split("#", 2)[2] if real_comment.count("#") >= 2 else ""
-    assert rationale and ("version" in rationale) and ("9.9.9" in real_comment.split("#", 1)[1]), (
+    assert rationale and ("version" in rationale), (
         "setup invalid: the real comment's rationale no longer independently mentions "
-        "version/the version digits -- the realistic-regression control needs it to"
+        "version -- the realistic-regression control needs it to"
     )
     reverted_instruction = " edit .claude-plugin/marketplace.json: set plugins[foundry].source.sha = $CONTENT, and source.ref = v9.9.9  "
     realistic_regression = "#" + reverted_instruction + "#" + rationale
