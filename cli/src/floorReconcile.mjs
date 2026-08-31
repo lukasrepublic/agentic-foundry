@@ -84,7 +84,11 @@ export function classifyPin(settingsObj, pins) {
   // platform may honour as auto-update-on, which is wider than AC-IUP-5's text.
   const isPlainObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
   const src = isPlainObject(entry) && isPlainObject(entry.source) ? entry.source : null;
-  const isOurSource = !!src && src.source === 'github' && src.repo === pins.marketplace_repo;
+  // Both operands undefined must NOT compare equal: a pin block that lost marketplace_repo
+  // would otherwise make every source carrying no repo key classify as ours.
+  const ourRepo = typeof pins.marketplace_repo === 'string' && pins.marketplace_repo !== ''
+    ? pins.marketplace_repo : null;
+  const isOurSource = !!src && !!ourRepo && src.source === 'github' && src.repo === ourRepo;
   const refAbsent = isOurSource && ref === undefined;
   const refWellFormed = isOurSource
     && (refAbsent || (typeof ref === 'string' && ref !== '' && !ref.includes('*')));
@@ -98,7 +102,11 @@ export function classifyPin(settingsObj, pins) {
   // tagless (refAbsent) entry has nothing to compare against a version, so it can never be "skewed"
   // — computing `ref !== vX` against a null ref would otherwise fire the warning on every run.
   const skew = pinned && !refAbsent && ref !== `v${pins.plugin_version}`;
-  return { state: pinned ? 'pinned' : 'unpinned', ref: typeof ref === 'string' ? ref : null, skew };
+  // The foreign/malformed-source case must not render as an ordinary ref-shaped 'unpinned':
+  // its remediation ("pin the marketplace") can NEVER clear it, because refWellFormed requires
+  // isOurSource. Carry the reason so renderPlan can say the thing the operator can act on.
+  const reason = pinned ? null : (!isOurSource ? 'source' : (!autoUpdateOk ? 'autoUpdate' : 'ref'));
+  return { state: pinned ? 'pinned' : 'unpinned', ref: typeof ref === 'string' ? ref : null, skew, reason };
 }
 
 /** Compute the delta WITHOUT touching the filesystem. Returns
@@ -255,8 +263,12 @@ export function renderPlan(plan, { applied }) {
     );
   } else if (plan.withheldAllow) {
     lines.push(
-      `  ! marketplace entry present but unpinned (ref=${plan.pin.ref === null ? 'none' : plan.pin.ref})` +
-        ' — allow-tier rules WITHHELD; ask and deny still applied. Pin the marketplace, then re-run.',
+      plan.pin.reason === 'source' || plan.pin.reason === 'autoUpdate'
+        ? `  ! the marketplace entry ${plan.pin.reason === 'autoUpdate' ? 'sets autoUpdate to something other than false' : "does not name this marketplace's github source"}` +
+          ' — allow-tier rules WITHHELD; ask and deny still applied. Pinning will NOT clear this:' +
+          ' the registered source itself is not ours. Inspect the entry before re-running.'
+        : `  ! marketplace entry present but unpinned (ref=${plan.pin.ref === null ? 'none' : plan.pin.ref})` +
+          ' — allow-tier rules WITHHELD; ask and deny still applied. Pin the marketplace, then re-run.',
     );
   }
   for (const rule of plan.blanket) {

@@ -73,7 +73,8 @@ CLI's composed `extraKnownMarketplaces` entry drops `source.ref` entirely, resto
 own already-authorized `AC-BCL-4(b)` declares. `permissionFloor.mjs` carries, in writing, the
 supersession of the prior PR #61 security-review Block that added `ref` in the first place — read
 it before touching that file again. `cli/src/floorReconcile.mjs`'s pinned-state predicate is taught
-that a tagless, `autoUpdate`-non-true entry is pinned (not unpinned), so the allow-tier grant is not
+that a tagless entry **naming this marketplace's own github source**, with `autoUpdate` absent or
+`false`, is pinned (not unpinned) — a foreign, malformed, or auto-updating entry still withholds, so the allow-tier grant is not
 silently withheld for every adopter as a side effect; its skew report is fixed to never claim
 "pinned at null". `.github/workflows/btb-gates-base.yml`'s security-path alternation now covers all
 three files. The artifact pin (`source.sha`) is unchanged throughout.

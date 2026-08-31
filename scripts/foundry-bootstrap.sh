@@ -40,7 +40,9 @@
 #                               the source argument (feat-foundry-installer-unpinning). The ARTIFACT
 #                               fetched still resolves to an exact commit via the manifest's own
 #                               source.sha regardless of which index ref is named, so this does not
-#                               loosen what code lands. edge: the plugin repository's default-branch
+#                               loosen the FIDELITY of what is fetched. It does NOT bound cadence:
+#                               a re-resolved index is a different catalogue naming a different
+#                               commit. Pass --ref to freeze the index too. edge: the plugin repository's default-branch
 #                               catalogue, an explicit opt-in only, never the default — UNSTABLE (the
 #                               index churns with every push to main) though not unpinned in the
 #                               artifact sense above; warns on stderr when selected. Byte-exact, no

@@ -680,3 +680,25 @@ def test_real_path_fail_closed_records_no_claude_call(tmp_path, existing_repo):
 
     calls = _read_calls(calls_file)
     assert not calls, "an unusable pin selector must record no claude invocation: %r" % (calls,)
+
+
+# ── the equality the tightened pinned-state predicate made load-bearing ────────────────────────
+# PR #132 security review, Risk 2. cli/src/floorReconcile.mjs's classifyPin now requires the
+# adopter's registered source.repo to EQUAL cli/package.json's foundry.marketplace_repo before a
+# tagless entry can classify `pinned`. The shell installer registers scripts/foundry-bootstrap.sh's
+# DEFAULT_MARKETPLACE. Nothing bound those two values, and they are edited in different files by
+# different atoms -- so a rename or a case change in either would make EVERY shell-installed
+# adopter's reconcile classify `unpinned` and silently withhold all 42 allow rules, which is the
+# exact failure AC-IUP-5 exists to prevent. Bound here, once, so the divergence is loud.
+def test_shell_default_marketplace_equals_the_cli_pin_block_repo():
+    """foundry-bootstrap.sh's DEFAULT_MARKETPLACE == cli/package.json foundry.marketplace_repo."""
+    shell_value = _script_constant(REPO_ROOT, "DEFAULT_MARKETPLACE")
+    with open(os.path.join(REPO_ROOT, "cli", "package.json"), encoding="utf-8") as fh:
+        pin_block = json.load(fh)["foundry"]
+    assert shell_value, "DEFAULT_MARKETPLACE did not resolve -- the comparison would be vacuous"
+    assert pin_block.get("marketplace_repo"), "cli/package.json foundry.marketplace_repo is missing"
+    assert shell_value == pin_block["marketplace_repo"], (
+        "the shell installer registers %r while the CLI pin block declares %r -- a tagless entry "
+        "written by one will classify UNPINNED against the other and silently lose the allow tier"
+        % (shell_value, pin_block["marketplace_repo"])
+    )
