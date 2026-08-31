@@ -133,11 +133,23 @@ def main_catalogue_coherence(tree, *, default_branch="main"):
 
     # --- AC-MCC-3: the id must be an ancestor of the default branch. Deliberately ancestry, not
     # adjacency — see the module docstring's "Ancestry, not adjacency".
+    #
+    # `git merge-base --is-ancestor` documents exactly THREE outcomes: exit 0 (true), exit 1 (false
+    # — a clean, genuine negative), or a HIGHER exit code / could-not-run (a real git error, e.g. an
+    # object the command could not resolve). Both non-zero cases refuse either way, so this was
+    # already fail-closed; the split below exists only so the MESSAGE never tells an operator
+    # "not an ancestor" for a run where git itself failed to answer the question.
     rc, _ = _git(tree, "merge-base", "--is-ancestor", sha, branch_ref)
-    if rc != 0:
+    if rc == 1:
         return False, (f"source.sha {sha[:12]}… is NOT an ancestor of {default_branch} — an "
                        f"adopter resolving {default_branch} and installing by this sha would fetch "
                        f"a commit outside the default branch's history.")
+    if rc != 0:
+        return False, (f"cannot verify ancestry of source.sha {sha[:12]}… against {default_branch}: "
+                       f"git merge-base --is-ancestor "
+                       f"{'could not run' if rc < 0 else f'exited {rc}'} (expected 0=ancestor or "
+                       f"1=not-an-ancestor). The coherence check refuses rather than reporting "
+                       f"not-applicable.")
 
     # --- AC-MCC-1: the committed plugin.json AT THAT SHA must carry the SAME version the
     # catalogue advertises. This is the R→R2 window defect: R legitimately advertises the new

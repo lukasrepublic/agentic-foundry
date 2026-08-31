@@ -173,6 +173,159 @@ def test_coherent_default_branch_passes(repo):
     assert ok, f"a coherent default-branch catalogue was refused: {detail}"
 
 
+# --------------------------------------------------------------------------- FAIL-CLOSED ABORT PATHS
+# The module's own docstring promises: "anything that prevents a real verdict ... REFUSES, never
+# reports not-applicable." Every control above drives a WELL-FORMED fixture; none of them ever walks
+# an abort path. Security review named the concrete risk: someone later silences a noisy red on a
+# shallow-clone CI job by turning the unresolvable-default-branch case into a soft pass, and the
+# check then silently never runs again -- exactly the "not applicable" trap that already let
+# `tag_pin_coherence` miss this class of defect once (spec, "tag_pin_coherence CANNOT catch this, by
+# construction"). Each test below asserts BOTH `not ok` AND that the detail message names the actual
+# cause, so a bare `return False, "nope"` refactor would satisfy none of them.
+
+def test_a_non_git_directory_is_refused(tmp_path):
+    """No `.git` at all -- the very first probe (`git rev-parse --git-dir`) must fail closed."""
+    not_a_repo = tmp_path / "not-a-repo"
+    not_a_repo.mkdir()
+    ok, detail = mcc.main_catalogue_coherence(str(not_a_repo))
+    assert not ok
+    assert "not a readable git repository" in detail
+
+
+def test_an_unresolvable_default_branch_is_refused(repo):
+    """A real repo, but the NAMED default branch does not exist -- e.g. a shallow clone missing the
+    branch, or a typo'd --default-branch. This is the reviewer's named scenario: silencing this by
+    turning it into a soft pass would make the check never run again."""
+    _write_manifests(str(repo), "1.0.0", sha="0" * 40)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "v1.0.0 content")
+
+    ok, detail = mcc.main_catalogue_coherence(str(repo), default_branch="does-not-exist")
+    assert not ok
+    assert "does not resolve" in detail
+
+
+def test_no_committed_marketplace_json_is_refused(repo):
+    """The default branch exists and has commits, but none of them ever added
+    .claude-plugin/marketplace.json."""
+    (repo / "README.md").write_text("nothing to see here\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "unrelated content, no manifest ever added")
+
+    ok, detail = mcc.main_catalogue_coherence(str(repo))
+    assert not ok
+    assert "carries no committed" in detail
+
+
+def test_malformed_marketplace_json_is_refused(repo):
+    """The committed marketplace.json is not valid JSON at all."""
+    os.makedirs(str(repo / ".claude-plugin"), exist_ok=True)
+    (repo / ".claude-plugin" / "marketplace.json").write_text("{not json")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "malformed marketplace.json")
+
+    ok, detail = mcc.main_catalogue_coherence(str(repo))
+    assert not ok
+    assert "unreadable" in detail
+
+
+def test_marketplace_json_with_no_foundry_entry_is_refused(repo):
+    """Valid JSON, a real plugins[] list, but no entry named 'foundry' -- and MORE than one entry,
+    so select_plugin_entry cannot fall through the single-plugin unambiguous case."""
+    os.makedirs(str(repo / ".claude-plugin"), exist_ok=True)
+    (repo / ".claude-plugin" / "marketplace.json").write_text(json.dumps(
+        {"plugins": [{"name": "other-plugin-a", "version": "1.0.0"},
+                     {"name": "other-plugin-b", "version": "1.0.0"}]}))
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "marketplace.json with no foundry entry")
+
+    ok, detail = mcc.main_catalogue_coherence(str(repo))
+    assert not ok
+    assert "foundry" in detail.lower()
+
+
+def test_entry_with_no_version_is_refused(repo):
+    """The 'foundry' entry exists but declares no `version` key at all."""
+    os.makedirs(str(repo / ".claude-plugin"), exist_ok=True)
+    (repo / ".claude-plugin" / "marketplace.json").write_text(json.dumps(
+        {"plugins": [{"name": "foundry", "source": {"sha": "0" * 40}}]}))
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "foundry entry with no version")
+
+    ok, detail = mcc.main_catalogue_coherence(str(repo))
+    assert not ok
+    assert "no version" in detail
+
+
+def test_entry_with_no_source_is_refused(repo):
+    """The 'foundry' entry declares a version but no `source` key at all -- sha comes back "" and
+    must be convicted the same way a malformed sha is, not silently skipped."""
+    os.makedirs(str(repo / ".claude-plugin"), exist_ok=True)
+    (repo / ".claude-plugin" / "marketplace.json").write_text(json.dumps(
+        {"plugins": [{"name": "foundry", "version": "1.0.0"}]}))
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "foundry entry with no source")
+
+    ok, detail = mcc.main_catalogue_coherence(str(repo))
+    assert not ok
+    assert "40-character" in detail
+
+
+def test_pinned_commit_missing_plugin_json_is_refused(repo):
+    """source.sha resolves to a REAL commit, ancestor of main, but that commit never carried
+    .claude-plugin/plugin.json at all -- e.g. it predates the plugin manifest entirely."""
+    (repo / "README.md").write_text("pre-plugin.json content\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "root, before plugin.json existed")
+    root_sha = git(repo, "rev-parse", "HEAD")
+
+    _write_manifests(str(repo), "1.0.0", sha=root_sha)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "add manifests, pin to the pre-plugin.json root")
+
+    ok, detail = mcc.main_catalogue_coherence(str(repo))
+    assert not ok
+    assert "has no .claude-plugin/plugin.json" in detail
+
+
+def test_pinned_commit_unparseable_plugin_json_is_refused(repo):
+    """source.sha resolves to a real, ancestor commit whose plugin.json is not valid JSON. The
+    BRANCH TIP's own marketplace.json/plugin.json stay well-formed -- only the PINNED commit's
+    plugin.json is malformed, isolating this from the malformed-marketplace.json case above."""
+    os.makedirs(str(repo / ".claude-plugin"), exist_ok=True)
+    (repo / ".claude-plugin" / "plugin.json").write_text("{not json")
+    (repo / ".claude-plugin" / "marketplace.json").write_text(json.dumps(
+        {"plugins": [{"name": "foundry", "version": "1.0.0", "source": {"sha": "0" * 40}}]}))
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "content commit with malformed plugin.json")
+    content_sha = git(repo, "rev-parse", "HEAD")
+
+    _write_manifests(str(repo), "1.0.0", sha=content_sha)   # re-pin: well-formed manifests at HEAD
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "re-pin to the malformed-plugin.json content commit")
+
+    ok, detail = mcc.main_catalogue_coherence(str(repo))
+    assert not ok
+    assert "unreadable" in detail
+
+
+def test_git_unavailable_is_refused(repo, monkeypatch):
+    """git itself cannot be RUN at all -- e.g. a CI image or session PATH missing the binary. The
+    fixture is built with the REAL git before PATH is stripped, since building it needs git; only
+    the check itself runs with git unreachable."""
+    _write_manifests(str(repo), "1.0.0", sha="0" * 40)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "v1.0.0 content")
+
+    empty_bin = repo.parent / "empty-bin"
+    empty_bin.mkdir()
+    monkeypatch.setenv("PATH", str(empty_bin))
+
+    ok, detail = mcc.main_catalogue_coherence(str(repo))
+    assert not ok
+    assert "could not run" in detail
+
+
 # --------------------------------------------------------------------------------------- AC-MCC-6
 def _fixture_digest(repo):
     """A recursive digest over every path under the fixture (including .git) so a mutation on ANY
