@@ -35,10 +35,56 @@ def _marketplace():
 
 
 # ------------------------------------------------------------------ the version identity --
+def _version_tuple(v):
+    return tuple(int(x) for x in v.split("."))
+
+
+def _manifests_agreement_failures(plugin_version, mp_version, mp_ref):
+    """RELAXED by feat-foundry-install-line-unpinning (AC-ILU-11/12): the deferred-bump sequencing
+    lands the `marketplace.json` version/ref bump in the re-pin commit R2, ONE COMMIT AFTER the
+    release commit R bumps `plugin.json` alone (so R never advertises a catalogue version whose
+    pinned commit does not carry it). marketplace.json MAY therefore lag plugin.json -- but it must
+    never LEAD it (a catalogue can't advertise a version cut before its own commit exists), and
+    `source.ref` must always name the catalogue's OWN advertised version, never plugin.json's.
+    Pure and parameterized (no repo I/O) so both the real-tree test below and the synthetic-lag
+    test (AC-ILU-12) drive the same comparison."""
+    failures = []
+    if _version_tuple(mp_version) > _version_tuple(plugin_version):
+        failures.append(
+            "marketplace.json (%s) is AHEAD of plugin.json (%s)" % (mp_version, plugin_version)
+        )
+    want_ref = "v" + mp_version
+    if mp_ref != want_ref:
+        failures.append(
+            "marketplace source.ref %r != %r (its own advertised version)" % (mp_ref, want_ref)
+        )
+    return failures
+
+
 def test_manifests_agree():
     mp = _marketplace()
-    assert mp["version"] == _plugin_version(), "plugin.json and marketplace.json disagree"
-    assert mp["source"]["ref"] == "v" + _plugin_version(), "marketplace ref must be vVERSION"
+    failures = _manifests_agreement_failures(_plugin_version(), mp["version"], mp["source"]["ref"])
+    assert not failures, "; ".join(failures)
+
+
+def test_marketplace_may_lag_plugin_version_between_r_and_r2():
+    """AC-ILU-12: a tree in which marketplace.json lags plugin.json by one release -- the exact
+    shape the deferred sequencing (AC-ILU-11) produces between the release commit R (plugin.json
+    bumped alone) and the re-pin commit R2 (marketplace.json bumped, together with source.sha) --
+    SHALL PASS, while still requiring source.ref to equal 'v' prefixed to the catalogue's OWN
+    (lagging) advertised version, and still refusing a catalogue that gets AHEAD of plugin.json."""
+    # the R-state shape: plugin.json ahead, marketplace.json lagging by one release, but internally
+    # self-consistent (ref names its own version) -- MUST PASS.
+    failures = _manifests_agreement_failures("1.7.0", "1.6.0", "v1.6.0")
+    assert not failures, "a one-release lag must PASS: %r" % (failures,)
+
+    # a lagging catalogue whose ref does NOT name its own version must still fail.
+    failures = _manifests_agreement_failures("1.7.0", "1.6.0", "v1.7.0")
+    assert failures, "a marketplace ref naming a version it does not carry must still fail"
+
+    # a catalogue that gets AHEAD of plugin.json (the nonsensical direction) must still fail.
+    failures = _manifests_agreement_failures("1.6.0", "1.7.0", "v1.7.0")
+    assert failures, "marketplace.json must never advertise a version plugin.json has not reached"
 
 
 def test_permission_floor_names_the_shipped_plugin_version():
@@ -61,15 +107,63 @@ def test_permission_floor_names_the_shipped_plugin_version():
         assert got == want, f"{rel} says {got!r}, plugin.json ships {want!r}"
 
 
+_INSTALL_PIN_RE = re.compile(r"marketplace add \S*lukasrepublic/agentic-foundry(#v[\d.]+)")
+_MARKETPLACE_ADD_INSTRUCTION_RE = re.compile(r"claude plugin marketplace add")
+
+
 def test_every_install_pin_matches_the_manifests():
-    """Every `marketplace add …#vX.Y.Z` snippet in user-facing docs pins the shipped version.
-    The exact drift that shipped once: README pinning one version while claiming another."""
-    want = "#v" + _plugin_version()
+    """INVERTED by feat-foundry-install-line-unpinning (AC-ILU-3). WHAT CHANGED AND WHY: a
+    `marketplace add lukasrepublic/agentic-foundry#vX.Y.Z` snippet pins the marketplace
+    REGISTRATION (the index), which lands verbatim in an adopter's settings.json and makes every
+    later `claude plugin update` re-read that FROZEN ref forever -- truthfully reporting "already
+    at the latest version" even after a new tag publishes. This function's NAME is unchanged
+    (checkpoints reference it by node id); its polarity is reversed, not deleted: user-facing docs
+    now SHALL carry no version-literal install pin at all, so a re-introduced one still fails CI.
+    NOTE this is deliberately EXCLUDED from `_PREEXISTING_DOCS_CLAIMS_CASES` below -- see that
+    tuple's comment.
+
+    Security-review FIX 3. (a) NON-VACUITY FLOOR: the pre-inversion check's `assert pins` failed
+    CLOSED the instant its regex stopped matching anything; a bare `assert not pins` on its own
+    would instead go GREEN the same way, silently passing for the wrong reason if the pattern
+    drifted. Each doc must still carry a recognized `claude plugin marketplace add` instruction.
+    (b) the pin pattern now tolerates an arbitrary non-whitespace prefix ahead of the bare
+    `owner/repo` slug, so a pin re-introduced in the full URL form
+    (`marketplace add https://github.com/lukasrepublic/agentic-foundry#v1.6.0`) is caught too."""
     for doc in (README, QUICKSTART, TROUBLESHOOTING):
-        pins = re.findall(r"marketplace add lukasrepublic/agentic-foundry(#v[\d.]+)", _read(doc))
-        assert pins, f"{os.path.basename(doc)} has no install pin to check"
-        for pin in pins:
-            assert pin == want, f"{os.path.basename(doc)} pins {pin}, shipped is {want}"
+        text = _read(doc)
+        assert _MARKETPLACE_ADD_INSTRUCTION_RE.search(text), (
+            f"{os.path.basename(doc)} carries no recognized `claude plugin marketplace add` "
+            "instruction -- either the doc lost its install line or the scanner's regex stopped "
+            "matching real lines (both must fail this test, not pass it silently)"
+        )
+        pins = _INSTALL_PIN_RE.findall(text)
+        assert not pins, f"{os.path.basename(doc)} still pins the registration to {pins}"
+
+
+# ------------------------------------------------------------ security review FIX 8 --
+def test_install_pin_regex_convicts_an_injected_pin():
+    """Security-review FIX 8: `test_every_install_pin_matches_the_manifests`'s restored
+    non-vacuity floor (`_MARKETPLACE_ADD_INSTRUCTION_RE`) proves the SCANNER still finds real
+    install lines; it proves NOTHING about `_INSTALL_PIN_RE` specifically. If that second pattern
+    alone drifted to match nothing, the test would go green for the wrong reason -- the exact
+    fail-open class FIX 3 was raised to close, one regex over. Mirrors the AC-ILU-4 control: drive
+    `_INSTALL_PIN_RE` directly over IN-MEMORY injected text (never a real shipped doc), proving it
+    convicts a pinned line, a pinned URL-form line, and does NOT convict a tagless one."""
+    pinned_bare = "claude plugin marketplace add lukasrepublic/agentic-foundry#v9.9.9"
+    pinned_url = (
+        "claude plugin marketplace add https://github.com/lukasrepublic/agentic-foundry#v9.9.9"
+    )
+    tagless = "claude plugin marketplace add lukasrepublic/agentic-foundry"
+
+    assert _INSTALL_PIN_RE.findall(pinned_bare) == ["#v9.9.9"], (
+        "an injected bare-slug version literal was NOT convicted: %r" % pinned_bare
+    )
+    assert _INSTALL_PIN_RE.findall(pinned_url) == ["#v9.9.9"], (
+        "an injected full-URL-form version literal was NOT convicted: %r" % pinned_url
+    )
+    assert not _INSTALL_PIN_RE.findall(tagless), (
+        "a tagless line was wrongly convicted -- the pattern is unconditionally red: %r" % tagless
+    )
 
 
 def test_readme_status_matches_the_manifests():
@@ -647,9 +741,16 @@ def test_docs_truth_negative_controls_all_fire():
 
 
 # --- AC-DTR-4 -- additive-only: every pre-existing case still defined, byte-identical body -----
+# `test_manifests_agree` and `test_every_install_pin_matches_the_manifests` are DELIBERATELY
+# ABSENT from this list. feat-foundry-install-line-unpinning (AC-ILU-3/11/12) is an explicitly
+# authorized, contract-driven change to both function bodies -- an inversion and a relaxation, not
+# an accidental weakening -- and this "unweakened" guard exists to catch the LATTER, not to freeze
+# a body a later, authorized atom is chartered to change. Both function NAMES stay in the suite
+# (checkpoints reference them by node id); only their exemption from byte-identity tracking here is
+# new. See tests/test_bootstrap_install_pin.py's matching note on AC-BIP-13/AC-ILU-3, and the memory
+# note "Atom-scoped checks decay on merge" for why a merge-base diff assertion cannot outlive its
+# own atom's authorized follow-on.
 _PREEXISTING_DOCS_CLAIMS_CASES = (
-    "test_manifests_agree",
-    "test_every_install_pin_matches_the_manifests",
     "test_readme_status_matches_the_manifests",
     "test_changelog_has_a_section_for_the_shipped_version",
     "test_test_count_claim_is_true",
@@ -751,3 +852,76 @@ def test_no_journey_narration_in_shipped_docs():
             offenders.append(rel)
     assert not offenders, f"journey narration reintroduced in: {offenders}"
 
+
+# ── the remove/add argument asymmetry ──────────────────────────────────────────────────────────
+# SETTLED BY EXECUTION 2026-08-31 against an isolated CLAUDE_CONFIG_DIR, not by reading docs:
+#   claude plugin marketplace remove lukasrepublic/agentic-foundry
+#     -> "Marketplace 'lukasrepublic/agentic-foundry' not found"  AND THE REGISTRATION SURVIVES
+#   claude plugin marketplace remove agentic-foundry              -> succeeds
+# `remove` (and `update`) take the registered marketplace NAME; `add` takes the owner/repo SOURCE.
+# docs/troubleshooting.md shipped the slug form, so its recovery errored at the remove step, left
+# the stale registration in place, and the subsequent `add` then refused with "its network source
+# differs from the one declared" -- wedging the operator inside the unwedging procedure.
+# That evidence lived only in one session transcript; this test is what makes it survive.
+_REMOVE_SLUG_RE = re.compile(r"marketplace remove\s+(?:--\S+\s+\S+\s+)*(\S+)")
+_ADD_ARG_RE = re.compile(r"marketplace add\s+(?:--\S+\s+\S+\s+)*(\S+)")
+
+
+def _remove_add_offenders(lines, where):
+    """(offenders, seen_remove, seen_add) for one iterable of lines. Pure, so the locators
+    themselves can be driven over in-memory strings by the negative control below."""
+    offenders, seen_remove, seen_add = [], 0, 0
+    for n, line in enumerate(lines, 1):
+        m = _REMOVE_SLUG_RE.search(line)
+        if m:
+            seen_remove += 1
+            if "/" in m.group(1) and "<" not in m.group(1):
+                offenders.append("%s:%d passes an owner/repo slug to remove" % (where, n))
+        m = _ADD_ARG_RE.search(line)
+        if m:
+            seen_add += 1
+            if "/" not in m.group(1) and "<" not in m.group(1):
+                offenders.append("%s:%d passes a bare name to add" % (where, n))
+    return offenders, seen_remove, seen_add
+
+
+def test_marketplace_remove_add_locators_convict_and_spare():
+    """The locators themselves, driven over in-memory lines -- so a regex that drifted to match
+    NOTHING is convicted here rather than turning the corpus scan green for the wrong reason.
+    That fail-open class is exactly what this pair of tests exists to prevent, so it must not be
+    reintroduced by the very check that prevents it."""
+    bad, _, _ = _remove_add_offenders(
+        ["claude plugin marketplace remove lukasrepublic/agentic-foundry --scope user"], "x")
+    assert len(bad) == 1 and "slug to remove" in bad[0]
+    bad, _, _ = _remove_add_offenders(
+        ["claude plugin marketplace add agentic-foundry --scope user"], "x")
+    assert len(bad) == 1 and "bare name to add" in bad[0]
+    # correct forms, including flag-first ordering, are spared
+    ok, sr, sa = _remove_add_offenders([
+        "claude plugin marketplace remove agentic-foundry --scope user",
+        "claude plugin marketplace add lukasrepublic/agentic-foundry --scope project",
+        "claude plugin marketplace remove --scope user agentic-foundry",
+        "claude plugin marketplace add --scope user lukasrepublic/agentic-foundry",
+        "claude plugin marketplace add <owner>/<repo>",
+    ], "x")
+    assert ok == [], ok
+    assert sr == 2 and sa == 3, (sr, sa)
+
+
+def test_marketplace_remove_takes_the_name_and_add_takes_the_source():
+    """`marketplace remove` names the marketplace; `marketplace add` names owner/repo. Not swappable."""
+    import glob as _glob
+    roots = [os.path.join(REPO_ROOT, "docs"), os.path.join(REPO_ROOT, "skills")]
+    files = [f for r in roots for f in _glob.glob(os.path.join(r, "**", "*.md"), recursive=True)]
+    files.append(os.path.join(REPO_ROOT, "README.md"))
+    assert len(files) > 1, "no shipped markdown found -- the scan would be vacuous"
+    offenders, seen_remove, seen_add = [], 0, 0
+    for path in files:
+        with open(path, encoding="utf-8") as fh:
+            o, sr, sa = _remove_add_offenders(fh, path)
+        offenders += o
+        seen_remove += sr
+        seen_add += sa
+    assert seen_remove, "no `marketplace remove` instruction found -- the scan would be vacuous"
+    assert seen_add, "no `marketplace add` instruction found -- the add half would be vacuous"
+    assert not offenders, "marketplace remove/add argument forms are swapped:\n" + "\n".join(offenders)

@@ -160,7 +160,7 @@ npx create-agentic-workspace --dir my-workspace
 Already have a repo?
 
 ```bash
-claude plugin marketplace add lukasrepublic/agentic-foundry#v1.6.0
+claude plugin marketplace add lukasrepublic/agentic-foundry
 claude plugin install foundry@agentic-foundry
 # in your repo's Claude Code session:
 /foundry:init       # wire your repo (operator registry, hooks, project config)
