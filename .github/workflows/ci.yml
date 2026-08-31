@@ -81,6 +81,16 @@ jobs:
           [ -s "$INIT_SLIMMING_BASE" ] || { echo "::error::empty AC-INS-5 baseline"; exit 1; }
           export INIT_SLIMMING_BASE
           python3 -m pytest tests/ -q
+      # feat-foundry-main-catalogue-coherence (AC-MCC-5). The hermetic pytest module above already
+      # ran on both push AND pull_request. This step is the LIVE-TREE assertion, and it MUST stay
+      # scoped to push-to-default-branch only: main legitimately advertises a version whose
+      # source.sha still names the previous release's revision for the span between the
+      # version-bump PR (R) and the re-pin PR (R2) — see the spec's "Clarifications". Removing the
+      # `if:` guard would turn every version-bump PR permanently red and make the release runbook
+      # unexecutable, trading a silent defect for a blocked release.
+      - name: Default-branch catalogue coherence (push-to-main only)
+        if: github.event_name == 'push'
+        run: python3 scripts/foundry_main_catalogue.py --tree . --default-branch main
       - name: Graph builder selftest
         run: python3 scripts/foundry-build-citation-graph.py --selftest
       - name: Graph MCP selftest

@@ -10,7 +10,9 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 
 ## Unreleased
 
-**The documented install line stops freezing the adopter's catalogue.** Every documented
+### The documented install line stops freezing the adopter's catalogue (feat-foundry-install-line-unpinning)
+
+Every documented
 marketplace-add install line (README, QUICKSTART, troubleshooting, the brownfield how-to, and the
 release runbook itself) registers the marketplace **tagless** now — no version literal on the
 source argument. A tag-pinned registration lands verbatim in an adopter's `settings.json` and every
@@ -31,6 +33,31 @@ passes), each carrying a negative control proving the inversion discriminates.
 path. The `npx create-agentic-workspace` pre-session bootstrap and the existing-repo installer
 still compose a pinned source in code; the sibling `feat-foundry-installer-unpinning` carries
 that half.
+
+### The default branch's catalogue is verified on every push (feat-foundry-main-catalogue-coherence)
+
+Sibling work removes the `#vX.Y.Z` tag from this plugin's marketplace registration so adopters can
+upgrade with one command. That move shifts catalogue resolution from the release **tag**'s
+`.claude-plugin/marketplace.json` — graded at cut time by `tag_pin_coherence`
+(`scripts/foundry-cut-release.py:306`) — to the **default branch**'s blob, which until now was
+graded by nothing.
+
+`scripts/foundry_main_catalogue.py` is the replacement control: a read-only, offline check over the
+default branch's checked-in `.claude-plugin/marketplace.json` for the `plugins[]` entry named
+`foundry`. It refuses unless `source.sha` is a full 40-character lowercase hex id, resolves to a
+plain revision (never an annotated-tag object), is an ancestor of the default branch, and the
+`.claude-plugin/plugin.json` checked in at that revision declares the same version the catalogue
+advertises. Wired into `.github/workflows/ci.yml` as a step scoped to push-to-`main` only — never
+on pull requests, since the version-bump PR in the release runbook legitimately advertises the new
+version before the re-pin PR lands the matching pin.
+
+This is a **detective** control, not a preventive one: it reports an incoherent default branch
+after the fact; it does not stop one from being pushed.
+
+**No `create-agentic-workspace` change in this entry** — this is a plugin-repo CI/governance-only
+atom; the scaffold it writes is untouched.
+
+Spec: `specs/features/foundry/governance/main-catalogue-coherence/` (workspace), authorized.
 
 ## v1.6.0
 
