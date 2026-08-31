@@ -91,7 +91,14 @@ export function classifyPin(settingsObj, pins) {
   // GitHub owner/repo is CASE-INSENSITIVE, so `LukasRepublic/agentic-foundry` is the SAME
   // repository. Comparing byte-exact would classify it unpinned and tell the operator "not ours",
   // which is false. Normalize both sides; the comparison stays exact-match otherwise.
-  const sameRepo = typeof src?.repo === 'string' && !!ourRepo
+  // Gate on the ASCII shape GitHub can actually issue BEFORE folding. toLowerCase() is
+  // locale-independent but NOT injective: U+212A KELVIN SIGN folds to ASCII 'k', and this repo's
+  // name contains one -- so "lu\u212Aasrepublic/agentic-foundry" would fold equal and read as
+  // ours. No such string can name a real GitHub repository, so it buys a false reassurance rather
+  // than attacker-controlled code; the shape gate closes the class outright, including whatever
+  // confusable the next Unicode revision adds.
+  const REPO_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+  const sameRepo = typeof src?.repo === 'string' && REPO_RE.test(src.repo) && !!ourRepo
     && src.repo.toLowerCase() === ourRepo.toLowerCase();
   const isOurSource = !!src && sameRepo && src.source === 'github';
   const refAbsent = isOurSource && ref === undefined;

@@ -414,3 +414,36 @@ test('the_same_repo_in_different_case_is_still_ours', () => {
     { extraKnownMarketplaces: { [PINS.marketplace_name]: { source: { source: 'github', repo: upper } } } }, PINS).state;
   assert.equal(state, 'pinned', 'GitHub owner/repo is case-insensitive -- the same repo must not read as foreign');
 });
+
+test('a_unicode_confusable_repo_does_not_fold_into_ours', () => {
+  // U+212A KELVIN SIGN lowercases to ASCII 'k'. Without an ASCII shape gate this folds equal to
+  // lukasrepublic/... and reads as pinned. No real GitHub name can contain it, so the damage is a
+  // false reassurance rather than a live path -- but it is a class the shape gate closes outright.
+  const confusable = PINS.marketplace_repo.replace('k', 'K');
+  assert.notEqual(confusable, PINS.marketplace_repo, 'the fixture must actually differ');
+  assert.equal(confusable.toLowerCase(), PINS.marketplace_repo.toLowerCase(), 'and must fold equal');
+  const pin = classifyPin(
+    { extraKnownMarketplaces: { [PINS.marketplace_name]: { source: { source: 'github', repo: confusable } } } }, PINS);
+  assert.equal(pin.state, 'unpinned');
+  assert.equal(pin.reason, 'source');
+});
+
+test('version_skew_fires_for_a_well_formed_ref_naming_another_version', () => {
+  // skew was asserted only NEGATIVELY -- replacing it with a constant false passed the whole suite,
+  // the same unasserted-field defect just fixed for `reason`.
+  const ours = (ref) => ({ source: { source: 'github', repo: PINS.marketplace_repo, ref }, autoUpdate: false });
+  const at = (ref) => classifyPin({ extraKnownMarketplaces: { [PINS.marketplace_name]: ours(ref) } }, PINS);
+  const stale = at('v0.9.0');
+  assert.equal(stale.state, 'pinned');
+  assert.equal(stale.skew, true, 'a ref naming another version must be reported as skewed');
+  const current = at(`v${PINS.plugin_version}`);
+  assert.equal(current.state, 'pinned');
+  assert.equal(current.skew, false, 'the matching ref must not be reported as skewed');
+});
+
+test('an_empty_pin_block_repo_cannot_match_an_empty_entry_repo', () => {
+  const brokenPins = { ...PINS, marketplace_repo: '' };
+  const entry = { source: { source: 'github', repo: '' } };
+  const pin = classifyPin({ extraKnownMarketplaces: { [PINS.marketplace_name]: entry } }, brokenPins);
+  assert.equal(pin.state, 'unpinned', 'a broken pin block must fail closed, never match by degeneracy');
+});
