@@ -8,8 +8,10 @@ ordering hole is closed.
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
+from pathlib import Path
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CUT = os.path.join(REPO_ROOT, "scripts", "foundry-cut-release.py")
@@ -178,6 +180,81 @@ def test_suite_runner_env_is_scrubbed_of_pytest_addopts(tmp_path):
     assert ok is False, "PYTEST_ADDOPTS from the environment silently weakened the gate: %s" % detail
 
 
+# ------------------------------------------------------------ AC-ILU-13 (feat-foundry-install-line-unpinning) --
+def _add_preceding_changelog_entry(tree, preceding_version):
+    """Appends a `## v<preceding_version> — test` section AFTER the target's own section (the
+    `_tree` fixture writes exactly one) and commits, so `_immediately_preceding_release` has a real
+    CHANGELOG-recorded prior release to find -- grounding the target-or-preceding tolerance in the
+    project's own recorded history rather than a bare semver guess."""
+    path = Path(tree) / "CHANGELOG.md"
+    path.write_text(
+        path.read_text(encoding="utf-8") + "\n## v%s — test\n\n- entry\n" % preceding_version,
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "-C", str(tree), "add", "-A"], capture_output=True, text=True, timeout=30)
+    subprocess.run(["git", "-C", str(tree), "commit", "-qm", "preceding changelog entry"],
+                   capture_output=True, text=True, timeout=30)
+
+
+def test_deferred_catalogue_bump_is_not_refused(tmp_path):
+    """AC-ILU-13: the deferred-bump sequencing AC-ILU-11 prescribes -- release commit R bumps
+    plugin.json ALONE, leaving marketplace.json's version/ref deliberately at the PREVIOUS release
+    (the bump lands one commit later, in the re-pin commit R2) -- must NOT be refused on that basis,
+    and the publish plan must still be emitted. Before this atom, preflight's
+    'marketplace.json version == target' AND 'marketplace source.ref == vTARGET' preconditions BOTH
+    refused every such tree with "bump BOTH manifests", making the prescribed sequencing
+    unexecutable against the gate that enforces it -- this covers both halves explicitly."""
+    m = _mod()
+    # R-shape: plugin.json at the target, marketplace.json deliberately left at the
+    # CHANGELOG-recorded PRECEDING release (both version and source.ref lagging, self-consistent
+    # with each other) -- exactly what AC-ILU-11's deferred sequencing produces.
+    tree = _tree(tmp_path / "deferred", version="9.9.9", plugin_v="9.9.9",
+                 mp_v="9.9.8", mp_ref="v9.9.8")
+    _add_preceding_changelog_entry(tree, "9.9.8")
+    r = m.cut_release(tree, "9.9.9",
+                      acceptance_fn=lambda **_k: {"verdict": "pass"},
+                      er_state_fn=lambda *_a, **_k: {},
+                      suite_runner=_real_runner)
+    assert r["state"] == "ready", (
+        "a deferred catalogue bump must not be refused: %r" % (r.get("failures"),)
+    )
+    assert r["plan"], "a deferred catalogue bump must still emit the publish plan"
+    metadata = [c for c in r["preflight"] if c[0] != m.SUITE_CHECK_LABEL]
+    assert all(c[1] for c in metadata), (
+        "the deferred (lagging-but-self-consistent) marketplace.json must pass every metadata "
+        "precondition: %r" % (metadata,)
+    )
+
+    # the converse: marketplace.json AHEAD of target must still refuse -- proving the relaxation
+    # tolerates the recorded PRECEDING release only, not an arbitrary mismatch.
+    ahead_tree = _tree(tmp_path / "ahead", version="9.9.9", plugin_v="9.9.9",
+                       mp_v="10.0.0", mp_ref="v10.0.0")
+    pf = m.preflight(ahead_tree, "9.9.9", suite_runner=lambda _t: (0, "1 passed", ""))
+    assert any(not c[1] for c in pf), "marketplace.json AHEAD of target must still refuse"
+
+    # a marketplace.json lagging by MORE than the one recorded preceding release must still
+    # refuse -- "never arbitrary": only target or the immediately-preceding release is tolerated.
+    too_far_tree = _tree(tmp_path / "too-far", version="9.9.9", plugin_v="9.9.9",
+                         mp_v="9.9.7", mp_ref="v9.9.7")
+    _add_preceding_changelog_entry(too_far_tree, "9.9.8")   # the recorded preceding release is 9.9.8, not 9.9.7
+    pf3 = m.preflight(too_far_tree, "9.9.9", suite_runner=lambda _t: (0, "1 passed", ""))
+    assert any(not c[1] for c in pf3), \
+        "a marketplace.json further behind than the one recorded preceding release must still refuse"
+
+    # THE SOURCE.REF HALF, EXPLICITLY (the coordinator's correction): a marketplace.json whose
+    # version is the tolerated preceding release, but whose OWN source.ref does not name that same
+    # version, must still refuse -- self-consistency is still required on the ref side too, proving
+    # a future change that re-tightens only the version check (and not source.ref) is convicted.
+    inconsistent_tree = _tree(tmp_path / "inconsistent", version="9.9.9", plugin_v="9.9.9",
+                              mp_v="9.9.8", mp_ref="v9.9.9")
+    _add_preceding_changelog_entry(inconsistent_tree, "9.9.8")
+    pf2 = m.preflight(inconsistent_tree, "9.9.9", suite_runner=lambda _t: (0, "1 passed", ""))
+    assert any(not c[1] for c in pf2), \
+        "a marketplace.json source.ref naming a version it does not itself carry must still refuse"
+    ref_check = next(c for c in pf2 if c[0] == "marketplace source.ref == vTARGET")
+    assert ref_check[1] is False, "the source.ref self-consistency check specifically must refuse"
+
+
 def test_antitaut_same_tree_green_test_proceeds(tmp_path):
     """The positive control: identical tree, test passing -> reaches acceptance and emits a plan. Without
     this, the refusal above could be caused by a malformed fixture rather than by the suite."""
@@ -190,3 +267,149 @@ def test_antitaut_same_tree_green_test_proceeds(tmp_path):
     assert r["state"] == "ready", r.get("failures")
     assert r["plan"], "a green tree must still emit the publish plan"
     assert any(c[0] == m.SUITE_CHECK_LABEL and c[1] for c in r["preflight"])
+
+
+
+
+# ------------------------------------------------------------ security review FIX 1/6 (feat-foundry-install-line-unpinning) --
+def _repin_comment(plan):
+    """The plan's human-readable `# edit .claude-plugin/marketplace.json: ...` re-pin instruction
+    comment, or None if no such comment is present. Isolated as a pure function so the positive
+    test and its negative control drive the exact same locator."""
+    return next(
+        (s for s in plan if isinstance(s, str) and s.lstrip().startswith("#")
+         and ".claude-plugin/marketplace.json" in s and "source.sha" in s),
+        None,
+    )
+
+
+def _repin_instruction_clause(comment):
+    """Security-review FIX 6: the shipped comment is shaped
+    `# edit .claude-plugin/marketplace.json: <INSTRUCTION>  # <RATIONALE prose>` -- two comment
+    markers, not one. The FIX 1 check originally searched the WHOLE string for the substrings
+    "version"/"source.ref"/the version number, but the RATIONALE prose independently contains
+    "plugins[].version", "advertising the wrong version", and (inside its own worked example)
+    the literal version digits -- so reverting ONLY the instruction while leaving the rationale
+    untouched left that check green, which is exactly the regression it exists to catch. This
+    isolates the instruction clause: the text between the comment's own leading '#' and the
+    SECOND '#' (the rationale's opening marker). A comment with no second '#' is entirely
+    instruction."""
+    if comment is None:
+        return ""
+    parts = comment.split("#", 2)
+    return parts[1] if len(parts) > 1 else ""
+
+
+# Structural (regex-captured assignment), never substring presence: a `plugins[foundry].version =
+# <value>` assignment naming exactly the target version, a `source.sha = ...` assignment, and a
+# `source.ref = ...` assignment, each present at all -- both anchored to a `key <spacing> = <spacing> value` shape, not merely to the
+# words "version"/"source.ref" occurring anywhere (which rationale prose also satisfies).
+_VERSION_ASSIGNMENT_RE = re.compile(r"plugins\[foundry\]\.version\s*=\s*([0-9][0-9.]*)")
+_SOURCE_SHA_ASSIGNMENT_RE = re.compile(r"source\.sha\s*=\s*\S")
+_SOURCE_REF_ASSIGNMENT_RE = re.compile(r"source\.ref\s*=\s*v?[0-9][0-9.]*")
+
+
+def _repin_comment_names_the_version_bump(comment, version):
+    """True iff the re-pin comment's INSTRUCTION CLAUSE (never its rationale prose) structurally
+    assigns `plugins[foundry].version` to the target version, AND still names `source.sha` and
+    `source.ref` assignments. Pure and parameterized so both the real plan (positive) and synthetic pre-fix and
+    realistic-regression comments (negative controls) drive the exact same check."""
+    clause = _repin_instruction_clause(comment)
+    if not clause:
+        return False
+    if not _SOURCE_SHA_ASSIGNMENT_RE.search(clause):
+        return False
+    m = _VERSION_ASSIGNMENT_RE.search(clause)
+    if not m or m.group(1) != version:
+        return False
+    return bool(_SOURCE_REF_ASSIGNMENT_RE.search(clause))
+
+
+def test_publish_plan_names_the_version_bump_in_r2(tmp_path):
+    """Security-review FIX 1: with the deferred-bump sequencing (AC-ILU-11), R2 is the ONLY commit
+    that ever bumps marketplace.json's `version` -- so the emitted publish plan's re-pin step MUST
+    tell the operator to set it there, alongside `source.sha` and `source.ref`. Before this fix the
+    emitted comment named only `source.sha` and `source.ref`; an operator following it verbatim
+    produced an R2 with `version` still at the PREVIOUS release while `source.ref` named the new
+    tag -- a mismatch `tag_pin_coherence` does NOT convict (it inspects `source.ref`, never
+    `plugins[].version`), so `--verify-tag` would print TAG-PIN-COHERENT over a catalogue
+    advertising a version its own commit does not carry."""
+    m = _mod()
+    plan = m.publish_plan(str(tmp_path), "9.9.9")
+    comment = _repin_comment(plan)
+    assert comment is not None, "no re-pin instruction comment found in the emitted plan"
+    assert _repin_comment_names_the_version_bump(comment, "9.9.9"), (
+        "the re-pin instruction must name the `version` bump, not just source.sha/source.ref -- "
+        "otherwise the emitted plan under-specifies R2: %r" % (comment,)
+    )
+
+
+def test_publish_plan_version_bump_assertion_is_not_vacuous():
+    """Security-review FIX 1/6 meta-test. Two negative controls, not one:
+
+    (a) the bare pre-fix comment (no rationale at all) -- the original control, kept because a
+        comment carrying NO rationale must still be convicted.
+    (b) THE REALISTIC REGRESSION (security-review FIX 6): derived from the REAL, current plan's
+        comment -- its instruction clause reverted to the pre-fix shape, its rationale prose left
+        COMPLETELY INTACT. The rationale independently contains "version" and "plugins[].version"
+        (it carries NO version digits -- those live in the instruction clause, on the other side of
+        the very boundary this control exists to police) -- so the prior whole-string
+        substring check passed this shape, which is precisely the defect FIX 6 closes. Both
+        controls must be convicted for the assertion above to be trusted."""
+    pre_fix_comment = (
+        "# edit .claude-plugin/marketplace.json: set plugins[foundry].source.sha = $CONTENT "
+        "(and source.ref = v9.9.9)"
+    )
+    assert not _repin_comment_names_the_version_bump(pre_fix_comment, "9.9.9"), (
+        "the pre-fix-shaped comment (no `version` mention, no rationale) was wrongly accepted"
+    )
+
+    m = _mod()
+    real_comment = _repin_comment(m.publish_plan("/tmp/x", "9.9.9"))
+    assert real_comment is not None, "setup: the real plan carries no re-pin comment to derive from"
+    real_clause = _repin_instruction_clause(real_comment)
+    assert "version" in real_clause, "setup invalid: the real instruction clause lost the version bump"
+    rationale = real_comment.split("#", 2)[2] if real_comment.count("#") >= 2 else ""
+    assert rationale and ("version" in rationale), (
+        "setup invalid: the real comment's rationale no longer independently mentions "
+        "version -- the realistic-regression control needs it to"
+    )
+    reverted_instruction = " edit .claude-plugin/marketplace.json: set plugins[foundry].source.sha = $CONTENT, and source.ref = v9.9.9  "
+    realistic_regression = "#" + reverted_instruction + "#" + rationale
+    assert not _repin_comment_names_the_version_bump(realistic_regression, "9.9.9"), (
+        "THE REALISTIC REGRESSION was wrongly accepted: instruction reverted to the pre-fix shape "
+        "while the rationale prose (which independently mentions version/9.9.9) was left intact -- "
+        "a whole-string substring check passes this; the structural, clause-scoped check must not: "
+        "%r" % (realistic_regression,)
+    )
+
+    # and the positive form, with `version` present in the INSTRUCTION clause, must be accepted --
+    # proving the check is not unconditionally red either.
+    assert _repin_comment_names_the_version_bump(real_comment, "9.9.9"), (
+        "the real (fixed) plan comment was wrongly rejected: %r" % (real_comment,)
+    )
+
+
+# ------------------------------------------------------------ security review FIX 4 (feat-foundry-install-line-unpinning) --
+def test_unhashable_marketplace_version_refuses_named_not_traceback(tmp_path):
+    """Security-review FIX 4: `plugins[].version` is read straight out of a JSON manifest with no
+    schema validation upstream of preflight(). A malformed-but-valid-JSON manifest can carry a
+    JSON object/array there instead of a string -- UNHASHABLE, so a bare `value in a_set` raises an
+    unhandled TypeError. main() catches only CutReleaseError, so an unguarded raise here would
+    traceback instead of naming the precondition that failed. preflight() must instead return a
+    NAMED refusal on that check, never raise."""
+    m = _mod()
+    tree = _tree(tmp_path / "malformed", version="9.9.9", plugin_v="9.9.9")
+    manifest_path = Path(tree) / ".claude-plugin" / "marketplace.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["plugins"][0]["version"] = {"not": "a string"}   # malformed but valid JSON
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    subprocess.run(["git", "-C", str(tree), "add", "-A"], capture_output=True, text=True, timeout=30)
+    subprocess.run(["git", "-C", str(tree), "commit", "-qm", "malformed marketplace version"],
+                   capture_output=True, text=True, timeout=30)
+
+    # must not raise
+    checks = m.preflight(tree, "9.9.9", suite_runner=lambda _t: (0, "1 passed", ""))
+    named = next((c for c in checks if c[0] == "marketplace.json version == target (bump BOTH manifests)"), None)
+    assert named is not None, "the malformed-version check must still be NAMED in the returned checks"
+    assert named[1] is False, "an unhashable marketplace.json version must refuse, not silently pass"

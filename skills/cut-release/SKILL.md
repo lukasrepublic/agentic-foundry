@@ -1,6 +1,6 @@
 ---
 name: cut-release
-description: Cut an agentic-foundry release as a guarded playbook (/foundry:cut-release). Encodes the hand-run cut procedure as a loop whose EXIT GATE is the existing acceptance verdict — verifies the ordered preconditions (bump BOTH manifests, source.ref, CHANGELOG section), refuses to emit any publish plan until run_acceptance returns pass, then emits the gotcha-correct publish plan (re-pin marketplace source.sha to the release commit → annotated tag on the re-pin commit → machine-verify the tag → push, never force) WITHOUT pushing. Trigger when the operator is cutting/releasing a version — "cut a release", "release v0.6.1", "/foundry:cut-release", "ship the release".
+description: Cut an agentic-foundry release as a guarded playbook (/foundry:cut-release). Encodes the hand-run cut procedure as a loop whose EXIT GATE is the existing acceptance verdict — verifies the ordered preconditions (plugin.json version, CHANGELOG section; the marketplace.json catalogue bump is deferred to the re-pin commit R2), refuses to emit any publish plan until run_acceptance returns pass, and only afterward emits the gotcha-correct publish plan (re-pin marketplace source.sha to the release commit → annotated tag on the re-pin commit → machine-verify the tag → push, never force) WITHOUT pushing. Trigger when the operator is cutting/releasing a version — "cut a release", "release v0.6.1", "/foundry:cut-release", "ship the release".
 ---
 
 # /foundry:cut-release — the cut-release playbook
@@ -49,28 +49,40 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
 ## Procedure
 
 1. **Pick the version** (the operator picks it — there is no inference) and make sure the prep is staged:
-   bump `plugin.json` **then** `marketplace.json` (version + `source.ref` = `vX.Y.Z`) → bump the
-   **install pin in its THREE bindings** (below) → write the `## vX.Y.Z` CHANGELOG section → commit
-   (the release commit **R**).
+   bump `plugin.json` alone → bump the **install pin's remaining binding** (below) → write the
+   `## vX.Y.Z` CHANGELOG section → commit (the release commit **R**).
 
-   > ⚠️ **The install pin is NOT covered by this playbook's preflight, and it has three bindings.**
-   > The `REFUSED` checks below cover `plugin.json`, `marketplace.json` (version + `source.ref`) and the
-   > CHANGELOG section — **none of the three**:
-   > 1. `DEFAULT_MARKETPLACE_REF` in `scripts/foundry-bootstrap.sh`;
-   > 2. every documented **marketplace-add install line** (the `…#vX.Y.Z`-pinned one) in **any**
-   >    shipped `*.md` — currently `README.md` and `docs/QUICKSTART.md` ×2. The test scans the whole
-   >    tree by matching that command string, so a new doc naming it joins this set automatically.
-   >    ⚠️ That also means **prose *about* the command counts**: writing the literal command name in a
-   >    sentence makes the scanner treat your sentence as an install instruction and demand it carry
-   >    the current pin. Describe it, do not spell it out (this paragraph deliberately does not);
-   > 3. the two together — `test_shipped_pin_matches_marketplace_manifest_ref` and
-   >    `test_documented_install_commands_name_the_shipped_pin` in
-   >    `tests/test_bootstrap_install_pin.py`.
+   > **`marketplace.json` does NOT bump here (deliberate — feat-foundry-install-line-unpinning,
+   > AC-ILU-11).** Its `version` and `source.ref` bump moves to the **re-pin commit R2** in step 3,
+   > landing TOGETHER with `source.sha` — not in R. Bumping the catalogue's advertised version in R,
+   > ahead of the commit that carries it (R2), would make the default branch advertise a
+   > catalogue version its own pinned commit does NOT carry: an adopter resolving a tagless
+   > registration mid-cut would be told about a version R2 has not shipped yet. Deferring the bump
+   > closes that window. `test_manifests_agree` (`tests/test_docs_claims.py`) tolerates the resulting
+   > one-release lag between R and R2, but still refuses a `marketplace.json` that gets AHEAD of
+   > `plugin.json`, or whose own `source.ref` names a version it does not itself carry.
+
+   > ⚠️ **The install pin's remaining binding is NOT covered by this playbook's preflight.**
+   > The `REFUSED` checks below cover `plugin.json` and the CHANGELOG section — not:
+   > 1. `DEFAULT_MARKETPLACE_REF` in `scripts/foundry-bootstrap.sh` — the installer's own default
+   >    pin, a separate code-level binding carried by the sibling `feat-foundry-installer-unpinning`;
+   > 2. `test_shipped_pin_matches_marketplace_manifest_ref` in `tests/test_bootstrap_install_pin.py`,
+   >    which compares that constant against `marketplace.json`'s `source.ref` — and since that ref
+   >    now lands in R2 rather than R (above), this comparison is only expected to agree once R2
+   >    lands, not at R itself.
+   >
+   > **The documented marketplace-add install lines are NOT a per-release binding any more.**
+   > `README.md`, `docs/QUICKSTART.md`, `docs/troubleshooting.md`,
+   > `docs/how-to/adopt-on-an-existing-codebase.md`, and this file's own "Downstream" section carry
+   > **no version literal at all** — there is nothing on them to bump on a cut
+   > (`feat-foundry-install-line-unpinning`). An adopter upgrades in place with
+   > `claude plugin update foundry@agentic-foundry`; see **"Downstream"** below for why, and for the
+   > one-time migration an existing tag-pinned adopter still needs.
    >
    > Those live in the **pytest** suite. **Since `feat-foundry-release-suite-gate`, the preflight RUNS that
    > suite and REFUSES the cut on any failure** — so a stale pin can no longer reach a tag, and this list is
-   > guidance for *staging the bump*, not a checklist you must remember. It is here because knowing the three
-   > bindings makes the refusal instantly actionable, not because you are the control.
+   > guidance for *staging the bump*, not a checklist you must remember. It is here because knowing the
+   > remaining binding makes the refusal instantly actionable, not because you are the control.
    >
    > This is the fix for the v0.27.0 cut, which shipped a stale pin: its four metadata preconditions all
    > passed and `run_acceptance` (validate + `plugin tag --dry-run` + DOCTOR-GREEN) runs no tests, so `READY`
@@ -81,8 +93,10 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-cut-release.py" --tree <repo-root> --version X.Y.Z
    ```
-   - `REFUSED` (exit 2) — a precondition failed; the output names it (e.g. "marketplace.json version !=
-     target — bump BOTH manifests"). Fix and re-run. **This now includes the candidate tree's own test
+   - `REFUSED` (exit 2) — a precondition failed; the output names it (e.g. "plugin.json version !=
+     target" for a typo'd version, or a `marketplace.json` that is neither at target nor at the
+     one CHANGELOG-recorded preceding release, per step 1's deferred-bump note above). Fix and
+     re-run. **This now includes the candidate tree's own test
      suite**, which runs *after* the four cheap metadata checks (so a typo'd version still refuses in
      milliseconds) and *before* acceptance. A failure names the failing tests; anything that prevents a real
      verdict — pytest absent, no `tests/`, nothing collected — refuses fail-closed rather than skipping.
@@ -91,14 +105,16 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
    - `GATED` (exit 2) — `run_acceptance` returned FAIL; the candidate tree's own doctor / validate /
      hooks-executable check is red. Fix the defect (NOT the gate) and re-run.
    - `READY` (exit 0) — preconditions ok ∧ acceptance `pass`. The **publish plan** is printed.
-3. **Execute the emitted publish plan yourself** (cut-release never pushes). **RE-PIN FIRST, THEN
-   TAG** — this order is the whole point, and the previous order shipped the wrong code twice:
+3. **Execute the emitted publish plan yourself** (cut-release never pushes). **RE-PIN FIRST, TAG
+   SECOND** — this order is the whole point, and the previous order shipped the wrong code twice:
 
    1. `git status --porcelain` — **must be empty.** The re-pin commit is created *after* the
       acceptance verdict and the tag lands on it, so any uncommitted edit would ship under the
       release tag having never been gated.
    2. `CONTENT=$(git rev-parse HEAD)` — the release commit **R**, the code being shipped.
-   3. Edit `.claude-plugin/marketplace.json`: `source.sha = $CONTENT`, `source.ref = vX.Y.Z`.
+   3. Edit `.claude-plugin/marketplace.json`: `version = X.Y.Z`, `source.sha = $CONTENT`,
+      `source.ref = vX.Y.Z` — **all three land here, in R2, never in R** (step 1, AC-ILU-11): the
+      default branch never advertises a catalogue version whose pinned commit does not carry it.
    4. Commit it **path-scoped**: `git commit -m '…' -- .claude-plugin/marketplace.json`. Never
       `commit -am`, which sweeps every modified tracked file into the tagged commit.  → **R2**
    5. `git tag -a vX.Y.Z` — on **R2**, the commit that CARRIES the pin.
@@ -112,9 +128,9 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
       directly; the tag pushes fine. Observed on v1.4.0: the tag landed and verified while `main`
       stayed a commit behind, leaving `main`'s `marketplace.json` naming the PREVIOUS release's
       sha. The published artifact is unaffected (adopters resolve at the tag), but the unstable
-      `--ref main` install path then serves the previous version and the next cut starts from a
-      wrong baseline. So **create R and R2 on a BRANCH and PR them from the start** — two PRs, the
-      bump then the re-pin, because `source.sha` must name the commit AS IT LANDS on `main` and a
+      `--ref main` install path subsequently serves the previous version and the next cut starts
+      from a wrong baseline. So **create R and R2 on a BRANCH and PR them from the start** — two
+      PRs, the bump followed by the re-pin, because `source.sha` must name the commit AS IT LANDS on `main` and a
       squash merge does not preserve a branch commit's SHA. Read main's HEAD after the bump PR
       merges; that is the sha the re-pin PR pins. Tag only once R2 is on `main`.
 
@@ -130,30 +146,59 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
 4. **Reconcile the release's ERs** (the backstop's operator step). The `READY` plan's **tail** carries one
    `gh issue close <n>` step per enhancement-request the release closes, derived from the `## vX.Y.Z`
    CHANGELOG section (the trace source authored in step 1). **Review each before running it** — see the
-   backstop section below — then execute the ones that apply. Closing an already-closed ER is a harmless
-   no-op.
-5. **Downstream** — adopters pull via `claude plugin marketplace update <marketplace>` →
-   `claude plugin update <plugin>@<marketplace>`. **The plugin id must be marketplace-qualified**: a bare
-   `claude plugin update foundry` fails with `Plugin "foundry" not found`.
-
-   **A TAG-PINNED registration needs RE-POINTING first — `marketplace update` alone is a no-op.**
-   `marketplace update` refreshes the cache **at the ref the marketplace is registered at**. When
-   that registration is `<owner>/<repo>@vX.Y.Z` (which is what the documented install line above
-   tells every adopter to run), it re-reads the OLD tag forever and `plugin update` reports
-   *"already at the latest version"* — naming the previous version, indefinitely. Publishing is not
-   delivery. Re-add the marketplace at the NEW tag, then update every scope:
+   backstop section below — and afterward execute the ones that apply. Closing an already-closed ER is
+   a harmless no-op.
+5. **Downstream** — the documented install line registers the marketplace **tagless**
+   (`feat-foundry-install-line-unpinning`), so the complete adopter upgrade, forever, is ONE
+   command:
 
    ```
-   claude plugin marketplace add lukasrepublic/agentic-foundry#v1.6.0 --scope user
-   claude plugin update foundry@agentic-foundry --scope user
-   claude plugin update foundry@agentic-foundry --scope project
+   claude plugin update foundry@agentic-foundry
    ```
 
-   The ref above is CONCRETE and pinned, not a `vX.Y.Z` placeholder — a documented install command
-   carrying a floating ref is exactly what `test_documented_install_commands_name_the_shipped_pin`
-   (AC-BIP-13) refuses, and it refuses this file like any other. So this line is a **release pin
-   site**: the cut bumps it with the other six documented pins, and the gate fails the cut if it is
-   forgotten. When re-pointing for a NEW release, substitute the version being cut.
+   **That is the whole upgrade — nothing else to run.** `plugin update` resolves the marketplace at
+   the ref the registration names. A tagless registration names none, so resolution reads the
+   catalogue live off the default branch every time; a new release reaches every adopter the moment
+   R2 lands there, with no re-add and no per-release step on the adopter's side. **The plugin id
+   must be marketplace-qualified**: a bare `claude plugin update foundry` fails with `Plugin
+   "foundry" not found`.
+
+   **Landing R2 on the default branch is delivery-critical, precisely because of that.** A tagless
+   registration resolves the catalogue from the default branch itself, never from a tag — so until
+   R2 (the commit carrying the new `version` / `source.ref` / `source.sha`, step 3) actually lands
+   there, `plugin update` keeps reporting *"already at the latest version"*, naming the PREVIOUS
+   release, truthfully. Publishing a tag is not delivery; landing R2 on the default branch is. There
+   is no install line to bump on this side and no per-release step to forget: the whole upgrade path
+   is this one command, every time.
+
+   **One-time migration for an adopter still tag-pinned from BEFORE this change.** Their
+   registration is `<owner>/<repo>#<old-tag>`, and `marketplace update` alone is a no-op against it
+   — it refreshes the cache **at the ref already declared**, which is the frozen old tag, forever.
+   Re-running `marketplace add <repo>` tagless does not fix it either: it **REFUSES** outright,
+   because a different ref is already declared for that marketplace in `settings.json` (the CLI's
+   own message: *"its network source differs from the one declared for it in settings"*). The actual
+   fix is `marketplace remove` → tagless `marketplace add` → **`plugin install`, not `plugin
+   update`** — `marketplace remove` also drops the plugin(s) installed from that marketplace (same
+   as the "Wedged or stale install" recovery in `docs/troubleshooting.md`), so a `plugin update`
+   afterward would have nothing to update; `plugin install` puts it back. Run it **explicitly per
+   scope, in every scope that still carries the old tag-pinned registration** — a bare invocation
+   touches only the default scope, and a stale scope silently shadows a fresh one (see the
+   `--scope`-mismatch caveat below):
+
+   ```
+   # user scope
+   claude plugin marketplace remove agentic-foundry --scope user
+   claude plugin marketplace add lukasrepublic/agentic-foundry --scope user
+   claude plugin install foundry@agentic-foundry --scope user
+
+   # project scope (repeat if a project-scoped registration was also tag-pinned)
+   claude plugin marketplace remove agentic-foundry --scope project
+   claude plugin marketplace add lukasrepublic/agentic-foundry --scope project
+   claude plugin install foundry@agentic-foundry --scope project
+   ```
+
+   Do this ONCE per affected scope. Every cut after that resolves automatically via the one-line
+   `plugin update` upgrade above.
 
    Verify by READING the refreshed cache — `~/.claude/plugins/marketplaces/<marketplace>/.claude-plugin/marketplace.json`
    must show the new `version` AND the new `source.sha`; the CLI's own "success" line does not prove
@@ -163,7 +208,7 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
    cut, where the plugin sat at 1.4.0 through several "successful" update runs. For this repo's own adopters
    that is `claude plugin marketplace update agentic-foundry` → `claude plugin update foundry@agentic-foundry`
    (`claude plugin list` prints the qualified id if you are unsure).
-   Then **verify the SHIPPED artifact, not the source tree** — run `/foundry:doctor` and any atom's
+   Afterward, **verify the SHIPPED artifact, not the source tree** — run `/foundry:doctor` and any atom's
    `--selftest` against `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`. A green source tree
    does not prove the published one is green. (When invoking a cached script by hand, set
    `CLAUDE_PROJECT_DIR` — without it, `stack-profile-lock` reports a misleading "not applicable".)
