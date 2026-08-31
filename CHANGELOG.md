@@ -22,10 +22,25 @@ latest version" even after a new release publishes: publishing was never deliver
 control.
 
 The release runbook (`skills/cut-release/SKILL.md`) is rewritten to match: the complete adopter
-upgrade is now one command, run forever; the marketplace.json catalogue bump (version + `source.ref`)
-moves from the release commit into the re-pin commit, together with `source.sha`, so the default
-branch never advertises a catalogue version its own pinned commit does not carry; an existing
-tag-pinned adopter gets a one-time migration instead of a per-release re-point. The shipped-doc
+upgrade is now one command, run forever; an existing tag-pinned adopter gets a one-time migration
+instead of a per-release re-point. The runbook also prescribes deferring the marketplace.json
+catalogue bump (version + `source.ref`) out of the release commit **R** into the re-pin commit **R2**,
+together with `source.sha`, so the default branch would never advertise a catalogue version its own
+pinned commit does not carry.
+
+**Known limitation — that deferral is not executable, and this release does not achieve it.**
+`claude plugin tag --dry-run`, which the required `release-acceptance` check runs by way of
+`scripts/foundry-release-acceptance.py`, refuses any tree whose `plugin.json` and
+`.claude-plugin/marketplace.json` versions disagree: *"Version mismatch ... update the marketplace
+entry ... before tagging."* The atom relaxed the two checks this repository owns (`test_manifests_agree`
+and the cut-release preflight) so both tolerate the lag, but never exercised the sequence against the
+platform's check — the one that actually gates the merge. So **R** must still bump the catalogue
+version, and the R-to-R2 window stays open, including on this cut: the coherence check below
+correctly reports `main` red for the span between the two merges. Under a tagless registration that
+window is fail-unsafe, because `source.sha` outranks `source.ref`. Recorded for correction; the
+runbook and the how-to still prescribe the unexecutable sequence.
+
+The shipped-doc
 install-pin checks are inverted to match (a version literal on the registration now fails, not
 passes), each carrying a negative control proving the inversion discriminates.
 
@@ -50,8 +65,9 @@ plain revision (never an annotated-tag object), is an ancestor of the default br
 advertises. Wired into `.github/workflows/ci.yml` as a step scoped to push-to-`main` only — never
 on pull requests, because the check grades `refs/heads/main` and a pull-request checkout leaves a
 detached HEAD with no such local ref, so it would fail closed on every PR. (An earlier draft of this
-note justified the scoping by a release window in which the version bump landed ahead of its pin;
-the sibling install-line atom re-sequenced the cut so that window no longer exists.)
+note justified the scoping by the release window in which the version bump lands ahead of its pin.
+That window is real and still open — see the known limitation above — but it is not why the step is
+push-scoped; the detached-HEAD reason is.)
 
 This is a **detective** control, not a preventive one: it reports an incoherent default branch
 after the fact; it does not stop one from being pushed.
