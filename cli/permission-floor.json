@@ -357,6 +357,10 @@
       "rationale": "pure decision library: no argparse/main()/__main__; exposes classify_gitops/decide_apply as pure functions (R5)"
     },
     {
+      "script": "foundry_main_catalogue.py",
+      "rationale": "the shipped __main__ runs only as a push-scoped CI workflow step (.github/workflows/ci.yml); never instructed by any skill or hook in an agent session"
+    },
+    {
       "script": "foundry_permission_floor.py",
       "rationale": "pure library: no argparse/main()/__main__; imported by scripts/foundry-doctor.py's permission-floor probe (feat-foundry-doctor-permission-floor-check), never in command position"
     },
