@@ -301,8 +301,8 @@ def _repin_instruction_clause(comment):
 
 
 # Structural (regex-captured assignment), never substring presence: a `plugins[foundry].version =
-# <value>` assignment naming exactly the target version, and a `source.ref = ...` assignment
-# present at all -- both anchored to a `key <spacing> = <spacing> value` shape, not merely to the
+# <value>` assignment naming exactly the target version, a `source.sha = ...` assignment, and a
+# `source.ref = ...` assignment, each present at all -- both anchored to a `key <spacing> = <spacing> value` shape, not merely to the
 # words "version"/"source.ref" occurring anywhere (which rationale prose also satisfies).
 _VERSION_ASSIGNMENT_RE = re.compile(r"plugins\[foundry\]\.version\s*=\s*([0-9][0-9.]*)")
 _SOURCE_SHA_ASSIGNMENT_RE = re.compile(r"source\.sha\s*=\s*\S")
@@ -311,8 +311,8 @@ _SOURCE_REF_ASSIGNMENT_RE = re.compile(r"source\.ref\s*=\s*v?[0-9][0-9.]*")
 
 def _repin_comment_names_the_version_bump(comment, version):
     """True iff the re-pin comment's INSTRUCTION CLAUSE (never its rationale prose) structurally
-    assigns `plugins[foundry].version` to the target version, AND still names a `source.ref`
-    assignment. Pure and parameterized so both the real plan (positive) and synthetic pre-fix and
+    assigns `plugins[foundry].version` to the target version, AND still names `source.sha` and
+    `source.ref` assignments. Pure and parameterized so both the real plan (positive) and synthetic pre-fix and
     realistic-regression comments (negative controls) drive the exact same check."""
     clause = _repin_instruction_clause(comment)
     if not clause:
@@ -351,8 +351,9 @@ def test_publish_plan_version_bump_assertion_is_not_vacuous():
         comment carrying NO rationale must still be convicted.
     (b) THE REALISTIC REGRESSION (security-review FIX 6): derived from the REAL, current plan's
         comment -- its instruction clause reverted to the pre-fix shape, its rationale prose left
-        COMPLETELY INTACT. The rationale independently contains "version", the digits "9.9.9" (in
-        its own worked source.ref example) and "plugins[].version" -- so the prior whole-string
+        COMPLETELY INTACT. The rationale independently contains "version" and "plugins[].version"
+        (it carries NO version digits -- those live in the instruction clause, on the other side of
+        the very boundary this control exists to police) -- so the prior whole-string
         substring check passed this shape, which is precisely the defect FIX 6 closes. Both
         controls must be convicted for the assertion above to be trusted."""
     pre_fix_comment = (

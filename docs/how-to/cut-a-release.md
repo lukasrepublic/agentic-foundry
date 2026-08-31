@@ -67,7 +67,8 @@ data** — it never tags, never pushes, never closes issues itself. You execute 
    # source.sha must name the commit AS IT LANDS on main and a squash landing does not preserve a
    # branch commit's SHA. Read main's HEAD after the bump PR merges; that is the sha the re-pin PR
    # pins. Tag only once R2 is on main. See skills/cut-release/SKILL.md.
-   git push origin main && git push origin vX.Y.Z                          # never force
+   git push origin main                                                    # never force
+   git push origin vX.Y.Z                                                  # never force; runs even if the line above is refused
    ```
 
    **Why this order.** An adopter installs by ref, which resolves `marketplace.json` **at the

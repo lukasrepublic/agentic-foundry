@@ -863,23 +863,65 @@ def test_no_journey_narration_in_shipped_docs():
 # the stale registration in place, and the subsequent `add` then refused with "its network source
 # differs from the one declared" -- wedging the operator inside the unwedging procedure.
 # That evidence lived only in one session transcript; this test is what makes it survive.
+_REMOVE_SLUG_RE = re.compile(r"marketplace remove\s+(?:--\S+\s+\S+\s+)*(\S+)")
+_ADD_ARG_RE = re.compile(r"marketplace add\s+(?:--\S+\s+\S+\s+)*(\S+)")
+
+
+def _remove_add_offenders(lines, where):
+    """(offenders, seen_remove, seen_add) for one iterable of lines. Pure, so the locators
+    themselves can be driven over in-memory strings by the negative control below."""
+    offenders, seen_remove, seen_add = [], 0, 0
+    for n, line in enumerate(lines, 1):
+        m = _REMOVE_SLUG_RE.search(line)
+        if m:
+            seen_remove += 1
+            if "/" in m.group(1) and "<" not in m.group(1):
+                offenders.append("%s:%d passes an owner/repo slug to remove" % (where, n))
+        m = _ADD_ARG_RE.search(line)
+        if m:
+            seen_add += 1
+            if "/" not in m.group(1) and "<" not in m.group(1):
+                offenders.append("%s:%d passes a bare name to add" % (where, n))
+    return offenders, seen_remove, seen_add
+
+
+def test_marketplace_remove_add_locators_convict_and_spare():
+    """The locators themselves, driven over in-memory lines -- so a regex that drifted to match
+    NOTHING is convicted here rather than turning the corpus scan green for the wrong reason.
+    That fail-open class is exactly what this pair of tests exists to prevent, so it must not be
+    reintroduced by the very check that prevents it."""
+    bad, _, _ = _remove_add_offenders(
+        ["claude plugin marketplace remove lukasrepublic/agentic-foundry --scope user"], "x")
+    assert len(bad) == 1 and "slug to remove" in bad[0]
+    bad, _, _ = _remove_add_offenders(
+        ["claude plugin marketplace add agentic-foundry --scope user"], "x")
+    assert len(bad) == 1 and "bare name to add" in bad[0]
+    # correct forms, including flag-first ordering, are spared
+    ok, sr, sa = _remove_add_offenders([
+        "claude plugin marketplace remove agentic-foundry --scope user",
+        "claude plugin marketplace add lukasrepublic/agentic-foundry --scope project",
+        "claude plugin marketplace remove --scope user agentic-foundry",
+        "claude plugin marketplace add --scope user lukasrepublic/agentic-foundry",
+        "claude plugin marketplace add <owner>/<repo>",
+    ], "x")
+    assert ok == [], ok
+    assert sr == 2 and sa == 3, (sr, sa)
+
+
 def test_marketplace_remove_takes_the_name_and_add_takes_the_source():
     """`marketplace remove` names the marketplace; `marketplace add` names owner/repo. Not swappable."""
     import glob as _glob
-    offenders = []
     roots = [os.path.join(REPO_ROOT, "docs"), os.path.join(REPO_ROOT, "skills")]
     files = [f for r in roots for f in _glob.glob(os.path.join(r, "**", "*.md"), recursive=True)]
-    assert files, "no shipped docs/skills markdown found -- the scan would be vacuous"
-    seen_remove = 0
+    files.append(os.path.join(REPO_ROOT, "README.md"))
+    assert len(files) > 1, "no shipped markdown found -- the scan would be vacuous"
+    offenders, seen_remove, seen_add = [], 0, 0
     for path in files:
         with open(path, encoding="utf-8") as fh:
-            for n, line in enumerate(fh, 1):
-                if "marketplace remove" in line:
-                    seen_remove += 1
-                    if re.search(r"marketplace remove\s+\S*/", line):
-                        offenders.append("%s:%d passes an owner/repo slug to remove" % (path, n))
-                if re.search(r"marketplace add\s+", line) and not re.search(
-                        r"marketplace add\s+\S*/", line) and "<" not in line:
-                    offenders.append("%s:%d passes a bare name to add" % (path, n))
+            o, sr, sa = _remove_add_offenders(fh, path)
+        offenders += o
+        seen_remove += sr
+        seen_add += sa
     assert seen_remove, "no `marketplace remove` instruction found -- the scan would be vacuous"
+    assert seen_add, "no `marketplace add` instruction found -- the add half would be vacuous"
     assert not offenders, "marketplace remove/add argument forms are swapped:\n" + "\n".join(offenders)
