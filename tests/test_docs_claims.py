@@ -140,6 +140,32 @@ def test_every_install_pin_matches_the_manifests():
         assert not pins, f"{os.path.basename(doc)} still pins the registration to {pins}"
 
 
+# ------------------------------------------------------------ security review FIX 8 --
+def test_install_pin_regex_convicts_an_injected_pin():
+    """Security-review FIX 8: `test_every_install_pin_matches_the_manifests`'s restored
+    non-vacuity floor (`_MARKETPLACE_ADD_INSTRUCTION_RE`) proves the SCANNER still finds real
+    install lines; it proves NOTHING about `_INSTALL_PIN_RE` specifically. If that second pattern
+    alone drifted to match nothing, the test would go green for the wrong reason -- the exact
+    fail-open class FIX 3 was raised to close, one regex over. Mirrors the AC-ILU-4 control: drive
+    `_INSTALL_PIN_RE` directly over IN-MEMORY injected text (never a real shipped doc), proving it
+    convicts a pinned line, a pinned URL-form line, and does NOT convict a tagless one."""
+    pinned_bare = "claude plugin marketplace add lukasrepublic/agentic-foundry#v9.9.9"
+    pinned_url = (
+        "claude plugin marketplace add https://github.com/lukasrepublic/agentic-foundry#v9.9.9"
+    )
+    tagless = "claude plugin marketplace add lukasrepublic/agentic-foundry"
+
+    assert _INSTALL_PIN_RE.findall(pinned_bare) == ["#v9.9.9"], (
+        "an injected bare-slug version literal was NOT convicted: %r" % pinned_bare
+    )
+    assert _INSTALL_PIN_RE.findall(pinned_url) == ["#v9.9.9"], (
+        "an injected full-URL-form version literal was NOT convicted: %r" % pinned_url
+    )
+    assert not _INSTALL_PIN_RE.findall(tagless), (
+        "a tagless line was wrongly convicted -- the pattern is unconditionally red: %r" % tagless
+    )
+
+
 def test_readme_status_matches_the_manifests():
     m = re.search(r"\*\*Status: v([\d.]+)\.\*\*", _read(README))
     assert m, "README must carry a **Status: vX.Y.Z.** line"

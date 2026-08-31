@@ -199,23 +199,33 @@ If `claude plugin list` shows a stale version, doctor reports drift you can't ex
 second install source got wired in by mistake, recover cleanly rather than debugging in place:
 
 ```bash
+# Run every numbered step in EACH scope that carries a registration -- user AND project.
+# A bare invocation (no --scope) touches only the default scope, and a stale scope silently
+# shadows a fresh one (a stale project-scoped row shadows a fresh user-scoped one), which is
+# how this recovery itself goes stale if run half-scoped.
+
 # 1. uninstall the plugin from this session's config
-claude plugin uninstall foundry@agentic-foundry
+claude plugin uninstall foundry@agentic-foundry --scope user
+claude plugin uninstall foundry@agentic-foundry --scope project
 
 # 2. remove the marketplace registration
-claude plugin marketplace remove lukasrepublic/agentic-foundry
+claude plugin marketplace remove lukasrepublic/agentic-foundry --scope user
+claude plugin marketplace remove lukasrepublic/agentic-foundry --scope project
 
 # 3. clear the plugin cache (default location; see docs/QUICKSTART.md's "Where things live" for
-#    the fleet-doctor lookup-root override, which does not move this cache)
+#    the fleet-doctor lookup-root override, which does not move this cache) -- filesystem, not
+#    scoped, so this runs once
 rm -rf ~/.claude/plugins/cache/
 
 # (the same cache clear also resolves a stale registry entry in
 #  ~/.claude/plugins/installed_plugins.json — the uninstall step above rewrites it, but a
 #  manual edit is safe if it doesn't)
 
-# 4. reinstall clean
-claude plugin marketplace add lukasrepublic/agentic-foundry
-claude plugin install foundry@agentic-foundry
+# 4. reinstall clean, per scope
+claude plugin marketplace add lukasrepublic/agentic-foundry --scope user
+claude plugin install foundry@agentic-foundry --scope user
+claude plugin marketplace add lukasrepublic/agentic-foundry --scope project
+claude plugin install foundry@agentic-foundry --scope project
 ```
 
 ```

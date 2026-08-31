@@ -7,15 +7,16 @@ data** — it never tags, never pushes, never closes issues itself. You execute 
 ```
   prep (you)                     the gate                        publish (you)
   ──────────                     ────────                        ─────────────
-  bump plugin.json          ┌────────────────────┐
-  bump marketplace.json ──▶ │ foundry-cut-release │──REFUSED──▶  fix the named
-  write CHANGELOG section   │   --tree . \        │              precondition, re-run
-  commit (release commit R) │   --version X.Y.Z   │──GATED────▶  fix the acceptance
+  bump plugin.json only     ┌────────────────────┐
+  write CHANGELOG section ──▶ │ foundry-cut-release │──REFUSED──▶  fix the named
+  commit (release commit R) │   --tree . \        │              precondition, re-run
+                            │   --version X.Y.Z   │──GATED────▶  fix the acceptance
                             └─────────┬──────────┘               failure, re-run
                                       │ READY
                                       ▼
                             the publish plan (data):
-                              1. re-pin marketplace source.sha = R (path-scoped commit R2)
+                              1. re-pin marketplace version + source.sha = R,
+                                 source.ref = vX.Y.Z (path-scoped commit R2)
                               2. annotated tag vX.Y.Z on R2 — the commit CARRYING the pin
                               3. --verify-tag  →  must print TAG-PIN-COHERENT
                               4. push main + tag  (never force)
@@ -25,10 +26,16 @@ data** — it never tags, never pushes, never closes issues itself. You execute 
 ## Steps
 
 1. **Prep** — pick the version (yours to pick; there is no inference), then:
-   - bump `.claude-plugin/plugin.json` `version`
-   - bump `.claude-plugin/marketplace.json` (version + `source.ref: vX.Y.Z`)
+   - bump `.claude-plugin/plugin.json` `version` **only**
    - write the `## vX.Y.Z` CHANGELOG section
    - commit (the release commit **R**)
+
+   **`.claude-plugin/marketplace.json` does NOT bump here.** Its `version` and `source.ref`
+   move to the re-pin commit **R2** below, landing together with `source.sha` — never in R
+   (`feat-foundry-install-line-unpinning`). Bumping the catalogue in R, ahead of the commit that
+   carries it, would mean the default branch never advertises a catalogue version whose pinned
+   commit does not carry it — see the **Prep** step of
+   [`skills/cut-release/SKILL.md`](../../skills/cut-release/SKILL.md) for the full reasoning.
 
 2. **Run the gate:**
 
@@ -48,7 +55,8 @@ data** — it never tags, never pushes, never closes issues itself. You execute 
    ```bash
    git status --porcelain                     # must be EMPTY (see the warning below)
    CONTENT=$(git rev-parse HEAD)              # the release commit R
-   # edit .claude-plugin/marketplace.json: source.sha = $CONTENT, source.ref = vX.Y.Z
+   # edit .claude-plugin/marketplace.json: source.sha = $CONTENT, then set version = X.Y.Z
+   # and source.ref = vX.Y.Z -- ALL THREE fields land here, in R2, never in R (see Prep above)
    git commit -m 'release: re-pin …' -- .claude-plugin/marketplace.json   # R2, PATH-SCOPED
    git tag -a vX.Y.Z -m 'agentic-foundry vX.Y.Z'                          # on R2
    python3 scripts/foundry-cut-release.py --tree . --version X.Y.Z --verify-tag

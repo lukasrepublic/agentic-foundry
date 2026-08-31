@@ -8,6 +8,7 @@ ordering hole is closed.
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -270,7 +271,7 @@ def test_antitaut_same_tree_green_test_proceeds(tmp_path):
 
 
 
-# ------------------------------------------------------------ security review FIX 1 (feat-foundry-install-line-unpinning) --
+# ------------------------------------------------------------ security review FIX 1/6 (feat-foundry-install-line-unpinning) --
 def _repin_comment(plan):
     """The plan's human-readable `# edit .claude-plugin/marketplace.json: ...` re-pin instruction
     comment, or None if no such comment is present. Isolated as a pure function so the positive
@@ -282,13 +283,43 @@ def _repin_comment(plan):
     )
 
 
-def _repin_comment_names_the_version_bump(comment, version):
-    """True iff the re-pin comment instructs the operator to set `version` (not just
-    `source.sha`/`source.ref`) to the target version. Pure and parameterized so both the real
-    plan (positive) and a synthetic pre-fix-shaped comment (negative control) drive it."""
+def _repin_instruction_clause(comment):
+    """Security-review FIX 6: the shipped comment is shaped
+    `# edit .claude-plugin/marketplace.json: <INSTRUCTION>  # <RATIONALE prose>` -- two comment
+    markers, not one. The FIX 1 check originally searched the WHOLE string for the substrings
+    "version"/"source.ref"/the version number, but the RATIONALE prose independently contains
+    "plugins[].version", "advertising the wrong version", and (inside its own worked example)
+    the literal version digits -- so reverting ONLY the instruction while leaving the rationale
+    untouched left that check green, which is exactly the regression it exists to catch. This
+    isolates the instruction clause: the text between the comment's own leading '#' and the
+    SECOND '#' (the rationale's opening marker). A comment with no second '#' is entirely
+    instruction."""
     if comment is None:
+        return ""
+    parts = comment.split("#", 2)
+    return parts[1] if len(parts) > 1 else ""
+
+
+# Structural (regex-captured assignment), never substring presence: a `plugins[foundry].version =
+# <value>` assignment naming exactly the target version, and a `source.ref = ...` assignment
+# present at all -- both anchored to a `key <spacing> = <spacing> value` shape, not merely to the
+# words "version"/"source.ref" occurring anywhere (which rationale prose also satisfies).
+_VERSION_ASSIGNMENT_RE = re.compile(r"plugins\[foundry\]\.version\s*=\s*([0-9][0-9.]*)")
+_SOURCE_REF_ASSIGNMENT_RE = re.compile(r"source\.ref\s*=\s*v?[0-9][0-9.]*")
+
+
+def _repin_comment_names_the_version_bump(comment, version):
+    """True iff the re-pin comment's INSTRUCTION CLAUSE (never its rationale prose) structurally
+    assigns `plugins[foundry].version` to the target version, AND still names a `source.ref`
+    assignment. Pure and parameterized so both the real plan (positive) and synthetic pre-fix and
+    realistic-regression comments (negative controls) drive the exact same check."""
+    clause = _repin_instruction_clause(comment)
+    if not clause:
         return False
-    return "version" in comment and version in comment and "source.ref" in comment
+    m = _VERSION_ASSIGNMENT_RE.search(clause)
+    if not m or m.group(1) != version:
+        return False
+    return bool(_SOURCE_REF_ASSIGNMENT_RE.search(clause))
 
 
 def test_publish_plan_names_the_version_bump_in_r2(tmp_path):
@@ -311,23 +342,47 @@ def test_publish_plan_names_the_version_bump_in_r2(tmp_path):
 
 
 def test_publish_plan_version_bump_assertion_is_not_vacuous():
-    """The meta-test: `_repin_comment_names_the_version_bump` must FAIL against a comment shaped
-    like the PRE-FIX plan, which named only source.sha/source.ref and never `version` -- proving
-    the assertion above discriminates rather than being green for free."""
+    """Security-review FIX 1/6 meta-test. Two negative controls, not one:
+
+    (a) the bare pre-fix comment (no rationale at all) -- the original control, kept because a
+        comment carrying NO rationale must still be convicted.
+    (b) THE REALISTIC REGRESSION (security-review FIX 6): derived from the REAL, current plan's
+        comment -- its instruction clause reverted to the pre-fix shape, its rationale prose left
+        COMPLETELY INTACT. The rationale independently contains "version", the digits "9.9.9" (in
+        its own worked source.ref example) and "plugins[].version" -- so the prior whole-string
+        substring check passed this shape, which is precisely the defect FIX 6 closes. Both
+        controls must be convicted for the assertion above to be trusted."""
     pre_fix_comment = (
         "# edit .claude-plugin/marketplace.json: set plugins[foundry].source.sha = $CONTENT "
         "(and source.ref = v9.9.9)"
     )
     assert not _repin_comment_names_the_version_bump(pre_fix_comment, "9.9.9"), (
-        "the pre-fix-shaped comment (no `version` mention) was wrongly accepted"
+        "the pre-fix-shaped comment (no `version` mention, no rationale) was wrongly accepted"
     )
-    # and the positive form, with `version` present, must be accepted -- proving the check is not
-    # unconditionally red either.
-    post_fix_comment = pre_fix_comment.replace(
-        "set plugins[foundry].source.sha", "set plugins[foundry].version = 9.9.9, source.sha"
+
+    m = _mod()
+    real_comment = _repin_comment(m.publish_plan("/tmp/x", "9.9.9"))
+    assert real_comment is not None, "setup: the real plan carries no re-pin comment to derive from"
+    real_clause = _repin_instruction_clause(real_comment)
+    assert "version" in real_clause, "setup invalid: the real instruction clause lost the version bump"
+    rationale = real_comment.split("#", 2)[2] if real_comment.count("#") >= 2 else ""
+    assert rationale and ("version" in rationale) and ("9.9.9" in real_comment.split("#", 1)[1]), (
+        "setup invalid: the real comment's rationale no longer independently mentions "
+        "version/the version digits -- the realistic-regression control needs it to"
     )
-    assert _repin_comment_names_the_version_bump(post_fix_comment, "9.9.9"), (
-        "a comment that DOES name the version bump was wrongly rejected"
+    reverted_instruction = " edit .claude-plugin/marketplace.json: set plugins[foundry].source.sha = $CONTENT, and source.ref = v9.9.9  "
+    realistic_regression = "#" + reverted_instruction + "#" + rationale
+    assert not _repin_comment_names_the_version_bump(realistic_regression, "9.9.9"), (
+        "THE REALISTIC REGRESSION was wrongly accepted: instruction reverted to the pre-fix shape "
+        "while the rationale prose (which independently mentions version/9.9.9) was left intact -- "
+        "a whole-string substring check passes this; the structural, clause-scoped check must not: "
+        "%r" % (realistic_regression,)
+    )
+
+    # and the positive form, with `version` present in the INSTRUCTION clause, must be accepted --
+    # proving the check is not unconditionally red either.
+    assert _repin_comment_names_the_version_bump(real_comment, "9.9.9"), (
+        "the real (fixed) plan comment was wrongly rejected: %r" % (real_comment,)
     )
 
 
