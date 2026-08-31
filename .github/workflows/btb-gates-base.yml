@@ -178,7 +178,17 @@ jobs:
           # and `scripts/my_foundry_tier_preflight.py` stay clean — see the negative-control rows
           # in tests/fixtures/btb-gates/security-path-matrix.yaml. OR-append only, same discipline
           # as the GP-2 widening above (widen-only, AC-TARC-15).
-          hits="$(printf '%s\n' "$files" | grep -E '(auth|secret|credential|token|provenance|signing|\.rego$)|^\.github/|^hooks/|^\.claude-plugin/|(^|/)(standing-versions|profile-version-ledger)|(^|/)(requirements[^/]*\.txt|package(-lock)?\.json|pyproject\.toml|Pipfile[^/]*|go\.(mod|sum)|Cargo\.(toml|lock))$|^skills/|^agents/|^rulesets/|^scripts/foundry_tier_preflight' || true)"
+          # feat-foundry-installer-unpinning widening (AC-IUP-10, security review required):
+          # `^scripts/foundry-bootstrap\.sh$`, `^cli/src/permissionFloor\.mjs$` and
+          # `^cli/src/floorReconcile\.mjs$` appended — this atom moves the delivery trust boundary
+          # (the marketplace registration's ref) inside these three files, and the floor's own
+          # pinned-state predicate lives in the third, so a FUTURE change to any of them must never
+          # report "security-path: PASS (not applicable)" the way this atom's own PR would have,
+          # unwidened. All three are exact-path ANCHORED (`^...$`) so `scripts/foundry-bootstrap2.sh`,
+          # `docs/scripts/foundry-bootstrap.sh` and `cli/src/permissionFloorX.mjs` stay clean — see
+          # the negative-control rows in tests/fixtures/btb-gates/security-path-matrix.yaml.
+          # OR-append only, same discipline as the widenings above (widen-only, AC-SCW-13).
+          hits="$(printf '%s\n' "$files" | grep -E '(auth|secret|credential|token|provenance|signing|\.rego$)|^\.github/|^hooks/|^\.claude-plugin/|(^|/)(standing-versions|profile-version-ledger)|(^|/)(requirements[^/]*\.txt|package(-lock)?\.json|pyproject\.toml|Pipfile[^/]*|go\.(mod|sum)|Cargo\.(toml|lock))$|^skills/|^agents/|^rulesets/|^scripts/foundry_tier_preflight|^scripts/foundry-bootstrap\.sh$|^cli/src/permissionFloor\.mjs$|^cli/src/floorReconcile\.mjs$' || true)"
           # The review label names a commit: `security-reviewed:<head12>-<base8>`. TWELVE hex, not seven.
           # Seven is 28 bits, and a targeted 28-bit prefix is grindable in seconds by a commit
           # grinder varying a trailer — so an author could land a commit whose sha7 EQUALS the

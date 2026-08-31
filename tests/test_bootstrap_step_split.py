@@ -287,15 +287,11 @@ def _name_only_entry():
 # ══════════════════════════════════════════════════════════════════════════ AC-BTSS-1 ══
 
 def test_toolchain_step_alone_runs_both_install_operations_and_nothing_else(tmp_path, home, stub_bin):
-    # NOTE (feat-foundry-bootstrap-install-pin, GP-2.9 item 1, merged after this atom): the
-    # plugin-install step now names an explicit ref on every `marketplace add` invocation — the
-    # pinned source argument is `<marketplace>#<resolved ref>`, never the bare marketplace value.
-    # The expected ref is read from the shipped constant (never a literal here) so this assertion
-    # tracks whichever ref the release process has pinned, rather than freezing one.
-    ref_match = re.search(r'^DEFAULT_MARKETPLACE_REF="([^"]*)"', BOOTSTRAP.read_text(encoding="utf-8"), re.MULTILINE)
-    assert ref_match, "DEFAULT_MARKETPLACE_REF not found in scripts/foundry-bootstrap.sh"
-    pinned_ref = ref_match.group(1)
-
+    # INVERTED (feat-foundry-installer-unpinning, AC-IUP-1). WAS (feat-foundry-bootstrap-install-pin,
+    # GP-2.9 item 1): the plugin-install step used to name an explicit ref on every default
+    # `marketplace add` invocation — "<marketplace>#<resolved ref>", never the bare marketplace
+    # value. The DEFAULT (no --ref, no --channel) now composes NO ref at all — the registration
+    # (the index) is tagless; the ARTIFACT stays pinned via the untouched `plugins[].source.sha`.
     record_file = tmp_path / "claude-record.jsonl"
     marketplace = "acme-org/nonstandard-marketplace"
     env = _env(home, stub_bin, STUB_RECORD_FILE=str(record_file))
@@ -303,8 +299,7 @@ def test_toolchain_step_alone_runs_both_install_operations_and_nothing_else(tmp_
     assert proc.returncode == 0, proc.stderr
 
     records = _read_records(record_file)
-    pinned_marketplace = "%s#%s" % (marketplace, pinned_ref)
-    marketplace_adds = [r for r in records if r["argv"] == ["plugin", "marketplace", "add", pinned_marketplace]]
+    marketplace_adds = [r for r in records if r["argv"] == ["plugin", "marketplace", "add", marketplace]]
     installs = [r for r in records if r["argv"] == ["plugin", "install", "foundry@nonstandard-marketplace"]]
     assert len(marketplace_adds) == 1, records
     assert len(installs) == 1, records

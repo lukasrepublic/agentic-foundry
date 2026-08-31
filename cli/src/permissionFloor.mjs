@@ -214,17 +214,52 @@ export function buildSettings(map, pins) {
   for (const e of map.entries) {
     byTier[e.tier].push(e.rule);
   }
-  // THE PINNED LITERAL (AC-BCL-4(b), contract v1.2 — PR #61 security review Block 1). `ref` is
-  // load-bearing, not decoration: without it the adopter's FIRST marketplace resolution floats to
-  // whatever the default branch points at, and because the floor's allow rules are
-  // version-wildcarded (`cache/*/foundry/*/scripts/...`), the operator's single trust acceptance
-  // becomes a standing grant over whatever code that resolution delivered. That is the same
-  // floating-pin defect `autoUpdate: false` guards the LATER fetches against, left open on the
-  // first one — and strictly weaker than the manual path docs/QUICKSTART.md documents
-  // (the documented `marketplace add …#<tag>` install line). Single-sourced from
-  // the `foundry` pin block, so it cannot drift from the marketplace manifest.
+  // THE PINNED LITERAL — SUPERSEDED (feat-foundry-installer-unpinning, AC-IUP-3). This block used
+  // to read (AC-BCL-4(b), contract v1.2 — PR #61 security review Block 1), verbatim:
+  //
+  //   "THE PINNED LITERAL (AC-BCL-4(b), contract v1.2 — PR #61 security review Block 1). `ref` is
+  //   load-bearing, not decoration: without it the adopter's FIRST marketplace resolution floats
+  //   to whatever the default branch points at, and because the floor's allow rules are
+  //   version-wildcarded (`cache/*/foundry/*/scripts/...`), the operator's single trust acceptance
+  //   becomes a standing grant over whatever code that resolution delivered. That is the same
+  //   floating-pin defect `autoUpdate: false` guards the LATER fetches against, left open on the
+  //   first one — and strictly weaker than the manual path docs/QUICKSTART.md documents (the
+  //   documented `marketplace add …#<tag>` install line). Single-sourced from the `foundry` pin
+  //   block, so it cannot drift from the marketplace manifest."
+  //
+  // That reasoning was CORRECT at the time and is not dismissed — it is superseded, on grounds
+  // re-derived from the LIVE repository configuration (not a shipped adopter template, which an
+  // earlier draft of the supersession wrongly cited and then withdrew), recorded in full in
+  // specs/features/foundry/onboarding/installer-unpinning/feat-foundry-installer-unpinning.md
+  // ("This SUPERSEDES a prior security-review Block"). Summary of the three grounds:
+  //   (i)   Ref integrity does not distinguish "pinned" from "tagless" on THIS repository: `main`
+  //         is Tier A (6 required status contexts, enforce_admins, strict) and `refs/tags/v*` is
+  //         doubly ruleset-protected (immutable, one ruleset with bypass_actors: []). The Block's
+  //         threat model — an index that "floats to whatever the default branch points at" — is
+  //         not a tampering threat here; both refs are equally tamper-resistant.
+  //   (ii)  The index pin controls CADENCE, not integrity, and that cost is paid three other ways:
+  //         AC-IUP-4 makes BOTH installers register with an explicit-or-effective `autoUpdate:
+  //         false` (this one keeps writing the literal `false`; the shell installer's Clarified
+  //         resolution is that an ABSENT key reads identically, per floorReconcile.mjs's `pinned`
+  //         predicate below); the untouched, content-addressed `plugins[].source.sha` in
+  //         `.claude-plugin/marketplace.json` fixes exactly what commit is fetched regardless of
+  //         which ref the index names; and `.github/workflows/btb-gates-base.yml`'s
+  //         `^\.claude-plugin/` security-path rule gates what may enter the catalogue at all.
+  //   (iii) The Block's own mechanism never implemented the Block's stated threat: this same
+  //         floorReconcile.mjs already classified `ref: "main"` (a branch) as PINNED before this
+  //         atom, and `scripts/foundry-bootstrap.sh --channel edge` already shipped exactly that
+  //         floating-ref state as a supported, if opt-in, option. And the withholding branch this
+  //         Block relied on (`floorReconcile.mjs`'s `withheldAllow`) only runs on the RECONCILE
+  //         path against an ALREADY-EXISTING entry — never on this create path, which the Block's
+  //         own "the adopter's FIRST marketplace resolution" language describes.
+  // AC-IUP-5 is a NECESSARY CONSEQUENCE of removing `ref` here, not a mitigation invented to excuse
+  // it: without floorReconcile.mjs's predicate change below, EVERY adopter's reconcile run would
+  // silently drop the allow tier. The residual this supersession leaves OPEN, not closed: nothing
+  // in this atom bounds what may land on `main` beyond the security-path label — the sibling
+  // default-branch catalogue gate (not delivered here) is what closes that gap. Single-sourced
+  // from the `foundry` pin block, so `repo` cannot drift from the marketplace manifest.
   const marketplaceEntry = {
-    source: { source: 'github', repo: pins.marketplace_repo, ref: `v${pins.plugin_version}` },
+    source: { source: 'github', repo: pins.marketplace_repo },
     autoUpdate: false,
   };
   return {

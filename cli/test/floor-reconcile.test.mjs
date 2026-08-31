@@ -23,9 +23,14 @@ const PINS = JSON.parse(fs.readFileSync(path.join(CLI_DIR, 'package.json'), 'utf
 const HOME = '/home/testuser';
 
 const byTier = (t) => MAP.entries.filter((e) => e.tier === t).map((e) => e.rule);
+// feat-foundry-installer-unpinning (AC-IUP-3): buildSettings no longer composes a `ref` — the
+// registration (the INDEX) is tagless; the artifact stays pinned via the untouched
+// `plugins[].source.sha`, denied to this atom. Kept in agreement with buildSettings's own output
+// (never a second, independently-typed literal) so a regression in either drifts the other, not
+// silently only one of them.
 const PINNED = {
   [PINS.marketplace_name]: {
-    source: { source: 'github', repo: PINS.marketplace_repo, ref: `v${PINS.plugin_version}` },
+    source: { source: 'github', repo: PINS.marketplace_repo },
     autoUpdate: false,
   },
 };
@@ -294,4 +299,151 @@ test('trust_handoff_tells_the_truth_on_the_reconcile_path', async () => {
   assert.doesNotMatch(reconciled, /take effect only after/);
   assert.match(reconciled, /ALREADY TRUSTED/);
   assert.match(reconciled, /no second consent ceremony/);
+});
+
+// ── feat-foundry-installer-unpinning (AC-IUP-5/AC-IUP-8) ──────────────────────────────────────
+
+test('no_ref_autoupdate_false_entry_classifies_pinned_and_grants_allow', () => {
+  // AC-IUP-5: both installers now register the marketplace TAGLESS by default (AC-IUP-1/AC-IUP-3)
+  // — a no-ref, autoUpdate:false entry must classify PINNED and must NOT withhold the allow tier.
+  const tagless = { [PINS.marketplace_name]: { source: { source: 'github', repo: PINS.marketplace_repo }, autoUpdate: false } };
+  const root = target({ permissions: { allow: [], ask: [], deny: [] }, extraKnownMarketplaces: tagless });
+  const { t, plan: p } = plan(root);
+  assert.equal(p.pin.state, 'pinned');
+  assert.equal(p.pin.ref, null);
+  assert.equal(p.pin.skew, false, 'AC-IUP-8: a tagless entry must never report skew');
+  assert.equal(p.withheldAllow, false);
+  assert.equal(p.additions.allow.length, byTier('allow').length, 'the allow tier must be granted');
+  commit(t, p);
+  assert.equal(read(root).permissions.allow.length, byTier('allow').length);
+});
+
+test('no_ref_no_autoupdate_key_at_all_still_classifies_pinned', () => {
+  // AC-IUP-4's Clarifications: `claude plugin marketplace add` has no --autoUpdate flag and a real
+  // isolated run wrote NO autoUpdate key at all -- the shell installer's registration is exactly
+  // this shape. The predicate must read an ABSENT key identically to an explicit `false`.
+  const shellShaped = { [PINS.marketplace_name]: { source: { source: 'github', repo: PINS.marketplace_repo } } };
+  assert.equal(classifyPin({ extraKnownMarketplaces: shellShaped }, PINS).state, 'pinned');
+});
+
+test('tagless_pinned_entry_renders_no_null_and_no_skew_warning', () => {
+  // AC-IUP-8: renderPlan must never print "pinned at null", and the VERSION SKEW clause must never
+  // fire for a tagless entry (skew is structurally false for it — see classifyPin above).
+  const tagless = { [PINS.marketplace_name]: { source: { source: 'github', repo: PINS.marketplace_repo }, autoUpdate: false } };
+  const root = target({ permissions: { allow: [], ask: [], deny: [] }, extraKnownMarketplaces: tagless });
+  const { plan: p } = plan(root);
+  const lines = renderPlan(p, { applied: false });
+  const pinLine = lines.find((l) => l.includes('marketplace pinned at'));
+  assert.ok(pinLine, 'expected a "marketplace pinned at ..." line');
+  assert.doesNotMatch(pinLine, /pinned at null/);
+  assert.doesNotMatch(pinLine, /VERSION SKEW/);
+});
+
+test('ref_present_but_wildcarded_still_unpinned', () => {
+  // regression guard: AC-IUP-5 widens the predicate for an ABSENT ref only. An explicit but
+  // malformed/wildcarded ref must still classify unpinned, exactly as before this atom.
+  const wildcarded = { [PINS.marketplace_name]: { source: { source: 'github', repo: PINS.marketplace_repo, ref: '*' }, autoUpdate: false } };
+  assert.equal(classifyPin({ extraKnownMarketplaces: wildcarded }, PINS).state, 'unpinned');
+});
+
+// ── PR #132 security review: widening "no ref" must not widen to "any entry" ───────────────────
+// Each case below classified `unpinned` (and so hit the withheld-allow brake) BEFORE this atom.
+// The tagless widening must not silently promote them to `pinned` — that would turn a warning
+// into a reassurance, which is the specific regression the review caught.
+const pinOf = (entry) => classifyPin({ extraKnownMarketplaces: { [PINS.marketplace_name]: entry } }, PINS).state;
+
+test('a_tagless_entry_naming_a_foreign_repo_is_not_pinned', () => {
+  assert.equal(pinOf({ source: { source: 'github', repo: 'attacker/lookalike' } }), 'unpinned');
+  // and the genuine one still is, so the check is not simply refusing everything
+  assert.equal(pinOf({ source: { source: 'github', repo: PINS.marketplace_repo } }), 'pinned');
+});
+
+test('a_structurally_malformed_entry_is_not_pinned', () => {
+  for (const bad of [{}, 'x', [], null, 42, { source: 'github' }, { source: null }]) {
+    assert.equal(pinOf(bad), 'unpinned', `malformed entry classified pinned: ${JSON.stringify(bad)}`);
+  }
+});
+
+test('a_non_github_source_is_not_pinned', () => {
+  assert.equal(pinOf({ source: { source: 'git', repo: PINS.marketplace_repo } }), 'unpinned');
+  assert.equal(pinOf({ source: { source: 'url', repo: PINS.marketplace_repo } }), 'unpinned');
+});
+
+test('a_truthy_non_true_autoUpdate_is_not_pinned', () => {
+  const ours = { source: { source: 'github', repo: PINS.marketplace_repo } };
+  for (const au of [1, 'true', {}, []]) {
+    assert.equal(pinOf({ ...ours, autoUpdate: au }), 'unpinned', `autoUpdate ${JSON.stringify(au)} classified pinned`);
+  }
+  // absent and explicit-false remain pinned (AC-IUP-4/AC-IUP-5)
+  assert.equal(pinOf(ours), 'pinned');
+  assert.equal(pinOf({ ...ours, autoUpdate: false }), 'pinned');
+});
+
+// ── PR #132 final review R1: the reason field and its render branch were UNASSERTED ────────────
+// The whole point of carrying `reason` is that the foreign-source refusal must NOT advise
+// "Pin the marketplace, then re-run" -- pinning can never clear it. Nothing read the field, so a
+// refactor dropping it would silently restore the un-actionable message with the suite green.
+test('classifyPin_reports_why_it_refused', () => {
+  const ours = { source: { source: 'github', repo: PINS.marketplace_repo } };
+  assert.equal(classifyPin({ extraKnownMarketplaces: { [PINS.marketplace_name]: ours } }, PINS).reason, null);
+  const reasonOf = (e) => classifyPin({ extraKnownMarketplaces: { [PINS.marketplace_name]: e } }, PINS).reason;
+  assert.equal(reasonOf({ source: { source: 'github', repo: 'attacker/lookalike' } }), 'source');
+  assert.equal(reasonOf({}), 'source');
+  assert.equal(reasonOf({ source: { source: 'git', repo: PINS.marketplace_repo } }), 'source');
+  assert.equal(reasonOf({ ...ours, autoUpdate: 1 }), 'autoUpdate');
+  assert.equal(reasonOf({ source: { source: 'github', repo: PINS.marketplace_repo, ref: '' } }), 'ref');
+});
+
+test('a_foreign_source_renders_advice_that_pinning_cannot_clear', () => {
+  // drive the real pipeline, exactly as plan() does, with a FOREIGN marketplace source
+  const root = target({
+    permissions: { allow: [], ask: [], deny: [] },
+    extraKnownMarketplaces: { [PINS.marketplace_name]: { source: { source: 'github', repo: 'attacker/lookalike' } } },
+  });
+  const { plan: p } = plan(root);
+  const out = renderPlan(p, { applied: false }).join('\n');
+  assert.match(out, /does not name this marketplace's github source/);
+  assert.match(out, /Pinning will NOT clear this/);
+  assert.doesNotMatch(out, /Pin the marketplace, then re-run/);
+});
+
+test('the_same_repo_in_different_case_is_still_ours', () => {
+  const upper = PINS.marketplace_repo.replace(/^./, (c) => c.toUpperCase());
+  assert.notEqual(upper, PINS.marketplace_repo, 'the case variant must actually differ');
+  const state = classifyPin(
+    { extraKnownMarketplaces: { [PINS.marketplace_name]: { source: { source: 'github', repo: upper } } } }, PINS).state;
+  assert.equal(state, 'pinned', 'GitHub owner/repo is case-insensitive -- the same repo must not read as foreign');
+});
+
+test('a_unicode_confusable_repo_does_not_fold_into_ours', () => {
+  // U+212A KELVIN SIGN lowercases to ASCII 'k'. Without an ASCII shape gate this folds equal to
+  // lukasrepublic/... and reads as pinned. No real GitHub name can contain it, so the damage is a
+  // false reassurance rather than a live path -- but it is a class the shape gate closes outright.
+  const confusable = PINS.marketplace_repo.replace('k', 'K');
+  assert.notEqual(confusable, PINS.marketplace_repo, 'the fixture must actually differ');
+  assert.equal(confusable.toLowerCase(), PINS.marketplace_repo.toLowerCase(), 'and must fold equal');
+  const pin = classifyPin(
+    { extraKnownMarketplaces: { [PINS.marketplace_name]: { source: { source: 'github', repo: confusable } } } }, PINS);
+  assert.equal(pin.state, 'unpinned');
+  assert.equal(pin.reason, 'source');
+});
+
+test('version_skew_fires_for_a_well_formed_ref_naming_another_version', () => {
+  // skew was asserted only NEGATIVELY -- replacing it with a constant false passed the whole suite,
+  // the same unasserted-field defect just fixed for `reason`.
+  const ours = (ref) => ({ source: { source: 'github', repo: PINS.marketplace_repo, ref }, autoUpdate: false });
+  const at = (ref) => classifyPin({ extraKnownMarketplaces: { [PINS.marketplace_name]: ours(ref) } }, PINS);
+  const stale = at('v0.9.0');
+  assert.equal(stale.state, 'pinned');
+  assert.equal(stale.skew, true, 'a ref naming another version must be reported as skewed');
+  const current = at(`v${PINS.plugin_version}`);
+  assert.equal(current.state, 'pinned');
+  assert.equal(current.skew, false, 'the matching ref must not be reported as skewed');
+});
+
+test('an_empty_pin_block_repo_cannot_match_an_empty_entry_repo', () => {
+  const brokenPins = { ...PINS, marketplace_repo: '' };
+  const entry = { source: { source: 'github', repo: '' } };
+  const pin = classifyPin({ extraKnownMarketplaces: { [PINS.marketplace_name]: entry } }, brokenPins);
+  assert.equal(pin.state, 'unpinned', 'a broken pin block must fail closed, never match by degeneracy');
 });

@@ -29,12 +29,24 @@
 #                               — toolchain-install's operations, project-scaffold's precondition
 #                               probe, and the combined form all derive from this ONE declared
 #                               value; there is no second default anywhere else in the script.
-#   --ref <ref>                 pin the marketplace add to an explicit ref (tag or branch);
-#                               overrides --channel for this invocation
-#   --channel <stable|edge>     stable (the default): the shipped PINNED release tag. edge: the
-#                               plugin repository's default-branch catalogue — UNSTABLE and
-#                               UNPINNED, an explicit opt-in only, never the default; warns on
-#                               stderr when selected. Byte-exact, no case-folding.
+#   --ref <ref>                 pin the marketplace add to an explicit ref (tag or branch) — e.g. a
+#                               pinned release tag; overrides --channel for this invocation
+#                               NOTE: the default registration is TAGLESS, so the catalogue
+#                               re-resolves from the marketplace's default branch. This step cannot
+#                               write `autoUpdate` (it may use only the claude CLI), so the platform
+#                               default governs unattended re-resolution. Pass --ref to freeze it.
+#   --channel <stable|edge>     stable (the default): registers the marketplace TAGLESS, against the
+#                               currently-published index — no release-tag literal is composed into
+#                               the source argument (feat-foundry-installer-unpinning). The ARTIFACT
+#                               fetched still resolves to an exact commit via the manifest's own
+#                               source.sha regardless of which index ref is named, so this does not
+#                               loosen the FIDELITY of what is fetched. It does NOT bound cadence:
+#                               a re-resolved index is a different catalogue naming a different
+#                               commit. Pass --ref to freeze the index too. edge: the plugin repository's default-branch
+#                               catalogue, an explicit opt-in only, never the default — UNSTABLE (the
+#                               index churns with every push to main) though not unpinned in the
+#                               artifact sense above; warns on stderr when selected. Byte-exact, no
+#                               case-folding.
 #   --template-ssh               clone the workspace template over SSH (git@github.com:) instead
 #                               of the default anonymous, prompt-disabled https:// clone
 #   --operator <id>             seed .claude/foundry-operators.json (replace op_example; requires an existing registry in the target)
@@ -52,9 +64,17 @@ set -euo pipefail
 
 DEFAULT_TEMPLATE="lukasrepublic/agentic-handbook"
 DEFAULT_MARKETPLACE="lukasrepublic/agentic-foundry"
-DEFAULT_MARKETPLACE_REF="v1.6.0"  # the pinned STABLE default; maintained by the release cut —
-                                    # tests/test_bootstrap_install_pin.py asserts it equals
-                                    # .claude-plugin/marketplace.json plugins[foundry].source.ref
+DEFAULT_MARKETPLACE_REF="v1.6.0"  # feat-foundry-installer-unpinning (AC-IUP-1/6): an INDEX-selector
+                                    # default only — used for the resolved-channel disclosure line and
+                                    # the shipped selftest's semver-shape check, NEVER composed into
+                                    # the default marketplace-add source argument (that is tagless as
+                                    # of this atom). Deliberately DECOUPLED from
+                                    # .claude-plugin/marketplace.json plugins[foundry].source.ref (the
+                                    # ARTIFACT pin, a denied path here) — the two are permitted to
+                                    # drift; test_bootstrap_default_ref_is_decoupled_from_the_manifest_ref
+                                    # proves it. Still validated as well-formed semver by
+                                    # test_shipped_pin_is_a_semver_release_tag, so it cannot rot to
+                                    # garbage even though it no longer tracks the manifest.
 EDGE_MARKETPLACE_REF="main"        # the plugin repository's default branch: the opt-in, UNSTABLE channel
 
 TEMPLATE="$DEFAULT_TEMPLATE"
@@ -72,7 +92,10 @@ CHANNEL_OPT=""              # raw --channel value, pre-validation
 TEMPLATE_SSH=0              # --template-ssh flag: SSH template clone instead of the https default
 RESOLVED_REF=""             # the resolved marketplace ref (Terminology) — set once, by validate_arguments
 RESOLVED_CHANNEL=""         # stable | edge | explicit (Terminology) — set once, by validate_arguments
-PINNED_SOURCE=""            # "<marketplace>#<resolved ref>" — the pinned source argument (Terminology)
+PINNED_SOURCE=""            # the marketplace-add source argument (Terminology): tagless
+                             # "<marketplace>" on the STABLE default (AC-IUP-1), or
+                             # "<marketplace>#<resolved ref>" when the operator supplied one
+                             # (explicit --ref, or --channel edge; AC-IUP-2)
 
 TOOLCHAIN_AFFIRMED=0      # source (A) of the toolchain-affirmation — process-local: never
                            # written to disk, never exported, never visible to a later invocation.
@@ -229,12 +252,21 @@ validate_arguments() {
     RESOLVED_REF="$DEFAULT_MARKETPLACE_REF"
     RESOLVED_CHANNEL="stable"
   fi
-  PINNED_SOURCE="${MARKETPLACE}#${RESOLVED_REF}"
+  # feat-foundry-installer-unpinning (AC-IUP-1/AC-IUP-2): the STABLE default composes NO ref at
+  # all — a tagless source, so `claude plugin update` can ever re-read a moving catalogue instead
+  # of a frozen one forever. An OPERATOR-SUPPLIED selector (an explicit --ref, or the explicit
+  # --channel edge opt-in) still composes "${MARKETPLACE}#${RESOLVED_REF}" exactly as before —
+  # this branch is the ONLY thing this atom changes about the composition.
+  if [ "$RESOLVED_CHANNEL" = "stable" ]; then
+    PINNED_SOURCE="$MARKETPLACE"
+  else
+    PINNED_SOURCE="${MARKETPLACE}#${RESOLVED_REF}"
+  fi
 
   # AC-BIP-6(c): the UNSTABLE warning fires from THIS resolution point — never from inside the
   # --dry-run branch — so it is identical on the dry-run plan and the real path (AC-BIP-14(b)).
   if [ "$RESOLVED_CHANNEL" = "edge" ]; then
-    printf 'foundry-bootstrap: WARNING: --channel edge selects the UNSTABLE, unpinned ref %s -- see --help\n' "$RESOLVED_REF" >&2
+    printf 'foundry-bootstrap: WARNING: --channel edge selects the UNSTABLE default-branch catalogue (ref %s) -- the index will drift with every push to main; the ARTIFACT stays commit-pinned via the manifest'"'"'s source.sha regardless -- see --help\n' "$RESOLVED_REF" >&2
   fi
 }
 
@@ -1079,11 +1111,13 @@ selftest() {
   check "dry-run prints the /foundry:init handoff" 'printf "%s" "$out" | grep -q "/foundry:init"'
   check "dry-run made no changes" '[ ! -e "$tmp/new" ]'
 
-  # 4b. [pinned marketplace ref / edge channel / https template clone] — AC-BIP-11: the default
-  # plan names an explicit release-tag ref, --channel edge announces itself as UNSTABLE, and the
-  # default template-clone transport is anonymous https.
-  check "pinned marketplace ref default names an explicit semver release tag" \
-    'printf "%s" "$out" | grep -Eq "marketplace add.*#v[0-9]+[.][0-9]+[.][0-9]+"'
+  # 4b. [tagless default marketplace ref / edge channel / https template clone] —
+  # feat-foundry-installer-unpinning (AC-IUP-1/AC-BIP-11): the default plan composes NO ref at
+  # all (tagless index), --channel edge announces itself as UNSTABLE, and the default
+  # template-clone transport is anonymous https.
+  check "default marketplace ref plan is tagless (index decoupled from the artifact pin)" \
+    'printf "%s" "$out" | grep -q "marketplace add $DEFAULT_MARKETPLACE" \
+       && ! printf "%s" "$out" | grep -Eq "marketplace add [^ ]*#"'
   out="$("${BASH_SOURCE[0]}" "$tmp/edge" --dry-run --channel edge 2>&1)"
   check "edge channel resolves to the edge ref and warns UNSTABLE" \
     'printf "%s" "$out" | grep -q "UNSTABLE" && printf "%s" "$out" | grep -Eq "marketplace add.*#main"'

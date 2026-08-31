@@ -220,17 +220,19 @@ def _assert_settings_bijection(settings, map_data):
         assert actual == expected, (tier, actual ^ expected)
 
 
-def _assert_marketplace_pinned_literal(entry, marketplace_repo, plugin_version):
-    """AC-BCL-4(b), contract v1.2. `source.ref` is the PIN — an entry carrying only {source, repo}
-    floats the adopter's first marketplace resolution to the default branch, which under the
-    floor's version-wildcarded allow rules turns one trust acceptance into a standing grant over
-    whatever that resolution delivered. Asserted as a whole-object equality so a DROPPED ref is
+def _assert_marketplace_pinned_literal(entry, marketplace_repo):
+    """SUPERSEDED shape (feat-foundry-installer-unpinning, AC-IUP-3). Was AC-BCL-4(b), contract
+    v1.2 (PR #61 security review Block 1): `source.ref` used to be asserted as the pin. It is
+    REMOVED now — `source`'s key set is closed to exactly {source, repo}, restoring the shape
+    feat-foundry-bootstrap-cli.md:184 (AC-BCL-4(b)) itself already declared; the `ref` the PR #61
+    Block added was a post-authorization addition. See the supersession comment carried verbatim
+    at cli/src/permissionFloor.mjs (the block above `buildSettings`'s composed literal) for the
+    full grounds. Asserted as a whole-object equality so a REINTRODUCED ref (or any other key) is
     caught, not just a wrong one."""
     assert entry == {
         "source": {
             "source": "github",
             "repo": marketplace_repo,
-            "ref": f"v{plugin_version}",
         },
         "autoUpdate": False,
     }
@@ -504,18 +506,93 @@ def test_marketplace_and_plugin_are_single_sourced(tmp_path):
 
 
 def test_the_marketplace_entry_is_the_pinned_literal(tmp_path):
+    """INVERTED (feat-foundry-installer-unpinning, AC-IUP-3). WAS: asserted `source.ref` present.
+    Name unchanged (checkpoints/AC-IUP-7 reference it by node id); the composed entry now carries
+    NO ref key at all — see _assert_marketplace_pinned_literal's docstring for the supersession."""
     proc, home, target = _scaffold(tmp_path)
     assert proc.returncode == 0
     settings = json.loads((target / ".claude" / "settings.json").read_text())
     pkg = load_pkg()
     pins = pkg["foundry"]
     entry = settings["extraKnownMarketplaces"][pins["marketplace_name"]]
-    _assert_marketplace_pinned_literal(entry, pins["marketplace_repo"], pins["plugin_version"])
+    _assert_marketplace_pinned_literal(entry, pins["marketplace_repo"])
     assert set(entry.keys()) == {"source", "autoUpdate"}
-    assert set(entry["source"].keys()) == {"source", "repo", "ref"}
+    assert set(entry["source"].keys()) == {"source", "repo"}
     assert entry["source"]["source"] == "github"
-    assert entry["source"]["ref"] == f"v{pins['plugin_version']}"
+    assert "ref" not in entry["source"]
     assert entry["autoUpdate"] is False
+
+
+# ── AC-IUP-3 (feat-foundry-installer-unpinning) ─────────────────────────────────────────────────
+
+
+def test_composed_marketplace_source_carries_no_ref_key():
+    """NEW (AC-IUP-3): exercises buildSettings directly (never a scaffold subprocess) and asserts
+    the composed entry's key set is exactly {source, autoUpdate}, source's key set exactly
+    {source, repo} — the shape feat-foundry-bootstrap-cli.md:184 (AC-BCL-4(b)) already declares."""
+    pkg = load_pkg()
+    pins = pkg["foundry"]
+    js = """
+import { loadMap, buildSettings } from './src/permissionFloor.mjs';
+const map = loadMap('./permission-floor.json');
+const pins = %s;
+const settings = buildSettings(map, pins);
+console.log(JSON.stringify(settings.extraKnownMarketplaces[pins.marketplace_name]));
+""" % json.dumps(pins)
+    entry = json.loads(_node_eval(js))
+    assert set(entry.keys()) == {"source", "autoUpdate"}, entry
+    assert set(entry["source"].keys()) == {"source", "repo"}, entry
+    assert entry["source"]["source"] == "github"
+    assert entry["source"]["repo"] == pins["marketplace_repo"]
+    assert entry["autoUpdate"] is False
+
+
+def test_cli_registers_with_auto_update_false(tmp_path):
+    """NEW (AC-IUP-4, the npx CLI half): the CLI already writes an explicit `autoUpdate: false` on
+    every scaffold — this checkpoint pins that continuing to hold as the shell installer's own
+    AC-IUP-4 node is satisfied a different way (see test_bootstrap_registers_with_auto_update_false
+    in tests/test_bootstrap_install_pin.py)."""
+    proc, home, target = _scaffold(tmp_path)
+    assert proc.returncode == 0
+    settings = json.loads((target / ".claude" / "settings.json").read_text())
+    pkg = load_pkg()
+    pins = pkg["foundry"]
+    entry = settings["extraKnownMarketplaces"][pins["marketplace_name"]]
+    assert entry["autoUpdate"] is False
+
+
+def test_no_ref_autoupdate_false_entry_classifies_pinned_and_grants_allow():
+    """NEW (AC-IUP-5): the tagless, autoUpdate:false shape AC-IUP-3 now composes must classify
+    PINNED under floorReconcile.mjs's predicate and must NOT withhold the allow tier — proven
+    against the SAME classifyPin/planAdditions the reconcile path runs, not a re-implementation."""
+    pkg = load_pkg()
+    pins = pkg["foundry"]
+    js = """
+import { loadMap, classifyDrift } from './src/permissionFloor.mjs';
+import { classifyPin, planAdditions, readTrackedRules } from './src/floorReconcile.mjs';
+const map = loadMap('./permission-floor.json');
+const pins = %s;
+const entry = { source: { source: 'github', repo: pins.marketplace_repo }, autoUpdate: false };
+const settingsObj = {
+  permissions: { allow: [], ask: [], deny: [] },
+  extraKnownMarketplaces: { [pins.marketplace_name]: entry },
+};
+const pin = classifyPin(settingsObj, pins);
+const findings = classifyDrift(map, readTrackedRules(settingsObj), {
+  pluginRootExpansion: ['x'], unreadableOrigins: [], home: '/home/testuser',
+});
+const plan = planAdditions({ findings, map, settingsObj, pins });
+console.log(JSON.stringify({
+  pinState: pin.state, pinRef: pin.ref, pinSkew: pin.skew,
+  withheldAllow: plan.withheldAllow, allowCount: plan.additions.allow.length,
+}));
+""" % json.dumps(pins)
+    data = json.loads(_node_eval(js))
+    assert data["pinState"] == "pinned", data
+    assert data["pinRef"] is None, data
+    assert data["pinSkew"] is False, data
+    assert data["withheldAllow"] is False, data
+    assert data["allowCount"] > 0, data
 
 
 def _walk_forbidden_keys(obj, forbidden, path=""):
@@ -1139,41 +1216,43 @@ console.log(JSON.stringify({refused}));
     # (i) autoUpdate flipped true -> the REAL pinned-literal helper fires
     pkg_i = load_pkg()
     repo_i = pkg_i["foundry"]["marketplace_repo"]
-    ver_i = pkg_i["foundry"]["plugin_version"]
     good_entry = {
-        "source": {"source": "github", "repo": repo_i, "ref": f"v{ver_i}"},
+        "source": {"source": "github", "repo": repo_i},
         "autoUpdate": False,
     }
-    _assert_marketplace_pinned_literal(good_entry, repo_i, ver_i)  # sanity
+    _assert_marketplace_pinned_literal(good_entry, repo_i)  # sanity
     bad_entry = {**good_entry, "autoUpdate": True}
     try:
-        _assert_marketplace_pinned_literal(bad_entry, repo_i, ver_i)
+        _assert_marketplace_pinned_literal(bad_entry, repo_i)
         results["i_autoupdate_true_detected"] = False
     except AssertionError:
         results["i_autoupdate_true_detected"] = True
 
-    # (o) THE FLOATING PIN — `source.ref` dropped entirely, and (o2) present but pointing at the
-    #     wrong version. Both must redden. This is the control the atom shipped WITHOUT: the
-    #     original assertions pinned the ref-less shape, so the checkpoint was green precisely
-    #     BECAUSE the pin was missing, and adding it would have turned three assertions red
-    #     (PR #61 security review Block 1). A dropped pin is the dangerous case — it is what an
-    #     ordinary refactor produces — so it gets its own control rather than riding on (i).
-    unpinned_entry = {"source": {"source": "github", "repo": repo_i}, "autoUpdate": False}
-    try:
-        _assert_marketplace_pinned_literal(unpinned_entry, repo_i, ver_i)
-        results["o_dropped_ref_detected"] = False
-    except AssertionError:
-        results["o_dropped_ref_detected"] = True
-
-    wrong_ref_entry = {
-        "source": {"source": "github", "repo": repo_i, "ref": "main"},
+    # (o) THE REINTRODUCED REF, and (o2) A NON-GITHUB SOURCE. Both must redden. R3 (spec Risks):
+    # after feat-foundry-installer-unpinning a DROPPED ref is the CORRECT shape (the checkpoint
+    # this control used to run — "a dropped ref is detected" — is exactly what this atom deliberately
+    # reverses), so control (o) must convict something else real instead of riding on that no-longer-
+    # defective case: a `ref` key an ordinary refactor might reintroduce, and a `source.source` that
+    # silently stopped being "github".
+    reintroduced_ref_entry = {
+        "source": {"source": "github", "repo": repo_i, "ref": "v9.9.9"},
         "autoUpdate": False,
     }
     try:
-        _assert_marketplace_pinned_literal(wrong_ref_entry, repo_i, ver_i)
-        results["o2_wrong_ref_detected"] = False
+        _assert_marketplace_pinned_literal(reintroduced_ref_entry, repo_i)
+        results["o_reintroduced_ref_detected"] = False
     except AssertionError:
-        results["o2_wrong_ref_detected"] = True
+        results["o_reintroduced_ref_detected"] = True
+
+    non_github_source_entry = {
+        "source": {"source": "npm", "repo": repo_i},
+        "autoUpdate": False,
+    }
+    try:
+        _assert_marketplace_pinned_literal(non_github_source_entry, repo_i)
+        results["o2_non_github_source_detected"] = False
+    except AssertionError:
+        results["o2_non_github_source_detected"] = True
 
     # (p) THE DANGLING-SYMLINK ESCAPE (PR #61 security review Block 2). A managed path that is a
     #     symlink to a NONEXISTENT target outside the root: existsSync FOLLOWS symlinks and so

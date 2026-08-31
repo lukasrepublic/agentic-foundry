@@ -113,6 +113,55 @@ rows:
     expect_exit_zero: true
     expect_summary_contains: "security-path: PASS (not applicable)"
 
+  # --- feat-foundry-installer-unpinning (AC-IUP-10) --------------------------------------------
+  - name: flagged-bootstrap-installer
+    files:
+      - "scripts/foundry-bootstrap.sh"
+    labels: []
+    expect_flagged: true
+    expect_exit_zero: false
+    expect_summary_contains: "security-path: FAIL"
+
+  - name: flagged-permission-floor
+    files:
+      - "cli/src/permissionFloor.mjs"
+    labels: []
+    expect_flagged: true
+    expect_exit_zero: false
+    expect_summary_contains: "security-path: FAIL"
+
+  - name: flagged-floor-reconcile
+    files:
+      - "cli/src/floorReconcile.mjs"
+    labels: []
+    expect_flagged: true
+    expect_exit_zero: false
+    expect_summary_contains: "security-path: FAIL"
+
+  - name: clean-bootstrap-installer-neighbour
+    files:
+      - "scripts/foundry-bootstrap2.sh"
+    labels: []
+    expect_flagged: false
+    expect_exit_zero: true
+    expect_summary_contains: "security-path: PASS (not applicable)"
+
+  - name: clean-docs-bootstrap-installer-neighbour
+    files:
+      - "docs/scripts/foundry-bootstrap.sh"
+    labels: []
+    expect_flagged: false
+    expect_exit_zero: true
+    expect_summary_contains: "security-path: PASS (not applicable)"
+
+  - name: clean-permission-floor-neighbour
+    files:
+      - "cli/src/permissionFloorX.mjs"
+    labels: []
+    expect_flagged: false
+    expect_exit_zero: true
+    expect_summary_contains: "security-path: PASS (not applicable)"
+
   # --- HEAD-BOUND REVIEW LABEL (2026-08-05, second security-review pass) --------------------
   # The label is `security-reviewed:<sha12>` and names the commit it describes. The three rows
   # below are the whole guarantee: a label for THIS head admits the diff, a label for ANOTHER
