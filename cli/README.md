@@ -17,8 +17,11 @@ never pre-grants anything — it *declares*, the platform's trust dialog is the 
 ## What it does
 
 - Emits the plugin's reviewed three-tier permission map verbatim into the new workspace's
-  committed `.claude/settings.json`, alongside `extraKnownMarketplaces` and `enabledPlugins`
-  pinned to an exact marketplace ref (`autoUpdate: false` — no floating grant).
+  committed `.claude/settings.json`, alongside `extraKnownMarketplaces` and `enabledPlugins`.
+  As of `feat-foundry-installer-unpinning`, the marketplace registration names no ref at all
+  (`autoUpdate: false` still stops it from floating on its own — no floating grant); the ARTIFACT
+  fetched is what stays pinned, via the untouched `plugins[].source.sha` in the marketplace
+  manifest, which `sha` outranks `ref` at install time regardless of which index ref is named.
 - Absorbs `foundry-bootstrap.sh`'s out-of-session `git` commit-identity isolation (`--gh-account`),
   proved differentially equal to the shipped script.
 - Scaffolds a seven-file, schema-valid workspace seed.

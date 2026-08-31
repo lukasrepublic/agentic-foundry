@@ -23,9 +23,14 @@ const PINS = JSON.parse(fs.readFileSync(path.join(CLI_DIR, 'package.json'), 'utf
 const HOME = '/home/testuser';
 
 const byTier = (t) => MAP.entries.filter((e) => e.tier === t).map((e) => e.rule);
+// feat-foundry-installer-unpinning (AC-IUP-3): buildSettings no longer composes a `ref` — the
+// registration (the INDEX) is tagless; the artifact stays pinned via the untouched
+// `plugins[].source.sha`, denied to this atom. Kept in agreement with buildSettings's own output
+// (never a second, independently-typed literal) so a regression in either drifts the other, not
+// silently only one of them.
 const PINNED = {
   [PINS.marketplace_name]: {
-    source: { source: 'github', repo: PINS.marketplace_repo, ref: `v${PINS.plugin_version}` },
+    source: { source: 'github', repo: PINS.marketplace_repo },
     autoUpdate: false,
   },
 };
@@ -294,4 +299,49 @@ test('trust_handoff_tells_the_truth_on_the_reconcile_path', async () => {
   assert.doesNotMatch(reconciled, /take effect only after/);
   assert.match(reconciled, /ALREADY TRUSTED/);
   assert.match(reconciled, /no second consent ceremony/);
+});
+
+// ── feat-foundry-installer-unpinning (AC-IUP-5/AC-IUP-8) ──────────────────────────────────────
+
+test('no_ref_autoupdate_false_entry_classifies_pinned_and_grants_allow', () => {
+  // AC-IUP-5: both installers now register the marketplace TAGLESS by default (AC-IUP-1/AC-IUP-3)
+  // — a no-ref, autoUpdate:false entry must classify PINNED and must NOT withhold the allow tier.
+  const tagless = { [PINS.marketplace_name]: { source: { source: 'github', repo: PINS.marketplace_repo }, autoUpdate: false } };
+  const root = target({ permissions: { allow: [], ask: [], deny: [] }, extraKnownMarketplaces: tagless });
+  const { t, plan: p } = plan(root);
+  assert.equal(p.pin.state, 'pinned');
+  assert.equal(p.pin.ref, null);
+  assert.equal(p.pin.skew, false, 'AC-IUP-8: a tagless entry must never report skew');
+  assert.equal(p.withheldAllow, false);
+  assert.equal(p.additions.allow.length, byTier('allow').length, 'the allow tier must be granted');
+  commit(t, p);
+  assert.equal(read(root).permissions.allow.length, byTier('allow').length);
+});
+
+test('no_ref_no_autoupdate_key_at_all_still_classifies_pinned', () => {
+  // AC-IUP-4's Clarifications: `claude plugin marketplace add` has no --autoUpdate flag and a real
+  // isolated run wrote NO autoUpdate key at all -- the shell installer's registration is exactly
+  // this shape. The predicate must read an ABSENT key identically to an explicit `false`.
+  const shellShaped = { [PINS.marketplace_name]: { source: { source: 'github', repo: PINS.marketplace_repo } } };
+  assert.equal(classifyPin({ extraKnownMarketplaces: shellShaped }, PINS).state, 'pinned');
+});
+
+test('tagless_pinned_entry_renders_no_null_and_no_skew_warning', () => {
+  // AC-IUP-8: renderPlan must never print "pinned at null", and the VERSION SKEW clause must never
+  // fire for a tagless entry (skew is structurally false for it — see classifyPin above).
+  const tagless = { [PINS.marketplace_name]: { source: { source: 'github', repo: PINS.marketplace_repo }, autoUpdate: false } };
+  const root = target({ permissions: { allow: [], ask: [], deny: [] }, extraKnownMarketplaces: tagless });
+  const { plan: p } = plan(root);
+  const lines = renderPlan(p, { applied: false });
+  const pinLine = lines.find((l) => l.includes('marketplace pinned at'));
+  assert.ok(pinLine, 'expected a "marketplace pinned at ..." line');
+  assert.doesNotMatch(pinLine, /pinned at null/);
+  assert.doesNotMatch(pinLine, /VERSION SKEW/);
+});
+
+test('ref_present_but_wildcarded_still_unpinned', () => {
+  // regression guard: AC-IUP-5 widens the predicate for an ABSENT ref only. An explicit but
+  // malformed/wildcarded ref must still classify unpinned, exactly as before this atom.
+  const wildcarded = { [PINS.marketplace_name]: { source: { source: 'github', repo: PINS.marketplace_repo, ref: '*' }, autoUpdate: false } };
+  assert.equal(classifyPin({ extraKnownMarketplaces: wildcarded }, PINS).state, 'unpinned');
 });

@@ -1,14 +1,21 @@
 """tests/test_bootstrap_install_pin.py — hermetic behavioral + static binding for
-feat-foundry-bootstrap-install-pin (GP-2.9 item 1, AC-BIP-1..14).
+feat-foundry-bootstrap-install-pin (GP-2.9 item 1, AC-BIP-1..14) AND, since
+feat-foundry-installer-unpinning, the AC-IUP-1/2/6 de-tagging of the marketplace REGISTRATION.
 
 WHAT THE PIN IS (read before trusting a green here). A release-tag ref is REPOINTABLE, so the
 ref + the catalogue's recorded `sha` name the release the project INTENDED to publish, never an
-immutable artifact reference. This module proves three things and no more: the script NAMES an
-exact ref on every plugin-install invocation (dry-run AND real), the shipped constant AGREES with
-`.claude-plugin/marketplace.json` (a LOCAL, hermetic comparison — never an upstream fact), and the
-template clone is anonymous `https://` by default with SSH as an opt-in. It proves nothing about
-whether the upstream tag still resolves to that commit — tag protection is an operator-owned
-dependency, out of this atom's reach (spec, Dependencies / sequencing).
+immutable artifact reference. As of feat-foundry-installer-unpinning, the shell installer's DEFAULT
+registration is deliberately TAGLESS (AC-IUP-1) — the ARTIFACT pin (`plugins[].source.sha` in
+`.claude-plugin/marketplace.json`, a denied path here) is what actually bounds what code is fetched;
+the registration's ref only ever bounded the INDEX, and freezing it is what made
+`claude plugin update` re-read the same frozen catalogue forever. This module now proves: an
+explicit `--ref` (or `--channel edge`) still composes an exact ref (AC-IUP-2, a regression guard —
+this half of AC-BIP-1 is unchanged), the shipped DEFAULT_MARKETPLACE_REF constant is DECOUPLED from
+`.claude-plugin/marketplace.json`'s `plugins[foundry].source.ref` and the two are PERMITTED to
+differ (AC-IUP-6 — this is a LOCAL, hermetic comparison, never an upstream fact), and the template
+clone is anonymous `https://` by default with SSH as an opt-in. It proves nothing about whether the
+upstream tag still resolves to that commit — tag protection is an operator-owned dependency, out of
+this atom's reach (spec, Dependencies / sequencing).
 
 HERMETICITY. Every test is network-free. The dry-run path invokes neither `git` nor `claude` (the
 shipped `run()` helper only prints a plan under `--dry-run`), so most of this module needs neither
@@ -87,17 +94,22 @@ def _manifest_ref(root: Path) -> str:
 
 
 def shipped_pin_drift(root: Path):
-    """The AC-BIP-3 comparison, parameterized by a repository root (Design/notes, item 2): reads
-    the shipped DEFAULT_MARKETPLACE_REF constant from scripts/foundry-bootstrap.sh and the
-    plugins[foundry].source.ref from .claude-plugin/marketplace.json, BOTH beneath `root`, at call
-    time. Returns None when they agree; otherwise a (constant, manifest_ref) pair describing the
-    drift. Neither operand is a literal in this module — a hard-coded string comparison cannot
-    satisfy this function's contract, which is what the negative control below convicts."""
-    constant = _script_constant(root, "DEFAULT_MARKETPLACE_REF")
-    manifest_ref = _manifest_ref(root)
-    if constant == manifest_ref:
-        return None
-    return (constant, manifest_ref)
+    """SEVERED (feat-foundry-installer-unpinning, AC-IUP-6). This USED to be the AC-BIP-3
+    comparison: it read the shipped DEFAULT_MARKETPLACE_REF constant from
+    scripts/foundry-bootstrap.sh and `plugins[foundry].source.ref` from
+    `.claude-plugin/marketplace.json`, BOTH beneath `root`, and reported a mismatch as drift. That
+    coupling is deliberately removed — DEFAULT_MARKETPLACE_REF is now an INDEX-selector default
+    only (never composed into the default marketplace-add source, AC-IUP-1), while `source.ref`
+    stays the ARTIFACT pin (a denied path, untouched by this atom); the two are PERMITTED to
+    differ, and this function now ALWAYS returns None. It still READS both operands beneath
+    `root` (rather than becoming a bare no-op), so a genuinely malformed shipped constant or
+    manifest still raises loudly through `_script_constant`/`_manifest_ref` — only the
+    equality-as-drift verdict is gone. Retained under its original name (rather than deleted) so
+    the two controls below keep proving the severance against this SAME production code path, not
+    a fresh copy of the old comparison."""
+    _script_constant(root, "DEFAULT_MARKETPLACE_REF")
+    _manifest_ref(root)
+    return None
 
 
 def _dry_run(target: Path, extra_args=None):
@@ -184,7 +196,12 @@ def _recording_claude_stub(tmp_path):
     return bindir
 
 
-# ───────────────────────────────────────────────────────────────────── AC-BIP-1 ──
+# ───────────────────────────────────────────────────────────────────── AC-IUP-1 ──
+# INVERTED (feat-foundry-installer-unpinning). WAS test_marketplace_add_names_an_explicit_ref: the
+# DEFAULT registration used to compose an explicit ref unconditionally. It now composes NONE — the
+# registration (the INDEX) is tagless; the ARTIFACT stays pinned via the untouched
+# `plugins[].source.sha` in `.claude-plugin/marketplace.json`, a denied path here. Name unchanged
+# (checkpoints/AC-IUP-7's collected-count floor reference it by node id); polarity reversed.
 
 def test_marketplace_add_names_an_explicit_ref(tmp_path):
     proc = _dry_run(tmp_path / "proj")
@@ -192,36 +209,50 @@ def test_marketplace_add_names_an_explicit_ref(tmp_path):
     m = re.search(r"marketplace add (\S+)", proc.stdout)
     assert m, proc.stdout
     src = m.group(1)
-    assert "#" in src, "pinned source argument %r carries no ref" % src
-    _, _, ref = src.partition("#")
-    assert re.match(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$", ref) and ".." not in ref, \
-        "resolved ref %r is outside the accepted ref grammar" % ref
+    assert "#" not in src, "the DEFAULT source argument %r still carries a ref (AC-IUP-1)" % src
+    marketplace = _script_constant(REPO_ROOT, "DEFAULT_MARKETPLACE")
+    assert src == marketplace, "the tagless default must name the declared marketplace verbatim"
 
 
-# ───────────────────────────────────────────────────────────────────── AC-BIP-2 ──
+# ───────────────────────────────────────────────────────────────────── AC-IUP-1 ──
+# INVERTED (feat-foundry-installer-unpinning). WAS test_default_ref_is_the_pinned_release_tag: the
+# default plan used to compose "<marketplace>#<ref>". It now composes the bare marketplace, with no
+# "#" anywhere on that line — the resolved ref is still DISCLOSED (the "resolved channel: stable
+# (ref vX.Y.Z)" line, AC-BIP-10(a)), just never concatenated into the source argument.
 
 def test_default_ref_is_the_pinned_release_tag(tmp_path):
     proc = _dry_run(tmp_path / "proj")
     assert proc.returncode == 0, proc.stderr
     ref = _script_constant(REPO_ROOT, "DEFAULT_MARKETPLACE_REF")
     marketplace = _script_constant(REPO_ROOT, "DEFAULT_MARKETPLACE")
-    assert ("marketplace add %s#%s" % (marketplace, ref)) in proc.stdout
+    assert ("marketplace add %s" % marketplace) in proc.stdout
+    assert not re.search(r"marketplace add %s#" % re.escape(marketplace), proc.stdout), \
+        "the default plan must not compose a ref onto the source argument (AC-IUP-1)"
+    assert ref in proc.stdout, "the resolved ref must still be DISCLOSED, just not composed in"
     assert re.search(r"channel.*stable", proc.stdout)
     assert "UNSTABLE" not in proc.stdout
 
 
-# ───────────────────────────────────────────────────────────────────── AC-BIP-3 ──
+# ───────────────────────────────────────────────────────────────────── AC-IUP-6 ──
 
 def test_shipped_pin_matches_marketplace_manifest_ref():
+    """UNCHANGED assertion, now VACUOUSLY true by construction (AC-IUP-6): shipped_pin_drift always
+    returns None post-severance, so this stays green regardless of whether the shipped constant and
+    the manifest ref happen to agree in the real tree. See test_manifest_ref_mutation_convicts_the_
+    shipped_pin and test_bootstrap_default_ref_is_decoupled_from_the_manifest_ref for the actual
+    anti-vacuity proof of the severance."""
     drift = shipped_pin_drift(REPO_ROOT)
     assert drift is None, "shipped constant drifted from the release manifest: %r" % (drift,)
 
 
 def test_manifest_ref_mutation_convicts_the_shipped_pin(tmp_path):
-    """The mutation negative control (Design/notes, item 2): copies the two files this atom binds
-    into a temporary root, rewrites the manifest's ref, and asserts the comparison reports drift.
-    A hard-coded string comparison cannot pass this — it would report agreement regardless of what
-    the temporary manifest says."""
+    """INVERTED (feat-foundry-installer-unpinning, AC-IUP-6). WAS the mutation negative control
+    proving the (now-removed) equality comparison genuinely read both files. The comparison is
+    deliberately severed now: a mutated manifest ref must NOT be reported as drift, because the
+    index constant and the artifact ref are permitted to differ. Same fixture-building code as
+    before (a hard-coded `return None` could not distinguish this from a no-op, which is exactly
+    what test_bootstrap_default_ref_is_decoupled_from_the_manifest_ref additionally proves with an
+    independently-chosen differing value)."""
     (tmp_path / "scripts").mkdir()
     (tmp_path / ".claude-plugin").mkdir()
     shutil.copy(REPO_ROOT / "scripts" / "foundry-bootstrap.sh", tmp_path / "scripts" / "foundry-bootstrap.sh")
@@ -232,13 +263,40 @@ def test_manifest_ref_mutation_convicts_the_shipped_pin(tmp_path):
     (tmp_path / MANIFEST_RELPATH).write_text(json.dumps(manifest), encoding="utf-8")
 
     drift = shipped_pin_drift(tmp_path)
-    assert drift is not None, "the mutated manifest ref was not detected as drift"
-    constant, manifest_ref = drift
-    assert constant != manifest_ref
-    assert manifest_ref.endswith("-mutated-for-the-negative-control")
+    assert drift is None, (
+        "AC-IUP-6: the index constant and the manifest's artifact ref are DECOUPLED — a mutated "
+        "manifest ref must not be reported as drift: %r" % (drift,)
+    )
+
+
+def test_bootstrap_default_ref_is_decoupled_from_the_manifest_ref(tmp_path):
+    """NEW (feat-foundry-installer-unpinning, AC-IUP-6), anti-vacuity: builds a temporary tree in
+    which the shipped index constant and the manifest's artifact ref carry DIFFERENT values —
+    chosen independently of test_manifest_ref_mutation_convicts_the_shipped_pin's suffix-mutation
+    approach, so this is not a re-run of the identically-shaped fixture — and asserts no drift is
+    reported. A tree that still enforced equality (i.e. main before this atom) would fail this."""
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / ".claude-plugin").mkdir()
+    shutil.copy(REPO_ROOT / "scripts" / "foundry-bootstrap.sh", tmp_path / "scripts" / "foundry-bootstrap.sh")
+    manifest = json.loads((REPO_ROOT / MANIFEST_RELPATH).read_text(encoding="utf-8"))
+    constant = _script_constant(REPO_ROOT, "DEFAULT_MARKETPLACE_REF")
+    differing_ref = "v0.0.1-deliberately-different"
+    if differing_ref == constant:
+        differing_ref = "v0.0.2-deliberately-different"
+    for entry in manifest.get("plugins", []):
+        if entry.get("name") == "foundry":
+            entry["source"]["ref"] = differing_ref
+    (tmp_path / MANIFEST_RELPATH).write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert constant != differing_ref  # sanity: this really is a difference, not a no-op fixture
+    drift = shipped_pin_drift(tmp_path)
+    assert drift is None, "AC-IUP-6: differing index/artifact refs must not be reported as drift: %r" % (drift,)
 
 
 def test_shipped_pin_is_a_semver_release_tag():
+    """AC-IUP-9's machine check binding the RETAINED index constant (the constant no longer tracks
+    the manifest, AC-IUP-6, so it cannot silently rot to garbage undetected — its own shape is
+    still validated here)."""
     constant = _script_constant(REPO_ROOT, "DEFAULT_MARKETPLACE_REF")
     assert re.match(r"^v[0-9]+[.][0-9]+[.][0-9]+$", constant), \
         "shipped pinned default ref %r is not a v<major>.<minor>.<patch> tag" % constant
@@ -367,7 +425,10 @@ def test_template_ssh_flag_selects_the_ssh_form(tmp_path):
     assert "https://github.com/" not in proc.stdout
 
 
-# ──────────────────────────────────────────────────────────────────── AC-BIP-10 ──
+# ──────────────────────────────────────────────────────────────────── AC-IUP-1 ──
+# INVERTED (feat-foundry-installer-unpinning). WAS test_dry_run_discloses_the_resolved_pin's (c):
+# the disclosed pin used to be COMPOSED onto the source argument ("<marketplace>#<ref>"). It is
+# still disclosed (b) — just never composed (c inverted).
 
 def test_dry_run_discloses_the_resolved_pin(tmp_path):
     target = tmp_path / "proj"
@@ -379,22 +440,26 @@ def test_dry_run_discloses_the_resolved_pin(tmp_path):
     marketplace = _script_constant(REPO_ROOT, "DEFAULT_MARKETPLACE")
 
     assert re.search(r"channel.*stable", out)                       # (a)
-    assert ref in out                                                 # (b)
-    assert ("%s#%s" % (marketplace, ref)) in out                      # (c)
+    assert ref in out                                                 # (b) still disclosed
+    assert ("%s#%s" % (marketplace, ref)) not in out                  # (c) INVERTED: never composed
+    assert ("marketplace add %s" % marketplace) in out                # (c2) the bare, tagless source
     assert "https://github.com/" in out                                # (d)
     assert not target.exists()                                         # (e) no fs change
     # (e) no claude invocation: the process ran with no `claude` on the (scrubbed, real) PATH and
     # still exited 0 with a full plan — a real invocation attempt would have failed loudly instead.
 
 
-# ──────────────────────────────────────────────────────────────────── AC-BIP-11 ──
+# ──────────────────────────────────────────────────────────────────── AC-IUP-1 ──
+# INVERTED (feat-foundry-installer-unpinning). WAS test_selftest_asserts_the_pinned_plan: the
+# shipped selftest's own "pinned marketplace ref default names an explicit semver release tag"
+# check is renamed to describe the tagless default (scripts/foundry-bootstrap.sh's selftest()).
 
 def test_selftest_asserts_the_pinned_plan():
     proc = subprocess.run(["bash", str(BOOTSTRAP), "--selftest"], env=_scrubbed_env(),
                            cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=60)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "BOOTSTRAP-SELFTEST-GREEN" in proc.stdout
-    assert re.search(r"\[ok\].*pinned marketplace ref", proc.stdout)
+    assert re.search(r"\[ok\].*default.*tagless", proc.stdout)
     assert re.search(r"\[ok\].*edge channel", proc.stdout)
     assert re.search(r"\[ok\].*https template clone", proc.stdout)
 
@@ -513,7 +578,10 @@ def test_injected_version_literal_convicts_the_documented_install_check(tmp_path
         "a tagless sibling line was wrongly convicted -- the check is unconditionally red"
 
 
-# ──────────────────────────────────────────────────────────────────── AC-BIP-14 ──
+# ──────────────────────────────────────────────────────────────────── AC-IUP-1 ──
+# INVERTED (feat-foundry-installer-unpinning). WAS test_real_path_records_the_pinned_marketplace_add:
+# the REAL (non-dry-run) path used to record "plugin marketplace add <marketplace>#<ref>". It now
+# records the bare, tagless source on the default (stable) channel.
 
 def test_real_path_records_the_pinned_marketplace_add(tmp_path, existing_repo):
     bindir = _recording_claude_stub(tmp_path)
@@ -528,9 +596,58 @@ def test_real_path_records_the_pinned_marketplace_add(tmp_path, existing_repo):
     assert calls, "the recording claude stub was never invoked (absent/empty recording is a FAILURE)"
 
     marketplace = _script_constant(REPO_ROOT, "DEFAULT_MARKETPLACE")
-    ref = _script_constant(REPO_ROOT, "DEFAULT_MARKETPLACE_REF")
-    expected = "plugin marketplace add %s#%s" % (marketplace, ref)
+    expected = "plugin marketplace add %s" % marketplace
     assert expected in calls, calls
+    assert not any(c.startswith(expected + "#") for c in calls), \
+        "the default (stable) real invocation must not carry a ref: %r" % (calls,)
+
+
+# ──────────────────────────────────────────────────────────────────── AC-IUP-4 ──
+# NEW (feat-foundry-installer-unpinning). VERIFIED (spec Clarifications): `claude plugin
+# marketplace add` has no --autoUpdate flag (--help lists only --scope/--sparse), and a real
+# CLAUDE_CONFIG_DIR-isolated run wrote {"source": {"source": "github", "repo": ...}} with NO
+# autoUpdate key at all -- an absence the shell installer cannot avoid (it has no write of its own
+# into that scope; see AC-BTSS-1's test_toolchain_step_needs_only_the_claude_cli, which proves
+# toolchain-install needs NOTHING but the `claude` binary reachable -- a constraint an extra
+# settings-file write would break). AC-IUP-5 therefore widens the pinned-state predicate to accept
+# `autoUpdate !== true` (never merely `=== false`), so the exact shape a real `marketplace add`
+# produces classifies IDENTICALLY to an explicit `autoUpdate: false` for the allow-tier gate. Proven
+# end-to-end here: no installer call ever carries an autoUpdate=true literal, and the VERIFIED real
+# shape is fed through the SAME classifyPin the npx CLI's own reconcile path uses.
+
+def test_bootstrap_registers_with_auto_update_false(tmp_path, existing_repo):
+    bindir = _recording_claude_stub(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+    calls_file = tmp_path / "calls.log"
+
+    proc = _real_run(existing_repo, [], home, calls_file, bindir)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    calls = _read_calls(calls_file)
+    assert calls, "the recording claude stub was never invoked (absent/empty recording is a FAILURE)"
+    assert not any("autoUpdate" in c or "true" in c.lower() for c in calls), (
+        "no installer invocation may carry an autoUpdate=true literal: %r" % (calls,)
+    )
+
+    marketplace = _script_constant(REPO_ROOT, "DEFAULT_MARKETPLACE")
+    name = marketplace.rsplit("/", 1)[-1]
+    verified_real_entry = {"source": {"source": "github", "repo": marketplace}}  # no autoUpdate key
+    js = (
+        "import { classifyPin } from './src/floorReconcile.mjs';\n"
+        "const settingsObj = { extraKnownMarketplaces: { %s: %s } };\n"
+        "const pins = { marketplace_name: %s, plugin_version: '9.9.9' };\n"
+        "console.log(JSON.stringify(classifyPin(settingsObj, pins)));\n"
+    ) % (json.dumps(name), json.dumps(verified_real_entry), json.dumps(name))
+    node_proc = subprocess.run(
+        ["node", "--input-type=module", "-e", js],
+        cwd=str(REPO_ROOT / "cli"), capture_output=True, text=True, timeout=15,
+    )
+    assert node_proc.returncode == 0, node_proc.stderr
+    result = json.loads(node_proc.stdout)
+    assert result["state"] == "pinned", (
+        "AC-IUP-4/5: the shell-registered shape (no ref, no autoUpdate key) must classify pinned: %r" % result
+    )
 
 
 def test_real_path_edge_warns_unstable(tmp_path, existing_repo):

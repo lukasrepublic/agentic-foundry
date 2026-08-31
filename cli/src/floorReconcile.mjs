@@ -65,13 +65,24 @@ export function classifyPin(settingsObj, pins) {
   const entry = ((settingsObj && settingsObj.extraKnownMarketplaces) || {})[pins.marketplace_name];
   if (entry === undefined) return { state: 'absent', ref: null, skew: false };
   const ref = entry && entry.source && entry.source.ref;
-  const pinned = typeof ref === 'string' && ref !== '' && !ref.includes('*') && entry.autoUpdate === false;
+  // feat-foundry-installer-unpinning (AC-IUP-5). Both installers now register the marketplace
+  // TAGLESS by default (AC-IUP-1/AC-IUP-3), so "no ref" must classify as pinned, not unpinned — an
+  // ABSENT ref is well-formed (refAbsent), distinct from a malformed EXPLICIT one (empty string, or
+  // carrying a wildcard, both still refused below). AC-IUP-4's Clarifications also widen the
+  // autoUpdate check from `=== false` to `!== true`: the shell installer has no --autoUpdate flag
+  // on `claude plugin marketplace add` and a verified isolated run wrote no such key at all, so an
+  // ABSENT autoUpdate must read the same as an explicit `false` — never merely tolerate `true`.
+  const refAbsent = ref === undefined;
+  const refWellFormed = refAbsent || (typeof ref === 'string' && ref !== '' && !ref.includes('*'));
+  const pinned = refWellFormed && entry.autoUpdate !== true;
   // A pin can be perfectly well-formed and still name a DIFFERENT plugin than the map these rules
   // came from. The 42 allow rules are wildcarded across the cache and their per-script rationales
   // were reviewed against THIS version's scripts; writing them over a workspace pinned at an older
   // one grants the same paths against different code. Surfaced rather than refused — the operator's
-  // review of the plan is the control, and it can only work if the skew is on screen.
-  const skew = pinned && ref !== `v${pins.plugin_version}`;
+  // review of the plan is the control, and it can only work if the skew is on screen. AC-IUP-8: a
+  // tagless (refAbsent) entry has nothing to compare against a version, so it can never be "skewed"
+  // — computing `ref !== vX` against a null ref would otherwise fire the warning on every run.
+  const skew = pinned && !refAbsent && ref !== `v${pins.plugin_version}`;
   return { state: pinned ? 'pinned' : 'unpinned', ref: typeof ref === 'string' ? ref : null, skew };
 }
 
@@ -215,9 +226,16 @@ export function renderPlan(plan, { applied }) {
     lines.push(`  + marketplace pin added — the bundled allow rules are wildcarded across the plugin cache and are bounded only by it`);
   } else if (plan.pin.state === 'pinned') {
     // printed on EVERY pinned run, not only the skewed one: an operator cannot notice a mismatch
-    // that is never shown, and this is the branch where 42 grants are written without comment
+    // that is never shown, and this is the branch where 42 grants are written without comment.
+    // AC-IUP-8: a TAGLESS entry (plan.pin.ref === null, the default registration as of
+    // feat-foundry-installer-unpinning) must never render as "pinned at null" — say what actually
+    // bounds it instead. classifyPin's `skew` is already forced false for this case, so the
+    // trailing VERSION SKEW clause never appends here.
+    const refDisplay = plan.pin.ref === null
+      ? 'the default catalogue (tagless index; the artifact commit stays fixed by the manifest\'s source.sha)'
+      : plan.pin.ref;
     lines.push(
-      `  · marketplace pinned at ${plan.pin.ref}; these rules come from the floor generated for v${plan.pinsVersion}` +
+      `  · marketplace pinned at ${refDisplay}; these rules come from the floor generated for v${plan.pinsVersion}` +
         (plan.pin.skew ? ' — VERSION SKEW: the same wildcarded paths will resolve to that pin\'s scripts, not this one\'s' : ''),
     );
   } else if (plan.withheldAllow) {

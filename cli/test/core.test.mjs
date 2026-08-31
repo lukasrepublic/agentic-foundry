@@ -62,13 +62,17 @@ test('AC-BCL-4: buildSettings is a set bijection onto the bundled map by tier', 
     for (const r of expected) assert.ok(actual.has(r), `missing ${tier} rule ${r}`);
   }
   assert.deepEqual(Object.keys(settings).sort(), ['enabledPlugins', 'extraKnownMarketplaces', 'permissions']);
-  // AC-BCL-4(b), contract v1.2: `ref` is the pin. Derived from `pins.plugin_version` rather than
-  // written as a second literal, so the assertion cannot drift from the marketplace manifest.
+  // SUPERSEDED (feat-foundry-installer-unpinning, AC-IUP-3; out-of-band fix, necessitated by that
+  // atom's cli/src/permissionFloor.mjs change — this fixture's own `pins` object above never
+  // carried `plugin_version`, so this line's `ref` used to hard-code the literal "vundefined" and
+  // pass only because buildSettings's pre-AC-IUP-3 output also derived "vundefined" from the same
+  // missing field — a coincidental, not a meaningful, agreement). `source`'s key set is now closed
+  // to exactly {source, repo}; see cli/src/permissionFloor.mjs's supersession comment for the full
+  // grounds.
   assert.deepEqual(settings.extraKnownMarketplaces['agentic-foundry'], {
     source: {
       source: 'github',
       repo: 'lukasrepublic/agentic-foundry',
-      ref: `v${pins.plugin_version}`,
     },
     autoUpdate: false,
   });
