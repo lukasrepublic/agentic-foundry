@@ -347,6 +347,13 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         # (Named by description, not by identifier: this file is inside the zero-reference gate's
         # swept surface, and spelling the retired module's name here would take that gate red.)
         "1.6.0": "0.6.0",
+        # v1.7.0 carries a REAL CLI change, not merely the pin it embeds: the composed
+        # extraKnownMarketplaces entry drops `source.ref` entirely (feat-foundry-installer-unpinning,
+        # restoring the shape AC-BCL-4(b) declares), and floorReconcile's pinned-state predicate now
+        # accepts a tagless entry naming this marketplace's own github source. A workspace scaffolded
+        # or reconciled by 0.7.0 therefore receives a different settings entry than 0.6.0 wrote, so
+        # the tarball takes a minor bump rather than echoing the pin.
+        "1.7.0": "0.7.0",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (
