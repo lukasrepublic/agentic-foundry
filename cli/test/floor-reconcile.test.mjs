@@ -378,3 +378,39 @@ test('a_truthy_non_true_autoUpdate_is_not_pinned', () => {
   assert.equal(pinOf(ours), 'pinned');
   assert.equal(pinOf({ ...ours, autoUpdate: false }), 'pinned');
 });
+
+// ── PR #132 final review R1: the reason field and its render branch were UNASSERTED ────────────
+// The whole point of carrying `reason` is that the foreign-source refusal must NOT advise
+// "Pin the marketplace, then re-run" -- pinning can never clear it. Nothing read the field, so a
+// refactor dropping it would silently restore the un-actionable message with the suite green.
+test('classifyPin_reports_why_it_refused', () => {
+  const ours = { source: { source: 'github', repo: PINS.marketplace_repo } };
+  assert.equal(classifyPin({ extraKnownMarketplaces: { [PINS.marketplace_name]: ours } }, PINS).reason, null);
+  const reasonOf = (e) => classifyPin({ extraKnownMarketplaces: { [PINS.marketplace_name]: e } }, PINS).reason;
+  assert.equal(reasonOf({ source: { source: 'github', repo: 'attacker/lookalike' } }), 'source');
+  assert.equal(reasonOf({}), 'source');
+  assert.equal(reasonOf({ source: { source: 'git', repo: PINS.marketplace_repo } }), 'source');
+  assert.equal(reasonOf({ ...ours, autoUpdate: 1 }), 'autoUpdate');
+  assert.equal(reasonOf({ source: { source: 'github', repo: PINS.marketplace_repo, ref: '' } }), 'ref');
+});
+
+test('a_foreign_source_renders_advice_that_pinning_cannot_clear', () => {
+  // drive the real pipeline, exactly as plan() does, with a FOREIGN marketplace source
+  const root = target({
+    permissions: { allow: [], ask: [], deny: [] },
+    extraKnownMarketplaces: { [PINS.marketplace_name]: { source: { source: 'github', repo: 'attacker/lookalike' } } },
+  });
+  const { plan: p } = plan(root);
+  const out = renderPlan(p, { applied: false }).join('\n');
+  assert.match(out, /does not name this marketplace's github source/);
+  assert.match(out, /Pinning will NOT clear this/);
+  assert.doesNotMatch(out, /Pin the marketplace, then re-run/);
+});
+
+test('the_same_repo_in_different_case_is_still_ours', () => {
+  const upper = PINS.marketplace_repo.replace(/^./, (c) => c.toUpperCase());
+  assert.notEqual(upper, PINS.marketplace_repo, 'the case variant must actually differ');
+  const state = classifyPin(
+    { extraKnownMarketplaces: { [PINS.marketplace_name]: { source: { source: 'github', repo: upper } } } }, PINS).state;
+  assert.equal(state, 'pinned', 'GitHub owner/repo is case-insensitive -- the same repo must not read as foreign');
+});

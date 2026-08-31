@@ -88,7 +88,12 @@ export function classifyPin(settingsObj, pins) {
   // would otherwise make every source carrying no repo key classify as ours.
   const ourRepo = typeof pins.marketplace_repo === 'string' && pins.marketplace_repo !== ''
     ? pins.marketplace_repo : null;
-  const isOurSource = !!src && !!ourRepo && src.source === 'github' && src.repo === ourRepo;
+  // GitHub owner/repo is CASE-INSENSITIVE, so `LukasRepublic/agentic-foundry` is the SAME
+  // repository. Comparing byte-exact would classify it unpinned and tell the operator "not ours",
+  // which is false. Normalize both sides; the comparison stays exact-match otherwise.
+  const sameRepo = typeof src?.repo === 'string' && !!ourRepo
+    && src.repo.toLowerCase() === ourRepo.toLowerCase();
+  const isOurSource = !!src && sameRepo && src.source === 'github';
   const refAbsent = isOurSource && ref === undefined;
   const refWellFormed = isOurSource
     && (refAbsent || (typeof ref === 'string' && ref !== '' && !ref.includes('*')));
