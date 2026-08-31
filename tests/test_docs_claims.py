@@ -107,6 +107,10 @@ def test_permission_floor_names_the_shipped_plugin_version():
         assert got == want, f"{rel} says {got!r}, plugin.json ships {want!r}"
 
 
+_INSTALL_PIN_RE = re.compile(r"marketplace add \S*lukasrepublic/agentic-foundry(#v[\d.]+)")
+_MARKETPLACE_ADD_INSTRUCTION_RE = re.compile(r"claude plugin marketplace add")
+
+
 def test_every_install_pin_matches_the_manifests():
     """INVERTED by feat-foundry-install-line-unpinning (AC-ILU-3). WHAT CHANGED AND WHY: a
     `marketplace add lukasrepublic/agentic-foundry#vX.Y.Z` snippet pins the marketplace
@@ -116,9 +120,23 @@ def test_every_install_pin_matches_the_manifests():
     (checkpoints reference it by node id); its polarity is reversed, not deleted: user-facing docs
     now SHALL carry no version-literal install pin at all, so a re-introduced one still fails CI.
     NOTE this is deliberately EXCLUDED from `_PREEXISTING_DOCS_CLAIMS_CASES` below -- see that
-    tuple's comment."""
+    tuple's comment.
+
+    Security-review FIX 3. (a) NON-VACUITY FLOOR: the pre-inversion check's `assert pins` failed
+    CLOSED the instant its regex stopped matching anything; a bare `assert not pins` on its own
+    would instead go GREEN the same way, silently passing for the wrong reason if the pattern
+    drifted. Each doc must still carry a recognized `claude plugin marketplace add` instruction.
+    (b) the pin pattern now tolerates an arbitrary non-whitespace prefix ahead of the bare
+    `owner/repo` slug, so a pin re-introduced in the full URL form
+    (`marketplace add https://github.com/lukasrepublic/agentic-foundry#v1.6.0`) is caught too."""
     for doc in (README, QUICKSTART, TROUBLESHOOTING):
-        pins = re.findall(r"marketplace add lukasrepublic/agentic-foundry(#v[\d.]+)", _read(doc))
+        text = _read(doc)
+        assert _MARKETPLACE_ADD_INSTRUCTION_RE.search(text), (
+            f"{os.path.basename(doc)} carries no recognized `claude plugin marketplace add` "
+            "instruction -- either the doc lost its install line or the scanner's regex stopped "
+            "matching real lines (both must fail this test, not pass it silently)"
+        )
+        pins = _INSTALL_PIN_RE.findall(text)
         assert not pins, f"{os.path.basename(doc)} still pins the registration to {pins}"
 
 

@@ -588,6 +588,21 @@ def worktree_clean(tree):
     return True, "clean"
 
 
+def _safe_in(value, collection):
+    """`value in collection`, but never raises. Security-review FIX 4: `plugins[].version` is read
+    straight out of a JSON manifest with no schema validation upstream of preflight(); if it is a
+    JSON object or array (malformed, but valid JSON) it is UNHASHABLE, and a bare `in` against the
+    `allowed_mp_versions` set raises an unhandled TypeError -- main() catches only
+    CutReleaseError, so this would traceback instead of a NAMED refusal. An unhashable value simply
+    reads as 'not a member' here, which the existing check already turns into a named, detailed
+    refusal (the `!r`-formatted value is printed). Fails closed either way: this guards a crash
+    into a refusal, never a refusal into a pass."""
+    try:
+        return value in collection
+    except TypeError:
+        return False
+
+
 def _semver_tuple(s):
     """(major, minor, patch) ints from a 'X.Y.Z' string, or None when unparseable. Never raises --
     an absent/malformed version must read as 'cannot compare', not crash the preflight."""
@@ -660,7 +675,7 @@ def preflight(tree, version, *, suite_runner=None):
     cl_present = changelog_has_section(tree, version)
     preceding = _immediately_preceding_release(tree, version)
     allowed_mp_versions = {ver for ver in (version, preceding) if ver is not None}
-    mp_version_ok = v["marketplace"] in allowed_mp_versions
+    mp_version_ok = _safe_in(v["marketplace"], allowed_mp_versions)
     mp_ref_self_consistent = (
         v["marketplace"] is not None and v["marketplace_ref"] == f"v{v['marketplace']}"
     )
@@ -723,8 +738,12 @@ def publish_plan(tree, version):
     return [
         f"git -C {tree} status --porcelain                         # MUST be empty: R2 is created after the gate ran",
         f"CONTENT=$(git -C {tree} rev-parse HEAD)                  # the release commit (R) — the code being shipped",
-        "# edit .claude-plugin/marketplace.json: set plugins[foundry].source.sha = $CONTENT (and source.ref = "
-        f"{tag})",
+        "# edit .claude-plugin/marketplace.json: set plugins[foundry].version = "
+        f"{version}, source.sha = $CONTENT, and source.ref = {tag}  # feat-foundry-install-line-unpinning "
+        "AC-ILU-11: ALL THREE land in R2, never in R -- a version bump left behind here (still naming "
+        "the PREVIOUS release) reads as a coherent tag to tag_pin_coherence (which checks source.ref, "
+        "never plugins[].version), so the machine re-check step below would report the tag as "
+        "coherent over a catalogue advertising the wrong version",
         f"git -C {tree} commit -m 'release: re-pin marketplace source.sha to the {tag} content commit' "
         f"-- .claude-plugin/marketplace.json  # (R2) PATH-SCOPED — commit ONLY the manifest, or stray "
         f"working-tree edits are swept into the tag ungated",

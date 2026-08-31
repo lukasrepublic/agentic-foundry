@@ -266,3 +266,91 @@ def test_antitaut_same_tree_green_test_proceeds(tmp_path):
     assert r["state"] == "ready", r.get("failures")
     assert r["plan"], "a green tree must still emit the publish plan"
     assert any(c[0] == m.SUITE_CHECK_LABEL and c[1] for c in r["preflight"])
+
+
+
+
+# ------------------------------------------------------------ security review FIX 1 (feat-foundry-install-line-unpinning) --
+def _repin_comment(plan):
+    """The plan's human-readable `# edit .claude-plugin/marketplace.json: ...` re-pin instruction
+    comment, or None if no such comment is present. Isolated as a pure function so the positive
+    test and its negative control drive the exact same locator."""
+    return next(
+        (s for s in plan if isinstance(s, str) and s.lstrip().startswith("#")
+         and ".claude-plugin/marketplace.json" in s and "source.sha" in s),
+        None,
+    )
+
+
+def _repin_comment_names_the_version_bump(comment, version):
+    """True iff the re-pin comment instructs the operator to set `version` (not just
+    `source.sha`/`source.ref`) to the target version. Pure and parameterized so both the real
+    plan (positive) and a synthetic pre-fix-shaped comment (negative control) drive it."""
+    if comment is None:
+        return False
+    return "version" in comment and version in comment and "source.ref" in comment
+
+
+def test_publish_plan_names_the_version_bump_in_r2(tmp_path):
+    """Security-review FIX 1: with the deferred-bump sequencing (AC-ILU-11), R2 is the ONLY commit
+    that ever bumps marketplace.json's `version` -- so the emitted publish plan's re-pin step MUST
+    tell the operator to set it there, alongside `source.sha` and `source.ref`. Before this fix the
+    emitted comment named only `source.sha` and `source.ref`; an operator following it verbatim
+    produced an R2 with `version` still at the PREVIOUS release while `source.ref` named the new
+    tag -- a mismatch `tag_pin_coherence` does NOT convict (it inspects `source.ref`, never
+    `plugins[].version`), so `--verify-tag` would print TAG-PIN-COHERENT over a catalogue
+    advertising a version its own commit does not carry."""
+    m = _mod()
+    plan = m.publish_plan(str(tmp_path), "9.9.9")
+    comment = _repin_comment(plan)
+    assert comment is not None, "no re-pin instruction comment found in the emitted plan"
+    assert _repin_comment_names_the_version_bump(comment, "9.9.9"), (
+        "the re-pin instruction must name the `version` bump, not just source.sha/source.ref -- "
+        "otherwise the emitted plan under-specifies R2: %r" % (comment,)
+    )
+
+
+def test_publish_plan_version_bump_assertion_is_not_vacuous():
+    """The meta-test: `_repin_comment_names_the_version_bump` must FAIL against a comment shaped
+    like the PRE-FIX plan, which named only source.sha/source.ref and never `version` -- proving
+    the assertion above discriminates rather than being green for free."""
+    pre_fix_comment = (
+        "# edit .claude-plugin/marketplace.json: set plugins[foundry].source.sha = $CONTENT "
+        "(and source.ref = v9.9.9)"
+    )
+    assert not _repin_comment_names_the_version_bump(pre_fix_comment, "9.9.9"), (
+        "the pre-fix-shaped comment (no `version` mention) was wrongly accepted"
+    )
+    # and the positive form, with `version` present, must be accepted -- proving the check is not
+    # unconditionally red either.
+    post_fix_comment = pre_fix_comment.replace(
+        "set plugins[foundry].source.sha", "set plugins[foundry].version = 9.9.9, source.sha"
+    )
+    assert _repin_comment_names_the_version_bump(post_fix_comment, "9.9.9"), (
+        "a comment that DOES name the version bump was wrongly rejected"
+    )
+
+
+# ------------------------------------------------------------ security review FIX 4 (feat-foundry-install-line-unpinning) --
+def test_unhashable_marketplace_version_refuses_named_not_traceback(tmp_path):
+    """Security-review FIX 4: `plugins[].version` is read straight out of a JSON manifest with no
+    schema validation upstream of preflight(). A malformed-but-valid-JSON manifest can carry a
+    JSON object/array there instead of a string -- UNHASHABLE, so a bare `value in a_set` raises an
+    unhandled TypeError. main() catches only CutReleaseError, so an unguarded raise here would
+    traceback instead of naming the precondition that failed. preflight() must instead return a
+    NAMED refusal on that check, never raise."""
+    m = _mod()
+    tree = _tree(tmp_path / "malformed", version="9.9.9", plugin_v="9.9.9")
+    manifest_path = Path(tree) / ".claude-plugin" / "marketplace.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["plugins"][0]["version"] = {"not": "a string"}   # malformed but valid JSON
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    subprocess.run(["git", "-C", str(tree), "add", "-A"], capture_output=True, text=True, timeout=30)
+    subprocess.run(["git", "-C", str(tree), "commit", "-qm", "malformed marketplace version"],
+                   capture_output=True, text=True, timeout=30)
+
+    # must not raise
+    checks = m.preflight(tree, "9.9.9", suite_runner=lambda _t: (0, "1 passed", ""))
+    named = next((c for c in checks if c[0] == "marketplace.json version == target (bump BOTH manifests)"), None)
+    assert named is not None, "the malformed-version check must still be NAMED in the returned checks"
+    assert named[1] is False, "an unhashable marketplace.json version must refuse, not silently pass"

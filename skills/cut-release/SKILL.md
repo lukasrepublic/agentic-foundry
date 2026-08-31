@@ -177,17 +177,28 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
    Re-running `marketplace add <repo>` tagless does not fix it either: it **REFUSES** outright,
    because a different ref is already declared for that marketplace in `settings.json` (the CLI's
    own message: *"its network source differs from the one declared for it in settings"*). The actual
-   fix is `marketplace remove` → tagless `marketplace add` → `plugin update`, in every scope that
-   still carries the old tag-pinned registration (user AND project):
+   fix is `marketplace remove` → tagless `marketplace add` → **`plugin install`, not `plugin
+   update`** — `marketplace remove` also drops the plugin(s) installed from that marketplace (same
+   as the "Wedged or stale install" recovery in `docs/troubleshooting.md`), so a `plugin update`
+   afterward would have nothing to update; `plugin install` puts it back. Run it **explicitly per
+   scope, in every scope that still carries the old tag-pinned registration** — a bare invocation
+   touches only the default scope, and a stale scope silently shadows a fresh one (see the
+   `--scope`-mismatch caveat below):
 
    ```
-   claude plugin marketplace remove agentic-foundry
-   claude plugin marketplace add lukasrepublic/agentic-foundry
-   claude plugin update foundry@agentic-foundry
+   # user scope
+   claude plugin marketplace remove agentic-foundry --scope user
+   claude plugin marketplace add lukasrepublic/agentic-foundry --scope user
+   claude plugin install foundry@agentic-foundry --scope user
+
+   # project scope (repeat if a project-scoped registration was also tag-pinned)
+   claude plugin marketplace remove agentic-foundry --scope project
+   claude plugin marketplace add lukasrepublic/agentic-foundry --scope project
+   claude plugin install foundry@agentic-foundry --scope project
    ```
 
    Do this ONCE per affected scope. Every cut after that resolves automatically via the one-line
-   upgrade above.
+   `plugin update` upgrade above.
 
    Verify by READING the refreshed cache — `~/.claude/plugins/marketplaces/<marketplace>/.claude-plugin/marketplace.json`
    must show the new `version` AND the new `source.sha`; the CLI's own "success" line does not prove
