@@ -267,9 +267,6 @@ SURFACE_FILES = [
     "tests/test_hooks_guards.py",
 ]
 
-# The single named carve-out (AC-CXD-1): the sentinel line + its two-line print-format follow-on in
-# scripts/foundry-stack-profile.py. Located by content, not a hardcoded line number, so an unrelated
-# line shift elsewhere in the file does not churn this test.
 
 # ═══════════════════════════════════════════════════════════════════════════════ AC-CXD-13 ═════
 

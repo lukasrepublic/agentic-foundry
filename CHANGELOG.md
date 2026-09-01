@@ -40,10 +40,14 @@ until the guard itself was edited.
 - **The changelog record is kept.** Descriptive references are reworded; proper identifiers are
   dropped rather than renamed, because renaming a published atom's name would be a falsehood. No
   released section or entry was removed.
-- **No replacement guard is built.** The industry shape would be a "no dependency" assertion over
-  manifests and the import graph, not a string sweep — but nothing imports the retired framework, so
-  such a detector would ship with an empty subject. An encoded or runtime-assembled token list was
-  researched and **rejected**: no industry precedent exists, and every surveyed tool stores its
+- **No guard ships to adopters; CI keeps a one-line re-entry locator.** The deleted gate was 400+
+  lines of test corpus that reached every adopter by construction. Its replacement is a single
+  allowlist-free `git grep` step in `.github/workflows/ci.yml` that fails the build on any
+  occurrence — **contributors should know it exists**, because it reds a PR containing the retired
+  substring anywhere outside that workflow file itself. The heavier "no dependency" assertion over
+  manifests and the import graph is deliberately NOT built: nothing imports the retired framework,
+  so such a detector would ship with an empty subject. An encoded or runtime-assembled token list
+  was researched and **rejected** — no industry precedent exists, and every surveyed tool stores its
   forbidden literals in reviewable plaintext by design.
 
 The `create-agentic-workspace` installer CLI is **unaffected** by this change: no install line, pin

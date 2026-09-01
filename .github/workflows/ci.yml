@@ -90,17 +90,35 @@ jobs:
       # shipped tree, which is the whole point: it protects the repo without reaching adopters.
       - name: Retired-framework re-entry guard (zero occurrences, allowlist-free)
         run: |
+          set -euo pipefail
           # Self-exclusion, and ONLY self-exclusion: a token guard must spell the token to detect
           # it, so this one file is excluded by path. That is the secret-scanner precedent (allowlist
           # the fixture, never hide the token) and it is the whole allowlist -- one path, stated
           # here, versus the 232-line allowlist corpus the retired gate carried.
-          n="$(git grep -ohIi 'ctx' -- . ':!.github/workflows/ci.yml' | wc -l)"
+          #
+          # EXIT-STATUS DISCRIMINATION, not a bare pipeline. `git grep` exits 1 on no-match (the
+          # green case) and 2+ on a real error. Assigning from a pipe ending in `wc -l` would make
+          # the status always 0, so ANY grep failure -- bad pathspec, corrupt index, I/O -- would
+          # print 0 and report GREEN having scanned nothing. That is the same fail-open shape a
+          # prior security review found in this file's merge-base step; it is refused here too.
+          if out="$(git grep -lIi 'ctx' -- . ':!.github/workflows/ci.yml')"; then
+            n="$(printf '%s\n' "$out" | grep -c . || true)"
+          else
+            rc=$?
+            if [ "$rc" -ne 1 ]; then
+              echo "::error::re-entry guard could not run (git grep rc=$rc) - failing closed"
+              exit 1
+            fi
+            n=0
+          fi
           if [ "$n" -ne 0 ]; then
-            echo "::error::retired-framework token re-entered the tree ($n occurrence(s))"
-            git grep -nIi 'ctx' -- . ':!.github/workflows/ci.yml' | head -50
+            echo "::error::retired-framework token re-entered the tree ($n file(s))"
+            # PATHS ONLY. Echoing matched file CONTENT would put fork-controlled text into the
+            # Actions workflow-command parser (::error::, ::add-mask::, ::stop-commands::).
+            printf '%s\n' "$out" | head -50
             exit 1
           fi
-          echo "RE-ENTRY-GUARD-GREEN (0 occurrences)"
+          echo "RE-ENTRY-GUARD-GREEN (0 files)"
       # feat-foundry-main-catalogue-coherence (AC-MCC-5). The hermetic pytest module above already
       # ran on both push AND pull_request. This step is the LIVE-TREE assertion, and it MUST stay
       # scoped to push-to-default-branch only: main legitimately advertises a version whose

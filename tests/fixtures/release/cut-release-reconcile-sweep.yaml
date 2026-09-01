@@ -163,6 +163,12 @@ hook_comment_expectation:
   #      substitution scanner mis-tracks backquotes across heredoc content), and the
   #      internal-evaluator-error path stops echoing the raw command (inline-credential leak
   #      exactly when the redacting evaluator has failed). Evaluator content byte-identical.
+  #   6. the public-zero atom (2026-09-01, lean lane, PR #135): a PURE IDENTIFIER RENAME of the
+  #      block-with-context helper, across 1 definition and 10 call sites, removing the retired
+  #      framework's name from a public repo. The block DECISION logic is byte-identical -- every
+  #      call site kept its line number and its message; a gating security review verified all
+  #      eleven sites and confirmed no guard path became unreachable. Re-based because exec_content()
+  #      strips comments, so an identifier change necessarily moves the digest.
   executable_content_sha256: '1242290c427fb5082680ed00def284c2ae6267dbf4bfb4bdd8e824d31090f88b'
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
