@@ -635,7 +635,7 @@ class TestIdApplyGate:
         assert checked == 4
         print("IDAGR-5-CLASSIFIER-4of4-OK")
 
-    # ── AC-IDAGR-6 — the procedure skill: no posture/CTX reference survives, the IAM-context statement
+    # ── AC-IDAGR-6 — the procedure skill: no posture reference survives, the IAM-context statement
     # is present, and BOTH prompt-injection rules survive. Parsed by section, not a joined-text substring.
     def test_id_apply_skill_names_no_posture_and_keeps_both_injection_rules(self):
         path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -644,8 +644,6 @@ class TestIdApplyGate:
             text = f.read()
         frontmatter, body = text.split("---", 2)[1:3]
         assert "posture" not in text.lower()
-        assert "ctx-posture" not in text.lower()
-        assert "ctx status" not in text.lower()
         sections = {}
         current = None
         for line in body.splitlines():
@@ -744,7 +742,7 @@ def _dead_shape_violations(*, decide_apply_fn, apply_decision_cls, runbook_cls, 
 
 _FORBIDDEN_PROSE_PHRASES = (
     "posture", "generate_runbook", "break-glass", "breakglass", "segregation of duties",
-    "governs whether a prod mutation runs", "security-review surface", "ctx-posture", "ctx status",
+    "governs whether a prod mutation runs", "security-review surface",
     " sod ", "sod split", "sod:",
 )
 

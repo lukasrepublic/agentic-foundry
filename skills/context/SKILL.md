@@ -1,11 +1,11 @@
 ---
 name: context
-description: Context lifecycle as thin seams over native primitives (/foundry:context <snapshot|resume|list|status>). WRAP of the ctx-* skills — additive over native /compact, --resume, /rewind, and the context sensor; never reinvents transcript replay. Trigger to snapshot/resume a session's distilled arc-state or check context budget.
+description: Context lifecycle as thin seams over native primitives (/foundry:context <snapshot|resume|list|status>). WRAP of the retired context-lifecycle skills — additive over native /compact, --resume, /rewind, and the context sensor; never reinvents transcript replay. Trigger to snapshot/resume a session's distilled arc-state or check context budget.
 ---
 
 # /foundry:context
 
-The context lifecycle, an additive WRAP layer over native primitives. The four ctx-* skills fold into one
+The context lifecycle, an additive WRAP layer over native primitives. The four retired context-lifecycle skills fold into one
 `/foundry:context <action>` — each action is a THIN seam over a native primitive,
 realizing (extend, don't compete).
 

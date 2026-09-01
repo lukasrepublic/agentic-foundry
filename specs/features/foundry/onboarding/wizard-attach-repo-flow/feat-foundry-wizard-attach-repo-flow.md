@@ -5,8 +5,7 @@
 > it) and reports on it; `[[feat-foundry-workspace-repo-verbs]]` reconciles reality to it and exposes
 > that reconcile as the importable callable `foundry_repo_fleet.reconcile`. **Neither writes a row.**
 > Today the only way a repo enters the control plane is an operator hand-editing JSON and remembering
-> the paired `.gitignore` line — the exact pairing this workspace has already got wrong
-> (`repos.ctxinfra`: no gitignore entry, and a path that does not exist).
+> the paired `.gitignore` line — the exact pairing this workspace has already got wrong.
 >
 > **This atom ships the write half, and only the write half**: the `attach-existing` and `create-new`
 > flows — the `mr register` / `nx import` shape — as a **reusable flow module the pre-session bootstrap

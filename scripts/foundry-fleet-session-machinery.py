@@ -7,7 +7,8 @@ machinery is running it*: the isolation (collision/blast surface), where
 it sits in the front-auth→gate→merge readiness pipeline, the mode, whether it trips the security
 floor, and (for infra) its blast-radius + target repo. `infra` is re-sourced from the committed
 stack-profile lock (`resolve_lock` + `profile_kind: infra`) — feat-foundry-fleet-infra-discriminator-
-regrounding — rather than a live CTX-CLI probe; it is now project-scoped, not session-scoped.
+regrounding — rather than a live probe of the retired control plane; it is now project-scoped,
+not session-scoped.
 
 These are SYSTEM STATE, not human intent → this atom DERIVES them and attaches a typed machinery
 sub-record to each session-registry record by `session_id`. It is READ-ONLY (computes, never mutates)
@@ -69,7 +70,7 @@ STAGE_DOMAIN = ("lean", "scale", None)
 # DEFAULT-DENY against. A value renders clear ONLY when it is in its field's known-safe set; everything
 # else — unknown, gate_block, direct_main, worktree_on_main, needs_review, high, ANY null/novel token —
 # is attention. Exposed so consumers do not re-declare (drift guard).
-# AC-FIGR-3: `ctx_posture` is REMOVED (not renamed) — the posture concept it discriminated no longer
+# AC-FIGR-3: the retired posture field is REMOVED (not renamed) — the concept it discriminated no longer
 # exists in the framework, so a renamed-but-unsourced field would be permanently null, therefore
 # permanently attention under this very table's default-deny rule.
 KNOWN_SAFE = {
@@ -85,7 +86,8 @@ def is_field_clear(field, value):
     `target_repo` is clear iff it resolved to a non-empty string. Every other / unknown / novel / null
     risk value ⇒ attention (False).
 
-    AC-FIGR-3: no longer accepts a `break_glass` keyword — its only consumer (`ctx_posture`) is
+    AC-FIGR-3: no longer accepts a `break_glass` keyword — its only consumer, the retired posture
+    field, is
     removed, not renamed, so there is no field left for it to special-case."""
     if field == "target_repo":
         return isinstance(value, str) and bool(value.strip())
@@ -275,8 +277,8 @@ def _stack_profile_module():
 
 
 def derive_infra(*, project_dir, blast_tier=None, root=None, plugin_root=None):
-    """AC-FIGR-2/4/6 (was AC-SMACH-5's ctx-posture-sourced infra block). The infra discriminator is
-    RE-SOURCED from the committed stack-profile lock instead of a live CTX-CLI probe: it calls the
+    """AC-FIGR-2/4/6 (was AC-SMACH-5's posture-sourced infra block). The infra discriminator is
+    RE-SOURCED from the committed stack-profile lock instead of a live control-plane probe: it calls the
     shipped `resolve_lock(project_dir)` and tests `profile_kind` on each resolved profile — `infra`
     true exactly when a resolved profile declares `profile_kind: infra`. Reads only committed files;
     executes no subprocess. The discriminator is now PROJECT-scoped, not session-scoped (a genuine,
@@ -439,7 +441,7 @@ def derive_all(corpus_root, invoking_sid=None, registry_result=None, *, root=Non
     topo = _git_topo(os.getcwd())
     diff_paths = _governance_diff_paths(topo)
     # AC-FIGR-2/6: the infra discriminator is PROJECT-scoped (resolve_lock(corpus_root)) — resolved
-    # ONCE here, before the per-session loop, exactly where the CTX probe it replaces used to resolve
+    # ONCE here, before the per-session loop, exactly where the retired probe it replaces used to resolve
     # (AC-FIGR-6's grounding note). derive_infra never raises — it catches StackProfileError itself and
     # returns a discriminated `degraded`/`source_unavailable` outcome — so an escaping exception here
     # can no longer take the whole roster down the way an unwrapped resolve_lock call would.
@@ -482,10 +484,12 @@ def _selftest():
                        "branch": "main", "default_branch": "main"}
         m = derive_machinery(rec, corpus_root=corpus, invoking_sid=sid, git_topo=topo_wtmain,
                              pr_state=None, diff_paths=["scripts/foundry-fleet-roster.py"])
-        typed = (m["session_id"] == sid and set(m).issuperset(
-            {"isolation", "gate_readiness", "mode", "security_flag",
-             "target_repo", "blast_radius", "infra", "sources"})
-            and "ctx_posture" not in m and "break_glass" not in m)
+        # Exact set equality, not issuperset: it proves the required keys present AND every retired
+        # key absent in one assertion, with no need to name a retired identifier. issuperset was
+        # blind to extras, which is why it needed the two negative clauses this replaces.
+        typed = (m["session_id"] == sid and set(m) == {
+            "blast_radius", "gate_readiness", "infra", "isolation", "mode",
+            "security_flag", "session_id", "sources", "status", "target_repo"})
         mode_ok = m["mode"] == {"stage": "lean", "merge_autonomy": "lean"}
         gate_ok = m["gate_readiness"] == "authorized"        # corpus authorized-trailer, no PR
         # a MISSING-block (join miss) is its own discriminated state, not a populated record.
@@ -571,7 +575,7 @@ def _selftest():
         no_lock_blast, no_lock_infra, no_lock_o, no_lock_r = derive_infra(project_dir=corpus)
         non_infra = (no_lock_blast is None and no_lock_infra is False
                     and no_lock_o == "source_unavailable" and "stack-profile.lock" in no_lock_r)
-        # no subprocess is executed deriving it (AC-FIGR-1/2): read-only, no `ctx` exec.
+        # no subprocess is executed deriving it (AC-FIGR-1/2): read-only, no control-plane exec.
         no_exec = True
         try:
             import unittest.mock as _mock

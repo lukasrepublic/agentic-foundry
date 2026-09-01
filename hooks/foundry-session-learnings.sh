@@ -256,11 +256,11 @@ except Exception: print("")' 2>/dev/null || true)"
   # AC-RUX-1: the runbook is RELOCATED (not shortened) into the model-facing additionalContext; the
   # user-facing reason is the short non-alarming line. Values are passed via the ENV, never argv, so a
   # session id / path never lands in the process list.
-  _FOUNDRY_REASON="$(_short_reason)" _FOUNDRY_CTX="$prompt" python3 -c 'import os,json
+  _FOUNDRY_REASON="$(_short_reason)" _FOUNDRY_CONTEXT="$prompt" python3 -c 'import os,json
 print(json.dumps({"decision":"block",
                   "reason":os.environ.get("_FOUNDRY_REASON","").strip(),
                   "hookSpecificOutput":{"hookEventName":"Stop",
-                                        "additionalContext":os.environ.get("_FOUNDRY_CTX","")}}))' 2>/dev/null \
+                                        "additionalContext":os.environ.get("_FOUNDRY_CONTEXT","")}}))' 2>/dev/null \
     || printf '{"decision":"block","reason":"Foundry: routine learnings capture, once per session (not an error). Capture via /foundry:learn-capture; disable with FOUNDRY_SESSION_LEARNINGS=off."}'
   exit 0
 }
@@ -634,10 +634,10 @@ print(d if isinstance(d,str) else "")' "$2" 2>/dev/null
   }
 
   # ---- AC-RUX-1: short user-facing reason; runbook RELOCATED (not deleted) to additionalContext.
-  local ru1=0 out1 reason1 ctx1 sentinel1='never write a file directly under .foundry/session-learnings/'
+  local ru1=0 out1 reason1 context1 sentinel1='never write a file directly under .foundry/session-learnings/'
   out1="$(_rux_stop "RUX1" "$tdir/sub_mut.jsonl")"
   reason1="$(_rux_get "$out1" reason)"
-  ctx1="$(_rux_get "$out1" hookSpecificOutput.additionalContext)"
+  context1="$(_rux_get "$out1" hookSpecificOutput.additionalContext)"
   [ -n "$reason1" ] || ru1=1
   [ "$(printf '%s\n' "$reason1" | grep -c .)" -le 2 ] || ru1=1          # <=2 lines
   printf '%s' "$reason1" | grep -qF 'not an error' || ru1=1             # contradicts the harness caption
@@ -646,9 +646,9 @@ print(d if isinstance(d,str) else "")' "$2" 2>/dev/null
   printf '%s' "$reason1" | grep -qE '\.sh|/tmp|\.foundry/|\|' && ru1=1  # no shell cmd / filesystem path
   printf '%s' "$reason1" | grep -qF 'RUX1' && ru1=1                     # no session id
   [ "$(_rux_get "$out1" hookSpecificOutput.hookEventName)" = "Stop" ] || ru1=1
-  printf '%s' "$ctx1" | grep -qF 'foundry-learn-capture' || ru1=1       # runbook present in MODEL channel
-  printf '%s' "$ctx1" | grep -qF "$sentinel1" || ru1=1                  # LBC-3 sentinel travels with it
-  printf '%s' "$ctx1" | grep -qF 'RUX1' || ru1=1                        # session id threaded (model side)
+  printf '%s' "$context1" | grep -qF 'foundry-learn-capture' || ru1=1       # runbook present in MODEL channel
+  printf '%s' "$context1" | grep -qF "$sentinel1" || ru1=1                  # LBC-3 sentinel travels with it
+  printf '%s' "$context1" | grep -qF 'RUX1' || ru1=1                        # session id threaded (model side)
   _emit "AC-RUX-1 short-reason-runbook-relocated-to-additionalcontext" "$ru1" "reason <=2 lines, no cmd/path/sid, says 'not an error' + names knob + /foundry:learn-capture; additionalContext carries runbook + LBC-3 sentinel + sid"
 
   # ---- AC-RUX-2: suppress ONLY on positive proof; each limb independent; fail TOWARD inject.
@@ -691,7 +691,7 @@ print(d if isinstance(d,str) else "")' "$2" 2>/dev/null
   local ru4=0 out_rt1 out_rt2
   # (i) relocation is real, not a deletion: known-bad = runbook left in the reason
   printf '%s' "$reason1" | grep -qF 'foundry-learn-capture --final' && ru4=1
-  [ -n "$ctx1" ] || ru4=1
+  [ -n "$context1" ] || ru4=1
   # (ii) the pre-existing guards still no-op (re-entrancy / headless / marker states)
   out_rt1="$(CLAUDE_CODE_ENTRYPOINT=cli; export CLAUDE_CODE_ENTRYPOINT; printf '{"session_id":"RUXR","stop_hook_active":true,"transcript_path":"%s"}' "$tdir/sub_mut.jsonl" | _stop 2>/dev/null)"
   printf '%s' "$out_rt1" | grep -q '"decision"' && ru4=1
@@ -759,20 +759,20 @@ EOJ
   _emit "AC-SYNT-1 local-command-records-excluded-from-turn-count" "$sy1" "all 5 tags excluded solo (no decision/marker @ MIN_TURNS=1); mid-string mention counts; list-shape first-block anchor counts/excludes correctly; origin.kind:human + promptSource both dominate a leading tag"
 
   # ---- AC-SYNT-2: the cadence wording is honest, in every emitter.
-  local sy2=0 outw reasonw ctxw sentinelw='never write a file directly under .foundry/session-learnings/'
+  local sy2=0 outw reasonw contextw sentinelw='never write a file directly under .foundry/session-learnings/'
   outw="$(_rux_stop "SYNTW" "$tdir/sub_mut.jsonl")"
   reasonw="$(_rux_get "$outw" reason)"
-  ctxw="$(_rux_get "$outw" hookSpecificOutput.additionalContext)"
-  printf '%s' "$ctxw" | grep -qF 'once per session, at the first qualifying idle' || sy2=1
-  printf '%s' "$ctxw" | grep -qF "$sentinelw" || sy2=1                                # AC-LBC-3 sentinel still travels
+  contextw="$(_rux_get "$outw" hookSpecificOutput.additionalContext)"
+  printf '%s' "$contextw" | grep -qF 'once per session, at the first qualifying idle' || sy2=1
+  printf '%s' "$contextw" | grep -qF "$sentinelw" || sy2=1                                # AC-LBC-3 sentinel still travels
   printf '%s' "$reasonw" | grep -qF 'once per session' || sy2=1
   printf '%s' "$reasonw" | grep -qF 'Before this session ends' && sy2=1
   printf '%s' "$reasonw" | grep -qF 'end-of-session' && sy2=1
-  printf '%s' "$ctxw" | grep -qF 'Before this session ends' && sy2=1
-  printf '%s' "$ctxw" | grep -qF 'end-of-session' && sy2=1
+  printf '%s' "$contextw" | grep -qF 'Before this session ends' && sy2=1
+  printf '%s' "$contextw" | grep -qF 'end-of-session' && sy2=1
   # the rendered replacement phrase itself carries no shell-expansion metacharacter (the runbook
   # heredoc is unquoted).
-  printf '%s' "$ctxw" | grep -F 'once per session, at the first qualifying idle' | grep -Eq '[$`\\]' && sy2=1
+  printf '%s' "$contextw" | grep -F 'once per session, at the first qualifying idle' | grep -Eq '[$`\\]' && sy2=1
   # _short_reason's heredoc stays single-quoted (source-level regression).
   grep -A1 '^_short_reason() {' "$_LIB_DIR/foundry-session-learnings.sh" | grep -qF "cat <<'EOF'" || sy2=1
   _emit "AC-SYNT-2 honest-once-per-session-cadence-wording" "$sy2" "additionalContext + reason carry the honest literal; neither channel carries the two banned phrases; wording metacharacter-free; _short_reason heredoc still single-quoted"

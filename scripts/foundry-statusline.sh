@@ -5,23 +5,23 @@
 # renderer surfaces the highest-value ambient signals for the parallel-autonomous-session operator,
 # isolation-first:
 #
-#   ⌂ <repo>:<branch>[+ahead/-behind,?untracked] · ⊙ <native task> · ctx ███░░ NN%
+#   ⌂ <repo>:<branch>[+ahead/-behind,?untracked] · ⊙ <native task> · tok ███░░ NN%
 #
 #   1. REPO ORIENTATION (leads, color-coded): `<glyph> <repo>:<branch>[+a/-b,?u]` — the repo basename
 #      (from the git COMMON-dir, so it is identical for a main checkout OR a linked worktree of the same
 #      repo), the branch (short-sha when detached, never empty), and a git-state cluster
 #      `[+ahead/-behind,?untracked]` rendered only when out-of-sync / dirty (ahead+behind default 0 with
 #      no upstream, so the bracket is never malformed). A linked/dedicated worktree → green `⊞`; the main
-#      checkout → amber `⌂` (an honest "not isolated"; red is reserved for the ctx bar). Detection =
+#      checkout → amber `⌂` (an honest "not isolated"; red is reserved for the tok bar). Detection =
 #      realpath-normalized `git rev-parse --absolute-git-dir` ≠ `--git-common-dir`. A non-repo cwd
 #      suppresses the segment.
 #   2. NATIVE TASK: `⊙ <label>` read from the session todos file
 #      `<CLAUDE_CONFIG_DIR||~/.claude>/todos/<sanitized-sessionId>-agent-*.json` (newest mtime, the
 #      `in_progress` entry, `activeForm` with a `content` fallback). Suppressed when none. NO @status.
-#   3. CONTEXT BAR: `ctx ███░░ NN%` from `context_window.remaining_percentage` with the 16.5%
+#   3. CONTEXT BAR: `tok ███░░ NN%` from `context_window.remaining_percentage` with the 16.5%
 #      auto-compact-buffer transform, color-coded at the context-bar thresholds (green <50 / yellow 50–65 /
 #      orange 65–80 / red+⚠ >80). Omitted when the field is absent/unparseable.
-#   3b. OVER-BUDGET ESCALATION (feat-foundry-session-per-mandate, AC-SPM-1/-2, additive AFTER the ctx
+#   3b. OVER-BUDGET ESCALATION (feat-foundry-session-per-mandate, AC-SPM-1/-2, additive AFTER the tok
 #      bar): when the RAW used-percentage (`100 − remaining_percentage`, distinct from the bar's buffer-
 #      adjusted display value) is >= the configured threshold, append a distinct-glyph/red escalation
 #      nudge naming the handoff move (`/foundry:context snapshot`). The threshold is read at RENDER
@@ -130,8 +130,8 @@ if [ -n "$SID" ] && [ "$_HAVE_JQ" -eq 1 ]; then
   fi
 fi
 
-# ── segment 3: context-pressure bar (ctx ███░░ NN%) ───────────────────────────────────────────────
-CTX=""
+# ── segment 3: context-pressure bar (tok ███░░ NN%) ───────────────────────────────────────────────
+TOK=""
 REM="$(jqr '(.context_window.remaining_percentage // empty)')"
 if [ -n "$REM" ]; then
   USED="$(awk -v r="$REM" -v b="$AUTO_COMPACT_BUFFER_PCT" 'BEGIN{
@@ -147,17 +147,17 @@ if [ -n "$REM" ]; then
     elif [ "$USED" -lt 65 ]; then COL="$AMBER"; WARN=""
     elif [ "$USED" -lt 80 ]; then COL="$ORANGE"; WARN=""
     else COL="$RED"; WARN=" ⚠"; fi
-    CTX="${COL}ctx ${BAR} ${USED}%${WARN}${RESET}"
+    TOK="${COL}tok ${BAR} ${USED}%${WARN}${RESET}"
   fi
 fi
 
 # ── segment 3b: over-budget escalation nudge (feat-foundry-session-per-mandate, AC-SPM-1/-2) ───────
-# Additive AFTER the ctx bar above — never replaces it. ADVISORY ONLY: this block can only ever
-# APPEND text to $CTX; it never sets a non-zero exit, never sleeps/blocks, never touches $OUT gating.
-if [ -n "$CTX" ]; then
+# Additive AFTER the tok bar above — never replaces it. ADVISORY ONLY: this block can only ever
+# APPEND text to $TOK; it never sets a non-zero exit, never sleeps/blocks, never touches $OUT gating.
+if [ -n "$TOK" ]; then
   # AC-SPM-1: escalate only on a REM that is a genuinely-numeric, in-[0,100]-range value; any other
-  # shape (absent — CTX already empty above — non-numeric, or out-of-range) degrades to the current
-  # non-escalated $CTX rendering computed above (never a crash).
+  # shape (absent — TOK already empty above — non-numeric, or out-of-range) degrades to the current
+  # non-escalated $TOK rendering computed above (never a crash).
   if printf '%s' "$REM" | grep -Eq '^[0-9]+(\.[0-9]+)?$|^-[0-9]+(\.[0-9]+)?$'; then
     RAWUSED="$(awk -v r="$REM" 'BEGIN{
                 u = 100 - r;
@@ -183,7 +183,7 @@ if [ -n "$CTX" ]; then
         esac
       fi
       if [ "$RAWUSED" -ge "$THRESHOLD" ] 2>/dev/null; then
-        CTX="${CTX} ${RED}⛔ over budget → /foundry:context snapshot${RESET}"
+        TOK="${TOK} ${RED}⛔ over budget → /foundry:context snapshot${RESET}"
       fi
     fi
   fi
@@ -251,7 +251,7 @@ esac
 
 # ── join non-empty segments with ' · ' (isolation leads) ──────────────────────────────────────────
 OUT=""
-for seg in "$ISO" "$TASK" "$CTX" "$MODESEG" "$EXTRAS"; do
+for seg in "$ISO" "$TASK" "$TOK" "$MODESEG" "$EXTRAS"; do
   [ -z "$seg" ] && continue
   if [ -z "$OUT" ]; then OUT="$seg"; else OUT="$OUT · $seg"; fi
 done

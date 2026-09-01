@@ -751,9 +751,9 @@ def main(argv=None):
             return 0
         if args.load:
             resolved = resolve_lock()
-            for ctx in loaded_context(resolved):
-                print(f"loaded {ctx['id']}@{ctx['version']}: {len(ctx['implementation_skills'])} skill(s), "
-                      f"conventions={ctx['conventions_doc']}")
+            for prof in loaded_context(resolved):
+                print(f"loaded {prof['id']}@{prof['version']}: {len(prof['implementation_skills'])} skill(s), "
+                      f"conventions={prof['conventions_doc']}")
             return 0
         if args.relock:
             deltas = relock_lock()

@@ -505,7 +505,7 @@ for i, t in enumerate(low):
     # same-numbered ambient PR was green. On a Tier-B repo this clause is the only in-session
     # control preventing that merge, so the query is PINNED to the command's own coordinates or
     # the merge is REFUSED. There is deliberately NO ambient fallback (AC-MVC-4).
-    def block_ctx(detail):
+    def block_context(detail):
         # Distinct from a red-check refusal (AC-MVC-7): this is an UNVERIFIABLE command, not a
         # failing one. Never phrase it as a check failure — that misdiagnosis is the bug.
         block("gh pr merge refused: the PR being merged cannot be resolved unambiguously from "
@@ -534,24 +534,24 @@ for i, t in enumerate(low):
     repo_flag_seen = bool(repo_sels)
     if len(set(repo_sels)) > 1:
         # Two different repos named in one merge: gh's precedence is not ours to guess.
-        block_ctx(f"Conflicting repo selectors {sorted(set(repo_sels))!r} were given.")
+        block_context(f"Conflicting repo selectors {sorted(set(repo_sels))!r} were given.")
     repo_sel = repo_sels[0] if repo_sels else None
     if repo_flag_seen and not (repo_sel and _is_literal(repo_sel)):
-        block_ctx("`--repo`/`-R` was given without a resolvable owner/name value.")
+        block_context("`--repo`/`-R` was given without a resolvable owner/name value.")
 
     # (2) The PR selector — the third bare token. Absent, `gh pr checks` would fall back to the
     #     CURRENT BRANCH's PR, which is exactly the ambient lookup this clause must never make.
     pr_ref = bare[2] if len(bare) >= 3 else None
     if not pr_ref:
-        block_ctx("No PR number, branch or URL was given, so the check query would fall back to "
+        block_context("No PR number, branch or URL was given, so the check query would fall back to "
                   "whichever PR the current branch points at.")
     if not _is_literal(pr_ref):
-        block_ctx(f"The PR selector {pr_ref!r} is not a literal value.")
+        block_context(f"The PR selector {pr_ref!r} is not a literal value.")
     # A PR URL carries owner/repo/number. If `--repo` names a DIFFERENT repo the command is
     # self-contradictory and we must not pick a winner (AC-MVC-8 keeps a lone URL sufficient).
     _m_url = re.match(r"^https?://[^/]+/([^/]+/[^/]+)/pull/\d+", pr_ref)
     if _m_url and repo_sel and _m_url.group(1).lower() != repo_sel.lower():
-        block_ctx(f"The PR URL names {_m_url.group(1)!r} but `--repo` names {repo_sel!r}.")
+        block_context(f"The PR URL names {_m_url.group(1)!r} but `--repo` names {repo_sel!r}.")
 
     # (3) The working directory. `cd <dir> && gh …` changes where gh resolves the repo from; the
     #     hook does not inherit it. A non-literal or non-existent target is unresolvable.
@@ -586,10 +586,10 @@ for i, t in enumerate(low):
                 run_cwd, cd_unresolved = os.path.expanduser(tgt), None
         j += 1
     if cd_unresolved:
-        block_ctx(f"This command chain contains {cd_unresolved}, so the directory gh would "
+        block_context(f"This command chain contains {cd_unresolved}, so the directory gh would "
                   "resolve the repo from is unknown.")
     if run_cwd is not None and not os.path.isdir(run_cwd):
-        block_ctx(f"The `cd` target {run_cwd!r} does not resolve to an existing directory.")
+        block_context(f"The `cd` target {run_cwd!r} does not resolve to an existing directory.")
 
     # (4) The GitHub identity. Inline `VAR=value gh …` assignments select the account, host and
     #     config dir; without them the query runs as a DIFFERENT account, which resolves
@@ -626,15 +626,15 @@ for i, t in enumerate(low):
             continue
         m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", t)
         if not m:
-            block_ctx(f"An unrecognized token {t!r} precedes `gh` in this clause, so the "
+            block_context(f"An unrecognized token {t!r} precedes `gh` in this clause, so the "
                       "environment the merge would run under cannot be reproduced.")
         name, val = m.group(1), m.group(2)
         if name not in _ENV_ALLOW:
-            block_ctx(f"The inline assignment {name}= is not a carryable GitHub-identity "
+            block_context(f"The inline assignment {name}= is not a carryable GitHub-identity "
                       f"variable ({', '.join(sorted(_ENV_ALLOW))}), so this command's "
                       "environment cannot be reproduced safely.")
         if not _is_literal(val):
-            block_ctx(f"The inline assignment {t!r} is not a literal value, so the GitHub "
+            block_context(f"The inline assignment {t!r} is not a literal value, so the GitHub "
                       "identity the merge would use cannot be reproduced.")
         run_env[name] = val
 
