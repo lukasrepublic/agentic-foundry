@@ -118,7 +118,9 @@ function makePrint() {
 // ================================================================================================
 
 test('the live set is read from every scope record in the installed plugin registry', () => {
-  // The exact observed shape: user->1.6.0, project(piiq-handbook)->1.6.0, project(agentic-workspace)->1.5.0
+  // The exact observed shape: user->1.6.0, project(a)->1.6.0, project(b)->1.5.0 — two projects on
+  // different versions, one of them BEHIND the user scope. That asymmetry is the whole point of the
+  // fixture: it is the shape a highest-semver heuristic gets wrong.
   const registry = { ok: true, doc: { version: 2, plugins: { [PLUGIN_KEY]: [
     { installPath: '/x/1.6.0', version: '1.6.0' },
     { installPath: '/y/1.6.0', version: '1.6.0', projectPath: '/y' },
