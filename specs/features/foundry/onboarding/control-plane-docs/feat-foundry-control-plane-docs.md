@@ -312,7 +312,7 @@ corpus.
 - **Changing authorization's degradation behaviour.** This atom describes it honestly; hardening it is a
   separate atom, and AC-CPD-3(2) is written so that atom flips the doc's claim rather than orphaning it.
 - **The preflight checks themselves** — `[[feat-foundry-control-plane-preflight]]` owns those.
-- **This workspace's dangling `repos.ctxinfra` entry** — an operator finding recorded in the ER, not a
+- **This workspace's dangling `repos.<private-infra>` entry** — an operator finding recorded in the ER, not a
   documentation change.
 
 ## Residuals ledger

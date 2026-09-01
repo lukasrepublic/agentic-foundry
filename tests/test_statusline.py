@@ -47,7 +47,7 @@ class TestStatuslineRenderer:
     def test_renders_over_real_repo_without_crashing(self):
         rc, out = _run(STATUSLINE, _payload(REPO_ROOT, 90))
         assert rc == 0
-        assert "ctx" in out  # the pressure-bar segment renders.
+        assert "tok" in out  # the pressure-bar segment renders.
 
     def test_fails_open_on_malformed_json(self):
         rc, out = _run(STATUSLINE, "not json {{")
@@ -99,7 +99,7 @@ class TestSessionPerMandateEscalation:
         proj = str(tmp_path)
         rc, out = _run(STATUSLINE, _payload("/tmp", None), env_extra={"CLAUDE_PROJECT_DIR": proj})
         assert rc == 0
-        assert "ctx" not in out and "snapshot" not in out.lower()
+        assert "tok" not in out and "snapshot" not in out.lower()
 
 
 # ==================================================== init-statusline-wrapper.py ==== #

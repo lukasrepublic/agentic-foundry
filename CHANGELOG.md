@@ -8,6 +8,50 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## Unreleased
+
+### The retired session-context framework's name leaves the repo entirely
+
+**The dependency was severed in v1.6.0; the name is now gone too.** This repo is public, and a plugin
+install is a full `git clone` with no file-exclusion mechanism, so every literal occurrence reached
+every adopter. There were **617 case-insensitive occurrences across 21 tracked files** at v1.7.0, and
+**428 of them — 69% — were the removal machinery itself**: the zero-reference gate, its frozen
+forbidden-token corpus, and the absence-proving tests. A forbidden-token gate cannot detect a token
+without spelling it, so the guard was by construction the largest instance of what it banned.
+
+It had also begun obstructing the cleanup it existed to enforce: because the gate required every
+allowlist entry to cover a live occurrence, removing an allowlisted reference turned the suite red
+until the guard itself was edited.
+
+- **The gate and its fixtures are deleted** — the sweep module, its frozen sweep definition, and the
+  module-absence proof that accompanied them. Retiring completed migration scaffolding at a
+  release boundary is the industry lifecycle (Rust removes a future-incompatibility lint once the
+  condition becomes unrepresentable; a ratchet at zero budget is inventory with a carrying cost).
+- **`tests/test_infra_prose_grounding.py` is re-grounded, not deleted.** Its two token-absence sweeps
+  and the overloaded-construct pin are removed; the **eleven positive prose invariants** that guard
+  the *replacement* doctrine survive and still pass. 18 cases, down from 35.
+- **Absence assertions became exactness assertions, which is strictly stronger.** The fleet
+  machinery's selftest and tests now freeze the import graph and the record/`KNOWN_SAFE` key sets by
+  exact equality instead of naming retired keys. The previous `issuperset` form was blind to extra
+  keys; exact equality convicts a re-added retired key *and* any other unexpected one.
+- **Ordinary "context" abbreviations are renamed** rather than pinned: the statusline pressure bar
+  renders `tok` (same three-character width), plus the git-discipline and session-learnings helpers,
+  a reviser callback parameter and two loop locals.
+- **The changelog record is kept.** Descriptive references are reworded; proper identifiers are
+  dropped rather than renamed, because renaming a published atom's name would be a falsehood. No
+  released section or entry was removed.
+- **No replacement guard is built.** The industry shape would be a "no dependency" assertion over
+  manifests and the import graph, not a string sweep — but nothing imports the retired framework, so
+  such a detector would ship with an empty subject. An encoded or runtime-assembled token list was
+  researched and **rejected**: no industry precedent exists, and every surveyed tool stores its
+  forbidden literals in reviewable plaintext by design.
+
+The `create-agentic-workspace` installer CLI is **unaffected** by this change: no install line, pin
+or scaffold output moves, and an adopter upgrades with the usual single `plugin update`.
+
+Security review: required and performed — the change touches `hooks/` and the shipped version ledger,
+three arms of the security-path floor.
+
 ## v1.7.0
 
 ### The documented install line stops freezing the adopter's catalogue (feat-foundry-install-line-unpinning)
@@ -104,13 +148,13 @@ this repository. Pass `--ref <tag>` if you want the old frozen-index behaviour.
 
 ## v1.6.0
 
-**The CTX control-plane dependency is severed.** The framework no longer probes, requires, or
+**The retired session-context control-plane dependency is severed.** The framework no longer probes, requires, or
 references an external environment control plane. Infra mutations run on standard `aws` / `tofu` /
 `kubectl` over IaC against the AWS context the OPERATOR has already configured — and the operator's
 IAM restrictions ARE the control, out of the framework's scope. It never acquires credentials,
 establishes connectivity, or second-guesses that context.
 
-Before this release, with no `ctx` binary on PATH the posture probe fail-closed to REFUSE, so
+Before this release, with the retired CLI absent from PATH the posture probe fail-closed to REFUSE, so
 `id-apply` refused **every** infra mutation on any machine without that CLI.
 
 The posture layer is **deleted, not replaced**: no prod-vs-non-prod branch, no guard state, no
@@ -123,9 +167,9 @@ Shipped with a standing exit gate that proves the removal and keeps it proven, a
 `cloud-cli-exec-guard` reclassified honestly as defense-in-depth rather than a security boundary.
 
 
-### A zero-reference exit gate proves the retired session-context framework stays gone (feat-foundry-ctx-zero-reference-gate)
+### A zero-reference exit gate proves the retired session-context framework stays gone
 
-**The CTX-REMOVAL program's exit criterion: an allowlist-aware whole-tracked-tree sweep, additive
+**The removal program's exit criterion: an allowlist-aware whole-tracked-tree sweep, additive
 and test-only, that computes RED on any reference to the retired framework anywhere in the repo and
 GREEN over the shipped tree.** `tests/test_reference_sweep.py` + its fixture
 `tests/fixtures/reference-sweep/retired-framework-sweep.yaml` add one pytest module and one
@@ -148,7 +192,7 @@ fixture; no shipped script, hook, schema, skill or workflow is edited.
 ### The apply gate loses its posture input and executes the change (feat-foundry-apply-gate-regrounding)
 
 **`decide_apply` no longer probes an ambient control plane for a posture — the operator supplies a
-correctly configured AWS context, and its IAM restrictions ARE the control.** The retired `ctx status
+correctly configured AWS context, and its IAM restrictions ARE the control.** The retired status-probe command
 --json` probe left the shipped gate inert on any machine without that CLI (`REFUSE` on every
 mutation); this atom subtracts the dependency rather than replacing it.
 
@@ -185,9 +229,9 @@ mutation); this atom subtracts the dependency rather than replacing it.
   `plan`/`verify`/`policy` slots rather than deferring to the retired runtime guard. The gate module's
   own docstrings and comments are rewritten to describe only the surviving behaviour.
 - **`skills/id-apply/SKILL.md` rewritten (AC-IDAGR-6):** the procedure resolves the profile → decides
-  (the gate re-derives the class itself) → drives the branch; no session probe, no posture, no CTX.
+  (the gate re-derives the class itself) → drives the branch; no session probe, no posture, no retired control plane.
 
-**No CTX-authority claim survives, and this atom deletes nothing.** The retired posture module
+**No external-authority claim survives, and this atom deletes nothing.** The retired posture module
 is left untouched — it becomes unreferenced by this atom, and a sibling atom retires it separately so
 the tree stays green at each step.
 
@@ -197,7 +241,7 @@ Checked rather than assumed: the package bundles `cli/permission-floor.json` and
 scaffolded or reconciled workspace until that workspace's plugin is updated. Adopters get it from the
 plugin, which is version-keyed, not from the wizard.
 
-### The shipped prose is re-grounded on operator-supplied AWS context (feat-foundry-ctx-prose-decoupling)
+### The shipped prose is re-grounded on operator-supplied AWS context
 
 **Every remaining reference to the retired session-context framework and its posture gate, across
 26 files, is rewritten to describe the reality the sibling code atoms ship: the framework EXECUTES
@@ -212,7 +256,7 @@ Prose asserting any of those is deleted, not restated in new words.
   there would fight the controller), and states the saved-plan sequence (`-out=.foundry/infra.tfplan`
   → `apply .foundry/infra.tfplan`, the literal path in both renderings, no placeholder) as applying
   exactly what was planned.
-- **`skills/id-promote/SKILL.md` rewritten (13 `ctx` lines / 18 forbidden-phrase lines closed):** the
+- **`skills/id-promote/SKILL.md` rewritten (13 retired-token lines / 18 forbidden-phrase lines closed):** the
   frontmatter `description` and body now describe promotion as re-deriving the change scope and the
   GitOps class per environment and driving `id-apply`'s real two-input `decide_apply(changed_paths,
   infra_binding)` — never the removed `posture`/`blast_tier`/`high_blast_acked` arguments, never
@@ -222,9 +266,9 @@ Prose asserting any of those is deleted, not restated in new words.
   (`id-validate`, `id-test`, `id-simulate`, `id-architect`):** each still states the step runs
   entirely offline — no live cloud account, no cluster, no credentials, no mutating command.
   `id-validate`/`id-test` keep the frozen `## Offline (no-guarded-exec) mode` heading verbatim
-  (`AC-IDOFF-1`); `id-test`'s now-dead `## No posture path — never invokes ctx-posture` section is
+  (`AC-IDOFF-1`); `id-test`'s now-dead no-posture-path section is
   deleted outright, not reworded.
-- **`docs/glossary.md`:** the CTX term entry is replaced by a `guarded-exec wrapper` /
+- **`docs/glossary.md`:** the retired-framework term entry is replaced by a `guarded-exec wrapper` /
   `cloud_cli_exec_guard` entry — adopter-supplied, config-gated and fail-INERT, defense-in-depth, not
   a security boundary; the operator's IAM restrictions are the control.
 - **`hooks/foundry-cloud-cli-exec-guard.sh` reclassified, not weakened:** its header now states
@@ -241,9 +285,10 @@ Prose asserting any of those is deleted, not restated in new words.
   `agents/infra-engineer.md`): the session/posture/guard clause is struck with nothing invented in
   its place — the step simply runs the command.
 - **New `tests/test_infra_prose_grounding.py`** carries every criterion above (35 tests) plus the
-  false-positive allowlist's survival proof (the statusline pressure bar, `block_ctx`, `_FOUNDRY_CTX`,
+  false-positive allowlist's survival proof (the statusline pressure bar, the git-discipline block helper, the session-learnings locals,
   the `spec-audit.js` reviser param, the tier-preflight local, the stack-profile loop local, and the
-  `ctx-*` context skills all remain verbatim — none of these were ever CTX references).
+  and the context-lifecycle skills all remained verbatim — none of these were ever references to the
+  retired framework).
 
 ### Retirement is expressible — `classification: remove` (ER #120, ER #121)
 
@@ -306,21 +351,21 @@ one that does not yet exist, then froze the falsehood into the contract hash.
 Spec: `specs/features/foundry/gate-integrity/retirement-grounding/` (workspace), authorized
 `auth_seq 1`, `spec_sha256=6102dc33b4534b64…`.
 
-### `/foundry:fleet` stops executing `ctx status` on every run — the infra discriminator is re-sourced from the stack-profile lock
+### `/foundry:fleet` stops probing the retired control plane on every run — the infra discriminator is re-sourced from the stack-profile lock
 
-**The one unmocked production probe of the retired CTX control plane in the whole workspace is gone.**
-`derive_all` called `_ctx_probe_present()` on every `/foundry:fleet` invocation, which shelled out to
-`ctx status --json`. All three imports of the retired posture module — `derive_infra`, the probe helper,
+**The one unmocked production probe of the retired session-context control plane in the whole workspace is gone.**
+`derive_all` invoked a probe helper on every `/foundry:fleet` invocation, which shelled out to the
+retired status command. All three imports of the retired posture module — `derive_infra`, the probe helper,
 and (the one a reader scanning `derive_*` functions misses) the module's own `--selftest` — are gone,
 and the helper itself is deleted.
 
 - **The `infra` discriminator is re-sourced from the committed stack-profile lock**
-  (`resolve_lock(project_dir)` + `profile_kind: infra`) instead of a live CTX session probe. This is a
+  (`resolve_lock(project_dir)` + `profile_kind: infra`) instead of a live session probe. This is a
   genuine, disclosed meaning change: `infra` is now **project-scoped, not session-scoped** — every
   session row in an infra-profile project reads `infra: true`, not only the invoking session's own
   row, because the source no longer varies by session. Nothing downstream gates on it; it is a display
   discriminator.
-- **`ctx_posture` and `break_glass` are REMOVED, not renamed.** With the posture concept itself retired,
+- **The posture field and `break_glass` are REMOVED, not renamed.** With the posture concept itself retired,
   a renamed field would be permanently null and, under the roster's own default-deny rule, permanently
   rendered as attention on every row forever. Removed from the machinery record, the `KNOWN_SAFE`
   default-deny table, `is_field_clear`'s signature (no longer accepts a `break_glass` keyword), the
@@ -330,10 +375,10 @@ and the helper itself is deleted.
   either escape: no lock at the project dir ⇒ `infra` false, `source_unavailable`; a lock present but
   unresolvable ⇒ `infra` false, `degraded`, carrying the resolver's own message. Both name the lock.
   `derive_all` resolves the discriminator exactly once, before its per-session loop — the same position
-  the removed CTX probe resolved at — so an unwrapped call there would have taken the whole roster down
+  the removed probe resolved at — so an unwrapped call there would have taken the whole roster down
   on a single tampered pin rather than degrading one field.
 - **First pytest coverage for `scripts/foundry-fleet-session-machinery.py`** (`tests/test_fleet_session_
-  machinery.py`) — the two fleet modules had none before this atom, which is how the live `ctx status`
+  machinery.py`) — the two fleet modules had none before this atom, which is how the live status probe
   exec survived unnoticed in a production path this long. The module's own `--selftest` still runs
   clean (`FLEET-SESSION-MACHINERY-SELFTEST-GREEN`) but is not treated as a substitute.
 - `blast_radius` stays inert (no live call site supplies `blast_tier`); this atom neither fixes nor
@@ -342,21 +387,21 @@ and the helper itself is deleted.
 Spec: `specs/features/foundry/fleet/infra-discriminator-regrounding/` (workspace), authorized
 `auth_seq 1`.
 
-### The retired CTX posture module is deleted (infra-delivery/ctx-posture-retirement)
+### The retired posture module is deleted
 
-**The framework's last hard dependency on the retired `ctx` CLI is gone.** The posture module
-shelled out to `ctx status --json` and, with no `ctx` on `PATH`, fail-closed to `REFUSE` — refusing
+**The framework's last hard dependency on the retired CLI is gone.** The posture module
+shelled out to the retired status command and, with that CLI absent from `PATH`, fail-closed to `REFUSE` — refusing
 every infra mutation on any machine without that binary. The two sibling atoms above severed every
 consumer first; this atom deletes the now-unreferenced module itself.
 
 - **The retired posture module and its dedicated test file are deleted outright.**
 - **The `not_invoked` entry naming the deleted script is removed from both permission-floor mirrors**
   (`cli/permission-floor.json`, `docs/permission-floor.json`), which remain byte-identical.
-- `docs/glossary.md` needed no edit — the prose-decoupling atom above already removed the CTX entry.
+- `docs/glossary.md` needed no edit — the prose-decoupling atom above already removed the retired-framework entry.
 - A whole-tree, no-allowlist sweep confirms the module's identifier now has zero occurrences in
-  either spelling anywhere in the shipped tree (`tests/test_ctx_removal_absence.py`).
+  either spelling anywhere in the shipped tree.
 
-Spec: `specs/features/foundry/infra-delivery/ctx-posture-retirement/` (workspace), authorized
+Spec: the posture-retirement atom in the workspace corpus, authorized
 `auth_seq 1`.
 
 ## v1.5.0 — 2026-08-14

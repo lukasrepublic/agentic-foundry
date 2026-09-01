@@ -81,6 +81,26 @@ jobs:
           [ -s "$INIT_SLIMMING_BASE" ] || { echo "::error::empty AC-INS-5 baseline"; exit 1; }
           export INIT_SLIMMING_BASE
           python3 -m pytest tests/ -q
+      # AC-CXZ-13 — the re-entry guard. The 400-line reference-sweep gate this atom deleted was
+      # retired because it had become the largest instance of what it banned AND shipped to every
+      # adopter (a plugin install is a full clone with no file-exclusion mechanism). That reasoning
+      # retires the GATE, not the invariant: the retired framework's name stays typeable by any
+      # contributor, and this repo is public. So the zero state keeps a guard — one line of the same
+      # bare, allowlist-free locator the atom's own exit criterion uses. It lives in CI, not in the
+      # shipped tree, which is the whole point: it protects the repo without reaching adopters.
+      - name: Retired-framework re-entry guard (zero occurrences, allowlist-free)
+        run: |
+          # Self-exclusion, and ONLY self-exclusion: a token guard must spell the token to detect
+          # it, so this one file is excluded by path. That is the secret-scanner precedent (allowlist
+          # the fixture, never hide the token) and it is the whole allowlist -- one path, stated
+          # here, versus the 232-line allowlist corpus the retired gate carried.
+          n="$(git grep -ohIi 'ctx' -- . ':!.github/workflows/ci.yml' | wc -l)"
+          if [ "$n" -ne 0 ]; then
+            echo "::error::retired-framework token re-entered the tree ($n occurrence(s))"
+            git grep -nIi 'ctx' -- . ':!.github/workflows/ci.yml' | head -50
+            exit 1
+          fi
+          echo "RE-ENTRY-GUARD-GREEN (0 occurrences)"
       # feat-foundry-main-catalogue-coherence (AC-MCC-5). The hermetic pytest module above already
       # ran on both push AND pull_request. This step is the LIVE-TREE assertion, and it MUST stay
       # scoped to push-to-default-branch only: main legitimately advertises a version whose

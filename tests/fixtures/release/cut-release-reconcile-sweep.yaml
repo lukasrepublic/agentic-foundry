@@ -163,7 +163,7 @@ hook_comment_expectation:
   #      substitution scanner mis-tracks backquotes across heredoc content), and the
   #      internal-evaluator-error path stops echoing the raw command (inline-credential leak
   #      exactly when the redacting evaluator has failed). Evaluator content byte-identical.
-  executable_content_sha256: '3be3abf0583c58aee97dd89f2753b3b73077ae7ba99ed88f15b15dbd5c8b76ad'
+  executable_content_sha256: '1242290c427fb5082680ed00def284c2ae6267dbf4bfb4bdd8e824d31090f88b'
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
 operator_registry_shape:

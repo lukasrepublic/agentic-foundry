@@ -11,14 +11,11 @@
 >   `additionalProperties: true` and no `required` — a record with no `path` validates, then fails at
 >   dispatch (`foundry-wt` exits 3, "unknown repo key").
 > - **Clone provenance has no field.** There is no `remote` and no `default_branch`; where a repo came
->   from lives in `"//"` prose comments (this workspace records `lukasrepublic/ctxinfra (private,
->   default branch develop)` that way).
+>   from lives in `"//"` prose comments.
 > - **A typo and a not-yet-cloned repo are indistinguishable.** Both present as "path is not there."
 >   Nothing can tell an operator *"clone it from here"* apart from *"this entry is garbage."*
 > - **Nothing pairs the manifest row with the gitignore entry**, though the pairing is load-bearing:
 >   a hosted repo that is not root-anchored-ignored gets swept into the control plane's own history.
->   Live in this workspace: `repos.ctxinfra` has **no** `.gitignore` entry at all, and the three that
->   do sit under a hand-written comment explaining why they must stay root-anchored.
 > - **`role` is used two incompatible ways in the first-party corpora today** —
 >   `docs/how-to/multi-repo-control-plane.md` writes `"role": "product"` / `"role": "infra"` (a
 >   vocabulary), while the handbook's seeded manifest writes a full prose sentence into the same key.
