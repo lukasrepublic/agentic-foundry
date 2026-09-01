@@ -111,6 +111,26 @@ def _iter_mjs_files(root=CLI_DIR):
     return sorted(root.rglob("*.mjs"))
 
 
+def _function_region(text, name):
+    """Return the source from `function <name>(` to the next top-level declaration, or None.
+
+    `_extract_function_body` below cannot be used on a function whose parameters are DESTRUCTURED:
+    it takes the first `{` after the name, which for `f(args, { a, b })` is the parameter pattern
+    rather than the body, so it returns `{ a, b }` and any assertion over it silently inspects a
+    parameter list while appearing to inspect a function. That is the precise failure mode this
+    file's own comments warn about ("a check that looks strict and inspects less than it claims"),
+    so destructured-parameter functions get a region slice instead of a brace scan. Coarser than a
+    balanced-brace body — it can run past the closing brace — which is safe for ABSENCE-of-guard
+    assertions (a false green needs the guard to be present, and if it is present the property
+    holds) but NOT for "makes no X call" claims; use it only for the former."""
+    start = re.search(r"\bfunction\s+" + re.escape(name) + r"\s*\(", text)
+    if start is None:
+        return None
+    rest = text[start.end():]
+    nxt = re.search(r"\n(?:export\s+)?(?:function|const|class)\s", rest)
+    return rest[: nxt.start()] if nxt else rest
+
+
 def _extract_function_body(text, name):
     """Return the body of `function <name>(...) { ... }` by BALANCED-BRACE scan, or None if the
     function is not present. A brace scan rather than a regex because a regex over raw text cannot
@@ -648,17 +668,84 @@ def test_the_cli_never_spawns_claude_or_writes_home_claude(tmp_path):
     assert not (home / ".claude").exists(), "the CLI must never write under $HOME/.claude/"
     assert not (target / ".claude" / "settings.local.json").exists()
 
-    # static witness: every execFile/execFileSync call site names only git or gh
-    spawn_calls = []
+    # Static witness. REWRITTEN 2026-09-01 — the previous version matched only a STRING-LITERAL
+    # first argument (`execFileSync('git', ...)`), so the moment the update atom introduced
+    # `execFileSync(claudeBin || 'claude', ...)` that site became invisible and this assertion
+    # passed while guarding nothing. A guard that silently stops covering the one new spawn in the
+    # package is worse than no guard, because its green is read as coverage.
+    #
+    # So: enumerate spawn sites STRUCTURALLY (every execFile/execFileSync, whatever the first
+    # argument looks like), then split by module. The create path keeps the closed {git, gh} set.
+    # The update path may spawn `claude` — that is what it is for — but only from one file, one
+    # function, and behind the allowlist.
+    # Spawn sites are found via the module's own child_process IMPORT BINDINGS, not by grepping for
+    # the literal name `execFileSync`. `identity.mjs` already imports `execFile as execFileCb`, so
+    # aliasing is in legitimate use here — and a name-based scan silently stops covering any call
+    # made through an alias. Resolving the local binding names first means a rename cannot walk a
+    # spawn out of this guard's view; it also pins the imported SURFACE, so `spawn`/`exec`/`execSync`
+    # (shell-bearing, or stream-shaped) cannot be introduced without this assertion being revisited.
+    UPDATE_PATH = {"update.mjs", "pluginRefresh.mjs", "cleanup.mjs"}
+    ALLOWED_CP_IMPORTS = {"execFileSync", "execFile"}
+    create_spawns, update_spawns = [], []
     for f in _iter_mjs_files(CLI_DIR / "src"):
         text = f.read_text()
-        for m in re.finditer(r"execFile(?:Sync)?\s*\(\s*(?:env\.\S+\s*\|\|\s*)?['\"]([a-zA-Z0-9_.-]+)['\"]", text):
-            spawn_calls.append((f, m.group(1)))
-        for m in re.finditer(r"execFile(?:Sync)?\s*\(\s*gh\b", text):
-            spawn_calls.append((f, "gh"))
-    assert spawn_calls, "expected at least one spawn call site to inspect"
-    for f, name in spawn_calls:
-        assert name in ("git", "gh"), f"{f} spawns {name!r}, outside the closed {{git, gh}} set"
+        bindings = []
+        for imp in re.finditer(r"import\s*\{([^}]*)\}\s*from\s*['\"]node:child_process['\"]", text):
+            for spec in imp.group(1).split(","):
+                spec = spec.strip()
+                if not spec:
+                    continue
+                parts = re.split(r"\s+as\s+", spec)
+                original, local = parts[0].strip(), parts[-1].strip()
+                assert original in ALLOWED_CP_IMPORTS, (
+                    f"{f.name} imports {original!r} from child_process, outside the closed "
+                    f"{sorted(ALLOWED_CP_IMPORTS)} surface"
+                )
+                bindings.append(local)
+        assert "require(" not in text or "child_process" not in text, (
+            f"{f.name} reaches child_process through require(), which this guard does not resolve"
+        )
+        for local in bindings:
+            for m in re.finditer(re.escape(local) + r"\s*\(\s*([^,]+?)\s*,", text):
+                (update_spawns if f.name in UPDATE_PATH else create_spawns).append((f, m.group(1).strip()))
+
+    assert create_spawns, "expected at least one create-path spawn call site to inspect"
+    for f, arg in create_spawns:
+        literal = re.fullmatch(r"['\"]([a-zA-Z0-9_.-]+)['\"]", arg)
+        assert literal, f"{f.name} spawns a non-literal executable {arg!r} on the create path"
+        assert literal.group(1) in ("git", "gh"), (
+            f"{f.name} spawns {literal.group(1)!r}, outside the closed {{git, gh}} set"
+        )
+
+    # The update path's single claude spawn. Pinned to one site so a second one cannot appear
+    # without this test being revisited — the property AC-UAW-14 buys is "one allowlisted spawn",
+    # and that is only true while there is exactly one.
+    assert [f.name for f, _ in update_spawns] == ["pluginRefresh.mjs"], (
+        f"the claude spawn must live in exactly one update-path module, found: "
+        f"{[f.name for f, _ in update_spawns]}"
+    )
+    # NOT _extract_function_body here: that helper takes the first `{` after the parameter-list
+    # `(`, which for `runClaude(args, { env, cwd, claudeBin })` is the DESTRUCTURING pattern, not
+    # the body — it would return `{ env, cwd, claudeBin }` and every assertion below would be
+    # inspecting a parameter list while appearing to inspect a function. Slice the source region
+    # from `function runClaude` to the next top-level declaration instead.
+    refresh_src = (CLI_DIR / "src" / "pluginRefresh.mjs").read_text()
+    start = re.search(r"\bfunction\s+runClaude\s*\(", refresh_src)
+    assert start is not None, "runClaude not found in pluginRefresh.mjs"
+    nxt = re.search(r"\n(?:export\s+)?(?:function|const|class)\s", refresh_src[start.end():])
+    run_claude = refresh_src[start.end(): start.end() + (nxt.start() if nxt else len(refresh_src))]
+    assert re.search(r"execFile(?:Sync)?\s*\(", run_claude), (
+        "the claude spawn is no longer inside runClaude — the allowlist check is bypassable"
+    )
+    assert "isAllowedInvocation" in run_claude, (
+        "runClaude spawns without consulting isAllowedInvocation — the argv allowlist is the only "
+        "thing standing between adopter-writable JSON and the claude CLI's option parser"
+    )
+    # ...and the create-path modules must not import it, or the closed set above is decorative.
+    for f in _iter_mjs_files(CLI_DIR / "src"):
+        if f.name in UPDATE_PATH:
+            continue
+        assert "runClaude" not in f.read_text(), f"create-path module {f.name} reaches for runClaude"
 
 
 def test_the_exit_line_explains_the_trust_gate(tmp_path):
@@ -732,12 +819,24 @@ def test_every_runtime_asset_is_packaged():
     # Structural — the function body is extracted by balanced-brace scan and each `fs.<method>`
     # call inside it checked against a read-only allowlist, so a write introduced there fails even
     # if it is spelled in a way no substring search anticipated.
+    # SCOPE, rewritten for the workspace-update atoms (2026-09-01). Until those atoms the claim
+    # "the CLI only ever READS the plugin cache" was true of every module, so one read-only rule
+    # covered the whole of cli/src. `cleanup.mjs` deliberately breaks it: pruning superseded cache
+    # versions is that atom's entire job, and its spec's R1 says so in as many words ("this atom
+    # puts the first recursive delete of an adopter path into cli/src/").
+    #
+    # The wrong response is to exempt it — that deletes the guard for the one file that most needs
+    # one. So the file set is split: CREATE-path modules keep the unchanged read-only rule, and the
+    # single cache MUTATOR is held to a stricter, structural containment rule of its own.
     read_only_fs = {"existsSync", "statSync", "lstatSync", "readdirSync", "readFileSync", "realpathSync"}
+    CACHE_MUTATORS = {"cleanup.mjs"}
     cache_readers = []
     for f in _iter_mjs_files(CLI_DIR / "src") + _iter_mjs_files(CLI_DIR / "bin"):
         text = f.read_text()
         assert "fetch(" not in text, f"{f.name} carries a fetch() call"
         if "plugins/cache" not in text:
+            continue
+        if f.name in CACHE_MUTATORS:
             continue
         cache_readers.append(f.name)
         body = _extract_function_body(text, "expandPluginRootGlob")
@@ -750,6 +849,57 @@ def test_every_runtime_asset_is_packaged():
     # Pin the reader set: a NEW file touching the plugin cache must come here and be justified,
     # rather than inheriting a guard written for run.mjs.
     assert cache_readers == ["run.mjs"], f"unexpected plugin-cache readers: {cache_readers}"
+
+    # ── the cache MUTATOR: containment, asserted structurally ────────────────────────────────────
+    # Three properties, each of which a plausible regression would break:
+    #   1. `rmSync` appears in exactly one function, `applyCachePrune`. A delete introduced anywhere
+    #      else in cli/src fails here even if it is spelled in a way no substring search anticipated.
+    #   2. `applyCachePrune` does not ENUMERATE. It removes only the candidates handed to it; a
+    #      `readdirSync` inside it would let it discover and delete paths that were never validated.
+    #   3. `planCachePrune` — which produces those candidates — still carries all three of its
+    #      guards. Deleting any one of them is how this becomes a directory-escape.
+    mutator_src = (CLI_DIR / "src" / "cleanup.mjs").read_text()
+    # RECURSIVE deletes specifically. `floorReconcile.mjs` legitimately does `fs.rmSync(tmp,
+    # {force:true})` to clean up its own temp file in the atomic write — a single named file it
+    # just created, not a tree walk. Pinning on `fs.rm*` alone would sweep that in and force the
+    # guard to carry an exemption list; pinning on `recursive: true` states the property that
+    # actually matters, so the temp-file cleanup is out of scope by construction rather than by
+    # exception.
+    rm_sites = [
+        f.name
+        for f in _iter_mjs_files(CLI_DIR / "src") + _iter_mjs_files(CLI_DIR / "bin")
+        if re.search(r"\bfs\.rm(?:Sync)?\s*\([^;]*recursive\s*:\s*true", f.read_text())
+    ]
+    assert rm_sites == ["cleanup.mjs"], f"unexpected recursive-delete sites in cli/src: {rm_sites}"
+
+    apply_body = _extract_function_body(mutator_src, "applyCachePrune")
+    assert apply_body is not None, "applyCachePrune not found in cleanup.mjs"
+    assert "rmSync" in apply_body, "applyCachePrune makes no rmSync call — did the delete move?"
+    assert "readdirSync" not in apply_body, (
+        "applyCachePrune enumerates the cache directory; it must remove ONLY the pre-validated "
+        "candidates planCachePrune handed it"
+    )
+
+    # The plan/apply separation, asserted as a COUNT rather than as an absence over a region: the
+    # file must carry exactly one recursive delete, and it must be the one inside applyCachePrune.
+    # That is strictly stronger than "planCachePrune contains no rmSync" and does not depend on
+    # where a region slice happens to end.
+    recursive_rms = re.findall(r"\bfs\.rm(?:Sync)?\s*\([^;]*recursive\s*:\s*true", mutator_src)
+    assert len(recursive_rms) == 1, (
+        f"cleanup.mjs carries {len(recursive_rms)} recursive deletes; exactly one is permitted, "
+        f"inside applyCachePrune"
+    )
+    assert re.search(r"\bfs\.rm(?:Sync)?\s*\([^;]*recursive\s*:\s*true", apply_body), (
+        "the recursive delete is not inside applyCachePrune — planning and applying must stay split"
+    )
+
+    plan_body = _function_region(mutator_src, "planCachePrune")
+    assert plan_body is not None, "planCachePrune not found in cleanup.mjs"
+    for guard in ("isSymbolicLink", "isDirectory", "realpathSync"):
+        assert guard in plan_body, (
+            f"planCachePrune lost its {guard} guard — this is the check that keeps a recursive "
+            f"delete inside the pinned cache root"
+        )
 
 
 # ── AC-BCL-6 ─────────────────────────────────────────────────────────────────────────────────────

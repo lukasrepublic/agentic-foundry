@@ -8,6 +8,39 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.9.0 — Unreleased
+
+### `npx update-agentic-workspace` — one command that brings an installed workspace current
+
+**The receiving side of a release, not just the cutting side.** Every prior release documented the
+upgrade procedure as a hand-run sequence transcribed out of the cut-release runbook — marketplace
+refresh, per-scope plugin update, a read-back verification, then a workspace reconcile. This
+release ships that sequence as one command, plus the one-time migration every pre-v1.7.0 adopter
+needs and could not discover on their own (their tooling truthfully reports "already at the latest
+version", forever, while pinned to a frozen tag).
+
+- **`cli-update/`** — a new, thin npm package (`update-agentic-workspace`) depending on
+  `create-agentic-workspace` at an exact, equal version; no shared module is vendored twice.
+- **`cli/src/pluginRefresh.mjs`** — Phase 1 (marketplace refresh, migrating an adopter still
+  tag-pinned from before v1.7.0, once per affected scope) and Phase 2 (plugin update in every scope
+  that enables the plugin, verified by reading back the refreshed cache manifest rather than
+  trusting the invoked CLI's own success line — the v1.4.1 scar, made mechanical). Every `claude`
+  invocation this command makes is drawn from one frozen, closed six-subcommand allowlist.
+- **`cli/src/cleanup.mjs`** — the destructive third phase, opt-in behind `--cleanup`: prune
+  superseded plugin-cache versions (the live set is read from the platform's own state, never
+  computed by sorting version strings — the newest directory on disk is not always the live one)
+  and remove a stale or duplicate marketplace registration that no scope still enables. A flagless
+  run previews every candidate and removes nothing at all.
+- **`cli/src/update.mjs`** — the phase orchestrator: preview before the first mutation, the
+  managed-file and permission-floor reconcile as the final phase, and a per-phase summary so a
+  no-op run is distinguishable from a silent failure.
+- **`docs/troubleshooting.md`** now points at the surgical `--cleanup` prune beside the existing
+  blunt `rm -rf ~/.claude/plugins/cache/` recovery, which stays for the case nothing on disk can be
+  trusted.
+- **`cli/README.md`** now points at the sibling entry point and scopes its "never runs `claude`"
+  claim to `create-agentic-workspace` specifically — the update command is the one exception to
+  that posture, bounded by the closed allowlist above.
+
 ## v1.8.0 — 2026-09-01
 
 ### The retired session-context framework's name leaves the repo entirely

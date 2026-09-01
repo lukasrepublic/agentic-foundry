@@ -1,4 +1,14 @@
-# Publishes `cli/` (create-agentic-workspace) to npm via TRUSTED PUBLISHING (OIDC).
+# Publishes `cli/` (create-agentic-workspace) AND `cli-update/` (update-agentic-workspace) to npm
+# via TRUSTED PUBLISHING (OIDC).
+#
+# TWO PACKAGES, TWO SEQUENTIAL JOBS — not a matrix. `cli-update`'s sole dependency is
+# `create-agentic-workspace` pinned at an EXACT version (AC-UAW-2), which — on the release that
+# bumps that version — is NOT YET on the registry when this workflow starts. `publish-cli-update`
+# therefore `needs: publish-cli` and its own gate step (below) polls the registry for that exact
+# version before attempting `npm install`, so `cli-update`'s pack/test/publish never race the
+# window in which its pinned dependency does not resolve. This is resolution (i),
+# "publish-then-wait", of the release-ordering hazard the workspace-update-command spec's
+# Clarifications flag and deliberately leave to the implementer.
 #
 # WHY OIDC AND NOT A TOKEN. The bootstrap-CLI spec's R9 obligation says `npm publish --provenance`,
 # which implies a long-lived NPM_TOKEN in repository secrets. That was the 2024 way. Since
@@ -37,7 +47,7 @@ permissions:
   contents: read
 
 jobs:
-  publish:
+  publish-cli:
     runs-on: ubuntu-24.04          # cloud-hosted runner REQUIRED; self-hosted is unsupported for OIDC
     environment: npm-publish        # gives the operator an approval gate on the publish itself
     permissions:
@@ -92,8 +102,12 @@ jobs:
           # the verify step below. These come from a manifest a merged PR can edit — write-access
           # controlled, not fork-controlled — but a version bump is exactly the diff a reviewer
           # eyeballs rather than parses (security review R1, 2026-08-04).
-          printf '%s' "$name" | grep -qE '^[@a-z0-9._/-]+$' || { echo "::error::refusing malformed package name"; exit 1; }
-          printf '%s' "$ver"  | grep -qE '^[A-Za-z0-9._+-]+$' || { echo "::error::refusing malformed version"; exit 1; }
+          # `case` matches the WHOLE string, not any line of it — `grep -q` exits 0 if ANY line of
+          # a multi-line value matches, so an embedded newline would ride an extra line straight
+          # past a line-oriented grep and inject a second $GITHUB_OUTPUT line (security review R2,
+          # 2026-09-01). A `case` pattern match has no such per-line ambiguity.
+          case "$name" in ''|*[!@a-z0-9._/-]*) echo "::error::refusing malformed package name"; exit 1;; esac
+          case "$ver" in ''|*[!A-Za-z0-9._+-]*) echo "::error::refusing malformed version"; exit 1;; esac
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "version=$ver" >> "$GITHUB_OUTPUT"
           # A `v*` tag ships the PLUGIN, whose version is independent of this CLI's. Most plugin
@@ -166,6 +180,153 @@ jobs:
                      "${PKG_NAME}@${PKG_VERSION}" dist.attestations 2>"$err" || true)"
             # Assert on SHAPE, not mere non-emptiness: `[ -n "$att" ]` alone would accept any
             # non-blank string, so require the provenance marker the field is supposed to carry.
+            if printf '%s' "$att" | grep -q 'predicateType'; then
+              echo "attestation visible on attempt ${attempt}."
+              break
+            fi
+            att=""
+            if [ "$attempt" -lt 6 ]; then
+              delay=$((attempt * 10))
+              echo "attestation not yet visible (attempt ${attempt}/6) — registry propagation; sleeping ${delay}s"
+              sleep "$delay"
+            fi
+          done
+          if [ -z "$att" ]; then
+            echo "::error::no provenance attestation on ${PKG_NAME}@${PKG_VERSION} after 6 attempts over ~150s"
+            echo "--- last stderr from npm view (empty means the registry answered, with no attestation) ---"
+            cat "$err" || true
+            exit 1
+          fi
+          echo "attestation present for ${PKG_NAME}@${PKG_VERSION}:"
+          printf '%s\n' "$att"
+
+  publish-cli-update:
+    needs: publish-cli
+    runs-on: ubuntu-24.04
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Assert the npm CLI supports trusted publishing
+        run: |
+          set -euo pipefail
+          have="$(npm --version)"
+          need="11.5.1"
+          printf 'npm %s (need >= %s)\n' "$have" "$need"
+          [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -1)" = "$need" ] || {
+            echo "::error::npm $have is below the $need floor required for trusted publishing"; exit 1; }
+
+      - name: Wait for cli-update's exact dependency pin to resolve on the registry
+        # The release-ordering hazard (workspace-update-command spec, Clarifications): cli-update
+        # pins create-agentic-workspace at an EXACT version equal to the one publish-cli just
+        # published. `needs: publish-cli` orders the JOBS, but the registry can still lag moments
+        # behind that job's own success — the same propagation delay `publish-cli`'s own
+        # attestation-verification step polls for. Poll here too, rather than assume the ordering
+        # alone is sufficient, or `npm install` below resolves nothing and cli-update's own publish
+        # fails for a dependency that is, in fact, on its way.
+        working-directory: cli-update
+        run: |
+          set -euo pipefail
+          dep="$(node -p 'require("./package.json").dependencies["create-agentic-workspace"]')"
+          # `case` cannot express "one or more digits" with POSIX glob syntax alone (no regex
+          # repetition), so an embedded-newline guard runs FIRST via `case` (whole-string match,
+          # immune to grep's per-line ambiguity — R2) and an anchored regex runs SECOND, now safe
+          # because the value is proven single-line. EXACT semver only (R3): the prior charset
+          # (^[A-Za-z0-9._+-]+$) admitted "latest", "next", "1.x", "0" — all floating, none of
+          # which AC-UAW-2's exact-pin invariant permits.
+          case "$dep" in *$'\n'*) echo "::error::refusing a pinned version containing a newline"; exit 1 ;; esac
+          printf '%s' "$dep" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?(\+[A-Za-z0-9.-]+)?$' \
+            || { echo "::error::refusing non-exact-semver pinned version: $dep"; exit 1; }
+          for attempt in 1 2 3 4 5 6; do
+            if npm view "create-agentic-workspace@${dep}" version >/dev/null 2>&1; then
+              echo "create-agentic-workspace@${dep} is resolvable on the registry."
+              break
+            fi
+            if [ "$attempt" -eq 6 ]; then
+              echo "::error::create-agentic-workspace@${dep} never became resolvable after 6 attempts"
+              exit 1
+            fi
+            delay=$((attempt * 10))
+            echo "not yet resolvable (attempt ${attempt}/6); sleeping ${delay}s"
+            sleep "$delay"
+          done
+
+      - name: Install (proves the exact-version pin actually resolves)
+        # --ignore-scripts (security review R4, 2026-09-01): this job holds `id-token: write` for
+        # the OIDC exchange further down. Without this flag, ANY lifecycle script belonging to
+        # `create-agentic-workspace` or a transitive dependency would run with that token's minting
+        # rights available in its process environment — an install-time script has no legitimate
+        # reason to reach OIDC at all. create-agentic-workspace's own `scripts` are already closed
+        # to `{test}` (AC-BCL-9's sibling invariant), so this costs nothing today and forecloses the
+        # class outright for whatever gets added later.
+        working-directory: cli-update
+        run: npm install --no-audit --no-fund --ignore-scripts
+
+      - name: Pack and show exactly what would publish
+        working-directory: cli-update
+        run: |
+          set -euo pipefail
+          npm pack --dry-run
+          echo "--- tarball contents ---"
+          npm pack --pack-destination "$RUNNER_TEMP" >/dev/null
+          tar -tzf "$RUNNER_TEMP"/update-agentic-workspace-*.tgz | sed 's|^package/||' | sort
+
+      - name: Skip if this version is already on the registry
+        id: gate
+        working-directory: cli-update
+        run: |
+          set -euo pipefail
+          name="$(node -p 'require("./package.json").name')"
+          ver="$(node -p 'require("./package.json").version')"
+          # `case` matches the WHOLE string, not any line of it — `grep -q` exits 0 if ANY line of
+          # a multi-line value matches, so an embedded newline would ride an extra line straight
+          # past a line-oriented grep and inject a second $GITHUB_OUTPUT line (security review R2,
+          # 2026-09-01). A `case` pattern match has no such per-line ambiguity.
+          case "$name" in ''|*[!@a-z0-9._/-]*) echo "::error::refusing malformed package name"; exit 1;; esac
+          case "$ver" in ''|*[!A-Za-z0-9._+-]*) echo "::error::refusing malformed version"; exit 1;; esac
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          if npm view "$name@$ver" version >/dev/null 2>&1; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "$name@$ver is already published — nothing to do."
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "$name@$ver is not on the registry — will publish."
+          fi
+
+      - name: Publish (OIDC trusted publishing; provenance is automatic)
+        # Requires its OWN trusted-publisher registration on npmjs.com (owner/repo/workflow
+        # filename/environment) — an out-of-band operator step; see the spec's non-goals.
+        if: steps.gate.outputs.publish == 'true' && inputs.dry_run != true && github.ref_type == 'tag'
+        working-directory: cli-update
+        run: npm publish
+
+      - name: Verify the attestation actually landed
+        if: steps.gate.outputs.publish == 'true' && inputs.dry_run != true && github.ref_type == 'tag'
+        working-directory: cli-update
+        env:
+          PKG_NAME: ${{ steps.gate.outputs.name }}
+          PKG_VERSION: ${{ steps.gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          NPM_VERIFY_CACHE="$RUNNER_TEMP/npm-verify-cache-update"
+          att=""
+          err="$RUNNER_TEMP/npm-view-attestations-update.err"
+          for attempt in 1 2 3 4 5 6; do
+            att="$(npm view --prefer-online --cache "$NPM_VERIFY_CACHE" \
+                     "${PKG_NAME}@${PKG_VERSION}" dist.attestations 2>"$err" || true)"
             if printf '%s' "$att" | grep -q 'predicateType'; then
               echo "attestation visible on attempt ${attempt}."
               break
