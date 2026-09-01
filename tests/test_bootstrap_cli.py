@@ -26,6 +26,12 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CLI_DIR = REPO_ROOT / "cli"
+# The SECOND published package. Every structural guard in this file was written when `cli/` was the
+# only thing that shipped, so each one roots at CLI_DIR and none of them sees `cli-update/` --
+# leaving the package an adopter actually runs via `npx update-agentic-workspace` outside the
+# manifest, import and lifecycle-script guards entirely. `npx` does NOT pass `--ignore-scripts`, so
+# a postinstall added here would execute on every adopter's machine with nothing in CI objecting.
+CLI_UPDATE_DIR = REPO_ROOT / "cli-update"
 NODE = shutil.which("node") or "node"
 REQUIRED_NODE_MAJOR = 22
 
@@ -301,6 +307,46 @@ def test_package_manifest_has_no_lifecycle_scripts_and_no_deps():
     assert set(scripts.keys()) <= {"test"}, f"scripts keys must be a subset of {{'test'}}: {scripts.keys()}"
     for forbidden in ("preinstall", "install", "postinstall", "prepare", "prepack", "prepublish"):
         assert forbidden not in scripts
+
+
+def test_the_update_package_manifest_has_no_lifecycle_scripts():
+    """The same lifecycle-script guard as the sibling above, for the OTHER published package.
+
+    Not a parametrisation of it: the two manifests are legitimately different shapes. `cli/` ships
+    with no dependencies at all; `cli-update/` has exactly one, deliberately, and pinning it to an
+    exact equal version is the whole design (AC-UAW-2). So the dependency assertion here is
+    'exactly one, exactly pinned' rather than 'none'.
+
+    The lifecycle-script half is what actually matters for an adopter. `npx` does not pass
+    --ignore-scripts, so a `postinstall` in this manifest runs on the machine of everyone who types
+    `npx update-agentic-workspace`. The workflow's own --ignore-scripts protects the CI runner's
+    OIDC token, not them.
+    """
+    pkg = json.loads((CLI_UPDATE_DIR / "package.json").read_text())
+    assert pkg["name"] == "update-agentic-workspace"
+    assert pkg["type"] == "module"
+    assert pkg["bin"] == {"update-agentic-workspace": "bin/update-agentic-workspace.mjs"}
+    assert pkg["engines"]["node"] == ">=22.0.0"
+    assert isinstance(pkg.get("files"), list) and len(pkg["files"]) > 0
+
+    deps = pkg.get("dependencies", {})
+    assert set(deps.keys()) == {"create-agentic-workspace"}, (
+        f"the update package must depend on exactly the shared package: {sorted(deps)}"
+    )
+    assert re.fullmatch(r"\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?", deps["create-agentic-workspace"]), (
+        f"the dependency pin must be an exact version, not a range: "
+        f"{deps['create-agentic-workspace']!r}"
+    )
+    for key in ("devDependencies", "optionalDependencies", "peerDependencies"):
+        assert key not in pkg or pkg[key] == {}, f"{key} must be absent or empty"
+
+    scripts = pkg.get("scripts", {})
+    assert set(scripts.keys()) <= {"test"}, f"scripts keys must be a subset of {{'test'}}: {scripts.keys()}"
+    for forbidden in ("preinstall", "install", "postinstall", "prepare", "prepack", "prepublish"):
+        assert forbidden not in scripts, (
+            f"{forbidden} in cli-update/package.json would execute on every `npx "
+            f"update-agentic-workspace` adopter's machine"
+        )
 
 
 def test_every_import_is_a_node_builtin_or_relative():
@@ -689,6 +735,18 @@ def test_the_cli_never_spawns_claude_or_writes_home_claude(tmp_path):
     create_spawns, update_spawns = [], []
     for f in _iter_mjs_files(CLI_DIR / "src"):
         text = f.read_text()
+        # A NAMESPACE or DEFAULT import yields no named bindings, so the resolver below would find
+        # nothing and every assertion in this test would pass while the module spawned freely --
+        # the exact silent-bypass shape this rewrite exists to remove. The codebase uses named
+        # imports throughout, so the cheap and honest rule is to refuse the other forms outright
+        # rather than teach the resolver to chase `cp.execFileSync(...)` member calls.
+        assert not re.search(
+            r"import\s+(?:\*\s*as\s+\w+|\w+)\s*(?:,\s*\{[^}]*\}\s*)?from\s*['\"]node:child_process['\"]",
+            text,
+        ), (
+            f"{f.name} imports child_process as a namespace or default binding; this guard resolves "
+            f"only named imports, so that form would bypass it silently -- use named imports"
+        )
         bindings = []
         for imp in re.finditer(r"import\s*\{([^}]*)\}\s*from\s*['\"]node:child_process['\"]", text):
             for spec in imp.group(1).split(","):

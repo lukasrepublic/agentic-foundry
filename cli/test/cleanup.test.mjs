@@ -287,9 +287,23 @@ test('an unreadable or unrecognised registry skips the prune with a reason and r
     ]);
     cases.push({ root, configDir, dir, skipManifest: true });
   }
+  // (f) B1, the MIXED case — the one an empty-set check does not catch. One record is usable and
+  // one is not, so the live set stays non-empty and reads `ok`, while the unusable record's
+  // still-live directory silently becomes a prune candidate. This is another project's live
+  // install being deleted on a destructive opt-in path, so indeterminacy in ANY record must skip
+  // the whole phase, not just indeterminacy in ALL of them.
+  {
+    const { root, configDir } = makeConfigDir('uwc4-mixed-');
+    const dir = makeCacheVersions(configDir, ['1.5.0', '1.8.0']);
+    writeInstalledPlugins(configDir, [
+      { installPath: `${configDir}/plugins/cache/${MARKETPLACE}/${PLUGIN}/1.8.0`, version: '1.8.0' },
+      { installPath: `${configDir}/plugins/cache/${MARKETPLACE}/${PLUGIN}/1.5.0`, projectPath: '/proj-b' },
+    ]);
+    cases.push({ root, configDir, dir, manifestVersion: '1.8.0' });
+  }
 
-  for (const { root, configDir, dir, skipManifest } of cases) {
-    if (!skipManifest) writeManifest(configDir, '1.5.0');
+  for (const { root, configDir, dir, skipManifest, manifestVersion } of cases) {
+    if (!skipManifest) writeManifest(configDir, manifestVersion || '1.5.0');
     const before = fs.readdirSync(dir).sort();
     const { print } = makePrint();
     const result = runCleanupPhase({

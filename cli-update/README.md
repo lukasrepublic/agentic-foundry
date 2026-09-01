@@ -62,6 +62,29 @@ happens, and ends with a per-phase summary (`changed` / `already current` / `ski
   above. Off by default; a flagless run removes nothing and prunes nothing.
 - `--help` — print usage and exit.
 
+## Exit codes
+
+Same convention as the sibling package, and worth reading before you wire this into anything:
+
+| code | meaning |
+|------|---------|
+| `0`  | the run completed and no managed workspace file was found drifted |
+| `2`  | the run completed and at least one managed workspace file was drifted |
+| `1`  | the run refused, or an invocation failed |
+
+**`2` is a success, not an error.** It reports one specific thing: a managed file in your workspace
+has diverged from what the current template would write. That is a normal finding on a workspace
+that predates a template change, and it is the expected result of a first run against a pre-v1.7.0
+workspace.
+
+Read the codes precisely, because `2` is narrower than "something happened": it is computed *only*
+from the managed-file drift check, so a run that migrates a tag-pinned registration and updates the
+plugin in every scope — real, visible changes — still exits `0` if no managed file drifted. Use the
+printed phase summary, not the exit code, to see what the run actually did.
+
+Only `1` means something went wrong. A `set -e` script or a CI step that treats any non-zero as
+failure will read a perfectly good update as broken; test for `1` specifically.
+
 ## No telemetry
 
 Same posture as the sibling package: no telemetry, no credential read beyond what your own `claude`

@@ -25,11 +25,39 @@ export function deriveLiveSet({ registry, manifestVersion, pluginKey }) {
   if (records.length === 0) {
     return { ok: false, reason: `installed plugin registry holds no record for ${pluginKey}` };
   }
-  const versions = new Set(records.map((r) => r && r.version).filter((v) => typeof v === 'string' && v));
+  // REFUSE ON THE FIRST UNUSABLE RECORD, not merely when every record is unusable. A `.filter()`
+  // that drops a malformed record while its SIBLINGS keep the set non-empty is the dangerous
+  // shape: the set stays `ok`, and the dropped record's still-live directory is handed to
+  // planCachePrune as a prune candidate. That is a live install of ANOTHER project deleted on a
+  // registry the platform wrote — recoverable only by reinstalling, and invisible until that
+  // project's next session breaks. An empty-set check alone closes only the degenerate half.
+  const unusable = records.findIndex((r) => !r || typeof r.version !== 'string' || !r.version);
+  if (unusable !== -1) {
+    return {
+      ok: false,
+      reason: `installed plugin registry record ${unusable} for ${pluginKey} carries no usable version string`,
+    };
+  }
+
+  // TWO NAMESPACES, seeded from both. `versions` is a set of version STRINGS; planCachePrune
+  // enumerates directory NAMES. Nothing in the platform's contract says those coincide, and if it
+  // ever normalises one differently from the other, every on-disk directory — the live one
+  // included — becomes a candidate while this function still reports `ok`. `installPath` is the
+  // only field that literally names the directory, so its basename is seeded alongside `version`:
+  // the live set is then expressed in BOTH namespaces and a divergence can only ever make the set
+  // larger (fewer deletions), never smaller.
+  const versions = new Set();
+  for (const r of records) {
+    versions.add(r.version);
+    if (typeof r.installPath === 'string' && r.installPath) {
+      const leaf = path.basename(r.installPath);
+      if (leaf && leaf !== '.' && leaf !== path.sep) versions.add(leaf);
+    }
+  }
   if (manifestVersion) versions.add(manifestVersion);
-  // Records existed but none carried a usable version string, and the manifest gave nothing to
-  // fall back on: an EMPTY live set is indistinguishable from "everything is safe to prune", which
-  // is the one verdict this function must never hand back on indeterminate input (AC-UWC-4).
+  // Belt-and-braces: unreachable given the per-record refusal above, but an empty live set is the
+  // one verdict this function must never hand back on indeterminate input (AC-UWC-4), so it is
+  // asserted rather than assumed.
   if (versions.size === 0) {
     return { ok: false, reason: `no live version could be read for ${pluginKey}` };
   }
