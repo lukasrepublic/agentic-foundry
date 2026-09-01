@@ -354,6 +354,12 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         # or reconciled by 0.7.0 therefore receives a different settings entry than 0.6.0 wrote, so
         # the tarball takes a minor bump rather than echoing the pin.
         "1.7.0": "0.7.0",
+        # v1.8.0 carries NO functional CLI change — the release removes the retired
+        # session-context framework's name from the repo, which does not touch cli/src/. The tarball
+        # still takes a minor bump because cli/package.json EMBEDS plugin_version: the pin moved to
+        # 1.8.0, so the published tarball's bytes differ and a new one must ship, or npm can never
+        # deliver this pin. Echoing the previous tarball version would strand 1.8.0 unreachable.
+        "1.8.0": "0.8.0",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (

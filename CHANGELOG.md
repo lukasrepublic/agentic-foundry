@@ -8,7 +8,7 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
-## Unreleased
+## v1.8.0 — 2026-09-01
 
 ### The retired session-context framework's name leaves the repo entirely
 
