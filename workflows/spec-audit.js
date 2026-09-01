@@ -1110,9 +1110,9 @@ const adapters = {
     // configurable but activates only once/if a caller supplies one; the wall-time arm is fully live).
     return { findings: (r && r.findings) || [] }
   },
-  reviser: async (specText, finding, ledgerSnapshot, ctx) => {
-    const revisionHint = (ctx && ctx.priorRejection)
-      ? ` Your PRIOR proposal was REJECTED: ${ctx.priorRejection.reason}. Revise it (still within the finding's OWN span).`
+  reviser: async (specText, finding, ledgerSnapshot, context) => {
+    const revisionHint = (context && context.priorRejection)
+      ? ` Your PRIOR proposal was REJECTED: ${context.priorRejection.reason}. Revise it (still within the finding's OWN span).`
       : ''
     const r = await agent(
       `You are a SEPARATE remediation agent (fresh context; you are NOT the critic). Resolve this §8 finding on the spec ${target} with a BOUNDED DIFF PROPOSAL — NOT a full-document rewrite, NOT an appended amendment/reground block. Propose one or more in-place span edits ONLY within a COMPONENT of this finding's OWN location '${finding.location}' — if the location is compound/multi-section (e.g. 'X / Y') or carries a parenthetical qualifier (e.g. '§3.5 (crash recovery)'), set each edit's 'span' to ONE cited component, stripped of its parenthetical (e.g. '§3.5' or 'AC-ID'); an edit outside every cited component is rejected. Each edit is { span, find, replace } where 'find' is an EXACT substring located within that component's own resolved block (an AC-ID bullet block, or a '§N.M' section's block) in the CURRENT spec text (provided inline) and 'replace' is its in-place replacement. List the finding's key in findingsAddressed if you fix it now, or in findingsDeferred if you cannot resolve it yet (never silently drop it). Return ONLY the structured 'proposal' — do NOT read or write any file; your ONLY output channel is the proposal.${revisionHint} CURRENT SPEC TEXT:\n<<<SPEC\n${specText}\nSPEC Finding: ${JSON.stringify(finding)}.`,

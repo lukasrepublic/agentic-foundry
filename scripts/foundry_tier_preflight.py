@@ -200,14 +200,14 @@ def find_entry(rulesets: list, name: str) -> dict | None:
 def extract_contexts(probe_rules: list) -> set[str]:
     """Byte-exact context set carried by every `required_status_checks` rule in the probe
     response (DECLARED POLICY: no case-folding, no trimming, no normalization of any kind)."""
-    ctx: set[str] = set()
+    contexts: set[str] = set()
     for rule in probe_rules or []:
         if isinstance(rule, dict) and rule.get("type") == "required_status_checks":
             params = rule.get("parameters") or {}
             for entry in params.get("required_status_checks") or []:
                 if isinstance(entry, dict) and "context" in entry:
-                    ctx.add(entry["context"])
-    return ctx
+                    contexts.add(entry["context"])
+    return contexts
 
 
 def probe_has_rsc_rule(probe_rules: list) -> bool:

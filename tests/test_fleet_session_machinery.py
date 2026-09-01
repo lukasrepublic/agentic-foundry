@@ -1,7 +1,7 @@
 """tests/test_fleet_session_machinery.py — feat-foundry-fleet-infra-discriminator-regrounding.
 
 The FIRST pytest coverage for scripts/foundry-fleet-session-machinery.py (AC-FIGR-5): the two fleet
-modules have NO pytest coverage at all today, which is how a live, unmocked `ctx status --json`
+modules have NO pytest coverage at all today, which is how a live, unmocked control-plane probe
 survived on every `/foundry:fleet` invocation this long. This file drives the module's REAL functions
 — never the CLI/`--selftest` scaffolding, which the acceptance contract names explicitly as NOT a
 substitute for this suite — over throwaway `tmp_path` fixtures and, for the stack-profile-lock cases,
@@ -62,19 +62,22 @@ def _tamper_content_sha256(lock_path):
         json.dump(lock, f)
 
 
-# ═══════════════════════════════════════════ AC-FIGR-1 — no ctx import in any scope, no ctx exec ═ #
+# ═══════════════ AC-FIGR-1 — the import graph is EXACTLY this, and no foreign exec ═════════════ #
 
-# The retired module's identifier, ASSEMBLED AT RUNTIME rather than written as a literal.
-# Why: the sibling ctx-posture-retirement atom's AC-CXPR-2 is a whole-tree sweep for the literal
-# identifier with NO allowlist — deliberately, because unlike the overloaded token `ctx` the module
-# name admits no false positives. These negative assertions must still NAME the module to prove it is
-# absent, so assembling the string keeps the assertion byte-identical in behaviour while leaving no
-# literal for the sweep to find. This is not weakening the assertion: the same string is compared.
-_RETIRED_MODULE = "foundry" + "_ctx_posture"
+# Stated POSITIVELY rather than as an absence of one named module. The retired posture module is
+# gone from the tree, so naming it here would reintroduce the identifier this atom removes AND would
+# only ever convict that one module. Freezing the whole import set is strictly stronger: it convicts
+# a re-added import of the retired module, and equally any other unexpected or dangling import.
+_EXPECTED_IMPORTS = {
+    "argparse", "importlib.util", "json", "os", "re", "subprocess", "sys",
+    "tempfile", "unittest.mock",
+}
+# A module name that does not exist, used only to build mutant trees below.
+_ABSENT_MODULE = "foundry_retired_probe"
 
 
-class TestNoCtxImportOrExec:
-    def test_no_ctx_import_in_any_scope_and_no_ctx_exec(self, tmp_path, monkeypatch):
+class TestImportGraphFrozenAndNoForeignExec:
+    def test_import_graph_is_frozen_and_no_foreign_exec(self, tmp_path, monkeypatch):
         # --- the PARSED import graph, every scope including function bodies (not mere importability:
         # all three shipped imports of the retired module were FUNCTION-LOCAL, so the module
         # imported clean today even before this atom) ---
@@ -86,10 +89,12 @@ class TestNoCtxImportOrExec:
                 imported.update(alias.name for alias in node.names)
             elif isinstance(node, ast.ImportFrom) and node.module:
                 imported.add(node.module)
-        assert _RETIRED_MODULE not in imported, (
-            "AC-FIGR-1: no import of the retired posture module in ANY scope (module-level or nested)")
+        assert imported == _EXPECTED_IMPORTS, (
+            "AC-FIGR-1: the import graph is frozen — a re-added retired-module import, or any other "
+            f"unexpected import, is convicted here. Unexpected: {sorted(imported - _EXPECTED_IMPORTS)}; "
+            f"missing: {sorted(_EXPECTED_IMPORTS - imported)}")
 
-        # --- a full derive_all() run makes zero `ctx` subprocess invocations ---
+        # --- a full derive_all() run shells out to git and nothing else ---
         calls = []
         real_run = machinery.subprocess.run
 
@@ -103,14 +108,16 @@ class TestNoCtxImportOrExec:
         machinery.derive_all(str(corpus), invoking_sid="s1", registry_result=registry_result)
 
         assert calls, "sanity: derive_all exercises at least the git topology subprocess probes"
-        assert not any(c and c[0] == "ctx" for c in calls), "AC-FIGR-1: zero `ctx` invocations"
-        print("FIGR-1-NO-CTX-OK")
+        argv0 = {c[0] for c in calls if c}
+        assert argv0 <= {"git"}, (
+            f"AC-FIGR-1: derive_all may shell out to git only; saw {sorted(argv0 - {'git'})}")
+        print("FIGR-1-IMPORTS-AND-EXEC-OK")
 
 
 # ═══════════════ AC-FIGR-1 SURVIVING-IMPORT MUTANT — the load-bearing row (the :439 site) ══════ #
 
 class TestSurvivingImportMutant:
-    def test_a_surviving_function_local_ctx_import_is_convicted(self):
+    def test_a_surviving_function_local_import_is_convicted(self):
         """MUTANT: a tree in which only the `_selftest` import survives — the site a reader scanning
         `derive_*` functions misses, and the one that turns `--selftest` into an ImportError once the
         sibling atom deletes the retired module file. An IMPORTABILITY-based witness (module loads
@@ -120,7 +127,7 @@ class TestSurvivingImportMutant:
             "def derive_infra(**kw):\n"
             "    return None, False, 'ok', 'x'\n\n"
             "def _selftest():\n"
-            "    import " + _RETIRED_MODULE + " as cp\n"  # the surviving site
+            "    import " + _ABSENT_MODULE + " as cp\n"  # the surviving site
             "    return True\n"
         )
         # the module IMPORTS cleanly (no module-level import of the retired module) — an
@@ -143,10 +150,10 @@ class TestSurvivingImportMutant:
                 imported.update(alias.name for alias in node.names)
             elif isinstance(node, ast.ImportFrom) and node.module:
                 imported.add(node.module)
-        assert _RETIRED_MODULE in imported, "the AST witness must SEE the surviving _selftest import"
+        assert _ABSENT_MODULE in imported, "the AST witness must SEE the surviving _selftest import"
 
         # and the REAL shipped module carries none of it (proven above in
-        # test_no_ctx_import_in_any_scope_and_no_ctx_exec; re-asserted narrowly here for this row).
+        # test_import_graph_is_frozen_and_no_foreign_exec; re-asserted narrowly here for this row).
         real_tree = ast.parse(open(MACHINERY_PATH, encoding="utf-8").read())
         real_imported = set()
         for node in ast.walk(real_tree):
@@ -154,7 +161,7 @@ class TestSurvivingImportMutant:
                 real_imported.update(alias.name for alias in node.names)
             elif isinstance(node, ast.ImportFrom) and node.module:
                 real_imported.add(node.module)
-        assert _RETIRED_MODULE not in real_imported
+        assert _ABSENT_MODULE not in real_imported
         print("FIGR-1-IMPORT-MUTANT-OK")
 
 
@@ -315,26 +322,29 @@ class TestCollapsingDegradedIntoSourceUnavailableConvicted:
 
 # ═════════════════════════ AC-FIGR-3 — removed from ALL FOUR consumers, driven directly ════════ #
 
-class TestCtxPostureAndBreakGlassRemoved:
-    def test_ctx_posture_and_break_glass_removed_from_all_four_consumers(self, tmp_path):
-        # 1. the KNOWN_SAFE default-deny table.
-        assert "ctx_posture" not in machinery.KNOWN_SAFE
+class TestRetiredFieldsRemovedFromAllConsumers:
+    def test_retired_fields_removed_from_all_four_consumers(self, tmp_path):
+        # 1. the KNOWN_SAFE default-deny table — frozen by exact key set, so a re-added retired
+        #    entry is convicted without this test naming the retired field.
+        assert set(machinery.KNOWN_SAFE) == {
+            "blast_radius", "gate_readiness", "isolation", "security_flag"}
 
         # 2. is_field_clear's signature no longer accepts break_glass.
         sig = inspect.signature(machinery.is_field_clear)
         assert "break_glass" not in sig.parameters
 
-        # 3. the assembled record.
+        # 3. the assembled record — exact key set, same reasoning as (1).
         corpus = _governance_corpus(tmp_path)
         rec = {"session_id": "s1", "atom_or_spec": None}
         m = machinery.derive_machinery(rec, corpus_root=str(corpus), invoking_sid="s1")
-        assert "ctx_posture" not in m and "break_glass" not in m
+        assert set(m) == {
+            "blast_radius", "gate_readiness", "infra", "isolation", "mode",
+            "security_flag", "session_id", "sources", "status", "target_repo"}
 
         # 4. the roster's deny() helper + both fixture records — driven directly over the roster's
         # own source (its `deny()` closure is not independently importable) and its selftest fixtures.
         roster_src = open(ROSTER_PATH, encoding="utf-8").read()
         assert "break_glass" not in roster_src, "AC-FIGR-3: roster deny() + fixtures carry no break_glass"
-        assert "ctx_posture" not in roster_src, "AC-FIGR-3: roster fixtures carry no ctx_posture"
         assert roster._selftest(), "the roster's own selftest still runs clean over the cleaned fixtures"
         print("FIGR-3-REMOVED-4of4-OK")
 
@@ -352,19 +362,20 @@ class TestRecordOnlyRemovalConvicted:
         m = machinery.derive_machinery(rec, corpus_root=str(corpus), invoking_sid="s1")
 
         def row_only_witness(record):
-            return "ctx_posture" not in record and "break_glass" not in record
+            return "break_glass" not in record and "retired_field" not in record
 
         def table_and_signature_witness():
-            return ("ctx_posture" not in machinery.KNOWN_SAFE
+            return (set(machinery.KNOWN_SAFE) == {
+                        "blast_radius", "gate_readiness", "isolation", "security_flag"}
                     and "break_glass" not in inspect.signature(machinery.is_field_clear).parameters)
 
         # the mutant tree: record clean (row-only witness passes)...
         assert row_only_witness(m), "sanity: the record is clean — this is exactly what fools the shallow witness"
-        # ...but a stale KNOWN_SAFE["ctx_posture"] entry / a surviving break_glass kwarg would NOT be
+        # ...but a stale extra KNOWN_SAFE entry / a surviving break_glass kwarg would NOT be
         # caught by that witness. Materialize the mutant's stale table directly and show it is
         # distinguishable from the real, fully-cleaned table:
         mutant_known_safe = dict(machinery.KNOWN_SAFE)
-        mutant_known_safe["ctx_posture"] = frozenset({"EXECUTE", "GENERATE"})  # the forgotten entry
+        mutant_known_safe["retired_field"] = frozenset({"EXECUTE", "GENERATE"})  # the forgotten entry
         assert mutant_known_safe != machinery.KNOWN_SAFE, (
             "the stale-table mutant must be distinguishable from the real table")
 
@@ -464,7 +475,7 @@ class TestInvokingOnlyFieldsLeakingCrossSessionConvicted:
 # ═══════════════════════════════════ AC-FIGR-5 — the module's own --selftest stays clean ══════ #
 
 class TestModuleSelftestStillRunsClean:
-    def test_module_selftest_still_runs_clean_without_the_ctx_import(self):
+    def test_module_selftest_still_runs_clean_without_the_retired_import(self):
         assert machinery._selftest() is True
         print("FIGR-5-SELFTEST-OK")
 

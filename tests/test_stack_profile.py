@@ -618,9 +618,12 @@ def _loader_readrole_commentary_blocks():
 def _names_sole_static_floor_no_external_authority(text):
     t = (text or "").lower()
     sole_floor = "sole static floor" in t
+    # Deliberately NOT emptied when the retired framework's name was purged: an empty tuple makes
+    # `not any(...)` vacuously true. These are the same authority-deferral claims, phrased without
+    # naming the retired product, so the check still bites on prose that hands the floor elsewhere.
     no_external_authority = not any(p in t for p in (
-        "authoritative floor is the ctx", "authoritative enforcement remains the ctx",
-        "ctx runtime guard", "ctx's command-policy", "ctx command-policy", "mirrored from ctx",
+        "authoritative floor is the", "authoritative enforcement remains the",
+        "runtime guard", "command-policy", "mirrored from the",
     ))
     return sole_floor and no_external_authority
 

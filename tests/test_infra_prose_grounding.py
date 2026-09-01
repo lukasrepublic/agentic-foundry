@@ -1,35 +1,17 @@
-"""tests/test_infra_prose_grounding.py — verification module for
-feat-foundry-ctx-prose-decoupling (CTX-REMOVAL program, P6).
+"""tests/test_infra_prose_grounding.py — prose-grounding invariants for the infra-delivery surface.
 
-Every remaining PROSE reference to the retired session-context framework and its posture gate is
-rewritten across this atom's declared surface to describe the reality the sibling code atoms ship:
-the framework EXECUTES standard `tofu`/`kubectl`/`aws` against the AWS context the OPERATOR has
-already configured, whose IAM restrictions are the control and are outside the framework's scope.
-There is no posture, no prod-vs-non-prod branch, no guard state, no break-glass.
+Asserts that the shipped prose describes the reality the code atoms ship: the framework EXECUTES
+standard `tofu` / `kubectl` / `aws` against the AWS context the OPERATOR has already configured,
+whose IAM restrictions are the control and are outside the framework's scope. There is no posture,
+no prod-vs-non-prod branch, no guard state, no break-glass.
 
-This module asserts two FROZEN sets over the atom's declared file surface (both defined once,
-below, so a set edit does not churn every test body):
-
-- The TOKEN set (AC-CXD-1): a bare case-insensitive `ctx` substring catch-all, bounded to a single
-  named carve-out (`scripts/foundry-stack-profile.py`'s `for ctx in loaded_context(resolved):` loop
-  local + its two-line follow-on print-format `ctx[...]` reads, which AC-CXD-10 requires to survive
-  verbatim as an overloaded-token false positive, NOT a CTX reference).
-- The FORBIDDEN-PHRASE set (AC-CXD-13): the abolished-narrative vocabulary that carries no `ctx`
-  token, so the token set above cannot see it (`posture gate`, `guarded prod`, `GENERATE_RUNBOOK`,
-  `break-glass`, `Posture.decision`, …) — closing the hole where a minimal edit deletes the literal
-  `ctx-posture` substring and leaves the retired prod-branch narrative intact under a different name.
-
-Both sets are evaluated over each file's full text with every run of whitespace normalized to a
-single space (so a line-wrapped construct is still caught), matched with case-insensitive ERE
-semantics.
-
-NOTE on this module's own text: it is itself named in the atom's surface enumeration, but a
-detector cannot be checked against its own detection patterns without becoming vacuous — the
-literal substrings below are regex/string PATTERN DEFINITIONS the checks are built from, the same
-category `denied_paths`' false-positive files are in, not shipped narrative prose. This module is
-therefore deliberately excluded from the SURFACE_FILES list its own tests iterate over; its
-explanatory prose (this docstring, comments) states the retired-narrative vocabulary only to name
-what is being checked for, never to restate it as a claim about live machinery.
+Each test below is a POSITIVE invariant over a named file: it asserts what the prose must SAY, not
+what it must avoid saying. The module's former absence-sweeps — a frozen token set and a
+forbidden-phrase set evaluated over an enumerated file surface — were retired once the retired
+framework was gone from the tree, on the industry lifecycle for migration scaffolding: a guard is
+removed when the condition it detects becomes unrepresentable, rather than carried forever as
+inventory. What survives here is the coverage that guards the REPLACEMENT doctrine, which stays
+load-bearing indefinitely.
 """
 from __future__ import annotations
 
@@ -57,112 +39,6 @@ def _norm(text: str) -> str:
     prose rather than being interrupted by a literal `#` at the join point."""
     stripped = "\n".join(_LEADING_COMMENT_MARKER_RE.sub("", ln) for ln in text.splitlines())
     return re.sub(r"\s+", " ", stripped)
-
-
-# ── FROZEN SETS (mirrors the sibling acceptance-contract.yaml preamble verbatim) ───────────────────
-
-# AC-CXD-1's token set: a bare case-insensitive `ctx` substring is the catch-all — it subsumes the
-# other three named spellings (`ctx[ _-]?posture`, `ctx[ _-]?status`, `ctxinfra`), each of which
-# necessarily contains the bare substring `ctx`. No word boundary: a boundary was proven (by the
-# sibling exit-gate atom) to miss compound identifiers like `probe_ctx` / `CtxState`.
-_TOKEN_RE = re.compile(r"ctx", re.IGNORECASE)
-
-# AC-CXD-13's forbidden-phrase set: the abolished-narrative vocabulary that carries NO `ctx` token.
-_FORBIDDEN_PATTERNS = [
-    r"posture[ -]gated",
-    r"posture gate",
-    r"guarded[ -]prod",
-    r"break[ _-]glass",
-    r"GENERATE_RUNBOOK",
-    r"resolve_posture",
-    r"probe_ctx",
-    r"Posture\.decision",
-    r"production_flag",
-    r"guard_state",
-    r"stale_state",
-    r"command-policy",
-]
-_FORBIDDEN_RE = re.compile("|".join(_FORBIDDEN_PATTERNS), re.IGNORECASE)
-
-# The atom's declared surface enumeration (25 prose/code files — the 26th, this module itself, is
-# deliberately excluded from its own scan; see the module docstring).
-SURFACE_FILES = [
-    "skills/id-apply/SKILL.md",
-    "skills/id-promote/SKILL.md",
-    "skills/id-simulate/SKILL.md",
-    "skills/id-test/SKILL.md",
-    "skills/id-validate/SKILL.md",
-    "skills/id-drift/SKILL.md",
-    "skills/id-architect/SKILL.md",
-    "skills/id-rollback/SKILL.md",
-    "skills/id-discover/SKILL.md",
-    "skills/id-plan/SKILL.md",
-    "skills/id-verify/SKILL.md",
-    "skills/id-import/SKILL.md",
-    "skills/id-implement/SKILL.md",
-    "skills/id-baseline/SKILL.md",
-    "skills/id-sync/SKILL.md",
-    "skills/infra-sandboxed-apply/SKILL.md",
-    "skills/fleet/SKILL.md",
-    "agents/infra-engineer.md",
-    "docs/glossary.md",
-    "packs/stack-profiles/aws-eks-karpenter/conventions.md",
-    "packs/stack-profiles/aws-eks-karpenter/skills/implement-aws-eks-karpenter.md",
-    "scripts/foundry-stack-profile.py",
-    "scripts/foundry-decommission.py",
-    "hooks/foundry-cloud-cli-exec-guard.sh",
-    "tests/test_hooks_guards.py",
-]
-
-# The single named carve-out (AC-CXD-1): the sentinel line + its two-line print-format follow-on in
-# scripts/foundry-stack-profile.py. Located by content, not a hardcoded line number, so an unrelated
-# line shift elsewhere in the file does not churn this test.
-_CARVEOUT_FILE = "scripts/foundry-stack-profile.py"
-_CARVEOUT_SENTINEL = "for ctx in loaded_context(resolved):"
-
-
-def _carveout_span():
-    """Return (start_line_idx, end_line_idx_inclusive) 0-based, spanning the sentinel `for ctx in
-    loaded_context(resolved):` line plus the two-line `print(f"loaded {ctx[...` follow-on."""
-    lines = _read(_CARVEOUT_FILE).splitlines()
-    for i, line in enumerate(lines):
-        if _CARVEOUT_SENTINEL in line:
-            return i, i + 2, lines
-    raise AssertionError(f"carve-out sentinel not found verbatim in {_CARVEOUT_FILE}")
-
-
-# ══════════════════════════════════════════════════════════════════════════════════ AC-CXD-1 ═════
-
-@pytest.mark.parametrize("case", ["all_surface_files_clean", "carveout_is_bounded"])
-def test_atom_surface_is_free_of_retired_framework_tokens(case):
-    if case == "all_surface_files_clean":
-        offenders = []
-        for relpath in SURFACE_FILES:
-            text = _read(relpath)
-            if relpath == _CARVEOUT_FILE:
-                start, end, lines = _carveout_span()
-                # Exclude exactly the carve-out's own lines, then scan the rest of the file.
-                text = "\n".join(lines[:start] + lines[end + 1:])
-            if _TOKEN_RE.search(_norm(text)):
-                hit_lines = [
-                    ln for ln in text.splitlines() if _TOKEN_RE.search(ln)
-                ]
-                offenders.append((relpath, hit_lines[:5]))
-        assert not offenders, f"retired-framework `ctx` token(s) found outside the carve-out: {offenders}"
-
-    elif case == "carveout_is_bounded":
-        start, end, lines = _carveout_span()
-        carveout_text = "\n".join(lines[start:end + 1])
-        # AC-CXD-10 requires exactly these occurrences to survive verbatim: the sentinel `for ctx
-        # in`, and the two-line print's `ctx['id']` / `len(ctx['implementation_skills'])` /
-        # `ctx['version']` / `ctx['conventions_doc']` reads — five bare `ctx` substrings across
-        # three lines, no more, no less.
-        hits = _TOKEN_RE.findall(carveout_text)
-        assert len(hits) == 5, (
-            f"carve-out at {_CARVEOUT_FILE}:{start + 1}-{end + 1} has {len(hits)} `ctx` "
-            f"occurrences, expected exactly 5 (bounded, not a wider tolerance): {carveout_text!r}"
-        )
-        assert "for ctx in loaded_context(resolved):" in lines[start]
 
 
 # ══════════════════════════════════════════════════════════════════════════════════ AC-CXD-2 ═════
@@ -275,33 +151,7 @@ def test_wrapper_reference_examples_use_the_generic_placeholder():
     guard = _read("hooks/foundry-cloud-cli-exec-guard.sh")
     fixtures = _read("tests/test_hooks_guards.py")
     assert "exec-wrapper" in guard
-    assert re.search(r"\bctx\b", guard) is None
     assert "exec-wrapper" in fixtures
-    assert re.search(r'wrapper\s*=\s*"ctx ', fixtures) is None
-
-
-# ═══════════════════════════════════════════════════════════════════════════════ AC-CXD-10 ═════
-
-_OVERLOADED_CONSTRUCTS = [
-    ("statusline_ctx_bar", "scripts/foundry-statusline.sh", '${COL}ctx ${BAR}'),
-    ("test_statusline_assert", "tests/test_statusline.py", 'assert "ctx" in out'),
-    ("git_discipline_block_ctx", "hooks/foundry-git-discipline.sh", "def block_ctx(detail):"),
-    ("session_learnings_foundry_ctx", "hooks/foundry-session-learnings.sh", "_FOUNDRY_CTX"),
-    ("spec_audit_ctx_param", "workflows/spec-audit.js", "ctx.priorRejection"),
-    ("tier_preflight_ctx_local", "scripts/foundry_tier_preflight.py", 'ctx: set[str] = set()'),
-    ("stack_profile_loop_local", "scripts/foundry-stack-profile.py", "for ctx in loaded_context(resolved):"),
-    ("context_skill_ctx_star", "skills/context/SKILL.md", "ctx-*"),
-]
-
-
-@pytest.mark.parametrize(
-    "relpath,literal",
-    [(relpath, literal) for _, relpath, literal in _OVERLOADED_CONSTRUCTS],
-    ids=[name for name, _, _ in _OVERLOADED_CONSTRUCTS],
-)
-def test_overloaded_ctx_constructs_survive_verbatim(relpath, literal):
-    text = _read(relpath)
-    assert literal in text, f"the shipped false-positive construct {literal!r} must survive verbatim in {relpath}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════ AC-CXD-11 ═════
@@ -367,13 +217,64 @@ def test_id_promote_describes_per_environment_execution(case):
         )
 
 
+# ═══════ Retired-NARRATIVE guard — token-free by construction, and NOT spent scaffolding ══════ #
+# These forbidden phrases carry no retired-framework token at all, which is precisely their point:
+# they close
+# the hole where a minimal edit deletes the retired identifier and leaves the retired prod-branch
+# narrative intact under a different name. That condition is NOT made unrepresentable by removing
+# the identifier, so unlike the token sweep this guard is kept. Only the single token-bearing
+# pattern was dropped; the identifier it named no longer exists.
+_FORBIDDEN_PATTERNS = [
+    r"posture[ -]gated",
+    r"posture gate",
+    r"guarded[ -]prod",
+    r"break[ _-]glass",
+    r"GENERATE_RUNBOOK",
+    r"resolve_posture",
+    r"Posture\.decision",
+    r"production_flag",
+    r"guard_state",
+    r"stale_state",
+    r"command-policy",
+]
+_FORBIDDEN_RE = re.compile("|".join(_FORBIDDEN_PATTERNS), re.IGNORECASE)
+
+SURFACE_FILES = [
+    "skills/id-apply/SKILL.md",
+    "skills/id-promote/SKILL.md",
+    "skills/id-simulate/SKILL.md",
+    "skills/id-test/SKILL.md",
+    "skills/id-validate/SKILL.md",
+    "skills/id-drift/SKILL.md",
+    "skills/id-architect/SKILL.md",
+    "skills/id-rollback/SKILL.md",
+    "skills/id-discover/SKILL.md",
+    "skills/id-plan/SKILL.md",
+    "skills/id-verify/SKILL.md",
+    "skills/id-import/SKILL.md",
+    "skills/id-implement/SKILL.md",
+    "skills/id-baseline/SKILL.md",
+    "skills/id-sync/SKILL.md",
+    "skills/infra-sandboxed-apply/SKILL.md",
+    "skills/fleet/SKILL.md",
+    "agents/infra-engineer.md",
+    "docs/glossary.md",
+    "packs/stack-profiles/aws-eks-karpenter/conventions.md",
+    "packs/stack-profiles/aws-eks-karpenter/skills/implement-aws-eks-karpenter.md",
+    "scripts/foundry-stack-profile.py",
+    "scripts/foundry-decommission.py",
+    "hooks/foundry-cloud-cli-exec-guard.sh",
+    "tests/test_hooks_guards.py",
+]
+
+
 # ═══════════════════════════════════════════════════════════════════════════════ AC-CXD-13 ═════
 
 # Row 1: whole-surface zero-hit assertion.
 # Rows 2-6: PRECISION NEGATIVE CONTROLS — five live, unrelated strings the forbidden set must NOT
 # match (lifted verbatim from the shipped tree, per the sibling contract's preamble).
 # Row 7: RECALL CONTROL — five strings lifted verbatim from the PRE-CHANGE surface (none carries a
-# `ctx` token), proving the forbidden-phrase set is non-vacuous, bundled as one row (any miss fails
+# retired token), proving the forbidden-phrase set is non-vacuous, bundled as one row (any miss fails
 # the row).
 _PRECISION_NEGATIVE_CONTROLS = [
     ("test_hooks_guards_session_posture", 'assert "posture: " in p.stdout'),
@@ -420,7 +321,7 @@ def test_atom_surface_is_free_of_the_abolished_narrative(case, literal):
 
     elif case == "recall_pre_change_surface":
         # Non-vacuousness (RECALL): the set must still fire on real pre-change strings that carry
-        # no `ctx` token, proving the "surface_is_clean" zero-hit result is not trivially true of
+        # no retired token, proving the "surface_is_clean" zero-hit result is not trivially true of
         # an empty/no-op pattern.
         misses = [lit for _, lit in _RECALL_CONTROLS if _FORBIDDEN_RE.search(_norm(lit)) is None]
         assert not misses, f"forbidden-phrase set failed to match known pre-change strings: {misses}"
