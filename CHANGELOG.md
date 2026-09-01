@@ -40,10 +40,11 @@ until the guard itself was edited.
 - **The changelog record is kept.** Descriptive references are reworded; proper identifiers are
   dropped rather than renamed, because renaming a published atom's name would be a falsehood. No
   released section or entry was removed.
-- **No guard ships to adopters; CI keeps a one-line re-entry locator.** The deleted gate was 400+
+- **No guard runs for adopters; CI keeps a one-line re-entry locator.** The deleted gate was 400+
   lines of test corpus that reached every adopter by construction. Its replacement is a single
   allowlist-free `git grep` step in `.github/workflows/ci.yml` that fails the build on any
-  occurrence — **contributors should know it exists**, because it reds a PR containing the retired
+  occurrence. Being a workflow, it still lands on disk in an adopter's plugin cache — an install is a
+  full clone, as above — but it never executes there and is not part of the plugin surface — **contributors should know it exists**, because it reds a PR containing the retired
   substring anywhere outside that workflow file itself. The heavier "no dependency" assertion over
   manifests and the import graph is deliberately NOT built: nothing imports the retired framework,
   so such a detector would ship with an empty subject. An encoded or runtime-assembled token list
