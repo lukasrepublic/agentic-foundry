@@ -638,9 +638,7 @@ test('a sibling the platform re-declares wins over the pre-migration snapshot', 
     "the platform's own re-declared value must win over the snapshot");
 });
 
-test('the sibling restore is own-property based and rejects a non-object entry', () => {
-  // Three hazards in the restore, all found by driving the function directly rather than by
-  // reading it. Each would be silent.
+test('the sibling restore carries only the allowlist and rejects a non-object entry', () => {
   const before = (entry) => ({
     extraKnownMarketplaces: { [MARKETPLACE]: entry },
     enabledPlugins: { [PLUGIN_KEY]: true },
@@ -650,35 +648,45 @@ test('the sibling restore is own-property based and rejects a non-object entry',
     enabledPlugins: {},
   });
 
-  // (a) An INHERITED name must not read as "the platform already declared it". `key in merged` is
-  // true for `toString`/`constructor`/`hasOwnProperty`, so those keys were silently dropped.
-  const inherited = repairScopeSettings(
-    before({ source: { ref: 'v1.6.0' }, toString: 'MINE', constructor: 'MINE' }),
+  // (a) THE SAFETY PROPERTY. An unanticipated key is DROPPED, not carried. `commit` is the one
+  // that matters: the shipped claude binary carries `ref`/`commit`/`scope`/`lastUpdated` strings in
+  // marketplace context, and restoring a stale `commit` would be pin resurrection under a different
+  // name -- defeating the migration this repair exists to serve.
+  const unknown = repairScopeSettings(
+    before({ source: { ref: 'v1.6.0' }, commit: 'deadbeef', scope: 'user', toString: 'MINE' }),
     after(), PLUGIN_KEY, MARKETPLACE,
   ).extraKnownMarketplaces[MARKETPLACE];
-  assert.equal(inherited.toString, 'MINE', 'a key named toString was dropped by an `in` check');
-  assert.equal(inherited.constructor, 'MINE', 'a key named constructor was dropped by an `in` check');
+  assert.equal(unknown.commit, undefined, 'a stale commit was carried across the migration');
+  assert.equal(unknown.scope, undefined, 'an unanticipated key was carried across the migration');
+  assert.equal(unknown.toString, Object.prototype.toString, 'a non-allowlisted key was restored');
+  assert.equal(unknown.source.ref, undefined, 'the stale pinned ref was restored');
 
-  // (b) `typeof [] === 'object'`, so an array entry merged its INDICES in as keys.
-  const arr = repairScopeSettings(before(['x']), after(), PLUGIN_KEY, MARKETPLACE)
-    .extraKnownMarketplaces[MARKETPLACE];
-  assert.deepEqual(Object.keys(arr).sort(), ['source'], `an array entry leaked keys: ${JSON.stringify(arr)}`);
+  // (b) and the one allowlisted key still survives -- the defect this release fixes.
+  assert.equal(
+    repairScopeSettings(before({ source: { ref: 'v1.6.0' }, autoUpdate: false }), after(),
+      PLUGIN_KEY, MARKETPLACE).extraKnownMarketplaces[MARKETPLACE].autoUpdate,
+    false, 'autoUpdate was dropped',
+  );
 
-  // (c) A `__proto__` key parsed from adopter-writable JSON must not pollute, and must not be
-  // restored onto the entry.
-  const hostile = JSON.parse(JSON.stringify({
-    extraKnownMarketplaces: { [MARKETPLACE]: { source: {} } }, enabledPlugins: {},
-  }));
+  // (c) `typeof [] === 'object'`, so without an Array.isArray guard an array entry is spread into
+  // `{"0": ...}` and WRITTEN BACK, silently reshaping what the platform put there. The guard is
+  // load-bearing on the AFTER side specifically: on the before side the allowlist already drops
+  // index keys, so asserting there would be vacuous.
+  const arrAfter = repairScopeSettings(
+    before({ source: { ref: 'v1.6.0' }, autoUpdate: false }),
+    { extraKnownMarketplaces: { [MARKETPLACE]: ['junk'] }, enabledPlugins: {} },
+    PLUGIN_KEY, MARKETPLACE,
+  ).extraKnownMarketplaces[MARKETPLACE];
+  assert.ok(Array.isArray(arrAfter),
+    `an array entry was reshaped into an object: ${JSON.stringify(arrAfter)}`);
+
+  // (d) a __proto__ key parsed from adopter-writable JSON must not pollute or land on the entry.
+  const hostile = { extraKnownMarketplaces: {}, enabledPlugins: {} };
   hostile.extraKnownMarketplaces[MARKETPLACE] = JSON.parse('{"source":{},"__proto__":{"polluted":true}}');
   const clean = repairScopeSettings(hostile, after(), PLUGIN_KEY, MARKETPLACE);
   assert.equal({}.polluted, undefined, 'Object.prototype was polluted');
-  assert.deepEqual(
-    Object.keys(clean.extraKnownMarketplaces[MARKETPLACE]).sort(), ['source'],
-    'a __proto__ key was restored onto the entry',
-  );
-
-  // (d) and the pin itself still never comes back.
-  assert.equal(inherited.source.ref, undefined, 'the stale pinned ref was restored');
+  assert.deepEqual(Object.keys(clean.extraKnownMarketplaces[MARKETPLACE]).sort(), ['source'],
+    'a __proto__ key was restored onto the entry');
 });
 
 test('resolveClaudeOnPath finds an executable and null when absent', () => {

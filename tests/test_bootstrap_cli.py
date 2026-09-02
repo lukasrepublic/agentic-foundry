@@ -342,25 +342,38 @@ def test_the_update_package_manifest_has_no_lifecycle_scripts():
     # an exactness-only assertion stays green. Worse on the release that first introduces a module:
     # the pin would resolve to a published version that does not contain it, and `npx
     # update-agentic-workspace` would install and then crash on import.
-    # The update package's OWN version must move whenever its pin does. Without this, a release
-    # that bumps `cli` and the pin leaves `cli-update`'s version untouched; the publish workflow's
-    # "skip if this version is already on the registry" gate then declines to publish, and the
-    # registry keeps serving an `update-agentic-workspace` pinned to the PREVIOUS shared modules --
-    # a fully green release that ships the fix to nobody. Observed as a live hazard cutting v1.9.1:
-    # 0.1.0 was already published, so the pin bump alone would have reached no adopter.
-    # Enforced as "pin moved => version moved" by pinning both against the release history.
-    prev = json.loads(
-        subprocess.run(["git", "show", "HEAD:cli-update/package.json"], cwd=REPO_ROOT,
-                       capture_output=True, text=True).stdout or "{}"
+    # The update package's OWN version must move whenever its pin does -- as a DECLARATIVE TABLE,
+    # not a git diff. An earlier version of this guard shelled out to `git show HEAD:` and compared
+    # the working tree against HEAD; once the release edit is committed (which is the only state CI
+    # ever sees) the two are equal, the comparison is skipped, and the assertion silently covers
+    # nothing. That is the decay pattern this repo has hit before, and it shipped with a comment
+    # claiming it was "pinned against the release history" when it was pinned against itself.
+    #
+    # The hazard it guards is silent and unfixable after the fact: `update-agentic-workspace@0.1.0`
+    # was already published when v1.9.1 was cut, so bumping only the pin would have left the
+    # registry serving a package pinned to the previous shared modules -- a fully green release
+    # shipping the fix to nobody, because the publish workflow skips an already-published version.
+    #
+    # A table cannot decay, cannot fail open, and forces a deliberate one-line edit per cut.
+    CLI_UPDATE_VERSION_BY_PIN = {
+        "0.9.0": "0.1.0",   # v1.9.0 -- update-agentic-workspace's first release
+        "0.9.1": "0.1.1",   # v1.9.1 -- the migration sibling-key fix
+    }
+    pin = deps["create-agentic-workspace"]
+    expected_update_version = CLI_UPDATE_VERSION_BY_PIN.get(pin)
+    assert expected_update_version is not None, (
+        f"cli-update pins create-agentic-workspace@{pin} with no row in CLI_UPDATE_VERSION_BY_PIN. "
+        f"A release that moves the pin MUST also move cli-update's own version, or the publish "
+        f"workflow skips it and adopters keep the previous shared modules. Add the row deliberately."
     )
-    prev_pin = (prev.get("dependencies") or {}).get("create-agentic-workspace")
-    prev_ver = prev.get("version")
-    if prev_pin and prev_pin != deps["create-agentic-workspace"]:
-        assert prev_ver != pkg["version"], (
-            f"the dependency pin moved ({prev_pin} -> {deps['create-agentic-workspace']}) but "
-            f"cli-update's own version did not ({prev_ver}); the publish gate would skip it and the "
-            f"registry would keep serving the previous shared modules"
-        )
+    assert pkg["version"] == expected_update_version, (
+        f"cli-update is version {pkg['version']} but its pin {pin} requires "
+        f"{expected_update_version}; both sides move together in the release commit"
+    )
+    assert len(set(CLI_UPDATE_VERSION_BY_PIN.values())) == len(CLI_UPDATE_VERSION_BY_PIN), (
+        "two pins map to the same cli-update version -- one of those releases would be skipped "
+        "by the publish workflow's already-published gate"
+    )
 
     assert deps["create-agentic-workspace"] == load_pkg()["version"], (
         f"the pin {deps['create-agentic-workspace']!r} does not equal create-agentic-workspace's "
