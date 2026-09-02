@@ -337,6 +337,15 @@ def test_the_update_package_manifest_has_no_lifecycle_scripts():
         f"the dependency pin must be an exact version, not a range: "
         f"{deps['create-agentic-workspace']!r}"
     )
+    # Exact is not the same as CORRECT. A release that bumps cli/ without moving this pin ships
+    # adopters the PREVIOUS version's shared modules — including any security fix in them — while
+    # an exactness-only assertion stays green. Worse on the release that first introduces a module:
+    # the pin would resolve to a published version that does not contain it, and `npx
+    # update-agentic-workspace` would install and then crash on import.
+    assert deps["create-agentic-workspace"] == load_pkg()["version"], (
+        f"the pin {deps['create-agentic-workspace']!r} does not equal create-agentic-workspace's "
+        f"own version {load_pkg()['version']!r} — both sides must move together in the release commit"
+    )
     for key in ("devDependencies", "optionalDependencies", "peerDependencies"):
         assert key not in pkg or pkg[key] == {}, f"{key} must be absent or empty"
 
@@ -763,6 +772,14 @@ def test_the_cli_never_spawns_claude_or_writes_home_claude(tmp_path):
         assert "require(" not in text or "child_process" not in text, (
             f"{f.name} reaches child_process through require(), which this guard does not resolve"
         )
+        # A dynamic import yields no static binding either — `const { execFileSync } = await
+        # import('node:child_process')` would leave the resolver below with nothing to find and
+        # every assertion after it passing vacuously. Same silent-bypass class as the namespace
+        # form above, one syntax away, so it is refused on the same terms.
+        assert not re.search(r"import\s*\(\s*['\"]node:child_process['\"]", text), (
+            f"{f.name} imports child_process dynamically; this guard resolves only static imports, "
+            f"so that form would bypass it silently"
+        )
         for local in bindings:
             for m in re.finditer(re.escape(local) + r"\s*\(\s*([^,]+?)\s*,", text):
                 (update_spawns if f.name in UPDATE_PATH else create_spawns).append((f, m.group(1).strip()))
@@ -910,8 +927,14 @@ def test_every_runtime_asset_is_packaged():
 
     # ── the cache MUTATOR: containment, asserted structurally ────────────────────────────────────
     # Three properties, each of which a plausible regression would break:
-    #   1. `rmSync` appears in exactly one function, `applyCachePrune`. A delete introduced anywhere
-    #      else in cli/src fails here even if it is spelled in a way no substring search anticipated.
+    #   1. A recursive delete appears in exactly one function, `applyCachePrune`. NOTE WHAT THIS
+    #      DOES AND DOES NOT COVER, because an earlier wording of this comment claimed the delete
+    #      was caught "even if spelled in a way no substring search anticipated" — which was not
+    #      true, and an overstated guard's green gets read as coverage it never had. The pattern
+    #      below matches `fs.rm`/`fs.rmSync`/`fs.rmdir*` and `fs.promises.*`, and the destructured
+    #      `node:fs` mutator imports are banned outright just below, so the spellings that actually
+    #      evade it are exotic (an aliased namespace object, a dynamically-built member name). It
+    #      is a strong regression guard, not a proof.
     #   2. `applyCachePrune` does not ENUMERATE. It removes only the candidates handed to it; a
     #      `readdirSync` inside it would let it discover and delete paths that were never validated.
     #   3. `planCachePrune` — which produces those candidates — still carries all three of its
@@ -923,12 +946,31 @@ def test_every_runtime_asset_is_packaged():
     # guard to carry an exemption list; pinning on `recursive: true` states the property that
     # actually matters, so the temp-file cleanup is out of scope by construction rather than by
     # exception.
+    # Broadened past `fs.rmSync`: `fs.promises.rm`, `fs.rmdirSync` and a hoisted options object all
+    # evaded the first version of this pattern. The options window is no longer `[^;]*` (which a
+    # statement terminator closed early) but a bounded any-char window, so `fs.rmSync(p,\n  {\n
+    # recursive: true })` across lines is caught too.
+    RECURSIVE_DELETE = re.compile(
+        r"\bfs\.(?:promises\.)?rm(?:dir)?(?:Sync)?\s*\([\s\S]{0,200}?recursive\s*:\s*true"
+    )
     rm_sites = [
         f.name
         for f in _iter_mjs_files(CLI_DIR / "src") + _iter_mjs_files(CLI_DIR / "bin")
-        if re.search(r"\bfs\.rm(?:Sync)?\s*\([^;]*recursive\s*:\s*true", f.read_text())
+        if RECURSIVE_DELETE.search(f.read_text())
     ]
     assert rm_sites == ["cleanup.mjs"], f"unexpected recursive-delete sites in cli/src: {rm_sites}"
+
+    # A destructured mutator import drops the `fs.` prefix entirely and walks past any pattern
+    # anchored on it. Banning the import is the outcome-level control; chasing the call sites is
+    # the mechanism-level one that has to enumerate every spelling.
+    for f in _iter_mjs_files(CLI_DIR / "src") + _iter_mjs_files(CLI_DIR / "bin"):
+        for imp in re.finditer(r"import\s*\{([^}]*)\}\s*from\s*['\"]node:fs(?:/promises)?['\"]", f.read_text()):
+            named = {re.split(r"\s+as\s+", s.strip())[0].strip() for s in imp.group(1).split(",") if s.strip()}
+            mutators = named & {"rm", "rmSync", "rmdir", "rmdirSync", "unlink", "unlinkSync"}
+            assert not mutators, (
+                f"{f.name} destructures {sorted(mutators)} from node:fs; the recursive-delete guard "
+                f"above is anchored on `fs.`, so a destructured mutator would bypass it silently"
+            )
 
     apply_body = _extract_function_body(mutator_src, "applyCachePrune")
     assert apply_body is not None, "applyCachePrune not found in cleanup.mjs"
@@ -1313,6 +1355,18 @@ def test_the_import_closure_carries_no_network_module():
     assert not violations, "\n".join(violations)
     for f in _iter_mjs_files():
         assert "fetch(" not in f.read_text(), f"{f} calls fetch()"
+
+    # The SECOND published package too. `_collect_import_violations`'s builtin-or-relative rule
+    # cannot be applied here — cli-update/bin legitimately imports the bare specifier
+    # `create-agentic-workspace/src/update.mjs`, which is the whole design — but the network-module
+    # and fetch bans have no such conflict and were simply never extended past CLI_DIR. This is the
+    # package an adopter actually executes via `npx`, so it is the one where an added `fetch()`
+    # matters most.
+    for f in _iter_mjs_files(CLI_UPDATE_DIR):
+        text = f.read_text()
+        assert "fetch(" not in text, f"{f} calls fetch()"
+        for spec in re.findall(r"""from\s*['"]([^'"]+)['"]""", text):
+            assert spec not in BANNED_NETWORK_MODULES, f"{f} imports the network module {spec}"
 
 
 def test_the_no_telemetry_statement_is_present(tmp_path):

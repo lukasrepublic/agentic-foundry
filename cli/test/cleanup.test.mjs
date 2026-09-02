@@ -220,6 +220,34 @@ test('every live version directory survives an opted in prune', () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test('a live directory whose name differs from its version string survives', () => {
+  // Pins the installPath half of the live set. `versions` and directory NAMES are two namespaces,
+  // and nothing in the platform's contract says they coincide — so the live set is seeded from
+  // basename(installPath) as well as version. Without that seeding this directory is absent from
+  // the live set and gets recursively deleted while a live install still points at it.
+  //
+  // The other AC-UWC-1/-3 fixtures cannot catch a regression here: theirs all use installPaths
+  // whose basename already equals the version, so deleting the seeding changes nothing in them.
+  const { root, configDir } = makeConfigDir('uwc3-namespace-');
+  const dir = makeCacheVersions(configDir, ['1.6.0-hotfix', '1.8.0']);
+  writeInstalledPlugins(configDir, [
+    { installPath: path.join(dir, '1.8.0'), version: '1.8.0' },
+    { installPath: path.join(dir, '1.6.0-hotfix'), version: '1.6.0', projectPath: '/proj-b' },
+  ]);
+  writeManifest(configDir, '1.8.0');
+  const beforeMarker = fs.readFileSync(path.join(dir, '1.6.0-hotfix', 'marker.txt'));
+
+  const { print } = makePrint();
+  const result = runCleanupPhase({
+    cleanupFlag: true, configDir, marketplaceName: MARKETPLACE, marketplaceRepo: REPO,
+    pluginName: PLUGIN, pluginKey: PLUGIN_KEY, scopeDescriptors: [], env: process.env, cwd: root, print,
+  });
+  assert.deepEqual(result.prunedVersions, [], 'a live install directory was pruned');
+  assert.ok(fs.existsSync(path.join(dir, '1.6.0-hotfix')), 'the differently-named live directory was removed');
+  assert.deepEqual(fs.readFileSync(path.join(dir, '1.6.0-hotfix', 'marker.txt')), beforeMarker);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test('a cache in which every on disk version is live removes nothing', () => {
   const { root, configDir } = makeConfigDir('uwc3-alllive-');
   const dir = makeCacheVersions(configDir, ['1.4.1', '1.5.0', '1.6.0']);

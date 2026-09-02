@@ -31,11 +31,29 @@ export function deriveLiveSet({ registry, manifestVersion, pluginKey }) {
   // planCachePrune as a prune candidate. That is a live install of ANOTHER project deleted on a
   // registry the platform wrote — recoverable only by reinstalling, and invisible until that
   // project's next session breaks. An empty-set check alone closes only the degenerate half.
-  const unusable = records.findIndex((r) => !r || typeof r.version !== 'string' || !r.version);
+  // `!r.version.trim()` and not merely `!r.version`: a whitespace-only version is a non-empty
+  // string, so it passes a truthiness test, joins the live set as "  ", and leaves the record's
+  // REAL cache directory absent from the set — the same hole as a dropped record, reached through
+  // a value that looks usable.
+  const unusable = records.findIndex(
+    (r) => !r || typeof r.version !== 'string' || !r.version.trim(),
+  );
   if (unusable !== -1) {
     return {
       ok: false,
       reason: `installed plugin registry record ${unusable} for ${pluginKey} carries no usable version string`,
+    };
+  }
+  // `installPath` is REQUIRED, not opportunistic. The namespace-bridging below is only a safeguard
+  // if it actually runs; making it conditional on the field being present would mean the one shape
+  // that needs the bridge (a directory name that differs from `version`) is exactly the shape that
+  // silently skips it. Every registry the platform writes carries this field, so a record without
+  // one is indeterminate input and takes the AC-UWC-4 skip like any other.
+  const noPath = records.findIndex((r) => typeof r.installPath !== 'string' || !r.installPath.trim());
+  if (noPath !== -1) {
+    return {
+      ok: false,
+      reason: `installed plugin registry record ${noPath} for ${pluginKey} carries no usable installPath`,
     };
   }
 
@@ -49,10 +67,8 @@ export function deriveLiveSet({ registry, manifestVersion, pluginKey }) {
   const versions = new Set();
   for (const r of records) {
     versions.add(r.version);
-    if (typeof r.installPath === 'string' && r.installPath) {
-      const leaf = path.basename(r.installPath);
-      if (leaf && leaf !== '.' && leaf !== path.sep) versions.add(leaf);
-    }
+    const leaf = path.basename(r.installPath);
+    if (leaf && leaf !== '.' && leaf !== path.sep) versions.add(leaf);
   }
   if (manifestVersion) versions.add(manifestVersion);
   // Belt-and-braces: unreachable given the per-record refusal above, but an empty live set is the
