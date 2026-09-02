@@ -435,6 +435,12 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         # 1.8.0, so the published tarball's bytes differ and a new one must ship, or npm can never
         # deliver this pin. Echoing the previous tarball version would strand 1.8.0 unreachable.
         "1.8.0": "0.8.0",
+        # v1.9.0 ships `npx update-agentic-workspace`, which lives in cli-update/ but imports every
+        # shared module from THIS tarball -- so unlike 1.8.0 this release genuinely does touch
+        # cli/src/. 0.8.0 is already published WITHOUT those modules, so echoing it would publish an
+        # update-agentic-workspace whose exact-version dependency resolves to a tarball that cannot
+        # satisfy its imports: `npx update-agentic-workspace` would install and then crash.
+        "1.9.0": "0.9.0",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (
