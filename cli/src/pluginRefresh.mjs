@@ -201,13 +201,40 @@ export function migrationActions(trigger, { scope, marketplaceName, marketplaceR
  * `before` carried survives with its ORIGINAL value except `extraKnownMarketplaces` — the one key
  * the migration exists to change — and `enabledPlugins` is unconditionally guaranteed to still name
  * the plugin, regardless of what either side carried. */
-export function repairScopeSettings(before, after, pluginKey) {
+/** ALLOWLIST, not "everything except `source`". The migration replaces the whole registration
+ * entry, and Claude Code publishes no schema for what may live in it — so a skip-`source` denylist
+ * carries an UNKNOWN key forward by default, and the dangerous shape is a second pin-like key. The
+ * shipped `claude` binary carries `ref`, `commit`, `scope` and `lastUpdated` strings in marketplace
+ * context: restoring a stale `commit` would be pin resurrection under a different name, defeating
+ * the very migration this repair serves. So the carry-forward set is enumerated, and a key nobody
+ * anticipated is DROPPED rather than restored — the platform re-adds what it still wants. Adding a
+ * key here is a deliberate one-line decision with this paragraph attached. */
+const CARRY_FORWARD = ['autoUpdate'];
+
+export function repairScopeSettings(before, after, pluginKey, marketplaceName) {
   const repaired = { ...after };
   for (const key of Object.keys(before)) {
     if (key === 'extraKnownMarketplaces') continue;
     repaired[key] = before[key];
   }
   repaired.enabledPlugins = { ...(repaired.enabledPlugins || {}), [pluginKey]: true };
+
+  // `!Array.isArray` on both sides: `typeof [] === 'object'`, so an array in this slot would merge
+  // its INDICES in as keys (`{"0": "...", source: {...}}`). Only a plain object is a registration.
+  const isEntry = (v) => v && typeof v === 'object' && !Array.isArray(v);
+  const beforeEntry = (before || {}).extraKnownMarketplaces?.[marketplaceName];
+  const afterEntry = repaired.extraKnownMarketplaces?.[marketplaceName];
+  if (isEntry(beforeEntry) && isEntry(afterEntry)) {
+    const merged = { ...afterEntry };
+    for (const key of CARRY_FORWARD) {
+      if (!Object.prototype.hasOwnProperty.call(beforeEntry, key)) continue;
+      // hasOwnProperty.call, NOT `key in merged`: `in` is true for INHERITED names, so a key
+      // literally called `toString` / `constructor` would read as "the platform already declared
+      // it" and be skipped. Own-property is the question actually being asked.
+      if (!Object.prototype.hasOwnProperty.call(merged, key)) merged[key] = beforeEntry[key];
+    }
+    repaired.extraKnownMarketplaces = { ...repaired.extraKnownMarketplaces, [marketplaceName]: merged };
+  }
   return repaired;
 }
 
@@ -236,7 +263,7 @@ export function migrateScope({ scopeSnap, trigger, marketplaceName, marketplaceR
   }
   if (fs.existsSync(scopeSnap.settingsPath)) {
     const after = readScopeSettings(scopeSnap).obj;
-    const repaired = repairScopeSettings(scopeSnap.obj, after, pluginKey);
+    const repaired = repairScopeSettings(scopeSnap.obj, after, pluginKey, marketplaceName);
     writeTargetAtomically(scopeSnap.settingsPath, repaired);
   }
   if (caught) throw caught;
