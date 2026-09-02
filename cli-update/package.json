@@ -1,0 +1,33 @@
+{
+  "name": "update-agentic-workspace",
+  "version": "0.1.0",
+  "description": "One command to bring an installed Agentic Foundry workspace current: refresh the plugin marketplace (migrating a pre-v1.7.0 tag-pinned registration if found), update the plugin in every scope that enables it, and re-run the workspace + permission-floor reconcile. A thin wrapper: every shared module is resolved from create-agentic-workspace at an exact version — no vendored second copy.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lukasrepublic/agentic-foundry.git",
+    "directory": "cli-update"
+  },
+  "homepage": "https://github.com/lukasrepublic/agentic-foundry/tree/main/cli-update#readme",
+  "bugs": {
+    "url": "https://github.com/lukasrepublic/agentic-foundry/issues"
+  },
+  "bin": {
+    "update-agentic-workspace": "bin/update-agentic-workspace.mjs"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "files": [
+    "bin/update-agentic-workspace.mjs",
+    "package.json",
+    "README.md"
+  ],
+  "dependencies": {
+    "create-agentic-workspace": "0.8.0"
+  },
+  "scripts": {
+    "test": "echo 'no local tests: every shared module is unit-tested in ../cli/test against create-agentic-workspace'\"'\"'s own src/'"
+  }
+}
