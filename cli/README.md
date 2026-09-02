@@ -11,8 +11,14 @@ npx create-agentic-workspace --dir my-workspace
 
 The CLI walks you through the target directory, greenfield-vs-existing, git/GitHub identity, and
 stage mode, **previews every file it will write and every capability it will declare**, writes
-the workspace, and stops. It never runs `claude`, never accepts the workspace trust dialog, and
-never pre-grants anything — it *declares*, the platform's trust dialog is the consent ceremony.
+the workspace, and stops. `create-agentic-workspace` never runs `claude`, never accepts the
+workspace trust dialog, and never pre-grants anything — it *declares*, the platform's trust dialog
+is the consent ceremony.
+
+**Already have a workspace and want it current instead?** That is a different command, on purpose
+— see the sibling package [`update-agentic-workspace`](https://github.com/lukasrepublic/agentic-foundry/tree/main/cli-update#readme),
+which refreshes the marketplace, updates the plugin, and re-runs this reconcile. Unlike this one,
+it does invoke `claude` (bounded by a closed allowlist — see its own README).
 
 ## What it does
 

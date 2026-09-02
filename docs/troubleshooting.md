@@ -232,6 +232,15 @@ claude plugin install foundry@agentic-foundry --scope project
 /foundry:doctor        # expect: DOCTOR-GREEN
 ```
 
+**A lighter touch, when nothing is actually wedged.** The recovery above is blunt on purpose — it
+discards every version of every plugin from every marketplace, which is right when nothing on disk
+can be trusted. If the install itself is fine and you just want the disk residue back (a superseded
+plugin-cache version left beside the current one after each update, or a stale/duplicate
+marketplace registration), `npx update-agentic-workspace --cleanup` is the surgical alternative: it
+prunes only cache versions the platform's own state no longer names as live, and removes only a
+registration no scope still enables — never the blunt `rm -rf` above. Run it without `--cleanup`
+first to preview what it would remove; nothing is deleted until you pass the flag.
+
 **Do not stack install sources.** The marketplace install and a directory-sourced local
 plugin (`claude --plugin-dir`) expand `${CLAUDE_PLUGIN_ROOT}` to different roots, so hooks
 wired from both fire twice with possibly-different versions. Pick one source per repo.
