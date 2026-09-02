@@ -8,6 +8,40 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.9.1 — 2026-09-02
+
+### The migration no longer drops a registration setting the adopter chose
+
+Found by the operator on the first real adopter workspace to hit the v1.9.0 migration — a
+`profile_kind`-agnostic settings defect, not a plugin one.
+
+The AC-UAW-4 migration heals a pre-v1.7.0 tag-pinned registration by a `marketplace remove` →
+tagless `add` pair. That replaces the **whole** `extraKnownMarketplaces.<marketplace>` entry, and
+the repair introduced in v1.9.0 restored only the settings file's **top-level** keys — so any
+sibling of `source` inside that entry was silently dropped. The observed case was
+`autoUpdate: false`: an adopter who had deliberately disabled auto-update on this marketplace had
+it re-enabled, with the preview never saying so.
+
+Only `source` is what the migration exists to change. Every other key the entry carried is now
+restored, additively — if the platform's own re-added entry declares the key, that value wins,
+since it may have learned something the pre-migration snapshot predates.
+
+AC-UAW-15(a) already required the scope's settings be left semantically unchanged "apart from the
+registration itself"; the pinned `source` is the registration, an `autoUpdate` toggle beside it is
+not. So this is a defect against an existing criterion, not a new one — no re-authorization.
+
+### The update package's own version is now forced to move with its pin
+
+A latent release hazard, live on this very cut: `update-agentic-workspace@0.1.0` was already
+published, so bumping only its `create-agentic-workspace` dependency pin would have left the
+registry serving a package pinned to the previous shared modules — a fully green release shipping
+the fix to nobody. The publish workflow's "skip if already on the registry" gate makes that
+silent. A test now asserts that when the pin moves, `update-agentic-workspace`'s own version
+moves with it.
+
+Both npm packages therefore ship this release: `create-agentic-workspace` 0.9.1 and
+`update-agentic-workspace` 0.1.1.
+
 ## v1.9.0 — 2026-09-01
 
 ### `npx update-agentic-workspace` — one command that brings an installed workspace current

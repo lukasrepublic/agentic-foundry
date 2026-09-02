@@ -201,13 +201,34 @@ export function migrationActions(trigger, { scope, marketplaceName, marketplaceR
  * `before` carried survives with its ORIGINAL value except `extraKnownMarketplaces` — the one key
  * the migration exists to change — and `enabledPlugins` is unconditionally guaranteed to still name
  * the plugin, regardless of what either side carried. */
-export function repairScopeSettings(before, after, pluginKey) {
+export function repairScopeSettings(before, after, pluginKey, marketplaceName) {
   const repaired = { ...after };
   for (const key of Object.keys(before)) {
     if (key === 'extraKnownMarketplaces') continue;
     repaired[key] = before[key];
   }
   repaired.enabledPlugins = { ...(repaired.enabledPlugins || {}), [pluginKey]: true };
+
+  // SIBLING KEYS OF `source` SURVIVE THE MIGRATION. `extraKnownMarketplaces` is skipped wholesale
+  // above because it is the key the migration exists to change — but only `source` actually
+  // changes. The entry can carry siblings the adopter set deliberately (`autoUpdate: false` is the
+  // observed one), and a remove/add pair replaces the WHOLE entry, so those siblings were silently
+  // dropped: an adopter who had disabled auto-update on this marketplace had it re-enabled without
+  // the preview ever saying so. AC-UAW-15(a) requires the scope's settings be left semantically
+  // unchanged "apart from the registration itself"; the pin is the registration, an `autoUpdate`
+  // toggle beside it is not. Restore every sibling the entry carried before, `source` excepted, and
+  // only when the platform's own re-added entry does not already declare it (its value wins if it
+  // does — the platform may have learned something the snapshot predates).
+  const beforeEntry = (before || {}).extraKnownMarketplaces?.[marketplaceName];
+  const afterEntry = repaired.extraKnownMarketplaces?.[marketplaceName];
+  if (beforeEntry && typeof beforeEntry === 'object' && afterEntry && typeof afterEntry === 'object') {
+    const merged = { ...afterEntry };
+    for (const key of Object.keys(beforeEntry)) {
+      if (key === 'source') continue;
+      if (!(key in merged)) merged[key] = beforeEntry[key];
+    }
+    repaired.extraKnownMarketplaces = { ...repaired.extraKnownMarketplaces, [marketplaceName]: merged };
+  }
   return repaired;
 }
 
@@ -236,7 +257,7 @@ export function migrateScope({ scopeSnap, trigger, marketplaceName, marketplaceR
   }
   if (fs.existsSync(scopeSnap.settingsPath)) {
     const after = readScopeSettings(scopeSnap).obj;
-    const repaired = repairScopeSettings(scopeSnap.obj, after, pluginKey);
+    const repaired = repairScopeSettings(scopeSnap.obj, after, pluginKey, marketplaceName);
     writeTargetAtomically(scopeSnap.settingsPath, repaired);
   }
   if (caught) throw caught;

@@ -593,6 +593,51 @@ test('repairScopeSettings restores every other key and forces enabledPlugins', (
   assert.equal(repaired.enabledPlugins[PLUGIN_KEY], true);
 });
 
+test('the migration preserves a registration sibling key the adopter set', () => {
+  // Observed on a real adopter workspace, 2026-09-02: the entry carried `autoUpdate: false`
+  // alongside `source`, and the remove/add pair replaced the WHOLE entry, so the toggle was
+  // silently dropped — auto-update re-enabled on a marketplace the adopter had deliberately
+  // pinned down, with the preview never saying so. Only `source` may change here.
+  const before = {
+    extraKnownMarketplaces: {
+      [MARKETPLACE]: {
+        source: { source: 'github', repo: REPO, ref: 'v1.6.0' },
+        autoUpdate: false,
+      },
+    },
+    enabledPlugins: { [PLUGIN_KEY]: true },
+  };
+  const after = {
+    extraKnownMarketplaces: {
+      [MARKETPLACE]: { source: { source: 'github', repo: REPO } }, // platform re-added it tagless
+    },
+    enabledPlugins: {},
+  };
+  const repaired = repairScopeSettings(before, after, PLUGIN_KEY, MARKETPLACE);
+  const entry = repaired.extraKnownMarketplaces[MARKETPLACE];
+  assert.equal(entry.autoUpdate, false, 'the adopter-set sibling key was dropped by the migration');
+  assert.deepEqual(entry.source, { source: 'github', repo: REPO },
+    'the tagless source the migration produced must NOT be reverted to the pinned one');
+  assert.equal(repaired.enabledPlugins[PLUGIN_KEY], true);
+});
+
+test('a sibling the platform re-declares wins over the pre-migration snapshot', () => {
+  // The restore is additive only. If the platform's own re-added entry declares a key, that value
+  // stands — it may have learned something the snapshot predates. Without this the repair would
+  // silently revert platform state, which is the same class of bug in the other direction.
+  const before = {
+    extraKnownMarketplaces: { [MARKETPLACE]: { source: { repo: REPO, ref: 'v1.6.0' }, autoUpdate: false } },
+    enabledPlugins: { [PLUGIN_KEY]: true },
+  };
+  const after = {
+    extraKnownMarketplaces: { [MARKETPLACE]: { source: { repo: REPO }, autoUpdate: true } },
+    enabledPlugins: {},
+  };
+  const repaired = repairScopeSettings(before, after, PLUGIN_KEY, MARKETPLACE);
+  assert.equal(repaired.extraKnownMarketplaces[MARKETPLACE].autoUpdate, true,
+    "the platform's own re-declared value must win over the snapshot");
+});
+
 test('resolveClaudeOnPath finds an executable and null when absent', () => {
   const dir = scratch('resolve-claude-');
   assert.equal(resolveClaudeOnPath(dir), null);

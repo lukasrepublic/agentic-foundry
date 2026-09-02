@@ -342,6 +342,26 @@ def test_the_update_package_manifest_has_no_lifecycle_scripts():
     # an exactness-only assertion stays green. Worse on the release that first introduces a module:
     # the pin would resolve to a published version that does not contain it, and `npx
     # update-agentic-workspace` would install and then crash on import.
+    # The update package's OWN version must move whenever its pin does. Without this, a release
+    # that bumps `cli` and the pin leaves `cli-update`'s version untouched; the publish workflow's
+    # "skip if this version is already on the registry" gate then declines to publish, and the
+    # registry keeps serving an `update-agentic-workspace` pinned to the PREVIOUS shared modules --
+    # a fully green release that ships the fix to nobody. Observed as a live hazard cutting v1.9.1:
+    # 0.1.0 was already published, so the pin bump alone would have reached no adopter.
+    # Enforced as "pin moved => version moved" by pinning both against the release history.
+    prev = json.loads(
+        subprocess.run(["git", "show", "HEAD:cli-update/package.json"], cwd=REPO_ROOT,
+                       capture_output=True, text=True).stdout or "{}"
+    )
+    prev_pin = (prev.get("dependencies") or {}).get("create-agentic-workspace")
+    prev_ver = prev.get("version")
+    if prev_pin and prev_pin != deps["create-agentic-workspace"]:
+        assert prev_ver != pkg["version"], (
+            f"the dependency pin moved ({prev_pin} -> {deps['create-agentic-workspace']}) but "
+            f"cli-update's own version did not ({prev_ver}); the publish gate would skip it and the "
+            f"registry would keep serving the previous shared modules"
+        )
+
     assert deps["create-agentic-workspace"] == load_pkg()["version"], (
         f"the pin {deps['create-agentic-workspace']!r} does not equal create-agentic-workspace's "
         f"own version {load_pkg()['version']!r} — both sides must move together in the release commit"
@@ -441,6 +461,7 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         # update-agentic-workspace whose exact-version dependency resolves to a tarball that cannot
         # satisfy its imports: `npx update-agentic-workspace` would install and then crash.
         "1.9.0": "0.9.0",
+        "1.9.1": "0.9.1",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (
