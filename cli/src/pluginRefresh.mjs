@@ -219,16 +219,6 @@ export function repairScopeSettings(before, after, pluginKey, marketplaceName) {
   }
   repaired.enabledPlugins = { ...(repaired.enabledPlugins || {}), [pluginKey]: true };
 
-  // SIBLING KEYS OF `source` SURVIVE THE MIGRATION. `extraKnownMarketplaces` is skipped wholesale
-  // above because it is the key the migration exists to change — but only `source` actually
-  // changes. The entry can carry siblings the adopter set deliberately (`autoUpdate: false` is the
-  // observed one), and a remove/add pair replaces the WHOLE entry, so those siblings were silently
-  // dropped: an adopter who had disabled auto-update on this marketplace had it re-enabled without
-  // the preview ever saying so. AC-UAW-15(a) requires the scope's settings be left semantically
-  // unchanged "apart from the registration itself"; the pin is the registration, an `autoUpdate`
-  // toggle beside it is not. Restore every sibling the entry carried before, `source` excepted, and
-  // only when the platform's own re-added entry does not already declare it (its value wins if it
-  // does — the platform may have learned something the snapshot predates).
   // `!Array.isArray` on both sides: `typeof [] === 'object'`, so an array in this slot would merge
   // its INDICES in as keys (`{"0": "...", source: {...}}`). Only a plain object is a registration.
   const isEntry = (v) => v && typeof v === 'object' && !Array.isArray(v);

@@ -22,9 +22,14 @@ sibling of `source` inside that entry was silently dropped. The observed case wa
 `autoUpdate: false`: an adopter who had deliberately disabled auto-update on this marketplace had
 it re-enabled, with the preview never saying so.
 
-Only `source` is what the migration exists to change. Every other key the entry carried is now
-restored, additively — if the platform's own re-added entry declares the key, that value wins,
-since it may have learned something the pre-migration snapshot predates.
+The carried-forward set is an explicit **allowlist**, currently just `autoUpdate`. A
+skip-`source` denylist would carry an *unanticipated* key forward by default, and the dangerous
+shape is a second pin-like key: the shipped `claude` binary carries `ref`, `commit`, `scope` and
+`lastUpdated` strings in marketplace context, and restoring a stale `commit` would be pin
+resurrection under a different name — defeating the very migration this repair serves. Claude Code
+publishes no schema for that object, so a denylist cannot be completed. An unknown key is therefore
+dropped and the platform re-adds what it still wants. The restore is additive within the allowlist:
+if the platform's own re-added entry declares the key, that value wins.
 
 AC-UAW-15(a) already required the scope's settings be left semantically unchanged "apart from the
 registration itself"; the pinned `source` is the registration, an `autoUpdate` toggle beside it is
