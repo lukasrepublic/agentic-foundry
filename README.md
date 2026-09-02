@@ -11,7 +11,7 @@ real running app → human sign-off.**
 > to earn its keep. A gate ships only if it names the observed failure it prevents; the
 > operator's own judgment is what the automation serves, never what it replaces.
 
-**Status: v1.8.0.** Built solo, dogfooded daily — Foundry is built *with* Foundry: every release
+**Status: v1.9.0.** Built solo, dogfooded daily — Foundry is built *with* Foundry: every release
 you can install was itself specced, authorized, floor-gated, and certified through it.
 
 ## The loop, in one picture
