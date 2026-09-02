@@ -964,7 +964,14 @@ def test_every_runtime_asset_is_packaged():
     # anchored on it. Banning the import is the outcome-level control; chasing the call sites is
     # the mechanism-level one that has to enumerate every spelling.
     for f in _iter_mjs_files(CLI_DIR / "src") + _iter_mjs_files(CLI_DIR / "bin"):
-        for imp in re.finditer(r"import\s*\{([^}]*)\}\s*from\s*['\"]node:fs(?:/promises)?['\"]", f.read_text()):
+        # `(?:\w+\s*,\s*)?` so the default-plus-named form is caught too -- the sibling
+        # child_process guard above already handles that shape, and omitting it here was an
+        # inconsistency, not a judgement: `import fs, { rmSync } from 'node:fs'` drops the `fs.`
+        # prefix on the call site just as thoroughly as a bare named import does.
+        for imp in re.finditer(
+            r"import\s+(?:\w+\s*,\s*)?\{([^}]*)\}\s*from\s*['\"]node:fs(?:/promises)?['\"]",
+            f.read_text(),
+        ):
             named = {re.split(r"\s+as\s+", s.strip())[0].strip() for s in imp.group(1).split(",") if s.strip()}
             mutators = named & {"rm", "rmSync", "rmdir", "rmdirSync", "unlink", "unlinkSync"}
             assert not mutators, (
@@ -984,12 +991,12 @@ def test_every_runtime_asset_is_packaged():
     # file must carry exactly one recursive delete, and it must be the one inside applyCachePrune.
     # That is strictly stronger than "planCachePrune contains no rmSync" and does not depend on
     # where a region slice happens to end.
-    recursive_rms = re.findall(r"\bfs\.rm(?:Sync)?\s*\([^;]*recursive\s*:\s*true", mutator_src)
+    recursive_rms = RECURSIVE_DELETE.findall(mutator_src)
     assert len(recursive_rms) == 1, (
         f"cleanup.mjs carries {len(recursive_rms)} recursive deletes; exactly one is permitted, "
         f"inside applyCachePrune"
     )
-    assert re.search(r"\bfs\.rm(?:Sync)?\s*\([^;]*recursive\s*:\s*true", apply_body), (
+    assert RECURSIVE_DELETE.search(apply_body), (
         "the recursive delete is not inside applyCachePrune — planning and applying must stay split"
     )
 
@@ -1365,7 +1372,12 @@ def test_the_import_closure_carries_no_network_module():
     for f in _iter_mjs_files(CLI_UPDATE_DIR):
         text = f.read_text()
         assert "fetch(" not in text, f"{f} calls fetch()"
-        for spec in re.findall(r"""from\s*['"]([^'"]+)['"]""", text):
+        # BOTH static and dynamic specifiers, matching what _collect_import_violations does for
+        # CLI_DIR. Scanning only `from '...'` would have let `await import('node:https')` through
+        # while the comment above claimed the same ban was being extended.
+        specs = re.findall(r"""from\s*['"]([^'"]+)['"]""", text)
+        specs += re.findall(r"""import\s*\(\s*['"]([^'"]+)['"]""", text)
+        for spec in specs:
             assert spec not in BANNED_NETWORK_MODULES, f"{f} imports the network module {spec}"
 
 

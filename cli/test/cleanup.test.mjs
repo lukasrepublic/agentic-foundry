@@ -315,6 +315,29 @@ test('an unreadable or unrecognised registry skips the prune with a reason and r
     ]);
     cases.push({ root, configDir, dir, skipManifest: true });
   }
+  // (g) a WHITESPACE-ONLY version. A non-empty string, so it passes a truthiness test and would
+  // join the live set as "  " while the record's real directory stays outside it — the same hole
+  // as a dropped record, reached through a value that looks usable.
+  {
+    const { root, configDir } = makeConfigDir('uwc4-blankversion-');
+    const dir = makeCacheVersions(configDir, ['1.5.0']);
+    writeInstalledPlugins(configDir, [{ installPath: '/a/1.5.0', version: '  ' }]);
+    cases.push({ root, configDir, dir, skipManifest: true });
+  }
+  // (h) a record with NO usable installPath. The live set is bridged into the directory-name
+  // namespace via basename(installPath), so a record without one cannot be bridged — and the one
+  // shape that needs the bridge would be exactly the shape that skipped it. Indeterminate input,
+  // so it takes the AC-UWC-4 skip like any other. Also pins that this is a REFUSAL and not an
+  // uncaught TypeError out of the unconditional basename() call below it.
+  {
+    const { root, configDir } = makeConfigDir('uwc4-nopath-');
+    const dir = makeCacheVersions(configDir, ['1.5.0']);
+    writeInstalledPlugins(configDir, [
+      { version: '1.5.0' },                    // installPath key entirely absent
+      { version: '1.6.0', installPath: '   ' }, // present but blank
+    ]);
+    cases.push({ root, configDir, dir, skipManifest: true });
+  }
   // (f) B1, the MIXED case — the one an empty-set check does not catch. One record is usable and
   // one is not, so the live set stays non-empty and reads `ok`, while the unusable record's
   // still-live directory silently becomes a prune candidate. This is another project's live
