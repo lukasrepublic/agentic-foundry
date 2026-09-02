@@ -8,7 +8,7 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
-## v1.9.0 — Unreleased
+## v1.9.0 — 2026-09-01
 
 ### `npx update-agentic-workspace` — one command that brings an installed workspace current
 
