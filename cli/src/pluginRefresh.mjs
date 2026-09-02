@@ -219,13 +219,19 @@ export function repairScopeSettings(before, after, pluginKey, marketplaceName) {
   // toggle beside it is not. Restore every sibling the entry carried before, `source` excepted, and
   // only when the platform's own re-added entry does not already declare it (its value wins if it
   // does — the platform may have learned something the snapshot predates).
+  // `!Array.isArray` on both sides: `typeof [] === 'object'`, so an array in this slot would merge
+  // its INDICES in as keys (`{"0": "...", source: {...}}`). Only a plain object is a registration.
+  const isEntry = (v) => v && typeof v === 'object' && !Array.isArray(v);
   const beforeEntry = (before || {}).extraKnownMarketplaces?.[marketplaceName];
   const afterEntry = repaired.extraKnownMarketplaces?.[marketplaceName];
-  if (beforeEntry && typeof beforeEntry === 'object' && afterEntry && typeof afterEntry === 'object') {
+  if (isEntry(beforeEntry) && isEntry(afterEntry)) {
     const merged = { ...afterEntry };
     for (const key of Object.keys(beforeEntry)) {
       if (key === 'source') continue;
-      if (!(key in merged)) merged[key] = beforeEntry[key];
+      // hasOwnProperty.call, NOT `key in merged`: `in` is true for INHERITED names, so a key
+      // literally called `toString` / `constructor` / `hasOwnProperty` would read as "the platform
+      // already declared it" and be silently dropped. Own-property is the question being asked.
+      if (!Object.prototype.hasOwnProperty.call(merged, key)) merged[key] = beforeEntry[key];
     }
     repaired.extraKnownMarketplaces = { ...repaired.extraKnownMarketplaces, [marketplaceName]: merged };
   }

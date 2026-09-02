@@ -638,6 +638,49 @@ test('a sibling the platform re-declares wins over the pre-migration snapshot', 
     "the platform's own re-declared value must win over the snapshot");
 });
 
+test('the sibling restore is own-property based and rejects a non-object entry', () => {
+  // Three hazards in the restore, all found by driving the function directly rather than by
+  // reading it. Each would be silent.
+  const before = (entry) => ({
+    extraKnownMarketplaces: { [MARKETPLACE]: entry },
+    enabledPlugins: { [PLUGIN_KEY]: true },
+  });
+  const after = () => ({
+    extraKnownMarketplaces: { [MARKETPLACE]: { source: { source: 'github', repo: REPO } } },
+    enabledPlugins: {},
+  });
+
+  // (a) An INHERITED name must not read as "the platform already declared it". `key in merged` is
+  // true for `toString`/`constructor`/`hasOwnProperty`, so those keys were silently dropped.
+  const inherited = repairScopeSettings(
+    before({ source: { ref: 'v1.6.0' }, toString: 'MINE', constructor: 'MINE' }),
+    after(), PLUGIN_KEY, MARKETPLACE,
+  ).extraKnownMarketplaces[MARKETPLACE];
+  assert.equal(inherited.toString, 'MINE', 'a key named toString was dropped by an `in` check');
+  assert.equal(inherited.constructor, 'MINE', 'a key named constructor was dropped by an `in` check');
+
+  // (b) `typeof [] === 'object'`, so an array entry merged its INDICES in as keys.
+  const arr = repairScopeSettings(before(['x']), after(), PLUGIN_KEY, MARKETPLACE)
+    .extraKnownMarketplaces[MARKETPLACE];
+  assert.deepEqual(Object.keys(arr).sort(), ['source'], `an array entry leaked keys: ${JSON.stringify(arr)}`);
+
+  // (c) A `__proto__` key parsed from adopter-writable JSON must not pollute, and must not be
+  // restored onto the entry.
+  const hostile = JSON.parse(JSON.stringify({
+    extraKnownMarketplaces: { [MARKETPLACE]: { source: {} } }, enabledPlugins: {},
+  }));
+  hostile.extraKnownMarketplaces[MARKETPLACE] = JSON.parse('{"source":{},"__proto__":{"polluted":true}}');
+  const clean = repairScopeSettings(hostile, after(), PLUGIN_KEY, MARKETPLACE);
+  assert.equal({}.polluted, undefined, 'Object.prototype was polluted');
+  assert.deepEqual(
+    Object.keys(clean.extraKnownMarketplaces[MARKETPLACE]).sort(), ['source'],
+    'a __proto__ key was restored onto the entry',
+  );
+
+  // (d) and the pin itself still never comes back.
+  assert.equal(inherited.source.ref, undefined, 'the stale pinned ref was restored');
+});
+
 test('resolveClaudeOnPath finds an executable and null when absent', () => {
   const dir = scratch('resolve-claude-');
   assert.equal(resolveClaudeOnPath(dir), null);
