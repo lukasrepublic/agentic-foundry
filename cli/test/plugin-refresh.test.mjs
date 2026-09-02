@@ -593,6 +593,102 @@ test('repairScopeSettings restores every other key and forces enabledPlugins', (
   assert.equal(repaired.enabledPlugins[PLUGIN_KEY], true);
 });
 
+test('the migration preserves a registration sibling key the adopter set', () => {
+  // Observed on a real adopter workspace, 2026-09-02: the entry carried `autoUpdate: false`
+  // alongside `source`, and the remove/add pair replaced the WHOLE entry, so the toggle was
+  // silently dropped — auto-update re-enabled on a marketplace the adopter had deliberately
+  // pinned down, with the preview never saying so. Only `source` may change here.
+  const before = {
+    extraKnownMarketplaces: {
+      [MARKETPLACE]: {
+        source: { source: 'github', repo: REPO, ref: 'v1.6.0' },
+        autoUpdate: false,
+      },
+    },
+    enabledPlugins: { [PLUGIN_KEY]: true },
+  };
+  const after = {
+    extraKnownMarketplaces: {
+      [MARKETPLACE]: { source: { source: 'github', repo: REPO } }, // platform re-added it tagless
+    },
+    enabledPlugins: {},
+  };
+  const repaired = repairScopeSettings(before, after, PLUGIN_KEY, MARKETPLACE);
+  const entry = repaired.extraKnownMarketplaces[MARKETPLACE];
+  assert.equal(entry.autoUpdate, false, 'the adopter-set sibling key was dropped by the migration');
+  assert.deepEqual(entry.source, { source: 'github', repo: REPO },
+    'the tagless source the migration produced must NOT be reverted to the pinned one');
+  assert.equal(repaired.enabledPlugins[PLUGIN_KEY], true);
+});
+
+test('a sibling the platform re-declares wins over the pre-migration snapshot', () => {
+  // The restore is additive only. If the platform's own re-added entry declares a key, that value
+  // stands — it may have learned something the snapshot predates. Without this the repair would
+  // silently revert platform state, which is the same class of bug in the other direction.
+  const before = {
+    extraKnownMarketplaces: { [MARKETPLACE]: { source: { repo: REPO, ref: 'v1.6.0' }, autoUpdate: false } },
+    enabledPlugins: { [PLUGIN_KEY]: true },
+  };
+  const after = {
+    extraKnownMarketplaces: { [MARKETPLACE]: { source: { repo: REPO }, autoUpdate: true } },
+    enabledPlugins: {},
+  };
+  const repaired = repairScopeSettings(before, after, PLUGIN_KEY, MARKETPLACE);
+  assert.equal(repaired.extraKnownMarketplaces[MARKETPLACE].autoUpdate, true,
+    "the platform's own re-declared value must win over the snapshot");
+});
+
+test('the sibling restore carries only the allowlist and rejects a non-object entry', () => {
+  const before = (entry) => ({
+    extraKnownMarketplaces: { [MARKETPLACE]: entry },
+    enabledPlugins: { [PLUGIN_KEY]: true },
+  });
+  const after = () => ({
+    extraKnownMarketplaces: { [MARKETPLACE]: { source: { source: 'github', repo: REPO } } },
+    enabledPlugins: {},
+  });
+
+  // (a) THE SAFETY PROPERTY. An unanticipated key is DROPPED, not carried. `commit` is the one
+  // that matters: the shipped claude binary carries `ref`/`commit`/`scope`/`lastUpdated` strings in
+  // marketplace context, and restoring a stale `commit` would be pin resurrection under a different
+  // name -- defeating the migration this repair exists to serve.
+  const unknown = repairScopeSettings(
+    before({ source: { ref: 'v1.6.0' }, commit: 'deadbeef', scope: 'user', toString: 'MINE' }),
+    after(), PLUGIN_KEY, MARKETPLACE,
+  ).extraKnownMarketplaces[MARKETPLACE];
+  assert.equal(unknown.commit, undefined, 'a stale commit was carried across the migration');
+  assert.equal(unknown.scope, undefined, 'an unanticipated key was carried across the migration');
+  assert.equal(unknown.toString, Object.prototype.toString, 'a non-allowlisted key was restored');
+  assert.equal(unknown.source.ref, undefined, 'the stale pinned ref was restored');
+
+  // (b) and the one allowlisted key still survives -- the defect this release fixes.
+  assert.equal(
+    repairScopeSettings(before({ source: { ref: 'v1.6.0' }, autoUpdate: false }), after(),
+      PLUGIN_KEY, MARKETPLACE).extraKnownMarketplaces[MARKETPLACE].autoUpdate,
+    false, 'autoUpdate was dropped',
+  );
+
+  // (c) `typeof [] === 'object'`, so without an Array.isArray guard an array entry is spread into
+  // `{"0": ...}` and WRITTEN BACK, silently reshaping what the platform put there. The guard is
+  // load-bearing on the AFTER side specifically: on the before side the allowlist already drops
+  // index keys, so asserting there would be vacuous.
+  const arrAfter = repairScopeSettings(
+    before({ source: { ref: 'v1.6.0' }, autoUpdate: false }),
+    { extraKnownMarketplaces: { [MARKETPLACE]: ['junk'] }, enabledPlugins: {} },
+    PLUGIN_KEY, MARKETPLACE,
+  ).extraKnownMarketplaces[MARKETPLACE];
+  assert.ok(Array.isArray(arrAfter),
+    `an array entry was reshaped into an object: ${JSON.stringify(arrAfter)}`);
+
+  // (d) a __proto__ key parsed from adopter-writable JSON must not pollute or land on the entry.
+  const hostile = { extraKnownMarketplaces: {}, enabledPlugins: {} };
+  hostile.extraKnownMarketplaces[MARKETPLACE] = JSON.parse('{"source":{},"__proto__":{"polluted":true}}');
+  const clean = repairScopeSettings(hostile, after(), PLUGIN_KEY, MARKETPLACE);
+  assert.equal({}.polluted, undefined, 'Object.prototype was polluted');
+  assert.deepEqual(Object.keys(clean.extraKnownMarketplaces[MARKETPLACE]).sort(), ['source'],
+    'a __proto__ key was restored onto the entry');
+});
+
 test('resolveClaudeOnPath finds an executable and null when absent', () => {
   const dir = scratch('resolve-claude-');
   assert.equal(resolveClaudeOnPath(dir), null);
