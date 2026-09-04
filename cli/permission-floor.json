@@ -269,6 +269,11 @@
       "rationale": "read-only programme resolution + ready-set/idle/wake derivation; writes nothing (asserted byte-level over a whole fixture tree by AC-CDW-6) and issues no merge, dispatch, or authorization. NOT write-free means side-effect-free: via foundry_release it runs read-only git plumbing (log/rev-parse) in a repo dir, and it exec_module's the in-tree wave planner. Manifest-named spec_ref/contract_ref are confinement-checked BEFORE any derivation. NOT covered: the dir git runs in comes from the contract's own target_repo via _resolve_repo, whose unrecognized-key fallback can leave the corpus - pre-existing shipped behaviour, reached only through an already-confined, authorized contract"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_command_deck_watch.py:*)",
+      "tier": "allow",
+      "rationale": "the command-deck watcher lifecycle: renders the tick prompt and keeps the watcher record. Reads are the read-only derivation it delegates to foundry_command_deck.py (same reach, same confinement). WRITES EXACTLY ONE PATH SHAPE: .foundry/watchers/<programme>.json under the project dir, where <programme> is re-checked against a [a-z0-9-]+ fullmatch BEFORE any path join, so a traversing or absolute identifier cannot reach os.path.join at all; forget removes only that same path. The record is inert data - no derivation reads it, it grants nothing and gates nothing. Manifest-derived text reaching the rendered prompt is passed through the shipped as_data sanitiser. NOT covered: it inherits foundry_command_deck.py's own pre-existing target_repo git-dir reach, unchanged by this script"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_release.py accept:*)",
       "tier": "ask",
       "rationale": "ceremony: leading subcommand, appends a PRACTICE acceptance record"
