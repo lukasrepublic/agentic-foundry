@@ -31,6 +31,7 @@ import datetime as dt
 import json
 import os
 import re
+import shlex
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -93,9 +94,17 @@ def read_record(programme: str, project_dir=None):
         return None
     try:
         with open(path, encoding="utf-8") as fh:
-            return json.load(fh)
+            rec = json.load(fh)
     except (OSError, json.JSONDecodeError) as e:
         raise WatchError(f"watcher record exists but could not be read: {path}: {e}")
+    # Valid JSON that is not an object is still an unreadable record. Without this the value flows
+    # into `.get()` downstream and raises an uncaught AttributeError — a traceback where this
+    # module promises a REFUSED line, which is the same "could not look" case wearing a crash.
+    if not isinstance(rec, dict):
+        raise WatchError(
+            f"watcher record is not a JSON object ({type(rec).__name__}): {path}"
+        )
+    return rec
 
 
 def write_record(programme: str, job_id: str, cron: str, project_dir=None) -> dict:
@@ -225,13 +234,17 @@ def _snapshot(m: dict) -> str:
 def render_prompt(programme: str, project_dir=None, branch="main", cron=DEFAULT_CRON) -> str:
     root = fr._project_dir(project_dir)
     m = measure(programme, project_dir=project_dir, branch=branch)
+    # The prompt renders shell the tick will run, so the workspace path is quoted for the shell.
+    # A macOS home directory with a space in it otherwise renders a `cd` that silently truncates —
+    # and running from the wrong directory is the exact failure §0b of the template exists to catch.
+    quoted_root = shlex.quote(root)
     measurement = (
         f"python3 ${{CLAUDE_PLUGIN_ROOT}}/scripts/foundry_command_deck_watch.py status "
-        f"{m['programme']} --root {root}"
+        f"{m['programme']} --root {quoted_root}"
     )
     subs = {
         "{{PROGRAMME_ID}}": m["programme"],
-        "{{WORKSPACE_PATH}}": root,
+        "{{WORKSPACE_PATH}}": quoted_root,
         "{{MEASUREMENT_COMMAND}}": measurement,
         "{{MANIFEST_PATH}}": f".foundry/releases/{m['programme']}/release.yaml",
         "{{CRON}}": cron,
