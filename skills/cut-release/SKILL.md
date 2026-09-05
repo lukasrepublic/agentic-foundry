@@ -94,9 +94,19 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
    > The v1.10.0 cut lost two full preflight runs (~12 minutes each) rediscovering this: first by
    > staging the CLI pins in R against the deferred catalogue (suite red), then by deferring the
    > catalogue as this playbook said (acceptance HARD-STOP). Stage as the table says and neither
-   > happens. The narrower AC-ILU-11 property — never advertise a catalogue version whose pinned
-   > commit does not carry it — is what `source.sha` deferring to R2 preserves, and it is preserved
-   > by exactly that one field, not by deferring the whole entry.
+   > **State the trade honestly: deferring `source.sha` does NOT preserve AC-ILU-11's property — it
+   > is the field that breaks it.** What it preserves is only the weaker, unavoidable "never pin a
+   > commit that does not exist yet", since `source.sha` names R. Between R and R2, `main`'s
+   > catalogue advertises the new version while pinning the PREVIOUS release's tree, so an adopter
+   > resolving tagless in that window installs the previous code labelled as the new version — and
+   > `sha` outranks `ref` in resolution. It is sticky: R2 moves only `sha`, and `manifestRefreshed`
+   > needs BOTH `version` and `sha` to move, so their next refresh reports `already current`.
+   > **`main`'s `ci` is RED for the whole window** — `foundry_main_catalogue.py` runs on push-to-main
+   > and exists to convict exactly this state; the workflow scopes it to push-only *because* the
+   > window is legitimate. That red is the window reporting itself, not a defect to fix in the gate.
+   > **So: land R and R2 back to back.** Every minute of that window is an adopter-visible
+   > mislabelled install. The window is not new — v1.9.1 had it too — but nothing in this playbook
+   > said so before.
    >
    > **Why `cli-update`'s own version must move whenever its pin does.** The publish workflow skips
    > a version already on the registry. `update-agentic-workspace@<old>` is published with the
@@ -110,15 +120,15 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
    > preflight suite names this rather than trusting you to remember it. Add each row deliberately,
    > with the one-line reason — that is the point of a table over a diff.
 
-   > **`marketplace.json` does NOT bump here (deliberate — feat-foundry-install-line-unpinning,
-   > AC-ILU-11).** Its `version` and `source.ref` bump moves to the **re-pin commit R2** in step 3,
-   > landing TOGETHER with `source.sha` — not in R. Bumping the catalogue's advertised version in R,
-   > ahead of the commit that carries it (R2), would make the default branch advertise a
-   > catalogue version its own pinned commit does NOT carry: an adopter resolving a tagless
-   > registration mid-cut would be told about a version R2 has not shipped yet. Deferring the bump
-   > closes that window. `test_manifests_agree` (`tests/test_docs_claims.py`) tolerates the resulting
-   > one-release lag between R and R2, but still refuses a `marketplace.json` that gets AHEAD of
-   > `plugin.json`, or whose own `source.ref` names a version it does not itself carry.
+   > **RETIRED — this paragraph used to say `marketplace.json` does not bump in R.** It claimed the
+   > `version` and `source.ref` bump moved to R2 alongside `source.sha`, on the AC-ILU-11 reasoning
+   > that the default branch must never advertise a version its own pinned commit does not carry.
+   > **No cut has ever done that**, because the acceptance gate refuses it (the trap above), and
+   > v1.9.1's own R bumped `version` + `ref` while leaving `sha` at the previous release's commit —
+   > exactly what step 1's table now prescribes. The text is kept as a tombstone because it is
+   > quotable and was believed; do not restore it. `test_manifests_agree`
+   > (`tests/test_docs_claims.py`) tolerates the R-to-R2 lag and still refuses a `marketplace.json`
+   > that gets AHEAD of `plugin.json` or whose `source.ref` names a version it does not itself carry.
 
    > ⚠️ **The install pin's remaining binding is NOT covered by this playbook's preflight.**
    > The `REFUSED` checks below cover `plugin.json` and the CHANGELOG section — not:

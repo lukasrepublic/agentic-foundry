@@ -75,8 +75,16 @@ that state: *"Version mismatch: plugin.json says X but marketplace.json plugins[
 Y."* The tolerance is therefore unusable: a cut that takes it can never reach `READY`.
 
 So the catalogue's `version` and `source.ref` bump in **R**, and `source.sha` is the only field that
-defers to R2 — which is what actually preserves AC-ILU-11's property, since `source.sha` names R and
-R does not exist until R is committed. Everything chained to the catalogue version follows it into
+defers to R2, because it names R and R does not exist until R is committed. **That deferral does not
+preserve AC-ILU-11's property — it is the field that breaks it**, and the corrected text now says so:
+between R and R2 the default branch advertises the new version while pinning the previous release's
+tree, an adopter resolving tagless in that window installs the previous code under the new label
+(`sha` outranks `ref`), and it is sticky because R2 moves only `sha` while `manifestRefreshed` needs
+both to move. `main`'s CI is red for the window by design — `foundry_main_catalogue.py` runs on
+push-to-main precisely to convict that state. The remedy is to land R and R2 back to back, and the
+docs now say that instead of implying the window is closed. This is not new behaviour: v1.9.1's own R
+bumped `version` + `ref` and left `sha` at v1.9.0's commit. What was new was a playbook describing a
+procedure no cut had ever run. Everything chained to the catalogue version follows it into
 R: `cli/package.json`'s `foundry.plugin_version` (asserted equal to it, with no R-to-R2 tolerance),
 then its `version` via `TARBALL_VERSION_BY_PLUGIN_PIN`, then `cli-update`'s pin and version via
 `CLI_UPDATE_VERSION_BY_PIN`. Step 1 now carries the full field-by-commit table, the trap is written
