@@ -47,6 +47,23 @@ that cannot cause an invocation. And nothing could arm, inspect, stop or re-arm 
 `restart` is how a tick prompt is **edited**: the scheduler is delete-then-create, and rewriting the
 prompt each time the deck learns a rule is why it gets good.
 
+### The cut-release playbook now hands over the tool that actually delivers the release
+
+`skills/cut-release/SKILL.md`'s Downstream step wrote out, by hand, the marketplace re-point, the
+per-scope plugin update, and the cache read-back — the exact work `npx update-agentic-workspace` has
+performed since v1.9.0. The playbook never named it, so every cut re-derived a manual procedure that
+already had a shipped, tested implementation.
+
+Step 5 now leads with `npx update-agentic-workspace` and says what each of its four phases does: the
+pre-v1.7.0 pinned-`ref` migration per affected scope, the plugin update in every scope that enables
+it **verified by reading back the refreshed cache manifest** rather than trusting a success line
+(the v1.4.1 scar, made mechanical), the opt-in `--cleanup` prune that previews and removes nothing
+without the flag, and the managed-file plus permission-floor reconcile — which is what lets an
+adopter's floor pick up a rule a release added instead of staying at whatever the last scaffold
+wrote. The hand-run commands stay, re-framed as the explanation and the no-npm fallback, and the
+one side effect worth saying out loud is stated: healing a pinned scope ends in `plugin install`, so
+a scope where the plugin was deliberately disabled has it re-enabled.
+
 **Security review:** required and performed — the diff adds a script that writes to the corpus and
 prose in two skills. Separate context, read-only, against the PR head: **no Block, no Risk, three
 Nits.** It confirmed the slug guard holds by construction (a literal-ASCII `re.fullmatch` returning

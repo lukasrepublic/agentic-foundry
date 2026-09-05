@@ -156,6 +156,35 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
    claude plugin update foundry@agentic-foundry
    ```
 
+   **Or, since v1.9.0, the shipped tool that does this and the checking around it:**
+
+   ```
+   npx update-agentic-workspace
+   ```
+
+   Run it **from inside the workspace directory**. Prefer it over the bare `plugin update` whenever
+   the adopter's state is not known-good — it is the manual steps below made mechanical, and it is
+   the only path that verifies delivery rather than reporting it:
+
+   - **Phase 1** — refreshes the marketplace, first migrating a registration still carrying a pinned
+     `ref` (the pre-v1.7.0 leftover): removed, re-added tagless, plugin re-installed, **once per
+     affected scope**, that scope's other settings preserved. This is the one-time migration written
+     out by hand further down; the tool finds the affected scopes instead of the operator guessing.
+   - **Phase 2** — `plugin update` in **every scope whose settings enable it**, then **reads back the
+     refreshed cache manifest** instead of trusting the CLI's own success line. That read-back is the
+     v1.4.1 scar (the plugin sat at 1.4.0 through several "successful" runs) made mechanical, and it
+     is why this is the delivery check and not merely another way to invoke the same command.
+   - **Phase 3** — `--cleanup`, opt-in: prunes superseded plugin-cache versions and a stale or
+     duplicate registration no scope still enables. **A flagless run previews and removes nothing.**
+   - **Phase 4** — re-runs the managed-file and permission-floor reconcile, so an adopter's floor
+     picks up rules a release added rather than staying at whatever the last scaffold wrote.
+
+   Every `claude` invocation it makes is drawn from one frozen, closed six-subcommand allowlist; none
+   can start a session or reach the trust dialog. **One side effect to state when handing it over:**
+   healing a pinned-`ref` scope ends in `plugin install`, so a scope where the plugin was
+   deliberately *disabled* has it re-enabled. That is specified, not accidental — a stale pin is a
+   broken registration either way — but an adopter who wants it off must disable it again afterward.
+
    **That is the whole upgrade — nothing else to run.** `plugin update` resolves the marketplace at
    the ref the registration names. A tagless registration names none, so resolution reads the
    catalogue live off the default branch every time; a new release reaches every adopter the moment
@@ -171,7 +200,12 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
    is no install line to bump on this side and no per-release step to forget: the whole upgrade path
    is this one command, every time.
 
-   **One-time migration for an adopter still tag-pinned from BEFORE this change.** Their
+   **One-time migration for an adopter still tag-pinned from BEFORE this change.** `npx
+   update-agentic-workspace` (above) performs exactly this as its Phase 1, in every affected scope,
+   and that is the way to do it. What follows is the same procedure by hand — read it to understand
+   why each step is there, or run it when npm is not available:
+
+   Their
    registration is `<owner>/<repo>#<old-tag>`, and `marketplace update` alone is a no-op against it
    — it refreshes the cache **at the ref already declared**, which is the frozen old tag, forever.
    Re-running `marketplace add <repo>` tagless does not fix it either: it **REFUSES** outright,
@@ -202,7 +236,8 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
 
    Verify by READING the refreshed cache — `~/.claude/plugins/marketplaces/<marketplace>/.claude-plugin/marketplace.json`
    must show the new `version` AND the new `source.sha`; the CLI's own "success" line does not prove
-   the ref moved. Check **both scopes**: a stale project row shadows a fresh user one, so a
+   the ref moved. **`npx update-agentic-workspace` already does this read-back in its Phase 2** — if
+   you used it, this paragraph is the check it ran, not a second one to run by hand. Check **both scopes**: a stale project row shadows a fresh user one, so a
    user-scope update can report success while the session keeps loading the old tree. Identify the
    tree actually loaded by a version-unique path, never by process start time. Missed on the v1.4.1
    cut, where the plugin sat at 1.4.0 through several "successful" update runs. For this repo's own adopters
