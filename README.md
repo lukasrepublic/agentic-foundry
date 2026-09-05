@@ -166,6 +166,18 @@ claude plugin install foundry@agentic-foundry
 /foundry:init       # wire your repo (operator registry, hooks, project config)
 ```
 
+Already installed, and want to be current? One command, run from inside the workspace:
+
+```bash
+npx update-agentic-workspace
+```
+
+It refreshes the marketplace (migrating a pre-v1.7.0 tag-pinned registration if it finds one),
+updates the plugin in **every scope that enables it** — verified by reading the refreshed cache back
+rather than trusting a success line — and re-runs the workspace and permission-floor reconcile so
+your floor picks up rules a release added. `--cleanup` additionally prunes superseded cache versions
+and stale registrations; without that flag it previews and removes nothing.
+
 Then follow **[docs/QUICKSTART.md](docs/QUICKSTART.md)** — zero to your first governed merge.
 Existing codebase? Start at `/foundry:extract-spec` (brownfield → spec, then the same loop).
 Want the full guided build? The **[Acme Links tutorial](https://github.com/lukasrepublic/agentic-handbook/blob/main/docs/example-acme-links/README.md)**

@@ -47,6 +47,35 @@ that cannot cause an invocation. And nothing could arm, inspect, stop or re-arm 
 `restart` is how a tick prompt is **edited**: the scheduler is delete-then-create, and rewriting the
 prompt each time the deck learns a rule is why it gets good.
 
+### Both npm packages are now staged, published and documented as a pair
+
+`npm-publish.yml` has always shipped **two** packages on a `v*` tag — `create-agentic-workspace`
+(the scaffolder) and then `update-agentic-workspace` (the upgrader), sequentially, the second
+polling the registry for its exact dependency pin before installing. The cut-release playbook
+described only the first, so the second was staged from memory or not at all.
+
+Step 1 now carries the staging table for both, and states the hazard that makes it load-bearing:
+the publish workflow **skips a version already on the registry**, so bumping `cli-update`'s
+dependency pin without bumping `cli-update`'s own version leaves the registry serving an upgrader
+that installs the *previous* shared modules — a fully green release delivering the fix to nobody.
+On a release that first introduces a shared module it is worse: the published pin resolves to a
+version that does not contain it and `npx update-agentic-workspace` installs, then crashes on
+import. Both `TARBALL_VERSION_BY_PLUGIN_PIN` and `CLI_UPDATE_VERSION_BY_PIN` refuse an unrecorded
+pin, so the preflight suite names this rather than relying on the operator to remember it. This
+release exercises the path it documents: `cli` 0.9.1 → **0.10.0**, `cli-update` 0.1.1 → **0.1.2**
+with its pin following — in **R2**, which is the other half of what the playbook was missing. The
+pin-block test asserts `cli/package.json`'s `foundry.plugin_version` equals `marketplace.json`'s
+`version`, and the catalogue bump is deferred to R2; staging the CLI pins in R therefore makes the
+two disagree and, because the preflight runs the suite, R can never reach `READY`. Both ledgers
+chain off that field, so all three npm-facing manifests follow the catalogue into R2. Step 1's table
+now says which commit each field lands in, and step 3 names the four files its path-scoped commit
+carries.
+
+`npx update-agentic-workspace` is also now documented where an adopter actually looks. It shipped in
+v1.9.0 and appeared only in `docs/troubleshooting.md` and the two CLI READMEs — never in `README.md`
+or `docs/QUICKSTART.md`, which both taught the scaffolder and then left the upgrade path to a bare
+`claude plugin update`. Both now carry it, as does `docs/how-to/adopt-on-an-existing-codebase.md`.
+
 ### The cut-release playbook now hands over the tool that actually delivers the release
 
 `skills/cut-release/SKILL.md`'s Downstream step wrote out, by hand, the marketplace re-point, the

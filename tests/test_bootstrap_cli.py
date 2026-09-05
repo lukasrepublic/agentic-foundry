@@ -358,6 +358,12 @@ def test_the_update_package_manifest_has_no_lifecycle_scripts():
     CLI_UPDATE_VERSION_BY_PIN = {
         "0.9.0": "0.1.0",   # v1.9.0 -- update-agentic-workspace's first release
         "0.9.1": "0.1.1",   # v1.9.1 -- the migration sibling-key fix
+        "0.10.0": "0.1.2",  # v1.10.0 -- cli/ takes a minor bump for the command-deck floor rule its
+                            # bundled permission-floor gains, so this pin and this package move with
+                            # it: 0.1.1 is already published pinned to 0.9.1, and the publish
+                            # workflow skips an already-published version, so NOT bumping here would
+                            # leave the registry serving an update tool that installs the previous
+                            # shared modules.
     }
     pin = deps["create-agentic-workspace"]
     expected_update_version = CLI_UPDATE_VERSION_BY_PIN.get(pin)

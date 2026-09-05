@@ -22,6 +22,10 @@ extract it into a spec, and run the loop on it — the rest of the codebase does
    # in a session: /foundry:init  →  /foundry:doctor → DOCTOR-GREEN
    ```
 
+   Already installed from an earlier release? `npx update-agentic-workspace`, run from inside the
+   repo, brings the marketplace, the plugin in every scope that enables it, and the permission-floor
+   reconcile current in one command.
+
 2. **Extract, don't author.** Pick the capability you're about to change anyway (the next
    feature or bugfix is the right first candidate — governance should ride work you were
    already doing):

@@ -49,8 +49,47 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
 ## Procedure
 
 1. **Pick the version** (the operator picks it — there is no inference) and make sure the prep is staged:
-   bump `plugin.json` alone → bump the **install pin's remaining binding** (below) → write the
-   `## vX.Y.Z` CHANGELOG section → commit (the release commit **R**).
+   bump `plugin.json` alone → bump the **install pin's remaining binding** (below) → **stage BOTH npm
+   packages** (next paragraph) → write the `## vX.Y.Z` CHANGELOG section → commit (the release
+   commit **R**).
+
+   > **TWO npm packages ship on a `v*` tag, not one.** `npm-publish.yml` runs two sequential jobs:
+   > `publish-cli` (`cli/` → **create-agentic-workspace**, the scaffolder) and then
+   > `publish-cli-update` (`cli-update/` → **update-agentic-workspace**, the upgrader), the second
+   > `needs:` the first and polls the registry for its dependency before installing. Staging a
+   > release means staging both, and they move together — **in R2, not in R**:
+   >
+   > | file | field | commit | rule |
+   > |---|---|---|---|
+   > | `.claude-plugin/plugin.json` | `version` | **R** | the plugin version itself |
+   > | `docs/` + `cli/permission-floor.json` | `generated_for_plugin_version` | **R** | both, byte-identical |
+   > | `.claude-plugin/marketplace.json` | `version`, `source.ref`, `source.sha` | **R2** | step 3 |
+   > | `cli/package.json` | `foundry.plugin_version` | **R2** | asserted EQUAL to `marketplace.json`'s `version` |
+   > | `cli/package.json` | `version` | **R2** | the scaffolder tarball; a row in `TARBALL_VERSION_BY_PLUGIN_PIN`, keyed by `plugin_version` |
+   > | `cli-update/package.json` | `dependencies.create-agentic-workspace` | **R2** | **exactly** `cli/package.json`'s new `version` |
+   > | `cli-update/package.json` | `version` | **R2** | must ALSO move; a row in `CLI_UPDATE_VERSION_BY_PIN` |
+   >
+   > **Why the CLI pins are R2 work and not R work — this is easy to get wrong, and the preflight
+   > will catch you.** `test_the_plugin_pin_block_matches_the_marketplace_manifest` asserts
+   > `cli/package.json`'s `foundry.plugin_version` **equals** `marketplace.json`'s `version`, with no
+   > R-to-R2 tolerance of its own. Since the catalogue bump is deferred to R2 (AC-ILU-11, step 3),
+   > bumping the CLI pin in R makes the two disagree and the suite goes red — and because the
+   > preflight RUNS the suite, R can never reach `READY`. The two ledger tables chain off that same
+   > field, so the tarball and `cli-update` versions follow it into R2. R therefore carries the
+   > plugin version, the floor mirrors and the CHANGELOG; **R2 carries the catalogue and all three
+   > npm-facing manifests**, and step 3's path-scoped commit names those four files explicitly.
+   >
+   > **Why `cli-update`'s own version must move whenever its pin does.** The publish workflow skips
+   > a version already on the registry. `update-agentic-workspace@<old>` is published with the
+   > *previous* dependency baked in, so bumping only the pin leaves the registry serving an upgrader
+   > that installs the previous shared modules — a fully green release delivering the fix to nobody.
+   > On a release that first introduces a shared module it is worse: the published pin resolves to a
+   > version that does not contain it, and `npx update-agentic-workspace` installs and then crashes
+   > on import.
+   >
+   > Both tables live in `tests/test_bootstrap_cli.py` and both **refuse an unrecorded pin**, so the
+   > preflight suite names this rather than trusting you to remember it. Add each row deliberately,
+   > with the one-line reason — that is the point of a table over a diff.
 
    > **`marketplace.json` does NOT bump here (deliberate — feat-foundry-install-line-unpinning,
    > AC-ILU-11).** Its `version` and `source.ref` bump moves to the **re-pin commit R2** in step 3,
@@ -115,8 +154,14 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
    3. Edit `.claude-plugin/marketplace.json`: `version = X.Y.Z`, `source.sha = $CONTENT`,
       `source.ref = vX.Y.Z` — **all three land here, in R2, never in R** (step 1, AC-ILU-11): the
       default branch never advertises a catalogue version whose pinned commit does not carry it.
-   4. Commit it **path-scoped**: `git commit -m '…' -- .claude-plugin/marketplace.json`. Never
-      `commit -am`, which sweeps every modified tracked file into the tagged commit.  → **R2**
+   3b. Bump the **three npm-facing manifests** in this same commit (step 1's table): `cli/package.json`
+      `foundry.plugin_version` (which the pin-block test asserts equal to the `version` you just
+      set) and `version`, then `cli-update/package.json` `dependencies.create-agentic-workspace`
+      and its own `version`.
+
+   4. Commit it **path-scoped, naming exactly those four files**:
+      `git commit -m '…' -- .claude-plugin/marketplace.json cli/package.json cli-update/package.json`.
+      Never `commit -am`, which sweeps every modified tracked file into the tagged commit.  → **R2**
    5. `git tag -a vX.Y.Z` — on **R2**, the commit that CARRIES the pin.
    6. `python3 scripts/foundry-cut-release.py --tree <repo> --version X.Y.Z --verify-tag` — the
       machine re-check. **Must print `TAG-PIN-COHERENT`.** Do not push until it does.

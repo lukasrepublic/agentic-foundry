@@ -104,6 +104,20 @@ claude plugin marketplace add lukasrepublic/agentic-foundry
 claude plugin install foundry@agentic-foundry
 ```
 
+Already installed from an earlier release? Bring it current with one command, run from inside the
+workspace directory:
+
+```bash
+npx update-agentic-workspace
+```
+
+It refreshes the marketplace (migrating a pre-v1.7.0 tag-pinned registration if it finds one),
+updates the plugin in **every scope that enables it** — verified by reading the refreshed cache
+manifest back, because the CLI's own "success" line does not prove the ref moved — and re-runs the
+managed-file and permission-floor reconcile, so a floor written by an older scaffold picks up rules
+a later release added. Add `--cleanup` to also prune superseded plugin-cache versions and a stale
+registration no scope still enables; without the flag it previews and removes nothing.
+
 Confirm inside a session in your repo:
 
 ```
