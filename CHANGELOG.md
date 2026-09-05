@@ -8,6 +8,133 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.10.0 — 2026-09-04
+
+### The command deck becomes a verb you can arm, stop and re-arm
+
+`/foundry:command-deck <programme-id>` arms a recurring watcher over one programme and manages it:
+`status`, `stop`, `restart`, `tick`, `prompt`, `list`. Each tick re-measures the ready-set from
+disk, dispatches what the wave barrier has unblocked, verifies independently, lands what passes, and
+reports Accomplishments / Next / Blockers.
+
+v1.5.0 shipped the tick contract as a delta to `/foundry:mode-autonomous`, which left two things
+broken. The capability's own name did not resolve it — the operator hit this directly: *"I thought
+the command would be command-deck but its mode-autonomous?"* — because skill selection matches the
+`description` frontmatter and `/foundry:command-deck` was listed only in the body, the one place
+that cannot cause an invocation. And nothing could arm, inspect, stop or re-arm a watcher at all.
+
+- **`skills/command-deck/SKILL.md`** — the verb. It also writes down the shape that works, which
+  was measured rather than assumed: the deck is the operator's own session woken by a recurring
+  scheduled job, so it holds their authority by construction. It is **never a subagent** (packaging
+  operator authority into a brief and delegating it is the exact shape a permission classifier
+  refuses, and refusing it is correct), **never a background shell loop**, and it **never
+  self-grants** a denied permission — it surfaces the denial as its single blocker and stops.
+- **`skills/command-deck/tick-prompt.template.md`** — the operating discipline a tick fires under,
+  rendered per programme.
+- **`scripts/foundry_command_deck_watch.py`** — renders that prompt from the live ready-set and
+  keeps the watcher record at `.foundry/watchers/<programme>.json`. The record exists because a
+  scheduled job is **session-only** and auto-expires after 7 days, so "this programme is meant to be
+  watched" cannot live in the job. It is a note, never an authority: nothing derives from it, and
+  `status` prints it and the live measurement side by side without reconciling them, because only
+  the session holding the job can say whether it still fires.
+- **`scripts/foundry_command_deck.py` is unchanged.** It remains the derivation — `ready_set` with
+  the authorization re-derivation and the wave barrier, `is_idle`, `wake_seconds`, `may_land`. The
+  new module is the surface around it, not a second copy of it.
+- **`skills/mode-autonomous/SKILL.md`** gains one disambiguation clause in its `description`. Both
+  skills now name the other and the condition under which the other is the right verb — in the
+  field selection actually matches, since a body cannot fix a mis-selection.
+
+`restart` is how a tick prompt is **edited**: the scheduler is delete-then-create, and rewriting the
+prompt each time the deck learns a rule is why it gets good.
+
+### Both npm packages are now staged, published and documented as a pair
+
+`npm-publish.yml` has always shipped **two** packages on a `v*` tag — `create-agentic-workspace`
+(the scaffolder) and then `update-agentic-workspace` (the upgrader), sequentially, the second
+polling the registry for its exact dependency pin before installing. The cut-release playbook
+described only the first, so the second was staged from memory or not at all.
+
+Step 1 now carries the staging table for both, and states the hazard that makes it load-bearing:
+the publish workflow **skips a version already on the registry**, so bumping `cli-update`'s
+dependency pin without bumping `cli-update`'s own version leaves the registry serving an upgrader
+that installs the *previous* shared modules — a fully green release delivering the fix to nobody.
+On a release that first introduces a shared module it is worse: the published pin resolves to a
+version that does not contain it and `npx update-agentic-workspace` installs, then crashes on
+import. Both `TARBALL_VERSION_BY_PLUGIN_PIN` and `CLI_UPDATE_VERSION_BY_PIN` refuse an unrecorded
+pin, so the preflight suite names this rather than relying on the operator to remember it. This
+release exercises the path it documents: `cli` 0.9.1 → **0.10.0**, `cli-update` 0.1.1 → **0.1.2**
+with its pin following.
+
+### The playbook's own two gates disagreed about the catalogue bump, and one of them is a HARD-STOP
+
+The cut that produced this release lost two full preflight runs to it, which is what makes it worth
+writing down rather than remembering. The **preflight** tolerates `marketplace.json` sitting at the
+immediately-preceding release and says the bump "may be deferred to the re-pin commit R2". The
+**acceptance gate** — `claude plugin tag --dry-run`, inside `run_acceptance` — then refuses exactly
+that state: *"Version mismatch: plugin.json says X but marketplace.json plugins[0].version says
+Y."* The tolerance is therefore unusable: a cut that takes it can never reach `READY`.
+
+So the catalogue's `version` and `source.ref` bump in **R**, and `source.sha` is the only field that
+defers to R2, because it names R and R does not exist until R is committed. **That deferral does not
+preserve AC-ILU-11's property — it is the field that breaks it**, and the corrected text now says so:
+between R and R2 the default branch advertises the new version while pinning the previous release's
+tree, an adopter resolving tagless in that window installs the previous code under the new label
+(`sha` outranks `ref`), and it is sticky because R2 moves only `sha` while `manifestRefreshed` needs
+both to move. `main`'s CI is red for the window by design — `foundry_main_catalogue.py` runs on
+push-to-main precisely to convict that state. The remedy is to land R and R2 back to back, and the
+docs now say that instead of implying the window is closed. This is not new behaviour: v1.9.1's own R
+bumped `version` + `ref` and left `sha` at v1.9.0's commit. What was new was a playbook describing a
+procedure no cut had ever run. Everything chained to the catalogue version follows it into
+R: `cli/package.json`'s `foundry.plugin_version` (asserted equal to it, with no R-to-R2 tolerance),
+then its `version` via `TARBALL_VERSION_BY_PLUGIN_PIN`, then `cli-update`'s pin and version via
+`CLI_UPDATE_VERSION_BY_PIN`. Step 1 now carries the full field-by-commit table, the trap is written
+out with the error each side produces, and step 3 is corrected to `source.sha` alone. The README
+`**Status:**` line is in the table too — it binds to `plugin.json`'s version, and it was the last
+straggler a red suite had to name.
+
+`npx update-agentic-workspace` is also now documented where an adopter actually looks. It shipped in
+v1.9.0 and appeared only in `docs/troubleshooting.md` and the two CLI READMEs — never in `README.md`
+or `docs/QUICKSTART.md`, which both taught the scaffolder and then left the upgrade path to a bare
+`claude plugin update`. Both now carry it, as does `docs/how-to/adopt-on-an-existing-codebase.md`.
+
+### The cut-release playbook now hands over the tool that actually delivers the release
+
+`skills/cut-release/SKILL.md`'s Downstream step wrote out, by hand, the marketplace re-point, the
+per-scope plugin update, and the cache read-back — the exact work `npx update-agentic-workspace` has
+performed since v1.9.0. The playbook never named it, so every cut re-derived a manual procedure that
+already had a shipped, tested implementation.
+
+Step 5 now leads with `npx update-agentic-workspace` and says what each of its four phases does: the
+pre-v1.7.0 pinned-`ref` migration per affected scope with its catalogue read-back, the plugin
+update in every scope that enables it, the opt-in `--cleanup` prune that previews and removes nothing
+without the flag, and the managed-file plus permission-floor reconcile — which is what lets an
+adopter's floor pick up a rule a release added instead of staying at whatever the last scaffold
+wrote.
+
+The step also now states what that tool does **not** verify, which the security pass on this release
+caught as an overstatement in the first draft: the read-back is Phase 1 and covers the **marketplace
+catalogue only**. `runPluginUpdate`'s result is discarded and Phase 2's printed verdict is a copy of
+the Phase-1 delta, so a scope whose update silently no-ops still prints `changed` — and
+`manifestRefreshed` requires both `version` and `source.sha` to move, so an R2 that moves only the
+sha reports `already current` despite real delivery. The both-scopes check therefore stays the
+operator's, which matters because skipping it is precisely the v1.4.1 failure: a stale project row
+shadows a fresh user one and the session keeps loading the previous version. The hand-run commands stay, re-framed as the explanation and the no-npm fallback, and the
+one side effect worth saying out loud is stated: healing a pinned scope ends in `plugin install`, so
+a scope where the plugin was deliberately disabled has it re-enabled.
+
+**Security review:** required and performed — the diff adds a script that writes to the corpus and
+prose in two skills. Separate context, read-only, against the PR head: **no Block, no Risk, three
+Nits.** It confirmed the slug guard holds by construction (a literal-ASCII `re.fullmatch` returning
+the value it validated, so traversal never reaches `os.path.join`, with `resolve_programme`'s
+realpath containment as a second non-overlapping layer) and that every value interpolated into the
+rendered prompt is a validated slug, a closed enum, or `as_data`-sanitised. Two Nits were fixed
+before merge: a watcher record holding valid-but-non-object JSON raised an uncaught `AttributeError`
+where the module promises a refusal, and the workspace path was interpolated unquoted into the
+tick's own `cd`. One is tracked and deliberately not fixed: the template directs the tick to read
+the manifest's YAML comments, which `yaml.safe_load` discards and the sanitiser therefore never
+sees — not a defect while the operator authors the manifests, and the reason that instruction stays
+pointed at the manifest rather than widened to arbitrary referenced files.
+
 ## v1.9.1 — 2026-09-02
 
 ### The migration no longer drops a registration setting the adopter chose

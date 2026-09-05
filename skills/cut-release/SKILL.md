@@ -1,6 +1,6 @@
 ---
 name: cut-release
-description: Cut an agentic-foundry release as a guarded playbook (/foundry:cut-release). Encodes the hand-run cut procedure as a loop whose EXIT GATE is the existing acceptance verdict — verifies the ordered preconditions (plugin.json version, CHANGELOG section; the marketplace.json catalogue bump is deferred to the re-pin commit R2), refuses to emit any publish plan until run_acceptance returns pass, and only afterward emits the gotcha-correct publish plan (re-pin marketplace source.sha to the release commit → annotated tag on the re-pin commit → machine-verify the tag → push, never force) WITHOUT pushing. Trigger when the operator is cutting/releasing a version — "cut a release", "release v0.6.1", "/foundry:cut-release", "ship the release".
+description: Cut an agentic-foundry release as a guarded playbook (/foundry:cut-release). Encodes the hand-run cut procedure as a loop whose EXIT GATE is the existing acceptance verdict — verifies the ordered preconditions (plugin.json version, CHANGELOG section, clean tree, and the candidate tree's own test suite; note the preflight TOLERATES a marketplace.json catalogue version left at the preceding release but the acceptance gate HARD-STOPS on it, so the catalogue bumps in R and only source.sha defers to the re-pin commit R2), refuses to emit any publish plan until run_acceptance returns pass, and only afterward emits the gotcha-correct publish plan (re-pin marketplace source.sha to the release commit → annotated tag on the re-pin commit → machine-verify the tag → push, never force) WITHOUT pushing. Trigger when the operator is cutting/releasing a version — "cut a release", "release v0.6.1", "/foundry:cut-release", "ship the release".
 ---
 
 # /foundry:cut-release — the cut-release playbook
@@ -49,18 +49,86 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
 ## Procedure
 
 1. **Pick the version** (the operator picks it — there is no inference) and make sure the prep is staged:
-   bump `plugin.json` alone → bump the **install pin's remaining binding** (below) → write the
-   `## vX.Y.Z` CHANGELOG section → commit (the release commit **R**).
+   bump `plugin.json` alone → bump the **install pin's remaining binding** (below) → **stage BOTH npm
+   packages** (next paragraph) → write the `## vX.Y.Z` CHANGELOG section → commit (the release
+   commit **R**).
 
-   > **`marketplace.json` does NOT bump here (deliberate — feat-foundry-install-line-unpinning,
-   > AC-ILU-11).** Its `version` and `source.ref` bump moves to the **re-pin commit R2** in step 3,
-   > landing TOGETHER with `source.sha` — not in R. Bumping the catalogue's advertised version in R,
-   > ahead of the commit that carries it (R2), would make the default branch advertise a
-   > catalogue version its own pinned commit does NOT carry: an adopter resolving a tagless
-   > registration mid-cut would be told about a version R2 has not shipped yet. Deferring the bump
-   > closes that window. `test_manifests_agree` (`tests/test_docs_claims.py`) tolerates the resulting
-   > one-release lag between R and R2, but still refuses a `marketplace.json` that gets AHEAD of
-   > `plugin.json`, or whose own `source.ref` names a version it does not itself carry.
+   > **TWO npm packages ship on a `v*` tag, not one.** `npm-publish.yml` runs two sequential jobs:
+   > `publish-cli` (`cli/` → **create-agentic-workspace**, the scaffolder) and then
+   > `publish-cli-update` (`cli-update/` → **update-agentic-workspace**, the upgrader), the second
+   > `needs:` the first and polls the registry for its dependency before installing. Staging a
+   > release means staging both, and they move together **in R** — only `source.sha` defers to R2:
+   >
+   > | file | field | commit | rule |
+   > |---|---|---|---|
+   > | `.claude-plugin/plugin.json` | `version` | **R** | the plugin version itself |
+   > | `.claude-plugin/marketplace.json` | `version`, `source.ref` | **R** | **not R2** — see the trap below |
+   > | `.claude-plugin/marketplace.json` | `source.sha` | **R2** | the ONLY field that defers; it names R, which does not exist yet |
+   > | `docs/` + `cli/permission-floor.json` | `generated_for_plugin_version` | **R** | both, byte-identical |
+   > | `README.md` | the `**Status: vX.Y.Z.**` line | **R** | asserted equal to `plugin.json`'s version |
+   > | `cli/package.json` | `foundry.plugin_version` | **R** | asserted EQUAL to `marketplace.json`'s `version`, so it follows the catalogue |
+   > | `cli/package.json` | `version` | **R** | the scaffolder tarball; a row in `TARBALL_VERSION_BY_PLUGIN_PIN`, keyed by `plugin_version` |
+   > | `cli-update/package.json` | `dependencies.create-agentic-workspace` | **R** | **exactly** `cli/package.json`'s new `version` |
+   > | `cli-update/package.json` | `version` | **R** | must ALSO move; a row in `CLI_UPDATE_VERSION_BY_PIN` |
+   >
+   > ### ⚠ THE TRAP: the preflight and the acceptance gate disagree about the catalogue bump
+   >
+   > Read this before staging anything, because two of this playbook's own gates give opposite
+   > answers and only one of them is a HARD-STOP.
+   >
+   > - The **preflight** *tolerates* `marketplace.json` sitting at the immediately-preceding release
+   >   and says in as many words that "the bump may be deferred to the re-pin commit R2".
+   > - The **acceptance gate** — `claude plugin tag --dry-run`, run inside `run_acceptance` — then
+   >   **REFUSES** exactly that state: *"Version mismatch: plugin.json says X but
+   >   .claude-plugin/marketplace.json plugins[0].version says Y … update the marketplace entry
+   >   before tagging."* That is a HARD-STOP; the cut cannot reach `READY`.
+   >
+   > **So the tolerance is not usable.** `marketplace.json`'s `version` and `source.ref` bump in
+   > **R**, with everything the equality chain drags along: `cli/package.json`'s `plugin_version`
+   > (asserted equal to the catalogue version by
+   > `test_the_plugin_pin_block_matches_the_marketplace_manifest`, no R-to-R2 tolerance), then its
+   > `version` via `TARBALL_VERSION_BY_PLUGIN_PIN`, then `cli-update`'s pin and version via
+   > `CLI_UPDATE_VERSION_BY_PIN`. **`source.sha` is the only field that can defer to R2** — it names
+   > R, which does not exist until R is committed, and that is the whole reason R2 exists.
+   >
+   > The v1.10.0 cut lost two full preflight runs (~12 minutes each) rediscovering this: first by
+   > staging the CLI pins in R against the deferred catalogue (suite red), then by deferring the
+   > catalogue as this playbook said (acceptance HARD-STOP). Stage as the table says and neither
+   > **State the trade honestly: deferring `source.sha` does NOT preserve AC-ILU-11's property — it
+   > is the field that breaks it.** What it preserves is only the weaker, unavoidable "never pin a
+   > commit that does not exist yet", since `source.sha` names R. Between R and R2, `main`'s
+   > catalogue advertises the new version while pinning the PREVIOUS release's tree, so an adopter
+   > resolving tagless in that window installs the previous code labelled as the new version — and
+   > `sha` outranks `ref` in resolution. It is sticky: R2 moves only `sha`, and `manifestRefreshed`
+   > needs BOTH `version` and `sha` to move, so their next refresh reports `already current`.
+   > **`main`'s `ci` is RED for the whole window** — `foundry_main_catalogue.py` runs on push-to-main
+   > and exists to convict exactly this state; the workflow scopes it to push-only *because* the
+   > window is legitimate. That red is the window reporting itself, not a defect to fix in the gate.
+   > **So: land R and R2 back to back.** Every minute of that window is an adopter-visible
+   > mislabelled install. The window is not new — v1.9.1 had it too — but nothing in this playbook
+   > said so before.
+   >
+   > **Why `cli-update`'s own version must move whenever its pin does.** The publish workflow skips
+   > a version already on the registry. `update-agentic-workspace@<old>` is published with the
+   > *previous* dependency baked in, so bumping only the pin leaves the registry serving an upgrader
+   > that installs the previous shared modules — a fully green release delivering the fix to nobody.
+   > On a release that first introduces a shared module it is worse: the published pin resolves to a
+   > version that does not contain it, and `npx update-agentic-workspace` installs and then crashes
+   > on import.
+   >
+   > Both tables live in `tests/test_bootstrap_cli.py` and both **refuse an unrecorded pin**, so the
+   > preflight suite names this rather than trusting you to remember it. Add each row deliberately,
+   > with the one-line reason — that is the point of a table over a diff.
+
+   > **RETIRED — this paragraph used to say `marketplace.json` does not bump in R.** It claimed the
+   > `version` and `source.ref` bump moved to R2 alongside `source.sha`, on the AC-ILU-11 reasoning
+   > that the default branch must never advertise a version its own pinned commit does not carry.
+   > **No cut has ever done that**, because the acceptance gate refuses it (the trap above), and
+   > v1.9.1's own R bumped `version` + `ref` while leaving `sha` at the previous release's commit —
+   > exactly what step 1's table now prescribes. The text is kept as a tombstone because it is
+   > quotable and was believed; do not restore it. `test_manifests_agree`
+   > (`tests/test_docs_claims.py`) tolerates the R-to-R2 lag and still refuses a `marketplace.json`
+   > that gets AHEAD of `plugin.json` or whose `source.ref` names a version it does not itself carry.
 
    > ⚠️ **The install pin's remaining binding is NOT covered by this playbook's preflight.**
    > The `REFUSED` checks below cover `plugin.json` and the CHANGELOG section — not:
@@ -112,9 +180,12 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
       acceptance verdict and the tag lands on it, so any uncommitted edit would ship under the
       release tag having never been gated.
    2. `CONTENT=$(git rev-parse HEAD)` — the release commit **R**, the code being shipped.
-   3. Edit `.claude-plugin/marketplace.json`: `version = X.Y.Z`, `source.sha = $CONTENT`,
-      `source.ref = vX.Y.Z` — **all three land here, in R2, never in R** (step 1, AC-ILU-11): the
-      default branch never advertises a catalogue version whose pinned commit does not carry it.
+   3. Edit `.claude-plugin/marketplace.json`: **`source.sha = $CONTENT` — that field alone.**
+      `version` and `source.ref` already moved in R (step 1's table and its trap: the acceptance
+      gate's `plugin tag --dry-run` HARD-STOPS on a catalogue version that disagrees with
+      `plugin.json`, so deferring them cannot reach `READY`). Deferring `source.sha` is what
+      preserves AC-ILU-11's property: the pinned commit is R, which did not exist until R was
+      committed.
    4. Commit it **path-scoped**: `git commit -m '…' -- .claude-plugin/marketplace.json`. Never
       `commit -am`, which sweeps every modified tracked file into the tagged commit.  → **R2**
    5. `git tag -a vX.Y.Z` — on **R2**, the commit that CARRIES the pin.
@@ -156,6 +227,39 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
    claude plugin update foundry@agentic-foundry
    ```
 
+   **Or, since v1.9.0, the shipped tool that does this and the checking around it:**
+
+   ```
+   npx update-agentic-workspace
+   ```
+
+   Run it **from inside the workspace directory**. Prefer it over the bare `plugin update` whenever
+   the adopter's state is not known-good — it is the manual steps below made mechanical, and it is
+   the only path that verifies delivery rather than reporting it:
+
+   - **Phase 1** — refreshes the marketplace, first migrating a registration still carrying a pinned
+     `ref` (the pre-v1.7.0 leftover): removed, re-added tagless, plugin re-installed, **once per
+     affected scope**, that scope's other settings preserved. This is the one-time migration written
+     out by hand further down; the tool finds the affected scopes instead of the operator guessing.
+     It reads the **marketplace catalogue manifest** before and after, and reports `changed` only
+     when BOTH `version` and `source.sha` moved — so an R2 that moves only `source.sha` reports
+     `already current` despite real delivery.
+   - **Phase 2** — `plugin update` in **every scope whose settings enable it**, from the
+     pre-migration snapshot. ⚠ **Phase 2 verifies nothing per scope.** `runPluginUpdate`'s result is
+     discarded and Phase 2's printed verdict is a *copy* of Phase 1's catalogue delta, so a scope
+     whose update silently no-ops still prints `changed`. The read-back above is a catalogue check,
+     not a delivery check — **you still confirm both scopes by hand** (below).
+   - **Phase 3** — `--cleanup`, opt-in: prunes superseded plugin-cache versions and a stale or
+     duplicate registration no scope still enables. **A flagless run previews and removes nothing.**
+   - **Phase 4** — re-runs the managed-file and permission-floor reconcile, so an adopter's floor
+     picks up rules a release added rather than staying at whatever the last scaffold wrote.
+
+   Every `claude` invocation it makes is drawn from one frozen, closed six-subcommand allowlist; none
+   can start a session or reach the trust dialog. **One side effect to state when handing it over:**
+   healing a pinned-`ref` scope ends in `plugin install`, so a scope where the plugin was
+   deliberately *disabled* has it re-enabled. That is specified, not accidental — a stale pin is a
+   broken registration either way — but an adopter who wants it off must disable it again afterward.
+
    **That is the whole upgrade — nothing else to run.** `plugin update` resolves the marketplace at
    the ref the registration names. A tagless registration names none, so resolution reads the
    catalogue live off the default branch every time; a new release reaches every adopter the moment
@@ -171,7 +275,12 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
    is no install line to bump on this side and no per-release step to forget: the whole upgrade path
    is this one command, every time.
 
-   **One-time migration for an adopter still tag-pinned from BEFORE this change.** Their
+   **One-time migration for an adopter still tag-pinned from BEFORE this change.** `npx
+   update-agentic-workspace` (above) performs exactly this as its Phase 1, in every affected scope,
+   and that is the way to do it. What follows is the same procedure by hand — read it to understand
+   why each step is there, or run it when npm is not available:
+
+   Their
    registration is `<owner>/<repo>#<old-tag>`, and `marketplace update` alone is a no-op against it
    — it refreshes the cache **at the ref already declared**, which is the frozen old tag, forever.
    Re-running `marketplace add <repo>` tagless does not fix it either: it **REFUSES** outright,
@@ -202,7 +311,11 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
 
    Verify by READING the refreshed cache — `~/.claude/plugins/marketplaces/<marketplace>/.claude-plugin/marketplace.json`
    must show the new `version` AND the new `source.sha`; the CLI's own "success" line does not prove
-   the ref moved. Check **both scopes**: a stale project row shadows a fresh user one, so a
+   the ref moved. **`npx update-agentic-workspace` does NOT do this for you.** Its read-back covers the
+   marketplace catalogue only, in Phase 1; nothing reads back per-scope install state, so the
+   both-scopes check in this paragraph is still yours to run. This is the v1.4.1 scar, and it is
+   exactly the shape that produced it: a stale project row shadows a fresh user one, the tool prints
+   `changed` from the catalogue delta, and the session keeps loading the previous version. Check **both scopes**: a stale project row shadows a fresh user one, so a
    user-scope update can report success while the session keeps loading the old tree. Identify the
    tree actually loaded by a version-unique path, never by process start time. Missed on the v1.4.1
    cut, where the plugin sat at 1.4.0 through several "successful" update runs. For this repo's own adopters

@@ -11,7 +11,7 @@ real running app → human sign-off.**
 > to earn its keep. A gate ships only if it names the observed failure it prevents; the
 > operator's own judgment is what the automation serves, never what it replaces.
 
-**Status: v1.9.1.** Built solo, dogfooded daily — Foundry is built *with* Foundry: every release
+**Status: v1.10.0.** Built solo, dogfooded daily — Foundry is built *with* Foundry: every release
 you can install was itself specced, authorized, floor-gated, and certified through it.
 
 ## The loop, in one picture
@@ -165,6 +165,19 @@ claude plugin install foundry@agentic-foundry
 # in your repo's Claude Code session:
 /foundry:init       # wire your repo (operator registry, hooks, project config)
 ```
+
+Already installed, and want to be current? One command, run from inside the workspace:
+
+```bash
+npx update-agentic-workspace
+```
+
+It refreshes the marketplace (migrating a pre-v1.7.0 tag-pinned registration if it finds one),
+updates the plugin in **every scope that enables it**, and re-runs the workspace and
+permission-floor reconcile so your floor picks up rules a release added. It reads the marketplace
+catalogue back to confirm it actually moved; the per-scope updates are not individually verified, so
+if a session still loads the old version, check each scope's registration. `--cleanup` additionally prunes superseded cache versions
+and stale registrations; without that flag it previews and removes nothing.
 
 Then follow **[docs/QUICKSTART.md](docs/QUICKSTART.md)** — zero to your first governed merge.
 Existing codebase? Start at `/foundry:extract-spec` (brownfield → spec, then the same loop).
