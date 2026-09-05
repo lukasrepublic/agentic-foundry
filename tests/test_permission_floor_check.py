@@ -183,9 +183,11 @@ def _import_map_suite():
 # not edit its own confinement), so both the map rows and this re-pin are coordinator work, the same
 # shape as PR #59's `c3406e5`.
 # Updated in the SAME reviewed diff as the map edit it pins (the R8 rule this guard states).
-# The edit: one `allow` entry for `scripts/foundry_command_deck.py`, a read-only derivation module
-# that writes nothing and issues no merge, dispatch, or authorization.
-MERGE_BASE_ENTRIES_DIGEST = "49c7b0a41a366bda435c0f049afe098a22dfedd15ce7e1315647ba546e5809b6"
+# The edit: one `allow` entry for `scripts/foundry_command_deck_watch.py`, the command-deck watcher
+# lifecycle. Its reads are the same reach as the derivation module beside it; it writes exactly one
+# path shape, `.foundry/watchers/<programme>.json`, whose only variable is re-checked against a
+# [a-z0-9-]+ fullmatch before any path join. The record is inert data no derivation reads.
+MERGE_BASE_ENTRIES_DIGEST = "03962a5cb357344279ab00f6750e49f3024642fe16bf29b026de57f082484b7a"
 
 
 # ================================================================================================ #

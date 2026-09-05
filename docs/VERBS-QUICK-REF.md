@@ -20,6 +20,7 @@ matter on day one, see the `## Start here` table in [README.md](../README.md).
 | `/foundry:mode` | Shows which session posture and merge-autonomy mode are active |
 | `/foundry:mode-interactive` | Switches to the zero-ceremony lane: plain Claude Code, no pipeline |
 | `/foundry:mode-autonomous` | Switches to the noninteractive posture for unattended runs |
+| `/foundry:command-deck` | Arms a recurring watcher over one programme and manages it — `status`, `stop`, `restart`, `tick`, `prompt`, `list`. Each tick re-measures the ready-set, dispatches, verifies, lands and reports |
 | `/foundry:context` | Loads the workspace and product context a session needs to start |
 | `/foundry:env-hygiene` | Flags stray environment variables a session should not be carrying |
 | `/foundry:work-isolation` | Manages the worktree write-jail and post-merge cleanup around an isolated worker |
