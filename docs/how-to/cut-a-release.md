@@ -15,8 +15,8 @@ data** — it never tags, never pushes, never closes issues itself. You execute 
                                       │ READY
                                       ▼
                             the publish plan (data):
-                              1. re-pin marketplace version + source.sha = R,
-                                 source.ref = vX.Y.Z (path-scoped commit R2)
+                              1. re-pin marketplace source.sha = R
+                                 (version + source.ref already moved in R) — commit R2
                               2. annotated tag vX.Y.Z on R2 — the commit CARRYING the pin
                               3. --verify-tag  →  must print TAG-PIN-COHERENT
                               4. push main + tag  (never force)
@@ -30,13 +30,23 @@ data** — it never tags, never pushes, never closes issues itself. You execute 
    - write the `## vX.Y.Z` CHANGELOG section
    - commit (the release commit **R**)
 
-   **`.claude-plugin/marketplace.json` does NOT bump here.** Its `version` and `source.ref`
-   move to the re-pin commit **R2** below, landing together with `source.sha` — never in R
-   (`feat-foundry-install-line-unpinning`). Bumping the catalogue in R, ahead of the commit that
-   carries it, would make the default branch advertise a catalogue version whose pinned commit does
-   NOT carry it — so an adopter resolving a tagless registration mid-cut is told about a version R2
-   has not shipped yet, and is served the previous release. See the version-bump step of
-   [`skills/cut-release/SKILL.md`](../../skills/cut-release/SKILL.md) for the full reasoning.
+   **`.claude-plugin/marketplace.json` DOES bump here** — its `version` and `source.ref`, together
+   with `cli/package.json`'s `foundry.plugin_version` and `version` and `cli-update/package.json`'s
+   pin and version, which are all asserted equal to it. **Only `source.sha` defers to R2**, because
+   it names R, which does not exist until R is committed.
+
+   This reverses what this guide used to say. The old text deferred the whole catalogue entry to R2
+   on the reasoning that the default branch must never advertise a version its own pinned commit
+   does not carry. That reasoning is sound and the procedure is still unusable: the acceptance gate
+   (`claude plugin tag --dry-run`) HARD-STOPS on a `marketplace.json` version that disagrees with
+   `plugin.json`, so a cut staged that way can never reach `READY`.
+
+   **The consequence is real and you should expect it.** Between R and R2, the default branch
+   advertises the new version while pinning the previous release's tree, so an adopter resolving a
+   tagless registration in that window installs the previous code labelled as the new version, and
+   `main`'s CI is RED (`foundry_main_catalogue.py` runs on push-to-main to convict exactly that
+   state). **Land R and R2 back to back** and the window is a few minutes. See the version-bump step
+   of [`skills/cut-release/SKILL.md`](../../skills/cut-release/SKILL.md) for the full table.
 
 2. **Run the gate:**
 
@@ -56,8 +66,8 @@ data** — it never tags, never pushes, never closes issues itself. You execute 
    ```bash
    git status --porcelain                     # must be EMPTY (see the warning below)
    CONTENT=$(git rev-parse HEAD)              # the release commit R
-   # edit .claude-plugin/marketplace.json: source.sha = $CONTENT, then set version = X.Y.Z
-   # and source.ref = vX.Y.Z -- ALL THREE fields land here, in R2, never in R (see Prep above)
+   # edit .claude-plugin/marketplace.json: source.sha = $CONTENT -- THAT FIELD ALONE.
+   # version and source.ref already moved in R (see Prep above)
    git commit -m 'release: re-pin …' -- .claude-plugin/marketplace.json   # R2, PATH-SCOPED
    git tag -a vX.Y.Z -m 'agentic-foundry vX.Y.Z'                          # on R2
    python3 scripts/foundry-cut-release.py --tree . --version X.Y.Z --verify-tag
