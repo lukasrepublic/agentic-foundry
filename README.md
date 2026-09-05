@@ -173,9 +173,10 @@ npx update-agentic-workspace
 ```
 
 It refreshes the marketplace (migrating a pre-v1.7.0 tag-pinned registration if it finds one),
-updates the plugin in **every scope that enables it** — verified by reading the refreshed cache back
-rather than trusting a success line — and re-runs the workspace and permission-floor reconcile so
-your floor picks up rules a release added. `--cleanup` additionally prunes superseded cache versions
+updates the plugin in **every scope that enables it**, and re-runs the workspace and
+permission-floor reconcile so your floor picks up rules a release added. It reads the marketplace
+catalogue back to confirm it actually moved; the per-scope updates are not individually verified, so
+if a session still loads the old version, check each scope's registration. `--cleanup` additionally prunes superseded cache versions
 and stale registrations; without that flag it previews and removes nothing.
 
 Then follow **[docs/QUICKSTART.md](docs/QUICKSTART.md)** — zero to your first governed merge.

@@ -63,13 +63,26 @@ version that does not contain it and `npx update-agentic-workspace` installs, th
 import. Both `TARBALL_VERSION_BY_PLUGIN_PIN` and `CLI_UPDATE_VERSION_BY_PIN` refuse an unrecorded
 pin, so the preflight suite names this rather than relying on the operator to remember it. This
 release exercises the path it documents: `cli` 0.9.1 → **0.10.0**, `cli-update` 0.1.1 → **0.1.2**
-with its pin following — in **R2**, which is the other half of what the playbook was missing. The
-pin-block test asserts `cli/package.json`'s `foundry.plugin_version` equals `marketplace.json`'s
-`version`, and the catalogue bump is deferred to R2; staging the CLI pins in R therefore makes the
-two disagree and, because the preflight runs the suite, R can never reach `READY`. Both ledgers
-chain off that field, so all three npm-facing manifests follow the catalogue into R2. Step 1's table
-now says which commit each field lands in, and step 3 names the four files its path-scoped commit
-carries.
+with its pin following.
+
+### The playbook's own two gates disagreed about the catalogue bump, and one of them is a HARD-STOP
+
+The cut that produced this release lost two full preflight runs to it, which is what makes it worth
+writing down rather than remembering. The **preflight** tolerates `marketplace.json` sitting at the
+immediately-preceding release and says the bump "may be deferred to the re-pin commit R2". The
+**acceptance gate** — `claude plugin tag --dry-run`, inside `run_acceptance` — then refuses exactly
+that state: *"Version mismatch: plugin.json says X but marketplace.json plugins[0].version says
+Y."* The tolerance is therefore unusable: a cut that takes it can never reach `READY`.
+
+So the catalogue's `version` and `source.ref` bump in **R**, and `source.sha` is the only field that
+defers to R2 — which is what actually preserves AC-ILU-11's property, since `source.sha` names R and
+R does not exist until R is committed. Everything chained to the catalogue version follows it into
+R: `cli/package.json`'s `foundry.plugin_version` (asserted equal to it, with no R-to-R2 tolerance),
+then its `version` via `TARBALL_VERSION_BY_PLUGIN_PIN`, then `cli-update`'s pin and version via
+`CLI_UPDATE_VERSION_BY_PIN`. Step 1 now carries the full field-by-commit table, the trap is written
+out with the error each side produces, and step 3 is corrected to `source.sha` alone. The README
+`**Status:**` line is in the table too — it binds to `plugin.json`'s version, and it was the last
+straggler a red suite had to name.
 
 `npx update-agentic-workspace` is also now documented where an adopter actually looks. It shipped in
 v1.9.0 and appeared only in `docs/troubleshooting.md` and the two CLI READMEs — never in `README.md`
@@ -84,12 +97,20 @@ performed since v1.9.0. The playbook never named it, so every cut re-derived a m
 already had a shipped, tested implementation.
 
 Step 5 now leads with `npx update-agentic-workspace` and says what each of its four phases does: the
-pre-v1.7.0 pinned-`ref` migration per affected scope, the plugin update in every scope that enables
-it **verified by reading back the refreshed cache manifest** rather than trusting a success line
-(the v1.4.1 scar, made mechanical), the opt-in `--cleanup` prune that previews and removes nothing
+pre-v1.7.0 pinned-`ref` migration per affected scope with its catalogue read-back, the plugin
+update in every scope that enables it, the opt-in `--cleanup` prune that previews and removes nothing
 without the flag, and the managed-file plus permission-floor reconcile — which is what lets an
 adopter's floor pick up a rule a release added instead of staying at whatever the last scaffold
-wrote. The hand-run commands stay, re-framed as the explanation and the no-npm fallback, and the
+wrote.
+
+The step also now states what that tool does **not** verify, which the security pass on this release
+caught as an overstatement in the first draft: the read-back is Phase 1 and covers the **marketplace
+catalogue only**. `runPluginUpdate`'s result is discarded and Phase 2's printed verdict is a copy of
+the Phase-1 delta, so a scope whose update silently no-ops still prints `changed` — and
+`manifestRefreshed` requires both `version` and `source.sha` to move, so an R2 that moves only the
+sha reports `already current` despite real delivery. The both-scopes check therefore stays the
+operator's, which matters because skipping it is precisely the v1.4.1 failure: a stale project row
+shadows a fresh user one and the session keeps loading the previous version. The hand-run commands stay, re-framed as the explanation and the no-npm fallback, and the
 one side effect worth saying out loud is stated: healing a pinned scope ends in `plugin install`, so
 a scope where the plugin was deliberately disabled has it re-enabled.
 

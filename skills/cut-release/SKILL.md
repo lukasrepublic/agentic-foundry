@@ -1,6 +1,6 @@
 ---
 name: cut-release
-description: Cut an agentic-foundry release as a guarded playbook (/foundry:cut-release). Encodes the hand-run cut procedure as a loop whose EXIT GATE is the existing acceptance verdict — verifies the ordered preconditions (plugin.json version, CHANGELOG section; the marketplace.json catalogue bump is deferred to the re-pin commit R2), refuses to emit any publish plan until run_acceptance returns pass, and only afterward emits the gotcha-correct publish plan (re-pin marketplace source.sha to the release commit → annotated tag on the re-pin commit → machine-verify the tag → push, never force) WITHOUT pushing. Trigger when the operator is cutting/releasing a version — "cut a release", "release v0.6.1", "/foundry:cut-release", "ship the release".
+description: Cut an agentic-foundry release as a guarded playbook (/foundry:cut-release). Encodes the hand-run cut procedure as a loop whose EXIT GATE is the existing acceptance verdict — verifies the ordered preconditions (plugin.json version, CHANGELOG section, clean tree, and the candidate tree's own test suite; note the preflight TOLERATES a marketplace.json catalogue version left at the preceding release but the acceptance gate HARD-STOPS on it, so the catalogue bumps in R and only source.sha defers to the re-pin commit R2), refuses to emit any publish plan until run_acceptance returns pass, and only afterward emits the gotcha-correct publish plan (re-pin marketplace source.sha to the release commit → annotated tag on the re-pin commit → machine-verify the tag → push, never force) WITHOUT pushing. Trigger when the operator is cutting/releasing a version — "cut a release", "release v0.6.1", "/foundry:cut-release", "ship the release".
 ---
 
 # /foundry:cut-release — the cut-release playbook
@@ -57,28 +57,46 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
    > `publish-cli` (`cli/` → **create-agentic-workspace**, the scaffolder) and then
    > `publish-cli-update` (`cli-update/` → **update-agentic-workspace**, the upgrader), the second
    > `needs:` the first and polls the registry for its dependency before installing. Staging a
-   > release means staging both, and they move together — **in R2, not in R**:
+   > release means staging both, and they move together **in R** — only `source.sha` defers to R2:
    >
    > | file | field | commit | rule |
    > |---|---|---|---|
    > | `.claude-plugin/plugin.json` | `version` | **R** | the plugin version itself |
+   > | `.claude-plugin/marketplace.json` | `version`, `source.ref` | **R** | **not R2** — see the trap below |
+   > | `.claude-plugin/marketplace.json` | `source.sha` | **R2** | the ONLY field that defers; it names R, which does not exist yet |
    > | `docs/` + `cli/permission-floor.json` | `generated_for_plugin_version` | **R** | both, byte-identical |
-   > | `README.md` | the `**Status: vX.Y.Z.**` line | **R** | asserted equal to `plugin.json`'s version, so it moves with it — NOT with the catalogue |
-   > | `.claude-plugin/marketplace.json` | `version`, `source.ref`, `source.sha` | **R2** | step 3 |
-   > | `cli/package.json` | `foundry.plugin_version` | **R2** | asserted EQUAL to `marketplace.json`'s `version` |
-   > | `cli/package.json` | `version` | **R2** | the scaffolder tarball; a row in `TARBALL_VERSION_BY_PLUGIN_PIN`, keyed by `plugin_version` |
-   > | `cli-update/package.json` | `dependencies.create-agentic-workspace` | **R2** | **exactly** `cli/package.json`'s new `version` |
-   > | `cli-update/package.json` | `version` | **R2** | must ALSO move; a row in `CLI_UPDATE_VERSION_BY_PIN` |
+   > | `README.md` | the `**Status: vX.Y.Z.**` line | **R** | asserted equal to `plugin.json`'s version |
+   > | `cli/package.json` | `foundry.plugin_version` | **R** | asserted EQUAL to `marketplace.json`'s `version`, so it follows the catalogue |
+   > | `cli/package.json` | `version` | **R** | the scaffolder tarball; a row in `TARBALL_VERSION_BY_PLUGIN_PIN`, keyed by `plugin_version` |
+   > | `cli-update/package.json` | `dependencies.create-agentic-workspace` | **R** | **exactly** `cli/package.json`'s new `version` |
+   > | `cli-update/package.json` | `version` | **R** | must ALSO move; a row in `CLI_UPDATE_VERSION_BY_PIN` |
    >
-   > **Why the CLI pins are R2 work and not R work — this is easy to get wrong, and the preflight
-   > will catch you.** `test_the_plugin_pin_block_matches_the_marketplace_manifest` asserts
-   > `cli/package.json`'s `foundry.plugin_version` **equals** `marketplace.json`'s `version`, with no
-   > R-to-R2 tolerance of its own. Since the catalogue bump is deferred to R2 (AC-ILU-11, step 3),
-   > bumping the CLI pin in R makes the two disagree and the suite goes red — and because the
-   > preflight RUNS the suite, R can never reach `READY`. The two ledger tables chain off that same
-   > field, so the tarball and `cli-update` versions follow it into R2. R therefore carries the
-   > plugin version, the floor mirrors and the CHANGELOG; **R2 carries the catalogue and all three
-   > npm-facing manifests**, and step 3's path-scoped commit names those four files explicitly.
+   > ### ⚠ THE TRAP: the preflight and the acceptance gate disagree about the catalogue bump
+   >
+   > Read this before staging anything, because two of this playbook's own gates give opposite
+   > answers and only one of them is a HARD-STOP.
+   >
+   > - The **preflight** *tolerates* `marketplace.json` sitting at the immediately-preceding release
+   >   and says in as many words that "the bump may be deferred to the re-pin commit R2".
+   > - The **acceptance gate** — `claude plugin tag --dry-run`, run inside `run_acceptance` — then
+   >   **REFUSES** exactly that state: *"Version mismatch: plugin.json says X but
+   >   .claude-plugin/marketplace.json plugins[0].version says Y … update the marketplace entry
+   >   before tagging."* That is a HARD-STOP; the cut cannot reach `READY`.
+   >
+   > **So the tolerance is not usable.** `marketplace.json`'s `version` and `source.ref` bump in
+   > **R**, with everything the equality chain drags along: `cli/package.json`'s `plugin_version`
+   > (asserted equal to the catalogue version by
+   > `test_the_plugin_pin_block_matches_the_marketplace_manifest`, no R-to-R2 tolerance), then its
+   > `version` via `TARBALL_VERSION_BY_PLUGIN_PIN`, then `cli-update`'s pin and version via
+   > `CLI_UPDATE_VERSION_BY_PIN`. **`source.sha` is the only field that can defer to R2** — it names
+   > R, which does not exist until R is committed, and that is the whole reason R2 exists.
+   >
+   > The v1.10.0 cut lost two full preflight runs (~12 minutes each) rediscovering this: first by
+   > staging the CLI pins in R against the deferred catalogue (suite red), then by deferring the
+   > catalogue as this playbook said (acceptance HARD-STOP). Stage as the table says and neither
+   > happens. The narrower AC-ILU-11 property — never advertise a catalogue version whose pinned
+   > commit does not carry it — is what `source.sha` deferring to R2 preserves, and it is preserved
+   > by exactly that one field, not by deferring the whole entry.
    >
    > **Why `cli-update`'s own version must move whenever its pin does.** The publish workflow skips
    > a version already on the registry. `update-agentic-workspace@<old>` is published with the
@@ -152,17 +170,14 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
       acceptance verdict and the tag lands on it, so any uncommitted edit would ship under the
       release tag having never been gated.
    2. `CONTENT=$(git rev-parse HEAD)` — the release commit **R**, the code being shipped.
-   3. Edit `.claude-plugin/marketplace.json`: `version = X.Y.Z`, `source.sha = $CONTENT`,
-      `source.ref = vX.Y.Z` — **all three land here, in R2, never in R** (step 1, AC-ILU-11): the
-      default branch never advertises a catalogue version whose pinned commit does not carry it.
-   3b. Bump the **three npm-facing manifests** in this same commit (step 1's table): `cli/package.json`
-      `foundry.plugin_version` (which the pin-block test asserts equal to the `version` you just
-      set) and `version`, then `cli-update/package.json` `dependencies.create-agentic-workspace`
-      and its own `version`.
-
-   4. Commit it **path-scoped, naming exactly those four files**:
-      `git commit -m '…' -- .claude-plugin/marketplace.json cli/package.json cli-update/package.json`.
-      Never `commit -am`, which sweeps every modified tracked file into the tagged commit.  → **R2**
+   3. Edit `.claude-plugin/marketplace.json`: **`source.sha = $CONTENT` — that field alone.**
+      `version` and `source.ref` already moved in R (step 1's table and its trap: the acceptance
+      gate's `plugin tag --dry-run` HARD-STOPS on a catalogue version that disagrees with
+      `plugin.json`, so deferring them cannot reach `READY`). Deferring `source.sha` is what
+      preserves AC-ILU-11's property: the pinned commit is R, which did not exist until R was
+      committed.
+   4. Commit it **path-scoped**: `git commit -m '…' -- .claude-plugin/marketplace.json`. Never
+      `commit -am`, which sweeps every modified tracked file into the tagged commit.  → **R2**
    5. `git tag -a vX.Y.Z` — on **R2**, the commit that CARRIES the pin.
    6. `python3 scripts/foundry-cut-release.py --tree <repo> --version X.Y.Z --verify-tag` — the
       machine re-check. **Must print `TAG-PIN-COHERENT`.** Do not push until it does.
@@ -216,10 +231,14 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
      `ref` (the pre-v1.7.0 leftover): removed, re-added tagless, plugin re-installed, **once per
      affected scope**, that scope's other settings preserved. This is the one-time migration written
      out by hand further down; the tool finds the affected scopes instead of the operator guessing.
-   - **Phase 2** — `plugin update` in **every scope whose settings enable it**, then **reads back the
-     refreshed cache manifest** instead of trusting the CLI's own success line. That read-back is the
-     v1.4.1 scar (the plugin sat at 1.4.0 through several "successful" runs) made mechanical, and it
-     is why this is the delivery check and not merely another way to invoke the same command.
+     It reads the **marketplace catalogue manifest** before and after, and reports `changed` only
+     when BOTH `version` and `source.sha` moved — so an R2 that moves only `source.sha` reports
+     `already current` despite real delivery.
+   - **Phase 2** — `plugin update` in **every scope whose settings enable it**, from the
+     pre-migration snapshot. ⚠ **Phase 2 verifies nothing per scope.** `runPluginUpdate`'s result is
+     discarded and Phase 2's printed verdict is a *copy* of Phase 1's catalogue delta, so a scope
+     whose update silently no-ops still prints `changed`. The read-back above is a catalogue check,
+     not a delivery check — **you still confirm both scopes by hand** (below).
    - **Phase 3** — `--cleanup`, opt-in: prunes superseded plugin-cache versions and a stale or
      duplicate registration no scope still enables. **A flagless run previews and removes nothing.**
    - **Phase 4** — re-runs the managed-file and permission-floor reconcile, so an adopter's floor
@@ -282,8 +301,11 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
 
    Verify by READING the refreshed cache — `~/.claude/plugins/marketplaces/<marketplace>/.claude-plugin/marketplace.json`
    must show the new `version` AND the new `source.sha`; the CLI's own "success" line does not prove
-   the ref moved. **`npx update-agentic-workspace` already does this read-back in its Phase 2** — if
-   you used it, this paragraph is the check it ran, not a second one to run by hand. Check **both scopes**: a stale project row shadows a fresh user one, so a
+   the ref moved. **`npx update-agentic-workspace` does NOT do this for you.** Its read-back covers the
+   marketplace catalogue only, in Phase 1; nothing reads back per-scope install state, so the
+   both-scopes check in this paragraph is still yours to run. This is the v1.4.1 scar, and it is
+   exactly the shape that produced it: a stale project row shadows a fresh user one, the tool prints
+   `changed` from the catalogue delta, and the session keeps loading the previous version. Check **both scopes**: a stale project row shadows a fresh user one, so a
    user-scope update can report success while the session keeps loading the old tree. Identify the
    tree actually loaded by a version-unique path, never by process start time. Missed on the v1.4.1
    cut, where the plugin sat at 1.4.0 through several "successful" update runs. For this repo's own adopters
