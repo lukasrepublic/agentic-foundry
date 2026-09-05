@@ -475,6 +475,11 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         # satisfy its imports: `npx update-agentic-workspace` would install and then crash.
         "1.9.0": "0.9.0",
         "1.9.1": "0.9.1",
+        # v1.10.0 DOES carry a CLI change of its own, on top of the pin it embeds — the same shape
+        # as 1.5.0: the bundled `cli/permission-floor.json` gains one `allow` rule (the command-deck
+        # watcher lifecycle), so a newly scaffolded or reconciled workspace receives a different
+        # floor than 0.9.1 wrote.
+        "1.10.0": "0.10.0",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (

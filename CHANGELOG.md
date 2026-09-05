@@ -8,6 +8,58 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.10.0 — 2026-09-04
+
+### The command deck becomes a verb you can arm, stop and re-arm
+
+`/foundry:command-deck <programme-id>` arms a recurring watcher over one programme and manages it:
+`status`, `stop`, `restart`, `tick`, `prompt`, `list`. Each tick re-measures the ready-set from
+disk, dispatches what the wave barrier has unblocked, verifies independently, lands what passes, and
+reports Accomplishments / Next / Blockers.
+
+v1.5.0 shipped the tick contract as a delta to `/foundry:mode-autonomous`, which left two things
+broken. The capability's own name did not resolve it — the operator hit this directly: *"I thought
+the command would be command-deck but its mode-autonomous?"* — because skill selection matches the
+`description` frontmatter and `/foundry:command-deck` was listed only in the body, the one place
+that cannot cause an invocation. And nothing could arm, inspect, stop or re-arm a watcher at all.
+
+- **`skills/command-deck/SKILL.md`** — the verb. It also writes down the shape that works, which
+  was measured rather than assumed: the deck is the operator's own session woken by a recurring
+  scheduled job, so it holds their authority by construction. It is **never a subagent** (packaging
+  operator authority into a brief and delegating it is the exact shape a permission classifier
+  refuses, and refusing it is correct), **never a background shell loop**, and it **never
+  self-grants** a denied permission — it surfaces the denial as its single blocker and stops.
+- **`skills/command-deck/tick-prompt.template.md`** — the operating discipline a tick fires under,
+  rendered per programme.
+- **`scripts/foundry_command_deck_watch.py`** — renders that prompt from the live ready-set and
+  keeps the watcher record at `.foundry/watchers/<programme>.json`. The record exists because a
+  scheduled job is **session-only** and auto-expires after 7 days, so "this programme is meant to be
+  watched" cannot live in the job. It is a note, never an authority: nothing derives from it, and
+  `status` prints it and the live measurement side by side without reconciling them, because only
+  the session holding the job can say whether it still fires.
+- **`scripts/foundry_command_deck.py` is unchanged.** It remains the derivation — `ready_set` with
+  the authorization re-derivation and the wave barrier, `is_idle`, `wake_seconds`, `may_land`. The
+  new module is the surface around it, not a second copy of it.
+- **`skills/mode-autonomous/SKILL.md`** gains one disambiguation clause in its `description`. Both
+  skills now name the other and the condition under which the other is the right verb — in the
+  field selection actually matches, since a body cannot fix a mis-selection.
+
+`restart` is how a tick prompt is **edited**: the scheduler is delete-then-create, and rewriting the
+prompt each time the deck learns a rule is why it gets good.
+
+**Security review:** required and performed — the diff adds a script that writes to the corpus and
+prose in two skills. Separate context, read-only, against the PR head: **no Block, no Risk, three
+Nits.** It confirmed the slug guard holds by construction (a literal-ASCII `re.fullmatch` returning
+the value it validated, so traversal never reaches `os.path.join`, with `resolve_programme`'s
+realpath containment as a second non-overlapping layer) and that every value interpolated into the
+rendered prompt is a validated slug, a closed enum, or `as_data`-sanitised. Two Nits were fixed
+before merge: a watcher record holding valid-but-non-object JSON raised an uncaught `AttributeError`
+where the module promises a refusal, and the workspace path was interpolated unquoted into the
+tick's own `cd`. One is tracked and deliberately not fixed: the template directs the tick to read
+the manifest's YAML comments, which `yaml.safe_load` discards and the sanitiser therefore never
+sees — not a defect while the operator authors the manifests, and the reason that instruction stays
+pointed at the manifest rather than widened to arbitrary referenced files.
+
 ## v1.9.1 — 2026-09-02
 
 ### The migration no longer drops a registration setting the adopter chose
