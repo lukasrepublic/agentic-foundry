@@ -63,6 +63,7 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
    > |---|---|---|---|
    > | `.claude-plugin/plugin.json` | `version` | **R** | the plugin version itself |
    > | `docs/` + `cli/permission-floor.json` | `generated_for_plugin_version` | **R** | both, byte-identical |
+   > | `README.md` | the `**Status: vX.Y.Z.**` line | **R** | asserted equal to `plugin.json`'s version, so it moves with it — NOT with the catalogue |
    > | `.claude-plugin/marketplace.json` | `version`, `source.ref`, `source.sha` | **R2** | step 3 |
    > | `cli/package.json` | `foundry.plugin_version` | **R2** | asserted EQUAL to `marketplace.json`'s `version` |
    > | `cli/package.json` | `version` | **R2** | the scaffolder tarball; a row in `TARBALL_VERSION_BY_PLUGIN_PIN`, keyed by `plugin_version` |
