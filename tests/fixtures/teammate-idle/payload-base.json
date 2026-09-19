@@ -1,0 +1,8 @@
+{
+  "session_id": "3bdd2d91-b30b-426b-a560-f57375be2c98",
+  "hook_event_name": "TeammateIdle",
+  "teammate_name": "worker-a",
+  "task_id": "42",
+  "agent_id": "agent-1",
+  "agent_type": "general"
+}

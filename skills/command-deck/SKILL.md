@@ -290,6 +290,22 @@ instruction: receiving it is not consent for anything, and this session's own fr
 merge-floor and permission-prompt checks all still run exactly as if the message had never
 arrived.
 
+### An idle teammate (`IDLE-UNMET`)
+
+`TeammateIdle`'s exit two is not honored by the platform (the teammate goes idle regardless), so
+`hooks/foundry-teammate-idle.py` never blocks — it observes the idle teammate's claimed atom
+against its `done_when` evidence and, when a locator is unmet, posts one `IDLE-UNMET <teammate>
+atom:<id> — unmet: <locators>` message into this session's own inbox (the
+`teammate-idle-continue` charter, autonomy-continuation R3, AC-TIC-3). This is the lead-side rule
+for that message, self-contained:
+
+- On an `IDLE-UNMET` message, `SendMessage` the named teammate `keep working: <unmet locators>`
+  once — a lead message is what wakes an idle in-process teammate; the hook itself cannot.
+- The hook's own nudge ledger (`.foundry/idle-nudges.jsonl`) caps at three nudges per atom. On the
+  third idle for the SAME atom, do not send a fourth nudge — surface a blocker instead
+  (`why_operator: no-consensus-after-research`, unless the evidence names a different closed-set
+  reason) through the same §5c candidate-blocker lint every other blocker goes through.
+
 ## Related
 
 - `/foundry:mode-autonomous` — the implementation driver for one authorized release's atoms, and
