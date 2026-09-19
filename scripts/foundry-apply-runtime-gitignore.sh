@@ -55,7 +55,7 @@ SYNTH_COMMENT="# deviation from the shipped .foundry/ runtime-partition default 
 KNOWN_BAD_SHAS_RELPATH=".foundry/leak-scan/known-bad-shas.txt"
 
 # The designed-tracked set (Terminology, spec): exactly these three, root-relative, and no others.
-MEMBERS=(".foundry/README.md" ".foundry/build-provenance.yaml" ".foundry/stack-profile.lock")
+MEMBERS=(".foundry/README.md" ".foundry/build-provenance.yaml" ".foundry/stack-profile.lock" ".foundry/releases/" ".foundry/decisions/" ".foundry/permissions.yaml")
 
 die() { printf 'foundry-apply-runtime-gitignore: %s\n' "$*" >&2; exit 1; }
 

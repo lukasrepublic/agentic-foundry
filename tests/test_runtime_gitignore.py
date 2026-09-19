@@ -31,6 +31,9 @@ DESIGNED_TRACKED_SET = [
     ".foundry/README.md",
     ".foundry/build-provenance.yaml",
     ".foundry/stack-profile.lock",
+    ".foundry/releases/",
+    ".foundry/decisions/",
+    ".foundry/permissions.yaml",
 ]
 
 BEGIN_TOKEN = "FOUNDRY-RUNTIME-GITIGNORE-BEGIN"

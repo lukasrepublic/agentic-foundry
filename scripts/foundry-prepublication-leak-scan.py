@@ -83,6 +83,9 @@ DESIGNED_TRACKED_SET = frozenset(
         ".foundry/README.md",
         ".foundry/build-provenance.yaml",
         ".foundry/stack-profile.lock",
+        ".foundry/releases/",
+        ".foundry/decisions/",
+        ".foundry/permissions.yaml",
     ]
 )
 
