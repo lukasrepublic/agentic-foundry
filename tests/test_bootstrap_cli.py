@@ -364,6 +364,8 @@ def test_the_update_package_manifest_has_no_lifecycle_scripts():
                             # workflow skips an already-published version, so NOT bumping here would
                             # leave the registry serving an update tool that installs the previous
                             # shared modules.
+        "0.11.0": "0.1.3",  # v1.11.0 -- cli/ moves for the /foundry:amend `ask` floor rule; the
+                            # upgrader's pin and own version move with it for the same reason.
     }
     pin = deps["create-agentic-workspace"]
     expected_update_version = CLI_UPDATE_VERSION_BY_PIN.get(pin)
@@ -486,6 +488,10 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         # watcher lifecycle), so a newly scaffolded or reconciled workspace receives a different
         # floor than 0.9.1 wrote.
         "1.10.0": "0.10.0",
+        # v1.11.0 carries a CLI change of the same shape: the bundled `cli/permission-floor.json`
+        # gains one `ask` rule (`foundry-amend.py`, the /foundry:amend re-freeze), so a scaffolded
+        # or reconciled workspace receives a different floor than 0.10.0 wrote.
+        "1.11.0": "0.11.0",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (
