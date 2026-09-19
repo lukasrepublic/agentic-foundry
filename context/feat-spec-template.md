@@ -57,7 +57,10 @@ question as an inline `[NEEDS CLARIFICATION: <question>]` marker so it blocks a 
 ## Amendments
 
 <!-- The spec is a living document (`.foundry/decisions/2026-09-18-spec-is-a-living-document.md`):
-adjusted during implementation when reality requires it, without re-entering the front gate.
+adjusted during implementation when reality requires it, without re-entering the front gate —
+except an amendment that widens scope (allowed_paths/denied_paths, requires_capabilities,
+identifier tokens in checkpoints) or touches a security-surface atom (mandatory_review names
+security), which re-enters /foundry:authorize.
 Record each amendment as a row — this section is outside the normative region and adds no AC.
 Leave the table empty (header only) until the first amendment lands. -->
 
