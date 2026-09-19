@@ -165,6 +165,14 @@ def _scan(cmd: str, emit_words: bool):
 
     hard_clause_start = 0
     cur_other_consumer = False
+    # AC-GSO-6 "# starts a comment" fix (PR #178 security review round 2): `not buf` is true
+    # right after an EMPTY quoted string too (`echo ''#x` closes `''` with nothing appended),
+    # which wrongly treated the `#` as a fresh word boundary — in real bash `''#x` is the single
+    # literal word "#x" (quote-adjacency continues the SAME token). `token_started` tracks
+    # "are we mid-token" independent of whether anything has been appended to `buf` yet: it goes
+    # True the moment a quote opens (even an empty one) or an ordinary char is appended, and only
+    # resets on an actual word boundary (whitespace/separator/newline) or at start of input.
+    token_started = False
 
     def cur_kind() -> str:
         if sub_stack:
@@ -172,7 +180,7 @@ def _scan(cmd: str, emit_words: bool):
         return "word"
 
     def flush_word():
-        nonlocal buf, cur_other_consumer
+        nonlocal buf, cur_other_consumer, token_started
         if buf:
             text = "".join(buf)
             if not sub_stack and _FD_DUP_RE.match(text):
@@ -180,6 +188,7 @@ def _scan(cmd: str, emit_words: bool):
             if emit_words:
                 words.append(Word(text, clause_index, False, cur_kind()))
         buf = []
+        token_started = False
 
     while i < n:
         ch = cmd[i]
@@ -199,6 +208,15 @@ def _scan(cmd: str, emit_words: bool):
                 buf.append(cmd[i + 1])
                 i += 2
                 continue
+            # Line continuation IS processed inside a double-quoted string (POSIX); this is
+            # ordinary "code span" splicing, independent of the raw-line heredoc-boundary search
+            # below, which never sees this transform.
+            if ch == "\\" and i + 1 < n and cmd[i + 1] == "\n":
+                i += 2
+                continue
+            if ch == "\\" and i + 2 < n and cmd[i + 1] == "\r" and cmd[i + 2] == "\n":
+                i += 3
+                continue
             if ch == '"':
                 in_dquote = False
                 i += 1
@@ -207,17 +225,32 @@ def _scan(cmd: str, emit_words: bool):
             i += 1
             continue
 
+        # Backslash line-continuation (AC-GSO-1(a), amended): spliced INLINE here, for ordinary
+        # word/opener scanning ONLY — never applied to the string before this loop runs, and
+        # never consulted by `_find_heredoc_end()`, which walks the untouched raw `cmd` on its
+        # own. This is what keeps heredoc terminator matching raw-line-correct while still
+        # joining a continued command line into one word stream.
+        if ch == "\\" and i + 1 < n and cmd[i + 1] == "\n":
+            i += 2
+            continue
+        if ch == "\\" and i + 2 < n and cmd[i + 1] == "\r" and cmd[i + 2] == "\n":
+            i += 3
+            continue
+
         if ch == "'":
             in_squote = True
+            token_started = True
             i += 1
             continue
         if ch == '"':
             in_dquote = True
+            token_started = True
             i += 1
             continue
 
         if ch == "$" and i + 1 < n and cmd[i + 1] == "(":
             flush_word()
+            token_started = True
             if i + 2 < n and cmd[i + 2] == "(":
                 sub_stack.append("arith")
                 i += 3
@@ -228,6 +261,7 @@ def _scan(cmd: str, emit_words: bool):
 
         if ch == "`":
             flush_word()
+            token_started = True
             if sub_stack and sub_stack[-1] == "backtick":
                 sub_stack.pop()
             else:
@@ -237,6 +271,7 @@ def _scan(cmd: str, emit_words: bool):
 
         if ch in (">", "<") and i + 1 < n and cmd[i + 1] == "(":
             flush_word()
+            token_started = True
             # AC-GSO-2(ii): a process-substitution consumer (`>(` / `<(`) anywhere in the
             # clause disqualifies it from inert-sink classification, regardless of where it
             # sits relative to the heredoc opener (`tee >(bash) <<EOF` names its own consumer
@@ -250,15 +285,18 @@ def _scan(cmd: str, emit_words: bool):
         if ch == ")":
             if sub_stack and sub_stack[-1] in ("cmdsub", "procsub"):
                 flush_word()
+                token_started = True
                 sub_stack.pop()
                 i += 1
                 continue
             if sub_stack and sub_stack[-1] == "arith":
                 flush_word()
+                token_started = True
                 sub_stack.pop()
                 i += 2 if (i + 1 < n and cmd[i + 1] == ")") else 1
                 continue
             buf.append(ch)
+            token_started = True
             i += 1
             continue
 
@@ -282,6 +320,7 @@ def _scan(cmd: str, emit_words: bool):
             if " " in delim or "\t" in delim:
                 # AC-GSO-6: a quoted terminator containing spaces is not treated as an opener.
                 buf.append(cmd[open_pos:j])
+                token_started = True
                 i = j
                 continue
             flush_word()
@@ -341,7 +380,7 @@ def _scan(cmd: str, emit_words: bool):
             i += 1
             continue
 
-        if ch == "#" and not sub_stack and not buf:
+        if ch == "#" and not sub_stack and not token_started:
             nl = cmd.find("\n", i)
             end = nl if nl != -1 else n
             if emit_words:
@@ -350,6 +389,7 @@ def _scan(cmd: str, emit_words: bool):
             continue
 
         buf.append(ch)
+        token_started = True
         i += 1
 
     flush_word()
@@ -515,12 +555,24 @@ def _classify_region(cmd: str, region: Dict, all_regions: List[Dict], has_crlf: 
 
 
 def tokenize(command) -> List[Word]:
-    """Tokenize a Bash command string per AC-GSO-1..2 and AC-GSO-6. See the module docstring."""
+    """Tokenize a Bash command string per AC-GSO-1..2 and AC-GSO-6. See the module docstring.
+
+    AC-GSO-1(a) (amended, auth_seq 3): heredoc boundaries are discovered on the RAW command —
+    a terminator is matched against the raw line, never after joining backslash continuations,
+    exactly as bash reads a heredoc (a quoted delimiter suppresses ALL body processing,
+    including continuation splicing, so the FIRST raw line equal to the delimiter ends the body
+    regardless of what precedes it). Backslash-continuation removal happens INLINE inside
+    `_scan()`'s own character walk (skipped there, never pre-applied to the whole string) so it
+    only ever affects ordinary word/opener scanning, never the independent, raw-line-based
+    `_find_heredoc_end()` terminator search. See PR #178 security review (round 1): pre-splicing
+    the whole command before boundary discovery re-opened withdrawn bypass class 2 with a sink —
+    a quoted-delimiter body with a trailing backslash spliced the terminator forward and
+    admitted a live `git push --force` that sat, in real bash, OUTSIDE the heredoc entirely.
+    """
     if not isinstance(command, str) or command == "":
         return []
 
-    # (a) backslash line continuations removed FIRST, before any other step.
-    cmd = re.sub(r"\\\r?\n", "", command)
+    cmd = command
     has_crlf = "\r" in cmd
 
     words, regions, last_clause = _scan(cmd, emit_words=True)
@@ -540,11 +592,20 @@ def tokenize(command) -> List[Word]:
 def neutralize(command) -> str:
     """Return `command` with every `data`-classified heredoc body's non-newline characters
     replaced by a space. Both guard hooks scan THIS text with their existing, unchanged clause
-    logic instead of the raw command — see the module docstring."""
+    logic instead of the raw command — see the module docstring.
+
+    Deliberately does NO backslash-continuation splicing of its own (AC-GSO-1(a), amended):
+    heredoc boundaries are found directly on the RAW `command`, and only the proven-`data` byte
+    ranges are blanked in place, leaving everything else — including any line continuation —
+    byte-identical to the input. Both hooks already run their own full splice-then-scan pass
+    over whatever `neutralize()` returns, exactly as they did before this atom; blanking the
+    unsafe ranges in the raw text is sufficient and avoids re-introducing the ordering bug a
+    pre-splice caused.
+    """
     if not isinstance(command, str) or command == "":
         return command if isinstance(command, str) else ""
 
-    cmd = re.sub(r"\\\r?\n", "", command)
+    cmd = command
     has_crlf = "\r" in cmd
     _, regions, _ = _scan(cmd, emit_words=False)
 

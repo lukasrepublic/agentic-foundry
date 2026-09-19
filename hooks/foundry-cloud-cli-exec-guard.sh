@@ -162,7 +162,7 @@ fi
 _cloud_guard_eval() {
   CMD="$cmd" WRAPPER="$wrapper_in" GUARDED_TOOLS="$tools_in" OFFLINE_EXEMPT="$exempt_in" \
     PLUGIN_ROOT="$PLUGIN_ROOT" python3 - <<'PY'
-import os, re, shlex, sys
+import json, os, re, shlex, sys
 
 sys.path.insert(0, os.path.join(os.environ.get("PLUGIN_ROOT", ""), "scripts"))
 import foundry_shell_scan          # feat-foundry-guards-guard-structured-observations (AC-GSO-1)
@@ -479,15 +479,29 @@ while i < n:
             # Name the exact wrapped form the operator must use instead (route_prefix already
             # carries the `exec` subverb — never doubled).
             wrapped = " ".join(route_prefix) + " " + word
+            _redacted_cmd = _redact(cmd)
             _reason = ("bare guarded tool %r at a command position not routed through the "
-                       "wrapper. Command: %s" % (word, _redact(cmd)))
+                       "wrapper. Command: %s" % (word, _redacted_cmd))
             _remediation = "Re-run it as: %s …" % wrapped
             # feat-foundry-guards-guard-structured-observations (AC-GSO-4): a leading
-            # BLOCK_REMEDIATION line carries the machine-usable remediation for the LIVE bash
-            # wrapper to fold into a structured JSON observation. The FINAL line stays the
-            # classic "BLOCK <reason>" text — the `--eval` selftest protocol (and every test
-            # that reads the LAST stdout line) is unchanged.
-            print("BLOCK_REMEDIATION:" + _remediation)
+            # BLOCK_JSON line carries the whole structured observation as ONE line (json.dumps
+            # never emits a literal newline — a multi-line `cmd` is escaped as "\\n" inside the
+            # JSON string), so the live bash wrapper never has to positionally parse fields out
+            # of a verdict that can itself span multiple physical lines. `evidence` is built
+            # from `_redacted_cmd` — the SAME redacted text `reason` embeds (PR #178 security
+            # review round 2: the bash wrapper previously built `observation.evidence` from its
+            # own raw, unredacted `$cmd` shell variable, leaking an inline secret this evaluator
+            # had already correctly redacted out of `reason`). The FINAL line stays the classic
+            # "BLOCK <reason>" text — the `--eval` selftest protocol (and every test that reads
+            # the LAST stdout line) is unchanged.
+            _payload = {
+                "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                        "permissionDecisionReason": _reason},
+                "observation": {"status": "blocked", "guard": "cloud-cli-exec-guard",
+                                 "reason": _reason, "evidence": [_redacted_cmd],
+                                 "retryable": False, "remediation": _remediation},
+            }
+            print("BLOCK_JSON:" + json.dumps(_payload))
             print("BLOCK " + _reason)
             sys.exit(0)
         # advance past this command word
@@ -529,28 +543,24 @@ fi
 # the "run it yourself outside the agent" sentence is retired in favor of the concrete wrapped
 # form the evaluator already computes. ---
 case "$verdict" in
-  BLOCK_REMEDIATION:*)
-    remediation_line="${verdict%%$'\n'*}"
-    remediation="${remediation_line#BLOCK_REMEDIATION:}"
-    block_line="$(printf '%s\n' "$verdict" | sed -n '2p')"
-    reason="${block_line#BLOCK }"
+  BLOCK_JSON:*)
+    # `$verdict` is "BLOCK_JSON:<one-line json>\nBLOCK <reason>" — the json line can never
+    # contain a literal newline (json.dumps escapes one embedded in a multi-line `cmd` as the
+    # two characters "\n"), so splitting on the FIRST newline is safe regardless of how many
+    # physical lines the trailing "BLOCK <reason>" line spans (a multi-line `cmd` makes that
+    # one, too — this is the pre-existing eval-mode last-line convention, unaffected).
+    json_line="${verdict%%$'\n'*}"
+    json_line="${json_line#BLOCK_JSON:}"
     if [ "$EVAL_MODE" -eq 1 ]; then
       printf '%s\n' "$verdict"
       exit 2
     fi
-    python3 -c '
-import json, sys
-reason, remediation, cmd = sys.argv[1], sys.argv[2], sys.argv[3]
-print(json.dumps({
-    "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                            "permissionDecisionReason": reason},
-    "observation": {"status": "blocked", "guard": "cloud-cli-exec-guard", "reason": reason,
-                     "evidence": [cmd], "retryable": False, "remediation": remediation},
-}))
-' "$reason" "$remediation" "$cmd"
+    printf '%s\n' "$json_line"
+    printf '%s' "$json_line" | python3 -c 'import json, sys
+d = json.load(sys.stdin)["observation"]
+print("  " + d["reason"])
+print("  " + d["remediation"])' >&2
     echo "FOUNDRY CLOUD-CLI EXEC-GUARD: BLOCKED (fail-closed) — a guarded cloud/IaC CLI was run bare, bypassing the guarded-exec wrapper." >&2
-    echo "  $reason" >&2
-    echo "  $remediation" >&2
     exit 2
     ;;
   BLOCK\ *)

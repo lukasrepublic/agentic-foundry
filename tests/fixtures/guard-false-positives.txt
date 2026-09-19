@@ -4,11 +4,15 @@
 # The measured false-positive corpus: realistic shapes where a guarded verb is
 # mentioned only in PROSE inside an inert-sink heredoc body (a commit message, a
 # doc/spec/runbook write, a PR/issue body) across the six closed AC-GSO-2 sink forms.
-# Each ADMIT case is paired with a CONVICT sibling of the SAME shape (the identical
-# heredoc content, but consumed differently — piped to bash/cat, or the heredoc fed
-# directly to bash — so it is no longer a provable inert sink). AC-GSO-2 is
-# convict-first: admitting a shape here is only safe because its sibling proves the
-# tokenizer still convicts the adjacent unsafe variant.
+# Each ADMIT case is paired with a CONVICT sibling that differs ONLY in the ONE
+# AC-GSO-2 property under test (PR #178 security review round 2: an earlier revision
+# paired several admits with a convict that also dropped the redirect target entirely,
+# convicting on 'not a recognized sink shape' rather than the property named in the
+# comment below each builder) — same sink + a pipe consumer (AC-GSO-2(ii)), same sink
+# under a scratch/tmp path (AC-GSO-2(iii)), or same sink with its path ALSO mentioned
+# in a later clause (AC-GSO-2(iv)). AC-GSO-2 is convict-first: an admit row is only as
+# good as the sibling that proves the tokenizer still convicts the adjacent unsafe
+# variant of the exact same shape.
 #
 # Format: repeated blocks of
 #   @@@ CASE <n>
@@ -24,7 +28,7 @@ cat > docs/x.md <<'EOF'
 See the guarded verb in this example: `git push --force origin main`.
 EOF
 --- CONVICT ---
-cat <<'EOF' | bash
+cat > docs/x.md <<'EOF' | tee >(bash)
 See the guarded verb in this example: `git push --force origin main`.
 EOF
 
@@ -34,7 +38,7 @@ cat >> README.md <<'EOF'
 Update: do not run `git push --force origin main` directly.
 EOF
 --- CONVICT ---
-cat <<'EOF' | bash
+cat >> /tmp/x <<'EOF'
 Update: do not run `git push --force origin main` directly.
 EOF
 
@@ -44,9 +48,10 @@ tee CHANGELOG.md <<'EOF'
 Runbook note: the incident involved `git push --force origin main` being attempted.
 EOF
 --- CONVICT ---
-cat <<'EOF' | tee CHANGELOG.md | bash
+tee CHANGELOG.md <<'EOF'
 Runbook note: the incident involved `git push --force origin main` being attempted.
 EOF
+; cat CHANGELOG.md
 
 @@@ CASE 4
 --- ADMIT ---
@@ -88,7 +93,7 @@ cat > memory/note.md <<'EOF'
 See the guarded verb in this example: `git push -f origin main`.
 EOF
 --- CONVICT ---
-cat <<'EOF' | bash
+cat > memory/note.md <<'EOF' | tee >(bash)
 See the guarded verb in this example: `git push -f origin main`.
 EOF
 
@@ -98,7 +103,7 @@ cat >> docs/troubleshooting.md <<'EOF'
 Update: do not run `git push -f origin main` directly.
 EOF
 --- CONVICT ---
-cat <<'EOF' | bash
+cat >> /tmp/x <<'EOF'
 Update: do not run `git push -f origin main` directly.
 EOF
 
@@ -108,9 +113,10 @@ tee docs/merge-floor.md <<'EOF'
 Runbook note: the incident involved `git push -f origin main` being attempted.
 EOF
 --- CONVICT ---
-cat <<'EOF' | tee docs/merge-floor.md | bash
+tee docs/merge-floor.md <<'EOF'
 Runbook note: the incident involved `git push -f origin main` being attempted.
 EOF
+; cat docs/merge-floor.md
 
 @@@ CASE 10
 --- ADMIT ---
@@ -152,7 +158,7 @@ cat > docs/guides/git-safety.md <<'EOF'
 See the guarded verb in this example: `git branch -D main`.
 EOF
 --- CONVICT ---
-cat <<'EOF' | bash
+cat > docs/guides/git-safety.md <<'EOF' | tee >(bash)
 See the guarded verb in this example: `git branch -D main`.
 EOF
 
@@ -162,7 +168,7 @@ cat >> CONTRIBUTING.md <<'EOF'
 Update: do not run `git branch -D main` directly.
 EOF
 --- CONVICT ---
-cat <<'EOF' | bash
+cat >> /tmp/x <<'EOF'
 Update: do not run `git branch -D main` directly.
 EOF
 
@@ -172,9 +178,10 @@ tee docs/postmortems/2026-09-19.md <<'EOF'
 Runbook note: the incident involved `git branch -D main` being attempted.
 EOF
 --- CONVICT ---
-cat <<'EOF' | tee docs/postmortems/2026-09-19.md | bash
+tee docs/postmortems/2026-09-19.md <<'EOF'
 Runbook note: the incident involved `git branch -D main` being attempted.
 EOF
+; cat docs/postmortems/2026-09-19.md
 
 @@@ CASE 16
 --- ADMIT ---
@@ -216,7 +223,7 @@ cat > notes/runbook.md <<'EOF'
 See the guarded verb in this example: `git filter-repo --path secrets.txt --invert-paths`.
 EOF
 --- CONVICT ---
-cat <<'EOF' | bash
+cat > notes/runbook.md <<'EOF' | tee >(bash)
 See the guarded verb in this example: `git filter-repo --path secrets.txt --invert-paths`.
 EOF
 
@@ -226,7 +233,7 @@ cat >> specs/features/foo/feat-foo.md <<'EOF'
 Update: do not run `git filter-repo --path secrets.txt --invert-paths` directly.
 EOF
 --- CONVICT ---
-cat <<'EOF' | bash
+cat >> /tmp/x <<'EOF'
 Update: do not run `git filter-repo --path secrets.txt --invert-paths` directly.
 EOF
 
@@ -236,9 +243,10 @@ tee .foundry/decisions/2026-09-19-note.md <<'EOF'
 Runbook note: the incident involved `git filter-repo --path secrets.txt --invert-paths` being attempted.
 EOF
 --- CONVICT ---
-cat <<'EOF' | tee .foundry/decisions/2026-09-19-note.md | bash
+tee .foundry/decisions/2026-09-19-note.md <<'EOF'
 Runbook note: the incident involved `git filter-repo --path secrets.txt --invert-paths` being attempted.
 EOF
+; cat .foundry/decisions/2026-09-19-note.md
 
 @@@ CASE 22
 --- ADMIT ---
@@ -280,7 +288,7 @@ cat > fixtures/example.md <<'EOF'
 See the guarded verb in this example: `git filter-branch --tree-filter 'rm -f secrets.txt' HEAD`.
 EOF
 --- CONVICT ---
-cat <<'EOF' | bash
+cat > fixtures/example.md <<'EOF' | tee >(bash)
 See the guarded verb in this example: `git filter-branch --tree-filter 'rm -f secrets.txt' HEAD`.
 EOF
 
@@ -290,7 +298,7 @@ cat >> docs/handoff/2026-09-19-note.md <<'EOF'
 Update: do not run `git filter-branch --tree-filter 'rm -f secrets.txt' HEAD` directly.
 EOF
 --- CONVICT ---
-cat <<'EOF' | bash
+cat >> /tmp/x <<'EOF'
 Update: do not run `git filter-branch --tree-filter 'rm -f secrets.txt' HEAD` directly.
 EOF
 
@@ -300,9 +308,10 @@ tee runbooks/incident.md <<'EOF'
 Runbook note: the incident involved `git filter-branch --tree-filter 'rm -f secrets.txt' HEAD` being attempted.
 EOF
 --- CONVICT ---
-cat <<'EOF' | tee runbooks/incident.md | bash
+tee runbooks/incident.md <<'EOF'
 Runbook note: the incident involved `git filter-branch --tree-filter 'rm -f secrets.txt' HEAD` being attempted.
 EOF
+; cat runbooks/incident.md
 
 @@@ CASE 28
 --- ADMIT ---
@@ -344,7 +353,7 @@ cat > docs/x.md <<'EOF'
 See the guarded verb in this example: `rm -rf .git`.
 EOF
 --- CONVICT ---
-cat <<'EOF' | bash
+cat > docs/x.md <<'EOF' | tee >(bash)
 See the guarded verb in this example: `rm -rf .git`.
 EOF
 
@@ -354,7 +363,7 @@ cat >> README.md <<'EOF'
 Update: do not run `rm -rf .git` directly.
 EOF
 --- CONVICT ---
-cat <<'EOF' | bash
+cat >> /tmp/x <<'EOF'
 Update: do not run `rm -rf .git` directly.
 EOF
 
@@ -364,9 +373,10 @@ tee CHANGELOG.md <<'EOF'
 Runbook note: the incident involved `rm -rf .git` being attempted.
 EOF
 --- CONVICT ---
-cat <<'EOF' | tee CHANGELOG.md | bash
+tee CHANGELOG.md <<'EOF'
 Runbook note: the incident involved `rm -rf .git` being attempted.
 EOF
+; cat CHANGELOG.md
 
 @@@ CASE 34
 --- ADMIT ---
@@ -408,7 +418,7 @@ cat > memory/note.md <<'EOF'
 See the guarded verb in this example: `git commit --no-verify -m wip`.
 EOF
 --- CONVICT ---
-cat <<'EOF' | bash
+cat > memory/note.md <<'EOF' | tee >(bash)
 See the guarded verb in this example: `git commit --no-verify -m wip`.
 EOF
 
@@ -418,7 +428,7 @@ cat >> docs/troubleshooting.md <<'EOF'
 Update: do not run `git commit --no-verify -m wip` directly.
 EOF
 --- CONVICT ---
-cat <<'EOF' | bash
+cat >> /tmp/x <<'EOF'
 Update: do not run `git commit --no-verify -m wip` directly.
 EOF
 
@@ -428,9 +438,10 @@ tee docs/merge-floor.md <<'EOF'
 Runbook note: the incident involved `git commit --no-verify -m wip` being attempted.
 EOF
 --- CONVICT ---
-cat <<'EOF' | tee docs/merge-floor.md | bash
+tee docs/merge-floor.md <<'EOF'
 Runbook note: the incident involved `git commit --no-verify -m wip` being attempted.
 EOF
+; cat docs/merge-floor.md
 
 @@@ CASE 40
 --- ADMIT ---
@@ -472,7 +483,7 @@ cat > docs/guides/git-safety.md <<'EOF'
 See the guarded verb in this example: `gh pr merge 42 --admin --merge`.
 EOF
 --- CONVICT ---
-cat <<'EOF' | bash
+cat > docs/guides/git-safety.md <<'EOF' | tee >(bash)
 See the guarded verb in this example: `gh pr merge 42 --admin --merge`.
 EOF
 
@@ -482,7 +493,7 @@ cat >> CONTRIBUTING.md <<'EOF'
 Update: do not run `gh pr merge 42 --admin --merge` directly.
 EOF
 --- CONVICT ---
-cat <<'EOF' | bash
+cat >> /tmp/x <<'EOF'
 Update: do not run `gh pr merge 42 --admin --merge` directly.
 EOF
 
@@ -492,9 +503,10 @@ tee docs/postmortems/2026-09-19.md <<'EOF'
 Runbook note: the incident involved `gh pr merge 42 --admin --merge` being attempted.
 EOF
 --- CONVICT ---
-cat <<'EOF' | tee docs/postmortems/2026-09-19.md | bash
+tee docs/postmortems/2026-09-19.md <<'EOF'
 Runbook note: the incident involved `gh pr merge 42 --admin --merge` being attempted.
 EOF
+; cat docs/postmortems/2026-09-19.md
 
 @@@ CASE 46
 --- ADMIT ---

@@ -109,6 +109,27 @@ def test_sink_path_existing_fifo_convicts(tmp_path):
         os.remove(fifo)
 
 
+# --------------------------------------------------------- PR #178 security review round 1 -----
+# AC-GSO-1(a) amended (auth_seq 3): heredoc boundaries are found on the RAW lines, never after
+# joining backslash continuations. A quoted delimiter suppresses ALL body processing in real
+# bash, so a trailing-backslash body line does NOT extend the body — the FIRST raw line equal to
+# the delimiter ends it, and anything after that is a REAL top-level clause, not heredoc data.
+
+@pytest.mark.parametrize("delim_form", ["<<'EOF'", "<<EOF"], ids=["quoted-delimiter", "unquoted-delimiter"])
+def test_trailing_backslash_terminator_splice_with_sink_does_not_admit(delim_form):
+    cmd = f"cat > notes.md {delim_form}\nx \\\nEOF\ngit push --force origin main\nEOF"
+    neut = fss.neutralize(cmd)
+    assert "git push --force origin main" in neut, (
+        f"the injected command leaked into a blanked (data) span for {delim_form!r}: {neut!r}")
+    # The heredoc's OWN body must be just "x \" (one raw line) — the terminator was found at the
+    # first raw "EOF" line, exactly as real bash reads it, not spliced forward past the push.
+    words = fss.tokenize(cmd)
+    heredoc_words = [w for w in words if w.kind == "heredoc"]
+    heredoc_text = " ".join(w.word for w in heredoc_words)
+    assert "push" not in heredoc_text and "force" not in heredoc_text, (
+        f"the injected command was captured as heredoc body content: {heredoc_text!r}")
+
+
 # ============================================================================== AC-GSO-6 =======
 
 _UNCLASSIFIABLE_CASES = [

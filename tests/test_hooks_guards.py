@@ -275,8 +275,8 @@ def test_discipline_blocks_admin_merge_outright():
     "cat notes.txt   # heredocs are written <<EOF\ngit push --force origin main\nEOF",
 
     # --- feat-foundry-guards-guard-structured-observations (AC-GSO-3): the round-1-remediation
-    # rows, extending the tripwire from twelve to fourteen (still convict-only; the BLOCK set
-    # does not shrink). Both are otherwise-plausible "inert sink" shapes that must NOT be
+    # rows, extending the tripwire from twelve to fifteen (still convict-only; the BLOCK set
+    # does not shrink). All three are otherwise-plausible "inert sink" shapes that must NOT be
     # admitted by the new heredoc-aware tokenizer.
     #
     # A same-call write-then-run: the heredoc writes a script AND a later clause in the SAME
@@ -284,6 +284,16 @@ def test_discipline_blocks_admin_merge_outright():
     "cat > f.sh <<EOF\ngit push --force origin main\nEOF\n; bash f.sh",
     # A /dev/fd sink — AC-GSO-2(iii) excludes any path under /dev/ or /proc/ outright.
     "cat > /dev/fd/3 <<EOF\ngit push --force origin main\nEOF",
+    # --- PR #178 security review round 1 (spec amendment auth_seq 3): the trailing-backslash
+    # terminator splice WITH an inert sink — withdrawn bypass class 2, reopened by an early
+    # version of this atom that removed backslash continuations BEFORE finding heredoc
+    # boundaries. A quoted delimiter (`<<'EOF'`) suppresses ALL body processing, so real bash
+    # ends the body at the FIRST raw line equal to "EOF" (the one right after "x \") — everything
+    # from "git push --force origin main" onward is a REAL, EXECUTED top-level command, not
+    # heredoc body at all. Splicing the continuation before boundary discovery merged "x \" with
+    # the next line into "x EOF" (no longer equal to the delimiter), so the scan ran past the
+    # real terminator, swallowed the live push into the (wrongly extended) body, and admitted it.
+    "cat > notes.md <<'EOF'\nx \\\nEOF\ngit push --force origin main\nEOF",
 ])
 def test_discipline_convicts_through_heredoc_shapes(cmd):
     p = _discipline(cmd)
@@ -346,6 +356,30 @@ def test_cloud_guard_block_emits_structured_observation_with_remediation(tmp_pat
     assert obs["guard"] == "cloud-cli-exec-guard"
     assert "exec-wrapper run -- exec aws" in obs["remediation"]
     assert "run it yourself outside the agent" not in p.stderr
+
+
+# ==================================================================== PR #178 round 2 ===========
+# feat-foundry-guards-guard-structured-observations: the bash wrapper built `observation.evidence`
+# from its own RAW, unredacted `$cmd` shell variable while `reason`/`permissionDecisionReason`
+# (built in python via `_redact()`) were already correctly scrubbed — a secret redacted out of
+# the reason text leaked verbatim through the sibling `evidence` field. Mirrors
+# `tests/test_cloud_guard_verb_path.py::test_refusal_redacts_inline_secrets`.
+
+def test_cloud_guard_observation_json_redacts_inline_secrets(tmp_path):
+    project_dir = tmp_path / "project-with-seam"
+    project_dir.mkdir()
+    _write_exec_guard_seam(project_dir, wrapper="exec-wrapper run --")
+    payload_in = json.dumps({"tool_name": "Bash",
+                              "tool_input": {"command": "AWS_SECRET_ACCESS_KEY=s3cr3tvalue aws s3 ls"}})
+    p = _run_hook("foundry-cloud-cli-exec-guard.sh", stdin_text=payload_in,
+                 extra_env={"CLAUDE_PROJECT_DIR": str(project_dir)})
+    assert p.returncode == 2, p.stdout + p.stderr
+    assert "s3cr3tvalue" not in p.stdout, f"the observation JSON leaked a secret: {p.stdout}"
+    assert "s3cr3tvalue" not in p.stderr, f"stderr leaked a secret: {p.stderr}"
+    payload = json.loads(p.stdout.strip().splitlines()[0])
+    obs = payload["observation"]
+    assert obs["evidence"] == ["AWS_SECRET_ACCESS_KEY=*** aws s3 ls"], obs["evidence"]
+    assert "AWS_SECRET_ACCESS_KEY=***" in obs["reason"]
 
 
 # ---- the EVIDENCE-RULE stub: the ONE committed tests/fixtures/gh-stub/gh, driven by env vars.
