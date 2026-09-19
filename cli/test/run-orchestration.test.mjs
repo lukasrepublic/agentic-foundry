@@ -15,6 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runCli } from '../src/run.mjs';
 import { loadMap } from '../src/permissionFloor.mjs';
+import { BEGIN_TOKEN, END_TOKEN, loadDesiredInterior } from '../src/gitignoreReconcile.mjs';
 
 const CLI_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const MAP = loadMap(path.join(CLI_DIR, 'permission-floor.json'));
@@ -129,4 +130,128 @@ test('dry_run_still_reports_the_pre_write_state_and_writes_nothing', async () =>
   assert.doesNotMatch(text, /permission-floor reconcile: added /);
   assert.equal(fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf-8'), before,
     'dry run mutated the target');
+});
+
+// ============================================================================================ //
+// gitignore-block-reconcile (ER #177, AC-GBR-1/-4) — wired beside floorReconcile's own rows
+// ============================================================================================ //
+
+const STALE_GITIGNORE_BLOCK = [
+  `# ${BEGIN_TOKEN} (managed by scripts/foundry-apply-runtime-gitignore.sh -- do not edit by hand)`,
+  '# .foundry/ runtime partitions are ignored by default; the designed-tracked set is re-included.',
+  '/.foundry/*',
+  '!/.foundry/README.md',
+  '!/.foundry/build-provenance.yaml',
+  '!/.foundry/stack-profile.lock',
+  `# ${END_TOKEN} (re-run the applier to converge; do not edit by hand)`,
+];
+
+function existingWorkspaceWithStaleGitignore(dir) {
+  fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, '.claude', 'settings.json'),
+    `${JSON.stringify({
+      extraKnownMarketplaces: PIN,
+      permissions: { allow: [], ask: [], deny: MAP.entries.filter((e) => e.tier === 'deny').map((e) => e.rule) },
+    }, null, 2)}\n`,
+  );
+  fs.writeFileSync(
+    path.join(dir, '.gitignore'),
+    ['# adopter line above', ...STALE_GITIGNORE_BLOCK, 'dist/'].map((l) => `${l}\n`).join(''),
+  );
+}
+
+test('existing_workspace_reconcile_converges_a_stale_gitignore_block', async () => {
+  const dir = scratch();
+  existingWorkspaceWithStaleGitignore(dir);
+
+  const { text } = await invoke(dir, ['--existing']);
+  assert.match(text, /^ {2}\[converged] \.gitignore \(managed block\)$/m, text);
+
+  const lines = fs.readFileSync(path.join(dir, '.gitignore'), 'utf-8').split('\n');
+  const body = lines[lines.length - 1] === '' ? lines.slice(0, -1) : lines;
+  assert.equal(body[0], '# adopter line above', 'the adopter line above the block was not preserved');
+  assert.equal(body[body.length - 1], 'dist/', 'the adopter line below the block was not preserved');
+  // PR #179 review: the EXISTING (annotated) sentinel lines are preserved verbatim — only the
+  // interior converges. Rewriting the sentinel line itself would have made this run and a later
+  // bash-applier run flip it back and forth forever.
+  const desiredInterior = loadDesiredInterior(path.join(CLI_DIR, 'templates'));
+  assert.equal(body[1], STALE_GITIGNORE_BLOCK[0], 'the existing annotated BEGIN line was rewritten');
+  assert.deepEqual(body.slice(2, 2 + desiredInterior.length), desiredInterior,
+    'the interior did not converge onto the template');
+  assert.equal(body[2 + desiredInterior.length], STALE_GITIGNORE_BLOCK[STALE_GITIGNORE_BLOCK.length - 1],
+    'the existing annotated END line was rewritten');
+});
+
+test('dry_run_reports_the_gitignore_row_and_writes_nothing', async () => {
+  const dir = scratch();
+  existingWorkspaceWithStaleGitignore(dir);
+  const before = fs.readFileSync(path.join(dir, '.gitignore'));
+
+  const { text } = await invoke(dir, ['--existing', '--dry-run']);
+  assert.match(text, /^ {2}\[converged] \.gitignore \(managed block\)$/m, text);
+  assert.deepEqual(fs.readFileSync(path.join(dir, '.gitignore')), before, 'dry run mutated .gitignore');
+});
+
+test('a_second_existing_reconcile_over_an_already_converged_block_is_unchanged_and_byte_stable', async () => {
+  const dir = scratch();
+  existingWorkspaceWithStaleGitignore(dir);
+  await invoke(dir, ['--existing']);
+
+  const gitignorePath = path.join(dir, '.gitignore');
+  const beforeBytes = fs.readFileSync(gitignorePath);
+  const beforeIno = fs.statSync(gitignorePath).ino;
+
+  const { text } = await invoke(dir, ['--existing']);
+  assert.match(text, /^ {2}\[unchanged] \.gitignore \(managed block\)$/m, text);
+  assert.deepEqual(fs.readFileSync(gitignorePath), beforeBytes, 'a converged .gitignore was rewritten');
+  assert.equal(fs.statSync(gitignorePath).ino, beforeIno, 'a converged .gitignore was rewritten');
+});
+
+test('a_gitignore_only_convergence_still_reports_the_already_trusted_hand_off', async () => {
+  const dir = scratch();
+  fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+  // a COMPLETE floor (every tier, fully pinned) — floorPlan.total will be 0, so if
+  // `reconciledExisting` were still gated on the floor alone, this run would wrongly get the
+  // standard (not-yet-trusted) hand-off despite having just written to .gitignore.
+  fs.writeFileSync(
+    path.join(dir, '.claude', 'settings.json'),
+    `${JSON.stringify({
+      extraKnownMarketplaces: PIN,
+      permissions: {
+        allow: MAP.entries.filter((e) => e.tier === 'allow').map((e) => e.rule),
+        ask: MAP.entries.filter((e) => e.tier === 'ask').map((e) => e.rule),
+        deny: MAP.entries.filter((e) => e.tier === 'deny').map((e) => e.rule),
+      },
+    }, null, 2)}\n`,
+  );
+  fs.writeFileSync(
+    path.join(dir, '.gitignore'),
+    ['# adopter line above', ...STALE_GITIGNORE_BLOCK, 'dist/'].map((l) => `${l}\n`).join(''),
+  );
+
+  const { text } = await invoke(dir, ['--existing']);
+  assert.doesNotMatch(text, /permission-floor reconcile: added /, 'the floor fixture was not actually complete');
+  assert.match(text, /^ {2}\[converged] \.gitignore \(managed block\)$/m, text);
+  assert.match(text, /ALREADY TRUSTED/, 'a gitignore-only write did not get the already-trusted hand-off');
+});
+
+test('a_malformed_gitignore_block_is_refused_and_the_rest_of_the_scaffold_still_lands', async () => {
+  const dir = scratch();
+  fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, '.claude', 'settings.json'),
+    `${JSON.stringify({ extraKnownMarketplaces: PIN, permissions: { allow: [], ask: [], deny: [] } }, null, 2)}\n`,
+  );
+  // an END with no BEGIN at all — malformed (AC-GBR-3)
+  const before = `# adopter\n# ${END_TOKEN}\n`;
+  fs.writeFileSync(path.join(dir, '.gitignore'), before);
+
+  const { text, exitCode } = await invoke(dir, ['--existing']);
+  assert.match(text, /^ {2}\[refused] \.gitignore \(malformed managed block: .+\)$/m, text);
+  assert.equal(fs.readFileSync(path.join(dir, '.gitignore'), 'utf-8'), before, 'a malformed .gitignore was written to');
+  // the refusal is reported, not escalated to a hard failure that blocks everything else this run
+  // would otherwise do (CLAUDE.md still lands, permission-floor reconcile still runs)
+  assert.notEqual(exitCode, 1, text);
+  assert.ok(fs.existsSync(path.join(dir, 'CLAUDE.md')), 'the rest of the scaffold did not land');
 });
