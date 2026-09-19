@@ -770,7 +770,11 @@ def test_docs_truth_negative_controls_all_fire():
 # re-baselined here in the SAME PR that makes the edit, per this charter, with the name staying in
 # the suite (checkpoints/AC-RFU-4 still reference it by node id) -- least-weakening option: only
 # THIS one case loses byte-identity tracking, every other pre-existing case keeps it.
+#
+# RE-ADDED (fast-follow after PR #174 landed): its README-derived body is now the merge-base
+# pre-image, so byte-identity tracking resumes for it too. The loss was one PR long.
 _PREEXISTING_DOCS_CLAIMS_CASES = (
+    "test_test_count_claim_is_true",
     "test_readme_status_matches_the_manifests",
     "test_changelog_has_a_section_for_the_shipped_version",
     "test_every_shipped_skill_is_in_the_verb_reference",
