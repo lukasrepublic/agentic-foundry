@@ -159,6 +159,26 @@ def test_unclassifiable_constructions_are_code(name, cmd):
     assert not any(w.data for w in body_words), f"{name}: {cmd!r} was wrongly classified data"
 
 
+def test_dash_heredoc_terminator_tabs_close_spaces_do_not():
+    """Security re-verify (PR #178): `<<-` strips leading TABS from the terminator only; a
+    space-indented terminator cannot close the body (so the body runs on → unresolved → code)."""
+    tab_closed = "cat > notes.md <<-'EOF'\n\tgit push --force origin main\n\tEOF\n"
+    words = fss.tokenize(tab_closed)
+    assert any(w.kind == "heredoc" for w in words), "tab-indented terminator must close the heredoc"
+    space_open = "cat > notes.md <<-'EOF'\n git push --force origin main\n EOF\n"
+    words = fss.tokenize(space_open)
+    assert not any(w.kind == "heredoc" and w.data for w in words), "space-indented terminator must not close"
+    assert "git push --force origin main" in fss.neutralize(space_open)
+
+
+def test_hash_after_closed_empty_quote_is_a_word_not_a_comment():
+    """Security re-verify (PR #178): `echo ''#x` is one literal word in bash; the comment rule must
+    not fire just because the buffer is empty after a closed quote."""
+    words = fss.tokenize("echo ''#x")
+    assert [w.word for w in words if w.kind == "word"] == ["echo", "#x"]
+    assert not any(w.kind == "comment" for w in words)
+
+
 # =========================================================================== neutralize() ======
 
 def test_neutralize_blanks_only_data_heredoc_bodies_preserving_line_count():
