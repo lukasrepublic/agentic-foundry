@@ -225,7 +225,7 @@ def _import_map_suite():
 # `allow` for `--check`: read-only drift check, never writes. `ask` for `--write`: reconciles
 # `.claude/settings.json` from the operator-owned `.foundry/permissions.yaml` — a ceremony, not a
 # self-grant, the same shape every other mutating compiler CLI in this map already carries.
-MERGE_BASE_ENTRIES_DIGEST = "PLACEHOLDER"
+MERGE_BASE_ENTRIES_DIGEST = "3ba1ee9b1c17e6950875e2cb98f3f10ff671b785f3944d1fac88f637666bb715"
 
 
 # ================================================================================================ #
