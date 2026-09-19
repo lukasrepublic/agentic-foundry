@@ -337,7 +337,8 @@ def _authorize(project_dir, spec_rel, contract_rel, operator="op_test"):
     spec_path = os.path.join(project_dir, spec_rel)
     contract_path = os.path.join(project_dir, contract_rel)
     _run([sys.executable, os.path.join(REPO_ROOT, "scripts", "foundry-audit-record.py"),
-          "--spec", spec_path, "--rounds", "3", "--operator", operator], env=env)
+          "--spec", spec_path, "--rounds", "3", "--operator", operator,
+          "--verdict", "plateau-clean"], env=env)
     r = _run([sys.executable, os.path.join(REPO_ROOT, "scripts", "foundry-authorize.py"),
               "--spec", spec_path, "--contract", contract_path, "--operator", operator,
               "--mode", "lean", "--yes"], env=env)
