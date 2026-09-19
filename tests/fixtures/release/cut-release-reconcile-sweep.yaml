@@ -169,7 +169,13 @@ hook_comment_expectation:
   #      call site kept its line number and its message; a gating security review verified all
   #      eleven sites and confirmed no guard path became unreachable. Re-based because exec_content()
   #      strips comments, so an identifier change necessarily moves the digest.
-  executable_content_sha256: '1242290c427fb5082680ed00def284c2ae6267dbf4bfb4bdd8e824d31090f88b'
+  #   7. feat-foundry-guards-guard-structured-observations (2026-09-19, factory lane,
+  #      security-flagged): the hook now imports scripts/foundry_shell_scan.py and neutralizes a
+  #      data-classified heredoc body before its EXISTING clause detection runs (every clause
+  #      rule byte-identical; only what text feeds them changed), and block() gained a
+  #      remediation/retryable/evidence-carrying JSON verdict (AC-GSO-4) replacing the old plain
+  #      "BLOCK <reason>" line. Both are real, reviewed executable changes to this hook.
+  executable_content_sha256: 'd602aa40af5407a08eba67e4e9536c437d4cf7966a8c3c37364d6536b82d9548'
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
 operator_registry_shape:

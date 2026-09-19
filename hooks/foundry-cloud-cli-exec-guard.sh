@@ -56,6 +56,14 @@
 # boundary; it is not a substitute for it, and it is not asked to be.
 set -uo pipefail
 
+# Resolve this plugin's own scripts/ dir (feat-foundry-guards-guard-structured-observations):
+# the embedded evaluator imports scripts/foundry_shell_scan.py for heredoc-aware tokenization.
+# Same fallback shape as hooks/foundry-env-reap.sh — CLAUDE_PLUGIN_ROOT first, else derive from
+# this script's own path (a live PreToolUse invocation always sets it; a direct/--eval/test
+# invocation may not).
+HERE_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$HERE_DIR/.." && pwd)}"
+
 # --eval (SELFTEST ONLY) — drive the matcher hermetically over a throwaway command-string
 # under an EXPLICIT (possibly empty) config, NEVER reading the real seam:
 #   foundry-cloud-cli-exec-guard.sh --eval '<cmd>' '<wrapper>' '<tools-csv>' '<exempt-newline-joined>'
@@ -152,8 +160,12 @@ fi
 # bash 3.2's command-substitution scanner mis-tracks backquotes/quotes across heredoc content
 # (feat-foundry-bash32-parse-guard), so the substitution below contains only the function call.
 _cloud_guard_eval() {
-  CMD="$cmd" WRAPPER="$wrapper_in" GUARDED_TOOLS="$tools_in" OFFLINE_EXEMPT="$exempt_in" python3 - <<'PY'
-import os, re, shlex, sys
+  CMD="$cmd" WRAPPER="$wrapper_in" GUARDED_TOOLS="$tools_in" OFFLINE_EXEMPT="$exempt_in" \
+    PLUGIN_ROOT="$PLUGIN_ROOT" python3 - <<'PY'
+import json, os, re, shlex, sys
+
+sys.path.insert(0, os.path.join(os.environ.get("PLUGIN_ROOT", ""), "scripts"))
+import foundry_shell_scan          # feat-foundry-guards-guard-structured-observations (AC-GSO-1)
 
 cmd = os.environ.get("CMD", "")
 wrapper_raw = os.environ.get("WRAPPER", "") or ""
@@ -241,7 +253,11 @@ def _redact(s):
     return _SECRET_ASSIGN.sub(lambda m: m.group(1) + "=***", s)
 
 
-norm = cmd
+# feat-foundry-guards-guard-structured-observations (AC-GSO-2/5): a guarded tool mentioned only
+# inside a `data`-classified heredoc body (a closed inert-sink shape — see
+# scripts/foundry_shell_scan.py) is neutralized to blank text BEFORE the command-position scan
+# below runs. Every existing rule is unchanged; only what text it scans changes.
+norm = foundry_shell_scan.neutralize(cmd)
 # --- LINE STRUCTURE FIRST, and in this order. Both defects below were verified in this guard and
 # were already fixed in the sibling git-discipline guard; the two must not disagree.
 #   1. A backslash line-continuation is DELETED, never spaced. bash splices the word back together,
@@ -463,8 +479,30 @@ while i < n:
             # Name the exact wrapped form the operator must use instead (route_prefix already
             # carries the `exec` subverb — never doubled).
             wrapped = " ".join(route_prefix) + " " + word
-            print("BLOCK bare guarded tool %r at a command position not routed through the "
-                  "wrapper. Re-run it as: %s …  Command: %s" % (word, wrapped, _redact(cmd)))
+            _redacted_cmd = _redact(cmd)
+            _reason = ("bare guarded tool %r at a command position not routed through the "
+                       "wrapper. Command: %s" % (word, _redacted_cmd))
+            _remediation = "Re-run it as: %s …" % wrapped
+            # feat-foundry-guards-guard-structured-observations (AC-GSO-4): a leading
+            # BLOCK_JSON line carries the whole structured observation as ONE line (json.dumps
+            # never emits a literal newline — a multi-line `cmd` is escaped as "\\n" inside the
+            # JSON string), so the live bash wrapper never has to positionally parse fields out
+            # of a verdict that can itself span multiple physical lines. `evidence` is built
+            # from `_redacted_cmd` — the SAME redacted text `reason` embeds (PR #178 security
+            # review round 2: the bash wrapper previously built `observation.evidence` from its
+            # own raw, unredacted `$cmd` shell variable, leaking an inline secret this evaluator
+            # had already correctly redacted out of `reason`). The FINAL line stays the classic
+            # "BLOCK <reason>" text — the `--eval` selftest protocol (and every test that reads
+            # the LAST stdout line) is unchanged.
+            _payload = {
+                "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                        "permissionDecisionReason": _reason},
+                "observation": {"status": "blocked", "guard": "cloud-cli-exec-guard",
+                                 "reason": _reason, "evidence": [_redacted_cmd],
+                                 "retryable": False, "remediation": _remediation},
+            }
+            print("BLOCK_JSON:" + json.dumps(_payload))
+            print("BLOCK " + _reason)
             sys.exit(0)
         # advance past this command word
         i = k + 1
@@ -498,18 +536,42 @@ if [ "$rc" -ne 0 ] || [ -z "$verdict" ]; then
   exit 0
 fi
 
-# --- SELFTEST (--eval) emits the RAW verdict token on stdout (the drop-in selftest greps it)
-# and mirrors the live exit code (0 allow / 2 block). The LIVE path emits the human-facing
-# denial on stderr. ---
+# --- SELFTEST (--eval) emits the RAW verdict token on stdout (the drop-in selftest greps the
+# LAST line, always the classic "BLOCK <reason>" / "ALLOW" text) and mirrors the live exit code
+# (0 allow / 2 block). The LIVE path additionally prints one JSON object on stdout
+# (hookSpecificOutput deny + observation, AC-GSO-4) and a stderr reason-then-remediation line;
+# the "run it yourself outside the agent" sentence is retired in favor of the concrete wrapped
+# form the evaluator already computes. ---
 case "$verdict" in
+  BLOCK_JSON:*)
+    # `$verdict` is "BLOCK_JSON:<one-line json>\nBLOCK <reason>" — the json line can never
+    # contain a literal newline (json.dumps escapes one embedded in a multi-line `cmd` as the
+    # two characters "\n"), so splitting on the FIRST newline is safe regardless of how many
+    # physical lines the trailing "BLOCK <reason>" line spans (a multi-line `cmd` makes that
+    # one, too — this is the pre-existing eval-mode last-line convention, unaffected).
+    json_line="${verdict%%$'\n'*}"
+    json_line="${json_line#BLOCK_JSON:}"
+    if [ "$EVAL_MODE" -eq 1 ]; then
+      printf '%s\n' "$verdict"
+      exit 2
+    fi
+    printf '%s\n' "$json_line"
+    printf '%s' "$json_line" | python3 -c 'import json, sys
+d = json.load(sys.stdin)["observation"]
+print("  " + d["reason"])
+print("  " + d["remediation"])' >&2
+    echo "FOUNDRY CLOUD-CLI EXEC-GUARD: BLOCKED (fail-closed) — a guarded cloud/IaC CLI was run bare, bypassing the guarded-exec wrapper." >&2
+    exit 2
+    ;;
   BLOCK\ *)
+    # Back-compat shape for a block verdict with no remediation line (none exist today; kept
+    # so a future single-line block() call still fails closed correctly, never silently admits).
     if [ "$EVAL_MODE" -eq 1 ]; then
       printf '%s\n' "$verdict"
       exit 2
     fi
     echo "FOUNDRY CLOUD-CLI EXEC-GUARD: BLOCKED (fail-closed) — a guarded cloud/IaC CLI was run bare, bypassing the guarded-exec wrapper." >&2
     echo "  ${verdict#BLOCK }" >&2
-    echo "  Route the tool through the wrapper. This guard takes no per-invocation override flag; its enforcement follows the project config's wrapper setting. To proceed, route via the wrapper or run it yourself outside the agent." >&2
     exit 2
     ;;
   ALLOW)

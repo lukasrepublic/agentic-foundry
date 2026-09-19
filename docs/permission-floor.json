@@ -346,6 +346,10 @@
   ],
   "not_invoked": [
     {
+      "script": "foundry_shell_scan.py",
+      "rationale": "library: no argparse/__main__; the stdlib shell tokenizer imported by the two PreToolUse(Bash) guards (guard-structured-observations)"
+    },
+    {
       "script": "foundry_audit_ledger.py",
       "rationale": "library: no argparse/__main__; imported by foundry-audit-record.py for the ledger schema/writer"
     },
