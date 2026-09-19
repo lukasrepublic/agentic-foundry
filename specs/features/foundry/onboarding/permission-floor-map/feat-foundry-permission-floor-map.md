@@ -215,10 +215,13 @@ is a tracked follow-on rather than a change made here.
   `foundry_graph.py`, `foundry_id_apply.py`, …). A module that is never a command is recorded with a one-line
   reason, and AC-PFM-2's disjointness means "forgot to classify" is indistinguishable from "failed the test".
   The new command-position cross-check closes the other half: a script the workflow actually instructs cannot
-  be parked in `not_invoked` to dodge a tier decision. Note the check's live consequence —
-  `foundry_run_metrics.py` **is** invoked in command position by `hooks/foundry-run-metrics.sh`
-  (`python3 "$_SCRIPTS_DIR/foundry_run_metrics.py" --posttooluse`), so despite its underscore-library naming
-  it must be **tiered**, not excluded. R11 bounds the check's known blind spot.
+  be parked in `not_invoked` to dodge a tier decision. Note the check's live consequence — at the
+  time this section was written, `foundry_run_metrics.py` **was** invoked in command position by
+  `hooks/foundry-run-metrics.sh` (`python3 "$_SCRIPTS_DIR/foundry_run_metrics.py" --posttooluse`),
+  so despite its underscore-library naming it had to be **tiered**, not excluded; both were retired
+  by `feat-yield-and-silent-yield-instrument` (2026-09-18), and the check's live consequence now
+  applies to any future underscore-named module a hook starts invoking. R11 bounds the check's
+  known blind spot.
 - **`foundry_id_apply.py` is a library, not a CLI.** Verified: the module declares no `argparse`, no
   `main()`, and no `if __name__ == "__main__"` block; it is loaded via `tests/conftest.py`'s `load_module`
   and exposes `classify_gitops`/`decide_apply` as pure functions. It is therefore `not_invoked`, with the

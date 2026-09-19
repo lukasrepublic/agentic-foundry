@@ -24,6 +24,11 @@
       "rationale": "writes one schema-validated evidence row to .foundry/audit-ledger.jsonl at the end of /foundry:audit"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-autonomy-instrument.py:*)",
+      "tier": "allow",
+      "rationale": "report-only six-ratio autonomy instrument (feat-yield-and-silent-yield-instrument); reads transcripts + the authorization corpus, gates nothing, writes only to a caller-specified --out path"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-build-citation-graph.py:*)",
       "tier": "allow",
       "rationale": "builds the derived citation-graph cache from plain-text source-of-truth files"
@@ -202,11 +207,6 @@
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_repo_registry.py:*)",
       "tier": "allow",
       "rationale": "Read-only registry-integrity report (feat-foundry-repo-registry-formalization): physical-confinement + gitignore-pairing + origin-match rows over .claude/foundry-project.json; single read-only git choke point, sanitizing emission sink, writes nothing. Tiered at merge-reconciliation when the script landed after the map (the closed-world tripwire firing as designed)."
-    },
-    {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_run_metrics.py:*)",
-      "tier": "allow",
-      "rationale": "posttooluse telemetry logger invoked by the run-metrics hook; appends a loss-tracking line"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_session_mode.py:*)",

@@ -36,11 +36,6 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/foundry-harvest-learnings.sh posttooluse"
-          },
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/foundry-run-metrics.sh posttooluse",
-            "timeout": 10
           }
         ]
       }

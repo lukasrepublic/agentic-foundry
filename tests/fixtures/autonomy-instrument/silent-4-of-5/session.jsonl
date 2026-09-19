@@ -1,0 +1,10 @@
+{"type": "assistant", "sessionId": "sess-1", "timestamp": "2023-11-14T22:13:20Z", "message": {"content": [{"type": "text", "text": "Finished task 0."}]}}
+{"type": "user", "sessionId": "sess-1", "timestamp": "2023-11-14T22:13:25Z", "origin": {"kind": "human"}, "message": {"content": [{"type": "text", "text": "go"}]}}
+{"type": "assistant", "sessionId": "sess-1", "timestamp": "2023-11-14T22:13:30Z", "message": {"content": [{"type": "text", "text": "Finished task 1."}]}}
+{"type": "user", "sessionId": "sess-1", "timestamp": "2023-11-14T22:13:35Z", "origin": {"kind": "human"}, "message": {"content": [{"type": "text", "text": "go"}]}}
+{"type": "assistant", "sessionId": "sess-1", "timestamp": "2023-11-14T22:13:40Z", "message": {"content": [{"type": "text", "text": "Task 2: should I deploy to prod or staging first?"}]}}
+{"type": "user", "sessionId": "sess-1", "timestamp": "2023-11-14T22:13:45Z", "origin": {"kind": "human"}, "message": {"content": [{"type": "text", "text": "staging first"}]}}
+{"type": "assistant", "sessionId": "sess-1", "timestamp": "2023-11-14T22:13:50Z", "message": {"content": [{"type": "text", "text": "Finished task 3."}]}}
+{"type": "user", "sessionId": "sess-1", "timestamp": "2023-11-14T22:13:55Z", "origin": {"kind": "human"}, "message": {"content": [{"type": "text", "text": "go"}]}}
+{"type": "assistant", "sessionId": "sess-1", "timestamp": "2023-11-14T22:14:00Z", "message": {"content": [{"type": "text", "text": "Finished task 4."}]}}
+{"type": "user", "sessionId": "sess-1", "timestamp": "2023-11-14T22:14:05Z", "origin": {"kind": "human"}, "message": {"content": [{"type": "text", "text": "go"}]}}
