@@ -1,0 +1,13 @@
+# Fixture: what the NEXT tick's write-state call adds. One entry repeats the existing fixture
+# exactly (to prove a merge dedupes rather than duplicating), the rest are new.
+decisions:
+  - "2026-09-01: acme-wave-1 decided to build the read path before the write path"
+  - "2026-09-08: acme-wave-2 decided the write path reuses the read path's confinement check"
+artifacts:
+  - path: specs/features/foundry/fixture-domain/fixture-capability/feat-fixture.md
+    reuse_as: "template for productA's next spec"
+  - path: scripts/fixture_helper.py
+    reuse_as: "the confinement check productA's write path reused verbatim"
+open_risks:
+  - "the merged write path has not been exercised under concurrent writers"
+amendments_needed: []

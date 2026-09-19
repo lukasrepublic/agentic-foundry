@@ -25,10 +25,16 @@ by construction (the atom's contract DENIES the first two so that stays true):
                                       two atoms that touch the same tree never share a wave. AC-CDW-5.
 
 WHAT IS ACTUALLY NEW HERE: the in-flight listing, the wave barrier applied to a ready-set, the idle
-predicate, the wake-interval rule, the landing-evidence rule, the applied-vs-merged rule, and the
-treat-manifest-text-as-data rule.
+predicate, the wake-interval rule, the landing-evidence rule, the applied-vs-merged rule, the
+treat-manifest-text-as-data rule, and (feat wave-learn) the one write this module makes.
 
-READ-ONLY (AC-CDW-6): every function is a pure derivation. Nothing in this module writes.
+READ-ONLY (AC-CDW-6), WITH ONE NAMED EXCEPTION: every function through `may_land`/`is_complete`
+above is a pure derivation over the corpus. `write_wave_state` (feat wave-learn, AC-WVL-1) is the
+sole write this module performs — it is what lets "next waves learn from previous ones" (operator
+decision `.foundry/decisions/2026-09-18-spec-is-a-living-document.md`) happen without a human
+copying a transcript. It writes exactly one file, `.foundry/releases/<id>/state.yaml`, only at wave
+close (every atom in a terminal state per `derive_run_state`, unless `force=True`), and only after
+merging with + revalidating against whatever is already there — a write can add, it can never drop.
 """
 from __future__ import annotations
 
@@ -38,6 +44,8 @@ import json
 import os
 import re
 import sys
+
+import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -332,6 +340,180 @@ def is_complete(run_row, deploy_verdict=None, *, has_live_surface=True):
     return "STALE" not in str(deploy_verdict).upper() and "NOT-ROLLED" not in str(deploy_verdict).upper()
 
 
+# ───────────────────────────────────────────────────────────── feat wave-learn: the wave-state file
+
+# Exactly the four top-level keys AC-WVL-1 names, and no others (`additionalProperties: false` at
+# the top level, per `schema/wave-state.schema.json`). Deliberately closed: this is the one place
+# per-atom status could leak back in, which the charter's "Out of scope" line forbids.
+_WAVE_STATE_KEYS = ("decisions", "artifacts", "open_risks", "amendments_needed")
+
+
+def _default_wave_state():
+    return {k: [] for k in _WAVE_STATE_KEYS}
+
+
+def _wave_schema_path():
+    return os.path.join(HERE, "..", "schema", "wave-state.schema.json")
+
+
+def _wave_jsonschema_check(doc):
+    """Opportunistic structural validation against the pinned JSON Schema, mirroring
+    `foundry_contract._jsonschema_check`. Returns [] when `jsonschema` is unavailable — the
+    hand-rolled checks in `validate_wave_state` below still enforce the same shape regardless."""
+    try:
+        import jsonschema  # type: ignore
+    except ImportError:
+        return []
+    try:
+        with open(_wave_schema_path(), encoding="utf-8") as fh:
+            schema = json.load(fh)
+        jsonschema.validate(doc, schema)
+    except jsonschema.ValidationError as e:  # type: ignore
+        return [f"schema: {e.message} (at {'/'.join(str(p) for p in e.absolute_path)})"]
+    except (OSError, json.JSONDecodeError) as e:  # pragma: no cover
+        return [f"schema: could not validate ({e})"]
+    return []
+
+
+def validate_wave_state(doc):
+    """Every reason `doc` is not a valid wave-state document, or `[]` when it is (AC-WVL-2).
+
+    Hand-rolled first (so this holds even where `jsonschema` is not installed — the same
+    optional-dependency posture `foundry_contract.py` uses), then the pinned schema on top."""
+    if not isinstance(doc, dict):
+        return [f"wave state must be a mapping, got {type(doc).__name__}"]
+    errors = []
+    extra = sorted(set(doc.keys()) - set(_WAVE_STATE_KEYS))
+    if extra:
+        errors.append(f"unknown top-level key(s) {extra} (allowed: {list(_WAVE_STATE_KEYS)})")
+    for key in _WAVE_STATE_KEYS:
+        if key not in doc:
+            continue
+        val = doc[key]
+        if not isinstance(val, list):
+            errors.append(f"{key!r} must be a list, got {type(val).__name__}")
+            continue
+        if key == "artifacts":
+            for i, item in enumerate(val):
+                if not isinstance(item, dict):
+                    errors.append(f"artifacts[{i}] must be a mapping, got {type(item).__name__}")
+                    continue
+                missing = [f for f in ("path", "reuse_as") if f not in item]
+                if missing:
+                    errors.append(f"artifacts[{i}] missing required field(s) {missing}")
+                    continue
+                for f in ("path", "reuse_as"):
+                    if not isinstance(item[f], str) or not item[f].strip():
+                        errors.append(f"artifacts[{i}].{f} must be a non-empty string")
+        else:
+            for i, item in enumerate(val):
+                if not isinstance(item, str) or not item.strip():
+                    errors.append(f"{key}[{i}] must be a non-empty string")
+    errors += _wave_jsonschema_check(doc)
+    return errors
+
+
+def merge_wave_state(existing, new):
+    """Merge `new` entries into `existing`, per key, preserving order and NEVER dropping an
+    existing entry. Exact-duplicate items (a repeated decision string, or an artifact with the same
+    `path`+`reuse_as`) are not appended twice; everything else new is appended after what is there."""
+    existing = existing or _default_wave_state()
+    new = new or {}
+    merged = {}
+    for key in _WAVE_STATE_KEYS:
+        kept = list(existing.get(key) or [])
+        added = list(new.get(key) or [])
+        merged_list = list(kept)
+        if key == "artifacts":
+            seen = {(a.get("path"), a.get("reuse_as")) for a in kept if isinstance(a, dict)}
+            for item in added:
+                marker = (item.get("path"), item.get("reuse_as")) if isinstance(item, dict) else None
+                if marker is None or marker not in seen:
+                    merged_list.append(item)
+                    if marker is not None:
+                        seen.add(marker)
+        else:
+            seen = set(kept)
+            for item in added:
+                if item not in seen:
+                    merged_list.append(item)
+                    seen.add(item)
+        merged[key] = merged_list
+    return merged
+
+
+def wave_state_path(release_id, project_dir=None):
+    """`.foundry/releases/<release_id>/state.yaml`. `release_id` is re-checked against the same
+    `[a-z0-9-]+` slug shape `foundry_release.load_release` enforces — defense in depth against a
+    caller passing something path-hostile straight to `os.path.join`."""
+    if not isinstance(release_id, str) or not re.fullmatch(r"[a-z0-9-]+", release_id.strip() or ""):
+        raise CommandDeckError(f"release id {release_id!r} is not a [a-z0-9-]+ slug")
+    root = fr._project_dir(project_dir)
+    return os.path.join(root, ".foundry", "releases", release_id.strip(), "state.yaml")
+
+
+def load_wave_state(release_id, project_dir=None):
+    """The release's `state.yaml`, validated — or `None` when there is none (AC-WVL-4: absence is
+    reported, never fabricated). An existing-but-invalid file RAISES rather than reading as absent,
+    same posture as `foundry_command_deck_watch.read_record`."""
+    path = wave_state_path(release_id, project_dir=project_dir)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh) or {}
+    except (OSError, yaml.YAMLError) as e:
+        raise CommandDeckError(f"wave state exists but could not be read: {path}: {e}")
+    errors = validate_wave_state(doc)
+    if errors:
+        raise CommandDeckError(f"wave state at {path} failed validation: " + "; ".join(errors))
+    return doc
+
+
+def release_completed(rows):
+    """True only when every row `derive_run_state` produced is terminal (AC-WVL-1's "reach
+    `completed`"). Reuses `_WAVE_SETTLED` — the same terminal set the wave barrier already treats as
+    finished — rather than inventing a second vocabulary for "done". No rows at all is NOT
+    completed: nothing has been observed yet."""
+    return bool(rows) and all((r or {}).get("state") in _WAVE_SETTLED for r in rows)
+
+
+def write_wave_state(release, new_entries, *, project_dir=None, branch="main", force=False, run_rows=None):
+    """Write `.foundry/releases/<release.id>/state.yaml` (AC-WVL-1). Merges `new_entries` into
+    whatever is already there and NEVER drops an existing entry; refuses (raises
+    `CommandDeckError`) rather than writing when the release has not reached `completed` (unless
+    `force=True`), when `new_entries` does not validate, or when the merged document would not.
+
+    `run_rows` overrides `derive_run_state` for tests, the same pattern `ready_set` already uses —
+    a synthetic completed release needs no real contracts/authorization on disk to exercise this.
+    """
+    if not force:
+        rows = run_rows if run_rows is not None else fr.derive_run_state(
+            release, project_dir=project_dir, branch=branch)
+        if not release_completed(rows):
+            unfinished = [r.get("id") for r in (rows or []) if r.get("state") not in _WAVE_SETTLED]
+            raise CommandDeckError(
+                f"release {release.id!r} has not reached completed — unfinished: "
+                f"{unfinished or 'no run-state rows derived'} (pass force=True to override)")
+
+    entry_errors = validate_wave_state(new_entries if isinstance(new_entries, dict) else {})
+    if entry_errors:
+        raise CommandDeckError("new wave-state entries failed validation: " + "; ".join(entry_errors))
+
+    existing = load_wave_state(release.id, project_dir=project_dir) or _default_wave_state()
+    merged = merge_wave_state(existing, new_entries)
+
+    merge_errors = validate_wave_state(merged)
+    if merge_errors:  # pragma: no cover — defensive; inputs above are already individually valid
+        raise CommandDeckError("merged wave state failed validation: " + "; ".join(merge_errors))
+
+    path = wave_state_path(release.id, project_dir=project_dir)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        yaml.safe_dump(merged, fh, sort_keys=False, default_flow_style=False, allow_unicode=True)
+    return merged
+
+
 # ───────────────────────────────────────────────────────────── CLI
 
 def _cmd_inflight(args):
@@ -345,12 +527,40 @@ def _cmd_ready(args):
     return 0
 
 
+def _cmd_write_state(args):
+    """feat wave-learn (AC-WVL-1): write/merge `.foundry/releases/<programme>/state.yaml` at wave
+    close. `--entries-json`/`--entries-file` name the NEW decisions/artifacts/open_risks/
+    amendments_needed to merge in; whatever is already on disk is kept."""
+    rel = resolve_programme(args.programme, project_dir=args.root)
+    try:
+        if args.entries_file:
+            with open(args.entries_file, encoding="utf-8") as fh:
+                entries = json.load(fh)
+        elif args.entries_json:
+            entries = json.loads(args.entries_json)
+        else:
+            raise CommandDeckError(
+                "write-state needs --entries-json or --entries-file naming the new "
+                "decisions/artifacts/open_risks/amendments_needed to merge in")
+    except (OSError, json.JSONDecodeError) as e:
+        raise CommandDeckError(f"could not read --entries-json/--entries-file: {e}")
+    merged = write_wave_state(rel, entries, project_dir=args.root, branch=args.branch, force=args.force)
+    print(json.dumps(merged, indent=2))
+    return 0
+
+
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="command-deck resolution (read-only)")
-    ap.add_argument("cmd", choices=["inflight", "ready"])
+    ap = argparse.ArgumentParser(description="command-deck resolution + the wave-close write")
+    ap.add_argument("cmd", choices=["inflight", "ready", "write-state"])
     ap.add_argument("programme", nargs="?", default=None)
     ap.add_argument("--root", default=os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
     ap.add_argument("--branch", default="main")
+    ap.add_argument("--entries-json", default=None,
+                     help="write-state: a JSON object with any of the four wave-state keys")
+    ap.add_argument("--entries-file", default=None,
+                     help="write-state: a path to a JSON file, same shape as --entries-json")
+    ap.add_argument("--force", action="store_true",
+                     help="write-state: write even when the release has not reached completed")
     args = ap.parse_args(argv)
     try:
         if args.cmd == "inflight":
@@ -361,6 +571,8 @@ def main(argv=None):
             for r in list_inflight(args.root):
                 print(f"  {r['id']}  [{r['state']}]  {r['description'][:80]}")
             return 2
+        if args.cmd == "write-state":
+            return _cmd_write_state(args)
         return _cmd_ready(args)
     except CommandDeckError as e:
         print(f"command-deck: REFUSED — {e}", file=sys.stderr)
