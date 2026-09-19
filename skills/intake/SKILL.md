@@ -33,8 +33,11 @@ downstream pipeline.
    release's `.foundry/releases/<id>/state.yaml` **before the first discovery question** and
    surface its four lists — `decisions`, `artifacts`, `open_risks`, `amendments_needed` — to the
    operator as the opening context, so the interview starts from what the last wave already
-   learned instead of re-litigating it. If a named release has no `state.yaml`, say so in one
-   line and continue — do **not** fabricate learning that was never recorded.
+   learned instead of re-litigating it. **`next_action`, where recorded, is the FIRST thing
+   surfaced** (feat programme-state-minimal, AC-PSM-1) — the single next thing to do outranks the
+   four lists in the opening context, not an afterthought appended to them. If a named release has
+   no `state.yaml`, say so in one line and continue — do **not** fabricate learning that was never
+   recorded.
 2. **Route the lane (the game test)** — see "Lane routing" below. Classify the atom
    **charter lane by default**; only a `security: true` atom, or one whose scope names auth,
    secrets, custody, a production mutation, or a cross-repo pin, or whose contract's
