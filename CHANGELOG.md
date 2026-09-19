@@ -8,25 +8,88 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
-## Unreleased
+## v1.11.0 — 2026-09-19
 
-### `/foundry:authorize` drops the §8 audit-record precondition
+### The spec becomes a living document (autonomy-continuation R0)
 
-`foundry-authorize.py` no longer fail-closes `--yes` on a spec whose content hash has no
-`.foundry/audit-ledger.jsonl` row. Measured over 30 days, that precondition — not the hash
-freeze itself — was the binding cost of every mid-build spec amendment (amend → re-freeze →
-owe an audit row → stall). The freeze floors (1-4), the operator's explicit confirmation, and
-the `authorize-intent`/`authorize-complete` security-audit trail are unchanged; the audit
-ledger becomes informational: a found row (any verdict) prints one
-`§8 audit: recorded (verdict=<verdict>) — informational` line and never blocks. The
-`--skip-audit-reason` flag is kept for one release as an accepted, deprecated no-op — it now
-prints a `SKIPPED` line stating it has no effect and appends one informational
-`authorize-audit-flag-deprecated` record (in place of the retired `authorize-audit-skip`
-record) to the security-audit trail. `skills/authorize/SKILL.md` is reworded to match:
-`/foundry:audit` is operator-invoked only, never a precondition.
+Eight atoms carrying one operator decision (`.foundry/decisions/2026-09-18-spec-is-a-living-document.md`,
+workspace): a frozen spec is adjusted **during** implementation when reality requires it, the first
+wave ships live code over polished paper, and the next wave reads what the previous one learned.
+Grounded in a 30-day mining of three adopter workspaces: the front gate's yield was 5.2% (the freeze
+itself was exonerated; the §8 audit-row precondition on every re-freeze was the binding cost).
 
-(Security review: not security-flagged — the change relaxes an informational bookkeeping
-gate, not a freeze floor, the operator-confirmation step, or the security-audit trail.)
+- **`/foundry:amend` — one-step re-freeze of a living, already-authorized spec** (#156,
+  `scripts/foundry-amend.py`, `skills/amend/SKILL.md`). Diffs the candidate against the commit whose
+  frozen hashes match the trailer (never `HEAD`/`--ref` as given), classifies the change, and re-freezes
+  a **narrowing** with no operator step: new `spec_sha256`/`contract_sha256`, `auth_seq`+1,
+  `supersedes`, a `## Amendments` row, one `amend-complete` security-audit record. A **widening** —
+  a boundary field (`scope`, `target_repo`, `checkpoints[].intended/ack`, `system_grounding`,
+  `preconditions`, `build_gates`, `post_apply_checks`, `mandatory_review`, `requires_capabilities`),
+  an identifier token (ARN, account id, hostname/URL, IPv4) in a locator or expected value, a
+  checkpoint-rigor reduction (lower `expect.value`, weaker `expect.op`, a changed `matches` regex,
+  `surface` repointed or deleted, a checkpoint deleted outright), or a contract whose
+  `mandatory_review` names security — leaves the contract byte-unchanged and emits a structured
+  `needs-operator` record with the remediation `/foundry:authorize <spec>`. Applies the same freeze
+  floors and AC↔checkpoint bijection as `/foundry:authorize` via `foundry_authz.validate_spec_contract`;
+  the freeze logic is never re-implemented. No audit-ledger row is required or consulted.
+- **`/foundry:authorize` drops the §8 audit-record precondition** (#151, #154). The audit ledger
+  becomes informational: a found row (any verdict) prints one `§8 audit: recorded (verdict=…) —
+  informational` line and never blocks. `--skip-audit-reason` is kept for one release as a
+  deprecated no-op (prints `SKIPPED`, appends one `authorize-audit-flag-deprecated` record). Freeze
+  floors 1–4, the operator confirmation, and the `authorize-intent`/`authorize-complete` trail are
+  unchanged.
+- **`find_audit` reads a PASS allowlist, and `--verdict` is mandatory on write** (#150,
+  `scripts/foundry_audit_ledger.py`, `scripts/foundry-audit-record.py`). The former denylist of
+  three legacy verdicts read every v2 non-pass terminus (`killed`, `refused`, `needs-operator`,
+  `needs-reground`, `dedupe-skip`) as accepted, and an omitted `--verdict` recorded `plateau-clean`.
+  Now `PASS_VERDICTS = {converged, plateau-clean, plateau-security, plateau}`; anything else returns
+  `None`; a malformed row fails closed. Closes the open fail-open in floor #1 recorded since v1.5.
+- **Spec review: coherence check at Phase 0, two-round cap** (#153, `skills/spec-review/SKILL.md`,
+  `agents/spec-reviewer.md`). For any atom in a release, `foundry-coherence-check.py --scope specs`
+  runs over the release's specs before authorization and a contradiction Blocks both owning atoms.
+  Remediation is capped at two rounds; a third needs an operator decision in `## Clarifications`.
+  A Block citing neither an `AC-<TOKEN>-<n>` nor a `file:line` downgrades to Risk; a finding unchanged
+  across rounds is reported once as "unresolved".
+- **Intake routes the charter lane by default** (#155, `skills/intake/SKILL.md`,
+  `skills/authorize-release/SKILL.md`). The factory lane is reserved for the security set — a
+  `security: true` atom, one whose scope names auth, secrets, custody, a production mutation or a
+  cross-repo pin, or whose contract's `mandatory_review` names security. A lane override is recorded
+  in the charter's `## Amendments` or the spec's `## Clarifications`, never silently.
+  `/foundry:authorize-release` shows lane + readiness per atom and routes only the next unblocked one.
+- **`## Amendments` section in both templates** (#148, `context/feat-spec-template.md`,
+  `context/charter-template.md`): `date · what changed · why reality required it · auth_seq`, after
+  `## Clarifications`, outside the normative region.
+- **The wave writes what it learned; the next wave reads it first** (#157,
+  `scripts/foundry_command_deck.py`, `schema/wave-state.schema.json`, `skills/intake/SKILL.md`).
+  At wave close the deck writes `.foundry/releases/<id>/state.yaml` with exactly `decisions` /
+  `artifacts` / `open_risks` / `amendments_needed` (no per-atom status — that is derived). Intake's
+  step 1 reads a `depends_on_release` target's `state.yaml` and surfaces the four lists before the
+  first discovery question; absence is stated in one line, never fabricated.
+- **`foundry-autonomy-instrument.py` replaces the run-metrics ledger** (#152). One CLI over the
+  session transcripts reports six ratios — silent-yield, directive-reply, granted-verb-denial,
+  guard-false-positive (sampled), authorized→built conversion, rounds-per-shipped-atom — with
+  numerators and denominators, `--json`, excerpts opt-in and redacted, output confined to `--out`.
+  `scripts/foundry_run_metrics.py` + `hooks/foundry-run-metrics.sh` are retired: every row they
+  ever wrote recorded `measurement: "unobserved"` and nothing read them.
+
+**Permission floor.** `cli/permission-floor.json` and `docs/permission-floor.json` gain one `ask`
+rule for `foundry-amend.py` (a re-freeze writes an authorization trailer) — the reason
+`create-agentic-workspace` (cli/, 0.11.0) and `update-agentic-workspace` (cli-update/, 0.1.3) move
+with this release: a scaffolded or reconciled workspace receives the new floor.
+
+**Known follow-ups, recorded in the workspace's `state.yaml` for R1 intake:** `foundry_release.py`'s
+loader rejects the programme manifest vocabulary (`program`, `depends_on_release`, `lane`, …) —
+first R1 atom; the permission-floor `ask` rules do not prefix-match the skills' `${CLAUDE_PLUGIN_ROOT}`
+invocations (pre-existing); three skill docs still describe the retired audit precondition
+(`skills/audit/SKILL.md`, `skills/spec-review/SKILL.md`); `foundry-amend.py` reads `prior_block` from
+the working-tree trailer, outside `contract_sha256`.
+
+(Security review: **security-flagged** — `/foundry:amend` writes authorization trailers. Three review
+rounds on #156 by the security lens: baseline bound to the frozen trailer (a committed widening or a
+`--ref` at a wider commit is refused), renamed and deleted checkpoints convict, the `## Amendments` row
+lands before the freeze write with a spec-hash-invariance assertion. #150/#151/#154 relax an
+informational gate, not a floor. The remaining atoms are doc/skill/template changes and an offline
+read-only instrument.)
 
 ## v1.10.0 — 2026-09-04
 
