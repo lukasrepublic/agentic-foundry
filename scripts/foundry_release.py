@@ -256,6 +256,12 @@ def _validate(doc, expected_id):
             raise ReleaseError(
                 f"release {rid!r}: atom {aid!r} must carry `charter_ref`, or both `spec_ref` + "
                 f"`contract_ref` — carries neither shape")
+        if has_charter and (spec_ref or contract_ref):
+            # PR #162 review: the two shapes are EXCLUSIVE — every consumer branches on charter_ref
+            # first, so a mixed atom would carry a contract_ref that ready_set never confines.
+            raise ReleaseError(
+                f"release {rid!r}: atom {aid!r} carries `charter_ref` AND `spec_ref`/`contract_ref` — "
+                f"one shape only (charter lane or factory lane)")
         kind = raw.get("kind")
         if kind is not None and (not isinstance(kind, str) or not kind.strip()):
             raise ReleaseError(f"release {rid!r}: atom {aid!r} kind must be a non-empty string")

@@ -610,6 +610,22 @@ class TestReleaseLoaderVocabulary:
         assert top_keys - required - optional == set(), \
             f"unexpected top-level field(s) in the real R0 manifest: {top_keys - required - optional}"
 
+    def test_mixed_shape_atom_refused_by_name(self, tmp_path):
+        """PR #162 review Risk: an atom carrying charter_ref AND a contract_ref is refused — the shapes
+        are exclusive, so no contract_ref can bypass ready_set's charter-first confinement."""
+        pd = str(tmp_path)
+        _seed_release_fixture(pd, "ac-r1-stop-stopping")
+        path = os.path.join(pd, ".foundry", "releases", "ac-r1-stop-stopping", "release.yaml")
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        text = text.replace("    charter_ref: .foundry/releases/ac-r1-stop-stopping/charters/release-loader-vocabulary.md\n",
+                            "    charter_ref: .foundry/releases/ac-r1-stop-stopping/charters/release-loader-vocabulary.md\n"
+                            "    contract_ref: specs/x/acceptance-contract.yaml\n", 1)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        with pytest.raises(release.ReleaseError, match="release-loader-vocabulary.*one shape only"):
+            release.load_release("ac-r1-stop-stopping", project_dir=pd)
+
     def test_ac_r0_fixture_manifest_loads_clean(self, tmp_path):
         """AC-RLV-5: the R0 manifest (repaired on the workspace side 2026-09-19 — valid YAML, every atom
         carrying spec_ref+contract_ref or charter_ref, `lands: first` on the first atom) loads without
