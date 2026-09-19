@@ -8,6 +8,56 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.13.0 — 2026-09-19
+
+### Gates stop lying (autonomy-continuation R2)
+
+Seven atoms, two of them security-flagged. The guards keep every block they made before and stop lying about
+the rest; the CI wait gets a primitive; a build fails fast when the operator never granted what it needs; and
+two defects the fresh-install test pass found are closed.
+
+- **The guards emit structured observations** (#178, security-flagged; `scripts/foundry_shell_scan.py`,
+  both PreToolUse(Bash) hooks). A stdlib tokenizer finds heredoc boundaries the way bash does — on the raw
+  lines, before any backslash-continuation is removed — tracks quotes and substitutions, and classifies a
+  heredoc body as `data` only when its sink is inert (`cat >`/`>>` a plain non-scratch file, `tee`, `git commit
+  -F -`, `gh pr create --body-file -`, `gh issue create --body-file -`), the clause has no other consumer, and
+  the sink path is mentioned nowhere else in the same command. Everything the tokenizer cannot classify
+  convicts. The withdrawn-exoneration tripwire grew from twelve to fifteen rows and every row still blocks; a
+  fifty-pair admit/convict corpus pins the false-positive shapes. A block now exits 2 AND prints one JSON
+  object (`hookSpecificOutput` deny + an `observation` with `evidence` redacted, `retryable`, and an
+  executable `remediation`); "run the command yourself outside the agent" is retired. Three review rounds
+  (the security lens caught a real bypass in round two — the spec's own step order was wrong and was amended).
+- **Capability preflight at dispatch** (#176, security-flagged; `scripts/foundry-capability-preflight.py`).
+  Before an atom starts, its contract's `requires_capabilities` are checked against the effective `allow`
+  rules (workspace, local, user settings — `deny` subtracts in either direction, `ask` never grants) and the
+  `automatic` grants of `permissions.yaml`, under the platform's own prefix matching; `missing` names the exact
+  rule to add, exits 3; inputs are confined, patterns sanitised. `/foundry:doctor` runs it over every active
+  release (`preflight ok (n atoms); policy …`). The closed escalation set gains `operator-approval` at all
+  four sites.
+- **`/foundry:merge-when-green <pr>`** (#180; `scripts/foundry-merge-when-green.py`, `skills/merge-when-green/`).
+  Waits on `gh pr checks` (a native `Monitor` in a session; a bounded poll headlessly), merges through the one
+  permitted path only when every check passes and the PR is `CLEAN`, returns one JSON result, and escalates
+  once with evidence when no check will ever report. Sleep-then-poll guidance is gone.
+- **The release loader's charter atoms in the wave plan** and **the two test-count guards no longer collide**
+  (#174, #175): a charter-lane atom's `paths[]` is checked against its charter's scope (an explicit empty scope
+  is a scope); the README's count is read, not hard-coded; the tamper guard covers it again.
+- **Task-list instructions only where the tool exists** (#173): the SessionStart hook and `skills/release`
+  instruct `TaskCreate`/`TaskUpdate` only under `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`; otherwise the manifest
+  plus `state.yaml` is the queue.
+- **The upgrader converges the managed `.gitignore` block** (#179, closes ER #177): `create-agentic-workspace
+  --existing` and `update-agentic-workspace` Phase 4 replace the interior of the sentinel-delimited block with
+  the shipped one, preserve the file's own sentinel lines and every adopter line, refuse malformed states, and
+  never write when already identical — so an existing workspace actually receives v1.12.1's re-includes. Found
+  by the v1.12.1 fresh-install pass; the v1.12.1 note that Phase 4 already did this was wrong.
+
+**Permission floor.** `allow` rows for `foundry-capability-preflight.py` and (`not_invoked`) the tokenizer
+library; an `ask` row for `foundry-merge-when-green.py` — the reason `create-agentic-workspace` (cli/) and
+`update-agentic-workspace` (cli-update/) move with this release, along with the reconcile change itself.
+
+(Security review: **security-flagged** — the guard rewrite is the merge floor's in-session half and the
+preflight decides whether a build starts. Security lens on both PRs, targeted re-verification after each
+amendment; the other five atoms are charter-lane changes with a fresh-context pr-reviewer pass each.)
+
 ## v1.12.1 — 2026-09-19
 
 ### The workspace's record is tracked (patch from the v1.12.0 fresh-install test pass)
