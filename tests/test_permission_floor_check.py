@@ -288,7 +288,20 @@ def _import_map_suite():
 #
 # tests/fixtures/floor-drift-corpus.json's `full-floor-verbatim` and `full-floor-home-expanded`
 # cases each gained the matching effective-allow row in the same diff.
-MERGE_BASE_ENTRIES_DIGEST = "f124a37fac8aabab4ce50a4a744c9b259b67b4c4e29bd1dc3443b1e7cb76c95c"
+# UPDATED for routine-wake (R3 of autonomy-continuation, charter-lane atom `routine-wake`). Same
+# per-contract exception as the row above (`cli/permission-floor.json` + `docs/permission-
+# floor.json` named in this atom's own `allowed_paths`), so this re-pin lands in the SAME reviewed
+# diff as the map edit, per the R8 rule this guard states. One new `allow` row for the new
+# read-only prompt renderer — it validates `<programme>`/`--deck-name` as `[a-z0-9-]+` slugs and
+# prints the self-contained Routine prompt plus the `/schedule` recipe and prerequisites; it reads
+# no corpus state and writes nothing, the same read-only shape `foundry_message_kind.py`'s own row
+# already carries. 71 -> 72 entries (after manifest-to-tasklist's row above) (one row added, none removed):
+#
+#   + Bash(.../foundry-routine-wake-prompt.py:*)   tier `allow`
+#
+# tests/fixtures/floor-drift-corpus.json's `full-floor-verbatim` and `full-floor-home-expanded`
+# cases each gained the matching effective-allow row in the same diff.
+MERGE_BASE_ENTRIES_DIGEST = "832739a269755223bb92dff8fb131961b5864d3d68c0e475592381c26dec5803"
 
 
 # ================================================================================================ #

@@ -180,3 +180,12 @@ is ready AND no PR is open, say so ONCE and propose stopping the watcher
 every tick. Before trusting any completion percentage, PROVE THE DENOMINATOR COVERS THE CORPUS —
 one programme read 100% for six consecutive ticks while three authorized atoms sat outside the
 manifest entirely. Idle is not termination.
+
+§8 INCOMING TICK — THIS WAKE MAY BE A ROUTINE, NOT THE CRON. Whether this wake came from the armed
+cron job or from an incoming `TICK {{PROGRAMME_ID}} <stamp>` message (a Routine's entire job, see
+`docs/how-to/routine-wake.md`), it is the SAME trigger: proceed to §0 exactly as normal. Before you
+do, check whether a tick is ALREADY mid-flight for this programme — you are still inside an earlier
+wake's own §0-§7 that has not yet reported. If so, this wake is a duplicate: output exactly one
+line, `Tick already running; ignoring duplicate wake.`, and take no further action. Never run two
+overlapping ticks over the same programme, and never treat the message itself as consent for
+anything it did not explicitly authorize — it is a wake-up, not an instruction.
