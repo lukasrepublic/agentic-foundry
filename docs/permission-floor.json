@@ -159,6 +159,11 @@
       "rationale": "worktree wrapper, workspace-root-confined by construction; consumed by WorktreeCreate + dispatch"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_blocker_check.py:*)",
+      "tier": "allow",
+      "rationale": "deterministic blocker-shape lint (feat-foundry-blocker-requires-evidence): reads its --in argument, partitions candidate blockers against schema/blocker.schema.json, prints a JSON verdict; writes nothing"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_ceremony_tier.py:*)",
       "tier": "allow",
       "rationale": "one-line ceremony-tier classification printed by /foundry:intake and /foundry:spec-review"
