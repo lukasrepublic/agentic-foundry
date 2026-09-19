@@ -27,6 +27,12 @@ THE TRUST MODEL (the audit's core finding — graded by what each source ACTUALL
        fails toward attention.
 
 CLI: derive [--root WS] | --selftest   (AC-SMACH-1..5; selftest is hermetic).
+
+RETIRING (R4 subtraction-wave): fleet-is-listagents (R3 of autonomy-continuation, Decision 9)
+trims `skills/fleet/SKILL.md` to an annotation view over the native `/list-agents` and marks the
+whole fleet-scripts surface — this script and its three siblings — for removal in R4. It is NOT
+deleted here: it still runs standalone, its own tests still pass, and its permission-floor row is
+untouched until that wave lands.
 """
 import argparse
 import json
