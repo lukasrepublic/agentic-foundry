@@ -5,11 +5,14 @@ description: The front door (/foundry:intake, phase 0 of the pipeline). Ingest a
 
 # /foundry:intake
 
-Phase 0 — the front of the pipeline. Turns fuzzy inputs into deterministic atomic
-specs. The pipeline is CLOSED: `intake → spec-review (the single-pass review default) → authorize
-→ release-shape → implement → certification run → the merge floor → closeout →
-deploy-observe`. (`/foundry:audit`'s multi-pass engine stays dormant-invocable for an
-exceptional deep audit — see `skills/audit/SKILL.md` — it is never the default step here.)
+Phase 0 — the front of the pipeline. Turns fuzzy inputs into a routed atom: a **charter**
+(the default lane) or a deterministic atomic **spec** (the factory lane, reserved for the
+security set — see "Lane routing" below). The factory-lane pipeline is CLOSED: `intake →
+spec-review (the single-pass review default) → authorize → release-shape → implement →
+certification run → the merge floor → closeout → deploy-observe`. (`/foundry:audit`'s
+multi-pass engine stays dormant-invocable for an exceptional deep audit — see
+`skills/audit/SKILL.md` — it is never the default step here.) The charter lane skips
+straight to the noninteractive build; see `skills/mode/SKILL.md`.
 
 ## When to trigger
 
@@ -25,24 +28,59 @@ downstream pipeline.
 
 1. **Ingest** the source(s). For design inputs, load the cited design assets first
    (the `design-context-load` discipline) so the spec is design-grounded.
-2. **Discovery (interactive)** — walk the decision tree (see the Discovery-interview
+2. **Route the lane (the game test)** — see "Lane routing" below. Classify the atom
+   **charter lane by default**; only a `security: true` atom, or one whose scope names auth,
+   secrets, custody, a production mutation, or a cross-repo pin, or whose contract's
+   `mandatory_review` names a security review, routes to the **factory lane**. The routed
+   lane decides the artifact the remaining steps produce (a charter vs. an atomic spec).
+3. **Discovery (interactive)** — walk the decision tree (see the Discovery-interview
    discipline below). Use native `AskUserQuestion` to resolve the load-bearing
    ambiguities (scope, surfaces, acceptance criteria). Do NOT invent requirements; ask.
    (This is the former `clarify-blockers`, now native.)
-3. **Research gate (before authoring)** — for a non-trivial approach decision, run the
+4. **Research gate (before authoring)** — for a non-trivial approach decision, run the
    research gate (see below) BEFORE authoring; carry its outcome into the spec.
-4. **Author the atomic spec** — one atom = one capability-behavior, per the spec
-   taxonomy: `specs/features/<product>/<domain>/<capability>/feat-….md`, from
-   `context/feat-spec-template.md` (the industry-grounded shape — see "The template shape"
-   below). Stable AC IDs (the bijection target for the acceptance-contract) live in a
-   delimited normative region (`<!-- normative -->`) so `spec_sha256` excludes cosmetic
-   edits. On a **brownfield** atom, ground the spec's data-model / interface section on the
-   **schema-aware survey** (see "Schema-aware authoring" below) — `sd-discover`'s fifth
-   dimension, composed with `explore-before-ask` and the `data model`
-   clarification-taxonomy dimension — BEFORE drafting the section from memory.
-5. **Hand off** → `/foundry:spec-review` (the default single-pass review —
-   see `skills/spec-review/SKILL.md`) → contract-author → `/foundry:authorize`. Intake
-   never authorizes, reviews, or implements; it produces the spec.
+5. **Author the atom.**
+   - **Charter lane (default)** — author a one-page charter from
+     `${CLAUDE_PLUGIN_ROOT}/context/charter-template.md`: Goal, Acceptance criteria, Out of
+     scope, Scope (write boundary), Verification, Merge, Amendments. Commit it; the commit is
+     the record — no frozen acceptance-contract, no §8 audit.
+   - **Factory lane (security set)** — author the atomic spec, one atom = one
+     capability-behavior, per the spec taxonomy:
+     `specs/features/<product>/<domain>/<capability>/feat-….md`, from
+     `context/feat-spec-template.md` (the industry-grounded shape — see "The template shape"
+     below). Stable AC IDs (the bijection target for the acceptance-contract) live in a
+     delimited normative region (`<!-- normative -->`) so `spec_sha256` excludes cosmetic
+     edits. On a **brownfield** atom, ground the spec's data-model / interface section on the
+     **schema-aware survey** (see "Schema-aware authoring" below) — `sd-discover`'s fifth
+     dimension, composed with `explore-before-ask` and the `data model`
+     clarification-taxonomy dimension — BEFORE drafting the section from memory.
+6. **Hand off** — charter lane → the noninteractive build (isolated worktree → PR → CI green
+   + fresh-context review → operator merge, per `skills/mode/SKILL.md`). Factory lane →
+   `/foundry:spec-review` (the default single-pass review — see `skills/spec-review/SKILL.md`)
+   → contract-author → `/foundry:authorize`. Intake never authorizes, reviews, or implements;
+   it produces the charter or the spec.
+
+## Lane routing (the game test)
+
+Route every atom by **Beck's game test** — most work is "the plumbing game" (low stakes, cheap
+to redo, ship and learn); a minority is "the mortgage game" (irreversible, high consequence,
+warrants ceremony before the fact). Foundry's two lanes implement that split:
+
+- **Charter lane — the default.** A one-page charter (`context/charter-template.md`), no
+  frozen acceptance-contract, no §8 audit precondition. This is the lane for ordinary product
+  work: it is cheap to redo, reviewed live in the PR, and the operator's merge is the
+  authorization.
+- **Factory lane — reserved for the security set.** Route to the full spec + frozen
+  acceptance-contract + `/foundry:authorize` + mandatory review when, and only when, the atom
+  is `security: true`, OR its scope names one of: **auth**, **secrets**, **custody**, a
+  **production mutation**, or a **cross-repo pin**, OR its acceptance-contract's
+  `mandatory_review` field names a security review. Any one of these routes to the factory
+  lane; none of them present means the atom stays on the charter lane.
+
+**Operator override.** The operator may override the routed lane for an atom in either
+direction. When they do, record the override and its reason immediately: in the atom's charter
+`## Amendments` table (charter lane) or the spec's `## Clarifications` section (factory lane) —
+never silently, and never without the reason.
 
 ## The template shape (what intake emits)
 
