@@ -45,7 +45,11 @@ Run: {{MEASUREMENT_COMMAND}}
 forecast. Carry the TOTAL, not just the count. A denominator that SHRINKS between ticks is a
 destruction signal; a completion % that JUMPS is usually a stale tree.
 
-§2 THREE SECTIONS, BULLETS ONLY.
+§2 THREE SECTIONS, BULLETS ONLY, TWELVE LINES TOTAL ACROSS ALL THREE. The executive report is a
+status, not a transcript: an atom id, a PR number, a commit sha go in a trailing `ids:` line (or in
+a blocker's `handoff` fields) — never spelled out mid-sentence — and prose names the human-readable
+thing (an atom's short name, a programme), never the machinery. If a section would run over its
+share, collapse detail into the `ids:` line and keep the bullet to one clause.
 - Tasks Accomplished — what actually landed, by atom id.
 - Next Tasks — MY queue, including CI waits and my own unfinished work. NEVER call these blockers.
 - Blockers — ONLY what needs an OPERATOR ACTION I cannot take: a permission denial I must surface,
@@ -130,6 +134,15 @@ claim), `attempted` (≥1: what you actually tried before escalating), `why_oper
   (exit 2) on malformed input — an instrument failure, not permission to skip the lint. Report
   ONLY the `blockers` partition under §2's Blockers section; fold every `next_tasks` entry (with
   its reason) into Next Tasks instead. Do not hand-report a blocker the check has not seen.
+  When a candidate's `why_operator` is `credential-step` or `external-provisioning`, it carries a
+  `handoff` (`cwd`, `command`, `why`, `expect`) — the runnable action as data, not prose the
+  operator has to reconstruct.
+
+§5d NOTIFY ONLY WHEN THERE IS SOMETHING TO ACT ON. After §5c's `blockers` partition is final: if it
+is non-empty, send exactly ONE native `PushNotification` this tick, naming the blocker's `claim`
+verbatim (if more than one blocker, join their claims into that single notification — never one
+notification per candidate), and never a repeat notification for a blocker already surfaced and
+unchanged. If the partition is empty, send none.
 
 §6 QUIET TICKS ARE CORRECT when work is genuinely in flight and moving. A tick that reports
 progress while the census shows zero workers is NOT quiet, it is stalled. Do NOT manufacture work to

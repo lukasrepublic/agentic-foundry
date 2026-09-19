@@ -35,12 +35,24 @@ def _run_cli(args, input_text=None):
 # =================================================================================================
 
 
+def _valid_handoff(**overrides):
+    h = {
+        "cwd": "/private/tmp/example-worktree",
+        "command": "gh auth login",
+        "why": "the operator's own AWS credential is required to provision the VPC",
+        "expect": "prints 'Logged in to github.com'",
+    }
+    h.update(overrides)
+    return h
+
+
 def _valid_blocker(**overrides):
     b = {
         "claim": "the operator's own AWS credential is required to provision the VPC",
         "evidence": ["cli:aws sts get-caller-identity exited 254, AccessDenied"],
         "attempted": ["ran terraform plan with the ambient role", "checked IAM policy docs"],
         "why_operator": "external-provisioning",
+        "handoff": _valid_handoff(),
     }
     b.update(overrides)
     return b
@@ -57,9 +69,15 @@ def test_schema_is_well_formed_json_schema():
         "external-provisioning", "credential-step", "no-consensus-after-research",
         "security-widening", "irreversible-action",
     ]
-    # handoff is deliberately unconstrained (no nested schema) — out of scope here per the charter
-    assert doc["properties"]["handoff"]["type"] == "object"
-    assert "properties" not in doc["properties"]["handoff"]
+    # AC-OHS-1: handoff is now constrained — cwd/command/why/expect, additionalProperties false.
+    handoff_schema = doc["properties"]["handoff"]
+    assert handoff_schema["type"] == "object"
+    assert handoff_schema["additionalProperties"] is False
+    assert set(handoff_schema["required"]) == {"cwd", "command", "why", "expect"}
+    assert set(handoff_schema["properties"].keys()) == {"cwd", "command", "why", "expect"}
+    # AC-OHS-2: credential-step / external-provisioning require handoff at the schema level too.
+    assert doc["if"]["properties"]["why_operator"]["enum"] == ["credential-step", "external-provisioning"]
+    assert doc["then"]["required"] == ["handoff"]
 
 
 def test_schema_accepts_a_valid_blocker():
@@ -73,7 +91,9 @@ def test_schema_accepts_a_valid_blocker_with_handoff():
     jsonschema = pytest.importorskip("jsonschema")
     with open(SCHEMA_PATH, encoding="utf-8") as fh:
         schema = json.load(fh)
-    jsonschema.validate(_valid_blocker(handoff={"anything": "goes", "for": ["now"]}), schema)
+    jsonschema.validate(_valid_blocker(handoff=_valid_handoff()), schema)
+    jsonschema.validate(_valid_blocker(handoff=_valid_handoff(cwd="~/example-worktree")), schema)
+    jsonschema.validate(_valid_blocker(handoff=_valid_handoff(cwd="~")), schema)
 
 
 @pytest.mark.parametrize("mutate,why", [
@@ -95,6 +115,150 @@ def test_schema_refuses_each_invalid_shape(mutate, why):
     mutate(b)
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(b, schema)
+
+
+# =================================================================================================
+# AC-OHS-1 — schema/blocker.schema.json's `handoff` is constrained: cwd, command, why, expect
+# =================================================================================================
+
+
+@pytest.mark.parametrize("mutate,why", [
+    (lambda h: h.pop("cwd"), "missing cwd"),
+    (lambda h: h.__setitem__("cwd", "relative/path"), "cwd not absolute or ~-relative"),
+    (lambda h: h.__setitem__("cwd", ""), "empty cwd"),
+    (lambda h: h.pop("command"), "missing command"),
+    (lambda h: h.__setitem__("command", "cd /x && rm -rf /"), "chained command (&&)"),
+    (lambda h: h.__setitem__("command", "echo hi; echo bye"), "chained command (;)"),
+    (lambda h: h.__setitem__("command", "cat foo | grep bar"), "chained command (|)"),
+    (lambda h: h.__setitem__("command", "echo hi\necho bye"), "newline in command"),
+    (lambda h: h.__setitem__("command", "set -e"), "top-level set -e"),
+    (lambda h: h.__setitem__("command", "trap cleanup EXIT"), "top-level trap"),
+    (lambda h: h.__setitem__("command", "exec bash"), "top-level exec"),
+    (lambda h: h.pop("why"), "missing why"),
+    (lambda h: h.pop("expect"), "missing expect"),
+    (lambda h: h.__setitem__("extra_field", "nope"), "extra key (additionalProperties: false)"),
+])
+def test_schema_refuses_each_invalid_handoff_shape(mutate, why):
+    jsonschema = pytest.importorskip("jsonschema")
+    with open(SCHEMA_PATH, encoding="utf-8") as fh:
+        schema = json.load(fh)
+    b = _valid_blocker()
+    mutate(b["handoff"])
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(b, schema)
+
+
+def test_schema_accepts_command_with_trap_or_exec_as_substring_of_a_longer_word():
+    """Only a TOP-LEVEL set -e/trap/exec is refused -- a word that merely contains one is fine
+    (e.g. a script literally named trap_handler.sh, or execute_tests.sh)."""
+    jsonschema = pytest.importorskip("jsonschema")
+    with open(SCHEMA_PATH, encoding="utf-8") as fh:
+        schema = json.load(fh)
+    jsonschema.validate(_valid_blocker(handoff=_valid_handoff(command="./trap_handler.sh --run")), schema)
+    jsonschema.validate(_valid_blocker(handoff=_valid_handoff(command="./execute_tests.sh")), schema)
+
+
+@pytest.mark.parametrize("command,offending", [
+    ("cd /x && rm -rf /", "&&"),
+    ("echo hi; echo bye", ";"),
+    ("cat foo | grep bar", "|"),
+    ("echo hi\necho bye", "newline"),
+    ("echo $(cat ~/.aws/credentials)", "$("),
+    ("echo `id`", "backtick"),
+])
+def test_handoff_check_refuses_chained_command_naming_the_token(command, offending):
+    errs = bc._handoff_errors(_valid_handoff(command=command))
+    assert errs, f"expected a refusal for {command!r}"
+    assert any(offending in e for e in errs), errs
+
+
+def test_handoff_check_refuses_relative_cwd():
+    errs = bc._handoff_errors(_valid_handoff(cwd="some/relative/worktree"))
+    assert errs
+    assert any("cwd" in e for e in errs)
+
+
+def test_handoff_check_accepts_absolute_and_tilde_cwd():
+    assert bc._handoff_errors(_valid_handoff(cwd="/private/tmp/x")) == []
+    assert bc._handoff_errors(_valid_handoff(cwd="~/x")) == []
+    assert bc._handoff_errors(_valid_handoff(cwd="~")) == []
+
+
+@pytest.mark.parametrize("command,offending_word", [
+    ("set -e", "set -e"),
+    ("trap cleanup EXIT", "trap"),
+    ("exec bash", "exec"),
+])
+def test_handoff_check_refuses_top_level_shell_altering_words(command, offending_word):
+    errs = bc._handoff_errors(_valid_handoff(command=command))
+    assert errs
+    assert any(offending_word.split()[0] in e for e in errs), errs
+
+
+def test_handoff_check_does_not_flag_a_word_merely_containing_trap_or_exec():
+    assert bc._handoff_errors(_valid_handoff(command="./trap_handler.sh --run")) == []
+    assert bc._handoff_errors(_valid_handoff(command="./execute_tests.sh")) == []
+
+
+def test_handoff_check_refuses_unknown_field():
+    errs = bc._handoff_errors(_valid_handoff(extra="nope"))
+    assert any("additionalProperties" in e for e in errs), errs
+
+
+def test_handoff_check_accepts_a_valid_handoff():
+    assert bc._handoff_errors(_valid_handoff()) == []
+
+
+# =================================================================================================
+# AC-OHS-2 — credential-step / external-provisioning REQUIRE a handoff
+# =================================================================================================
+
+
+@pytest.mark.parametrize("why_operator", ["credential-step", "external-provisioning"])
+def test_credential_and_provisioning_blockers_require_handoff(why_operator):
+    b = _valid_blocker(why_operator=why_operator)
+    del b["handoff"]
+    jsonschema = pytest.importorskip("jsonschema")
+    with open(SCHEMA_PATH, encoding="utf-8") as fh:
+        schema = json.load(fh)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(b, schema)
+    # the hand-rolled floor refuses it too, and names why
+    errors = bc.validate_candidate(b)
+    assert any("requires handoff" in e for e in errors), errors
+
+
+@pytest.mark.parametrize("why_operator", [
+    "no-consensus-after-research", "security-widening", "irreversible-action",
+])
+def test_other_why_operator_values_do_not_require_handoff(why_operator):
+    b = _valid_blocker(why_operator=why_operator)
+    del b["handoff"]
+    jsonschema = pytest.importorskip("jsonschema")
+    with open(SCHEMA_PATH, encoding="utf-8") as fh:
+        schema = json.load(fh)
+    jsonschema.validate(b, schema)  # must not raise
+    assert bc.validate_candidate(b) == []
+
+
+def test_partition_demotes_credential_step_without_handoff_naming_the_reason():
+    candidates = [{
+        "claim": "need the operator's AWS credential",
+        "evidence": ["e1"],
+        "attempted": ["a1"],
+        "why_operator": "credential-step",
+    }]
+    verdict = bc.partition(candidates)
+    assert verdict["blockers"] == []
+    assert len(verdict["next_tasks"]) == 1
+    assert "requires handoff" in verdict["next_tasks"][0]["reason"]
+
+
+def test_partition_accepts_credential_step_with_handoff():
+    candidates = [_valid_blocker(why_operator="credential-step")]
+    verdict = bc.partition(candidates)
+    assert len(verdict["blockers"]) == 1
+    assert verdict["next_tasks"] == []
 
 
 # =================================================================================================
@@ -234,3 +398,82 @@ def test_tick_prompt_template_instructs_the_blocker_check():
     assert "blockers" in text and "next_tasks" in text
     # instructs reporting only the blockers partition under Blockers, the rest under Next Tasks
     assert "Next Tasks" in text
+
+
+# =================================================================================================
+# AC-OHS-3 — the tick prompt: executive report cap, ids-in-fields, PushNotification discipline
+# =================================================================================================
+
+
+def _tick_prompt_text():
+    template_path = os.path.join(REPO_ROOT, "skills", "command-deck", "tick-prompt.template.md")
+    with open(template_path, encoding="utf-8") as fh:
+        return fh.read()
+
+
+def test_tick_prompt_caps_the_executive_report_at_twelve_bullet_lines():
+    text = _tick_prompt_text()
+    assert "TWELVE LINES" in text
+    assert "ids:" in text
+    # ids/PR numbers/shas live in fields, human names stay in prose
+    assert "atom id, a PR number, a commit sha" in text or "atom id" in text
+
+
+def test_tick_prompt_instructs_push_notification_only_when_blockers_nonempty():
+    text = _tick_prompt_text()
+    assert "PushNotification" in text
+    assert "§5d" in text
+    assert "non-empty" in text
+    assert "If the partition is empty, send none." in text
+    # never one per candidate
+    assert "never one" in text.lower() or "never one notification per candidate" in text
+
+
+def test_skill_md_documents_handoff_and_push_notification_discipline():
+    skill_path = os.path.join(REPO_ROOT, "skills", "command-deck", "SKILL.md")
+    with open(skill_path, encoding="utf-8") as fh:
+        text = fh.read()
+    assert "handoff" in text
+    assert "PushNotification" in text
+    assert "twelve bullet lines" in text
+
+
+# =================================================================================================
+# AC-OHS-4 — a rendered executive report stays within the twelve-line cap (pure fixture check;
+# the deck's actual renderer is a prose instruction to the agent, not a script -- out of scope)
+# =================================================================================================
+
+
+def _count_bullet_lines(report_text: str) -> int:
+    """Count top-level bullet lines (lines starting with '- ' after stripping leading
+    whitespace) across an executive report's three sections. A continuation line (indented
+    further, no leading '- ') is not a new bullet."""
+    return sum(1 for line in report_text.splitlines() if line.strip().startswith("- "))
+
+
+_FIXTURE_REPORT_WITHIN_CAP = """\
+## Tasks Accomplished
+- landed atom-admission-contract
+- landed release-loader-vocabulary
+ids: PR #247, PR #162
+
+## Next Tasks
+- waiting on CI for standing-grants-as-policy
+- re-measure the ready set next tick
+
+## Blockers
+- the operator's own AWS credential is required to provision the VPC
+ids: (see handoff)
+"""
+
+_FIXTURE_REPORT_OVER_CAP = "\n".join(f"- item {i}" for i in range(20))
+
+
+def test_fixture_report_within_cap_counts_at_most_twelve():
+    assert _count_bullet_lines(_FIXTURE_REPORT_WITHIN_CAP) <= 12
+
+
+def test_fixture_report_over_cap_is_detected_by_the_same_counter():
+    """Negative control: proves the counter actually convicts an over-cap report rather than
+    trivially passing every input."""
+    assert _count_bullet_lines(_FIXTURE_REPORT_OVER_CAP) > 12
