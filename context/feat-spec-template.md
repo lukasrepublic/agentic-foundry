@@ -54,6 +54,16 @@ syntax, and keep them DECLARATIVE — imperative, UI-scripted scenarios are a do
 Example Mapping's red Question card). Record resolved forks + their rationale, and leave any open
 question as an inline `[NEEDS CLARIFICATION: <question>]` marker so it blocks a false assumption. -->
 
+## Amendments
+
+<!-- The spec is a living document (`.foundry/decisions/2026-09-18-spec-is-a-living-document.md`):
+adjusted during implementation when reality requires it, without re-entering the front gate.
+Record each amendment as a row — this section is outside the normative region and adds no AC.
+Leave the table empty (header only) until the first amendment lands. -->
+
+| date | what changed | why reality required it | auth_seq |
+|---|---|---|---|
+
 ## UI/UX artifact slots (design/ sibling dir — for a UI-bearing atom only)
 
 <!-- CONSTITUTION §16: UI/UX intent is a first-class spec input, not an afterthought.

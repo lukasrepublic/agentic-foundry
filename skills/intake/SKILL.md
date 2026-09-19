@@ -68,7 +68,13 @@ CONSTITUTION.md §III names as the checked standard:
   override**) — if the atom you are drafting is trending oversize, **decompose it into
   smaller atoms now**, at authoring time, rather than authoring one large spec and
   discovering the ceiling at review. `/foundry:spec-review`'s Phase 0 REFUSES an oversize
-  spec unconditionally; there is no `--allow-oversize` escape hatch to reach for.
+  spec unconditionally; there is no `--allow-oversize` escape hatch to reach for. The spec is
+  written to **wave-1 depth** — the depth needed to build wave 1, not the depth needed to
+  survive review (CONSTITUTION §12; `.foundry/decisions/2026-09-18-spec-is-a-living-document.md`).
+- **`## Amendments`** — a required non-normative section (the spec is a living document,
+  adjusted during implementation when reality requires it, without re-entering the front gate).
+  intake emits it **empty** — header row only, no amendment recorded yet; the `amend` verb is
+  what fills it later.
 
 ## Discovery-interview discipline
 
