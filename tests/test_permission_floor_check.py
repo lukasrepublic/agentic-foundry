@@ -241,7 +241,23 @@ def _import_map_suite():
 # re-pin land in the SAME reviewed diff. tests/fixtures/floor-drift-corpus.json's
 # `full-floor-verbatim` and `full-floor-home-expanded` cases (the only two cases asserted to leave
 # no `allow-absent` residue) each gained the matching effective-allow row in the same diff.
-MERGE_BASE_ENTRIES_DIGEST = "3867f92ee41d9322557bc5fd899d7d56f5af95aac9a73cafe194e7c4ce8a3460"
+#
+# UPDATED for feat-merge-when-green (R2 of autonomy-continuation, charter-lane atom
+# `merge-when-green`). This atom's charter carries the SAME per-contract exception
+# (`cli/permission-floor.json` + `docs/permission-floor.json` named in its own `allowed_paths`),
+# so this re-pin lands in the SAME reviewed diff as the map edit, per the R8 rule this guard
+# states. One new `ask` row for the new script (a merge is a repo-state mutation, tiered like
+# `foundry-authorize.py`/`foundry-amend.py`, never a self-grant); nothing removed. 68 -> 69
+# entries (one row added, none removed):
+#
+#   + Bash(.../foundry-merge-when-green.py:*)   tier `ask`
+#
+# tests/fixtures/floor-drift-corpus.json's `full-floor-verbatim` and `full-floor-home-expanded`
+# cases each gained the matching effective-ask row in the same diff (an `ask` rule is carried
+# literally, never home-expanded — the harness only persists an `allow` rule as an absolute,
+# version-resolved path on ask-to-allow; an `ask` rule is prompted every time and never persists
+# that way, the same shape `foundry-permissions-compile.py --write`'s own row already carries).
+MERGE_BASE_ENTRIES_DIGEST = "4335652bd1a4c4e09ede55b19961af5a305f4c9781c3e00da65b352bf999a5e9"
 
 
 # ================================================================================================ #
