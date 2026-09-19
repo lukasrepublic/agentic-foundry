@@ -8,6 +8,27 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.12.1 — 2026-09-19
+
+### The workspace's record is tracked (patch from the v1.12.0 fresh-install test pass)
+
+- **The managed `.gitignore` block re-includes `/.foundry/releases/`, `/.foundry/decisions/` and
+  `/.foundry/permissions.yaml`** (#170, closes ER #169; `scripts/foundry-runtime.gitignore`,
+  `cli/templates/gitignore.tmpl`, the applier's member list, the pre-publication scanner's constant). The
+  scaffold's `/.foundry/*` deny had hidden every programme manifest, charter, wave `state.yaml`, decision record
+  and the operator's standing-grants policy — so in a fresh adopter workspace the charter lane (the default
+  since v1.11.0) could never authorize, the next wave's intake read nothing, and the policy file was never
+  committed. The self-host workspace tracks these by an older `.gitignore`, which is why two thousand green
+  tests never saw it; the fresh-install pass did. Runtime partitions (`audit-ledger.jsonl`,
+  `security-audit.jsonl`, `watchers/`, `auto-answers.jsonl`) stay ignored. Existing workspaces converge with
+  `scripts/foundry-apply-runtime-gitignore.sh .` or `npx update-agentic-workspace` (Phase 4).
+
+`create-agentic-workspace` (cli/) and `update-agentic-workspace` (cli-update/) move because the scaffold
+template changed.
+
+(Security review: not security-flagged — a gitignore re-include of committed record files; no auth, secrets or
+floor machinery.)
+
 ## v1.12.0 — 2026-09-19
 
 ### Stop stopping (autonomy-continuation R1)
