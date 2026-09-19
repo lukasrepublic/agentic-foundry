@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
 """foundry_blocker_check — a blocker without evidence is a Next Task (feat-foundry-blocker-
-requires-evidence, AC-BRE-2).
+requires-evidence, AC-BRE-2). Extended by feat-foundry-operator-handoff-schema (AC-OHS-1, AC-OHS-2)
+to constrain the optional `handoff` field: anything the operator must run is handed over as DATA
+(`cwd`, `command`, `why`, `expect`), never as prose to parse, and `why_operator` values that name a
+credential/provisioning step REQUIRE one.
 
 A deck tick's Blockers section used to be free prose, so anything could be reported as a blocker
 and the operator became the inbox. This CLI is the lint a tick runs BEFORE it reports: it reads a
 JSON list of candidate blockers (schema/blocker.schema.json, AC-BRE-1 — `claim`, `evidence[]`,
 `attempted[]`, `why_operator` drawn from the SAME closed `escalate_when` set
-`schema/acceptance-contract.schema.json` already fixes, optional `handoff`) and partitions them
-into `blockers` (schema-valid) and `next_tasks` (everything else, each carrying WHY it was
-demoted). The tick reports only the `blockers` partition under its Blockers section; the rest goes
-under Next Tasks (skills/command-deck/tick-prompt.template.md §5c).
+`schema/acceptance-contract.schema.json` already fixes, optional but constrained `handoff`) and
+partitions them into `blockers` (schema-valid) and `next_tasks` (everything else, each carrying WHY
+it was demoted). The tick reports only the `blockers` partition under its Blockers section; the
+rest goes under Next Tasks (skills/command-deck/tick-prompt.template.md §5c).
 
 Validation mirrors foundry_audit_ledger.py's v2 write-boundary pattern: a real JSON-Schema check
 against schema/blocker.schema.json when `jsonschema` is importable, PLUS a hand-rolled structural
 floor that ALWAYS runs — so the check never silently degrades to a no-op when the optional
-dependency is absent (mirrors foundry_contract.py's UL-0011 pattern).
+dependency is absent (mirrors foundry_contract.py's UL-0011 pattern). The hand-rolled floor is also
+the one that NAMES the offending token in a refused `handoff.command` (AC-OHS-1) — the JSON-Schema
+`pattern` checks alone can only accept/reject, not explain.
 
 Usage:
     foundry_blocker_check.py --in <path-to-json-file-or-'-'-for-stdin>
@@ -31,6 +36,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import sys
 
 _HERE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -46,6 +52,85 @@ _WHY_OPERATOR_SET = {
 
 _REQUIRED_FIELDS = ("claim", "evidence", "attempted", "why_operator")
 _ALLOWED_FIELDS = _REQUIRED_FIELDS + ("handoff",)
+
+# AC-OHS-2: these two why_operator members name a step the AGENT structurally cannot take itself
+# -- a credential the agent does not hold, or provisioning outside its reach -- so a candidate
+# carrying one MUST hand the operator the runnable command as data, not leave it to be inferred
+# from `claim`/`evidence` prose.
+_WHY_OPERATOR_REQUIRES_HANDOFF = {"credential-step", "external-provisioning"}
+
+_HANDOFF_REQUIRED_FIELDS = ("cwd", "command", "why", "expect")
+# AC-OHS-1: a bare command is refused if it chains -- these are checked as plain substrings so the
+# offending token can be named verbatim in the reason, regardless of where in the command it sits.
+_HANDOFF_CHAIN_TOKENS = (("&&", "&&"), (";", ";"), ("|", "|"), ("\n", "newline"), ("\r", "carriage return"))
+# Refused only at the TOP LEVEL (as the command's own leading word or flag), never as a substring
+# of a longer word (e.g. "trap_handler.sh" or "execute.sh" are fine) -- shlex tokenization is what
+# makes that distinction possible.
+_HANDOFF_TOP_LEVEL_REFUSED_WORDS = {"trap", "exec"}
+
+
+def _handoff_errors(handoff) -> list[str]:
+    """Hand-rolled structural floor for `handoff` (AC-OHS-1) -- ALWAYS runs, mirrors
+    `_structural_errors`'s pattern, and is the one that names the offending token in a refused
+    `command` (the JSON-Schema `pattern` checks in schema/blocker.schema.json can only
+    accept/reject, not explain)."""
+    if not isinstance(handoff, dict):
+        return ["handoff must be a JSON object"]
+
+    errs: list[str] = []
+
+    unknown = sorted(set(handoff.keys()) - set(_HANDOFF_REQUIRED_FIELDS))
+    if unknown:
+        errs.append(f"handoff has unknown field(s) {unknown!r} (additionalProperties: false)")
+
+    for field in _HANDOFF_REQUIRED_FIELDS:
+        if field not in handoff:
+            errs.append(f"handoff missing required field {field!r}")
+
+    if "cwd" in handoff:
+        cwd = handoff.get("cwd")
+        if not (isinstance(cwd, str) and cwd and (cwd == "~" or cwd.startswith("~/") or cwd.startswith("/"))):
+            errs.append(
+                f"handoff.cwd {cwd!r} must be an absolute path (starts with '/') or a "
+                "~-relative path (starts with '~'), never a bare relative path"
+            )
+
+    if "command" in handoff:
+        command = handoff.get("command")
+        if not (isinstance(command, str) and command.strip()):
+            errs.append("handoff.command must be a non-empty string")
+        else:
+            for token, name in _HANDOFF_CHAIN_TOKENS:
+                if token in command:
+                    errs.append(
+                        f"handoff.command contains {name!r} — one bare command only, no chaining"
+                    )
+            try:
+                words = shlex.split(command)
+            except ValueError as e:
+                errs.append(f"handoff.command is not shell-tokenizable: {e}")
+                words = []
+            if words:
+                if words[0] in _HANDOFF_TOP_LEVEL_REFUSED_WORDS:
+                    errs.append(
+                        f"handoff.command starts with {words[0]!r} — top-level {words[0]!r} is "
+                        "refused (it could alter or exit the operator's own shell)"
+                    )
+                if words[0] == "set":
+                    e_flags = [w for w in words[1:] if w.startswith("-") and "e" in w]
+                    if e_flags:
+                        errs.append(
+                            f"handoff.command starts with 'set {e_flags[0]}' — top-level 'set -e' "
+                            "is refused (it could exit the operator's own shell)"
+                        )
+
+    if "why" in handoff and not (isinstance(handoff.get("why"), str) and handoff.get("why")):
+        errs.append("handoff.why must be a non-empty string")
+
+    if "expect" in handoff and not (isinstance(handoff.get("expect"), str) and handoff.get("expect")):
+        errs.append("handoff.expect must be a non-empty string")
+
+    return errs
 
 
 class BlockerCheckError(Exception):
@@ -95,9 +180,15 @@ def _structural_errors(candidate) -> list[str]:
             errs.append(
                 f"why_operator {wo!r} not in the closed escalate_when set {sorted(_WHY_OPERATOR_SET)}"
             )
+        # AC-OHS-2: credential-step / external-provisioning REQUIRE a handoff.
+        elif wo in _WHY_OPERATOR_REQUIRES_HANDOFF and "handoff" not in candidate:
+            errs.append(
+                f"why_operator {wo!r} requires handoff (the operator needs cwd/command/why/expect, "
+                "not prose, to act on a credential or provisioning step)"
+            )
 
-    if "handoff" in candidate and not isinstance(candidate.get("handoff"), dict):
-        errs.append("handoff must be a JSON object")
+    if "handoff" in candidate:
+        errs.extend(_handoff_errors(candidate.get("handoff")))
 
     return errs
 

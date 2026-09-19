@@ -162,6 +162,16 @@ work — is *Next Tasks*, never a blocker.
 authority: it cannot promote a Next Task into a blocker, only catch a blocker asserted without the
 shape to back it.
 
+**Anything the operator must run is handed over as data, not prose.** A `credential-step` or
+`external-provisioning` blocker carries a `handoff` object — `cwd` (absolute or `~`-relative),
+`command` (one bare command: no `&&`/`;`/`|`/newline, and no top-level `set -e`/`trap`/`exec`),
+`why`, `expect` — instead of leaving the operator to parse a working directory and a runnable
+command out of the claim's prose. The executive report itself is capped at twelve bullet lines
+across its three sections (§2 of the tick prompt): ids go in a trailing `ids:` line or in a
+blocker's `handoff` fields, human names stay in prose. The tick sends a native `PushNotification`
+**only** when the Blockers partition is non-empty — one per tick, naming the blocker's `claim`
+(§5d of the tick prompt) — never one per candidate and never for an empty partition.
+
 ## Related
 
 - `/foundry:mode-autonomous` — the implementation driver for one authorized release's atoms, and
