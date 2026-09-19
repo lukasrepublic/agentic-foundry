@@ -85,6 +85,11 @@ VERIFYING
 LANDING
 - Land a worker's output ONLY from its completion notification. A "completed" status plus a file on
   disk is not a finished deliverable.
+- WAIT FOR A PR'S CHECKS VIA `/foundry:merge-when-green <pr> --watch`, NEVER A HAND-ROLLED
+  SLEEP-THEN-POLL LOOP re-running `gh pr checks` yourself. Arm a native `Monitor` on it and let it
+  notify this session on the next state change; it merges via the same already-permitted `gh pr
+  merge <pr> --squash` the instant every check is green, and escalates ONCE with evidence rather
+  than spinning forever when no check will ever report.
 - COMMIT AND PUSH the moment it is lint-clean — before review, not after. A branch costs nothing
   and survives a crash.
 - "DID THIS LAND?" IS ANSWERED BY PROBING FOR THE ARTIFACT, never by an ancestry test — squash-merge

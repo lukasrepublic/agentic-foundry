@@ -24,7 +24,33 @@ case "${1:-}" in
   pr)
     case "${2:-}" in
       checks)
-        # git-discipline.sh's `gh pr checks [<pr_ref>]` query.
+        # git-discipline.sh's `gh pr checks [<pr_ref>]` query -- ALSO
+        # foundry-merge-when-green.py's own poll query (feat-merge-when-green, AC-MWG-5): the
+        # SAME stubbed command, never a second reimplementation.
+        #
+        # `GH_STUB_CHECKS_SEQUENCE` (additive; every pre-existing behaviour below is unchanged
+        # when it is unset) drives a pending->pass transition ACROSS POLLS without a second real
+        # `gh` invocation: entries are separated by the ASCII record-separator (0x1E, chosen
+        # because it can never appear in a `gh pr checks` row) and selected by this invocation's
+        # own 1-indexed ordinal among every LOGGED `pr checks` call so far -- read from
+        # `$GH_STUB_LOG` (REQUIRED when this var is set; the log write at the top of this script
+        # already recorded THIS call before we reach here). The last entry repeats once the
+        # sequence is exhausted, so a poll loop that outlives the fixture still gets a defined
+        # (not empty-by-accident) answer.
+        if [ -n "${GH_STUB_CHECKS_SEQUENCE:-}" ]; then
+          if [ -z "${GH_STUB_LOG:-}" ] || [ ! -f "${GH_STUB_LOG}" ]; then
+            echo "gh-stub: GH_STUB_CHECKS_SEQUENCE requires GH_STUB_LOG to sequence polls" >&2
+            exit 98
+          fi
+          ordinal=$(grep -c '^pr checks' "${GH_STUB_LOG}")
+          IFS=$'\x1e' read -r -a _mwg_seq <<< "${GH_STUB_CHECKS_SEQUENCE}"
+          n=${#_mwg_seq[@]}
+          if [ "$ordinal" -gt "$n" ]; then ordinal=$n; fi
+          if [ "$ordinal" -lt 1 ]; then ordinal=1; fi
+          sel="${_mwg_seq[$((ordinal-1))]}"
+          if [ -n "$sel" ]; then printf '%s\n' "$sel"; fi
+          exit "${GH_STUB_CHECKS_EXIT:-0}"
+        fi
         if [ -n "${GH_STUB_CHECKS_OUTPUT:-}" ]; then
           printf '%s\n' "${GH_STUB_CHECKS_OUTPUT}"
         fi
@@ -34,7 +60,18 @@ case "${1:-}" in
         # btb-gates.yml's `gh pr view "$PR" --repo "$REPO" --json body -q .body` (spec-link) or
         # `... --json labels -q '.labels[].name'` (spec-link + security-path). Dispatched on the
         # `--json` field name present in argv, not on job identity.
-        if printf '%s\n' "$*" | grep -q -- '--json body'; then
+        #
+        # `--json mergeStateStatus` / `--json mergeCommit` (feat-merge-when-green, AC-MWG-1):
+        # foundry-merge-when-green.py's own polling + post-merge query. ONE fixture body serves
+        # both field requests -- the caller always asks for a SINGLE field per call and reads
+        # only the key it asked for, so a body carrying both keys answers either call correctly.
+        if printf '%s\n' "$*" | grep -qE -- '--json (mergeStateStatus|mergeCommit)'; then
+          if [ -n "${GH_STUB_VIEW_JSON:-}" ]; then
+            printf '%s\n' "${GH_STUB_VIEW_JSON}"
+          else
+            printf '%s\n' '{}'
+          fi
+        elif printf '%s\n' "$*" | grep -q -- '--json body'; then
           printf '%s\n' "${GH_STUB_PR_BODY:-}"
         elif printf '%s\n' "$*" | grep -q -- '--json labels'; then
           # STATEFUL when $GH_STUB_DELETED_LOG is set: labels this stub has already accepted a
@@ -49,6 +86,13 @@ case "${1:-}" in
           fi
         fi
         exit "${GH_STUB_VIEW_EXIT:-0}"
+        ;;
+      merge)
+        # foundry-merge-when-green.py's own `gh pr merge <pr> --squash` (feat-merge-when-green,
+        # AC-MWG-1/-4). This ONE plain shape is the only merge invocation the CLI ever issues
+        # (never `--admin`), the same shape `hooks/foundry-git-discipline.sh`'s clause already
+        # admits.
+        exit "${GH_STUB_MERGE_EXIT:-0}"
         ;;
       *)
         echo "gh-stub: unrecognized 'gh pr' subcommand: $*" >&2
@@ -161,6 +205,17 @@ case "${1:-}" in
       # Shipped arm, PRESERVED VERBATIM (AC-TARC-13 non-regression).
       printf '%s\n' "${GH_STUB_PR_FILES:-}"
       exit "${GH_STUB_API_EXIT:-0}"
+    elif [[ "$api_path" =~ ^repos/[^/]+/[^/]+/actions/workflows$ ]]; then
+      # foundry-merge-when-green.py's AC-MWG-2 escalate-evidence query: is any workflow at all
+      # configured for this repo? Defaults to an EMPTY workflow list so a test that never sets
+      # this var still exercises the "zero workflows configured" arm rather than an unset one.
+      if [ -n "${GH_STUB_WORKFLOWS_BODY:-}" ]; then
+        printf '%s\n' "${GH_STUB_WORKFLOWS_BODY}"
+      else
+        printf '%s\n' '{"workflows":[]}'
+      fi
+      if [ -n "${GH_STUB_WORKFLOWS_STDERR:-}" ]; then printf '%s\n' "${GH_STUB_WORKFLOWS_STDERR}" >&2; fi
+      exit "${GH_STUB_WORKFLOWS_EXIT:-0}"
     elif [[ "$api_path" =~ ^repos/[^/]+/[^/]+$ ]]; then
       # Bare `repos/{owner}/{repo}` — default_branch (+ visibility, ignored by the CLI).
       printf '%s\n' "${GH_STUB_REPO_BODY:-}"

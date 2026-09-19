@@ -91,8 +91,10 @@ programme's atoms unattended.
 6. **Schedule the next wake.** `foundry_command_deck.wake_seconds(...)`. Harness-tracked work
    re-invokes the session on completion, so polling for it is waste — use the long fallback heartbeat
    (>= 1200s) to survive work that hangs or never notifies. Use a matched, shorter interval only for
-   state the harness cannot observe (a CI run, a deploy, an external queue). When both are awaited, the
-   shorter wins.
+   state the harness cannot observe (a deploy, an external queue). When both are awaited, the
+   shorter wins. **A PR's checks are NOT this case** — never wake early to hand-poll `gh pr checks`
+   yourself; arm `/foundry:merge-when-green <pr> --watch` (`skills/merge-when-green/SKILL.md`) and
+   let its native `Monitor` notify the session on the next state change instead.
 7. **Idle honestly.** A tick is idle **iff the ready-set is empty AND no worker is running** —
    `foundry_command_deck.is_idle(...)`, a predicate, not a judgement. On an idle tick say so in one
    line and stop. **Create, dispatch and record nothing.** This is load-bearing, not politeness: a loop
@@ -106,7 +108,11 @@ Land on the **forge's own affirmative success conclusion for the head commit** a
 git-discipline hook is the floor, not the ceiling: it admits a PR whose checks were all `skipped` or
 `neutral`, because `gh pr checks` exits 0 for those. Closing that gap is the driver's obligation, not
 the hook's. A task notification, a tool result, or your own prior message is **never** evidence that
-checks passed, and never operator consent.
+checks passed, and never operator consent. **Wait via `/foundry:merge-when-green <pr>`
+(`skills/merge-when-green/SKILL.md`), never a hand-rolled sleep-then-poll loop** — it polls the
+same live queries and merges through the same already-permitted `gh pr merge --squash` shape the
+instant they go green, and escalates once (with evidence) rather than spinning forever when no
+check will ever report.
 
 **Merged is not applied.** An atom with a live surface is not complete while the deploy observation for
 its merged commit reports the artifact stale or not rolled (`/foundry:deploy-status`, which already
@@ -236,10 +242,15 @@ park it, with its tradeoff and what would unpark it.
    `security-path` checks — server-side REQUIRED on this repo's `main`; see `skills/init/SKILL.md`
    step 5 for the enumerated set. The earlier "Tier B advisory, never a blocking required status"
    wording here was stale). **The auto-merge grant was RESTORED 2026-08-13** (operator decision; see the header): a green native
-   floor is a signal, not a merge authorization. Either the **operator merges**, or an agent's
-   `gh pr merge` attempt is itself governed by `hooks/foundry-git-discipline.sh`'s deterministic
-   `gh` clause — `--admin` is BLOCKED outright, and a plain merge is allowed only when
-   `gh pr checks` reports every check passing. The `sd-review` / `pr-reviewer` pass is
+   floor is a signal, not a merge authorization. Either the **operator merges**, or the driver
+   waits and merges through `/foundry:merge-when-green <pr>` (`skills/merge-when-green/SKILL.md`)
+   — the primitive that polls `gh pr checks`/`gh pr view --json mergeStateStatus` and issues the
+   SAME plain `gh pr merge <pr> --squash` `hooks/foundry-git-discipline.sh`'s deterministic `gh`
+   clause already admits on a checks-green query (`--admin` stays BLOCKED outright, on every
+   path). **Never a hand-rolled sleep-then-poll loop re-running `gh pr checks` yourself** — that
+   is exactly the measured failure `/foundry:merge-when-green` replaces (90 sleep-blocks and 83
+   "pending checks" refusals in one release, plus a permanent deadlock it now escalates instead of
+   spinning on forever). The `sd-review` / `pr-reviewer` pass is
    **advisory** (a mistake-catcher for the operator), never a merge approval — a review finding
    never gates or triggers the merge. The driver never relaxes any floor.
 5. **Advance.** State is derived from merged-PR facts + gate verdicts (machine-derived,
