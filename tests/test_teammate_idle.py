@@ -46,17 +46,18 @@ try:
 finally:
     sys.dont_write_bytecode = _prev_dont_write_bytecode
 
-# NEVER `load_module("scripts/foundry_floor_hooks.py", "foundry_floor_hooks")` here: that helper
-# always registers a FRESH module object under `sys.modules["foundry_floor_hooks"]`, and
-# `tests/test_floor_hooks.py` does the exact same thing under the exact same name — whichever
-# test file's collection-time call runs LAST silently detaches the OTHER file's `ffh` variable
-# from what the hook entry points' own lazy `import foundry_floor_hooks as ffh` actually resolve
-# to at call time (a real collision, reproduced while wiring this suite: patching one file's
-# `ffh` object stopped affecting the hooks at all once both suites ran in the same process).
-# `tic._import_ffh()` performs the SAME bare `import foundry_floor_hooks as ffh` the hook itself
-# runs — it reuses whatever is already cached in `sys.modules`, so it is always the SAME object
-# every hook's own import resolves to, whichever suite happened to load first.
-ffh = tic._import_ffh()
+# NEVER `load_module("scripts/foundry_floor_hooks.py", "foundry_floor_hooks")` here, and never
+# cache its result in a MODULE-LEVEL name either: that helper always registers a FRESH module
+# object under `sys.modules["foundry_floor_hooks"]`, `tests/test_floor_hooks.py` does the exact
+# same thing under the exact same name, and pytest collects files in COMMAND-LINE order, not
+# always alphabetical — so whichever of the two files collects LAST re-registers the name out
+# from under a module-level variable captured earlier (reproduced while wiring this suite: a
+# `monkeypatch.setattr` on a collection-time-captured `ffh` silently stopped affecting the hook at
+# all, depending on argument order on the pytest command line). The one call site below that needs
+# the live module (`test_internal_error_still_exits_0_and_records`) instead calls
+# `tic._import_ffh()` INSIDE the test function, at TEST-EXECUTION time (after every file's
+# collection-time registration has already settled) — the same bare `import foundry_floor_hooks
+# as ffh` the hook itself runs at call time, so it is always the object `run()` will actually use.
 
 
 # ================================================================================================ #
@@ -526,7 +527,9 @@ def test_internal_error_still_exits_0_and_records(tmp_path, monkeypatch):
     def _boom(*_a, **_k):
         raise RuntimeError("injected crash")
 
-    monkeypatch.setattr(ffh, "declared_done_when", _boom)
+    # fetched fresh, at test-execution time — see the module-level comment above `tic` for why.
+    live_ffh = tic._import_ffh()
+    monkeypatch.setattr(live_ffh, "declared_done_when", _boom)
     payload = _load_fixture("payload-base.json")
     payload["task_subject"] = "atom:r-crash/c-atom"
     assert tic.run(payload, project_dir=project_dir, nudges_path=nudges_file) == 0
