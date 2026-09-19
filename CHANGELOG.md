@@ -8,6 +8,26 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## Unreleased
+
+### `/foundry:authorize` drops the §8 audit-record precondition
+
+`foundry-authorize.py` no longer fail-closes `--yes` on a spec whose content hash has no
+`.foundry/audit-ledger.jsonl` row. Measured over 30 days, that precondition — not the hash
+freeze itself — was the binding cost of every mid-build spec amendment (amend → re-freeze →
+owe an audit row → stall). The freeze floors (1-4), the operator's explicit confirmation, and
+the `authorize-intent`/`authorize-complete` security-audit trail are unchanged; the audit
+ledger becomes informational: a found row (any verdict) prints one
+`§8 audit: recorded (verdict=<verdict>) — informational` line and never blocks. The
+`--skip-audit-reason` flag is kept for one release as an accepted, deprecated no-op — it now
+prints a `SKIPPED` line stating it has no effect and appends one informational
+`authorize-audit-flag-deprecated` record (in place of the retired `authorize-audit-skip`
+record) to the security-audit trail. `skills/authorize/SKILL.md` is reworded to match:
+`/foundry:audit` is operator-invoked only, never a precondition.
+
+(Security review: not security-flagged — the change relaxes an informational bookkeeping
+gate, not a freeze floor, the operator-confirmation step, or the security-audit trail.)
+
 ## v1.10.0 — 2026-09-04
 
 ### The command deck becomes a verb you can arm, stop and re-arm
