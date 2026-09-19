@@ -10,6 +10,7 @@ FIXTURES ARE MATERIALIZED, NEVER MOCKED: a real git repo, real spec and contract
 criterion (AC-CDW-3) is driven through the SHIPPED `foundry_authz` re-derivation rather than a stub,
 because a stubbed authorization check proves nothing about the thing whose entire job is to check.
 """
+import importlib.util
 import json
 import os
 import subprocess
@@ -411,3 +412,66 @@ def test_manifest_text_is_data_and_paths_are_confined(corpus):
     # ValueError out of the census is the silent-halt class this atom exists to remove)
     assert cd.confined("specs/a\x00/b.md", corpus) is False
     print("CDW-12-DATA-OK")
+
+
+# ───────────────────────────────────────── release-loader-vocabulary (AC-RLV-3): charter_ref
+# confinement — ready_set's CONFINE-FIRST check must cover `charter_ref` exactly as it covers
+# spec_ref/contract_ref (a charter-lane atom has no spec_ref/contract_ref at all).
+
+def test_ready_set_confinement_covers_charter_ref(corpus):
+    # an escaping charter_ref is excluded by name, same wording as the spec_ref/contract_ref case
+    _manifest(corpus, "prog-charter-esc", [
+        {"id": "charter-escaper", "charter_ref": "/etc/passwd", "depends_on": []},
+    ])
+    rel = cd.resolve_programme("prog-charter-esc", project_dir=corpus)
+    res = cd.ready_set(rel, project_dir=corpus)
+    assert res["ready"] == [], res
+    assert "escapes the corpus" in res["excluded"]["charter-escaper"], res
+
+    # a CONFINED, committed charter_ref is never flagged as escaping — and the full AC-RLV-3
+    # round trip works through ready_set too: a charter atom whose file is confined + committed
+    # on the corpus's branch (`specs/good/feat-good.md`, committed by the `corpus` fixture) is
+    # authorized and enters the ready set exactly like an authorized factory atom would.
+    _manifest(corpus, "prog-charter-ok", [
+        {"id": "charter-ok", "charter_ref": "specs/good/feat-good.md", "depends_on": []},
+    ])
+    rel2 = cd.resolve_programme("prog-charter-ok", project_dir=corpus)
+    res2 = cd.ready_set(rel2, project_dir=corpus)
+    assert "charter-ok" in res2["ready"], res2
+    assert "escapes the corpus" not in res2["excluded"].get("charter-ok", ""), res2
+
+
+BASE_REV = "f7cfa25"   # the commit release-loader-vocabulary's worktree branched from
+
+
+def _exec_git_blob_as_module(rev, relpath, modname, *, fake_file=None):
+    """`git show <rev>:<relpath>` -> an isolated module object, exec'd under `modname` (NEVER
+    written to `sys.modules` here — the caller controls that, since a bare `import X` inside the
+    executed source resolves via `sys.modules`/`sys.path` at exec time, not afterward)."""
+    p = subprocess.run(["git", "-C", os.path.dirname(SCRIPTS), "show", f"{rev}:{relpath}"],
+                       capture_output=True, text=True)
+    assert p.returncode == 0, p.stderr
+    mod = importlib.util.module_from_spec(importlib.util.spec_from_loader(modname, loader=None))
+    mod.__file__ = fake_file or f"<git {rev}:{relpath}>"
+    exec(compile(p.stdout, mod.__file__, "exec"), mod.__dict__)
+    return mod
+
+
+def test_ready_set_charter_atom_RED_before_GREEN(corpus):
+    """RED-before-GREEN, re-derived every run (not an assertion about history): the SAME Release
+    object (built via the CURRENT `foundry_release.Atom`/`Release`, which supports a charter-lane
+    atom — spec_ref/contract_ref both None), handed to `ready_set` AT `BASE_REV`, is mislabeled as
+    escaping the corpus — `confined(None, root)` is `False` (not a str), so BOTH None fields land
+    in `bad`, producing a false "manifest path escapes the corpus: , ". The CURRENT `ready_set`
+    checks `charter_ref` instead and never emits that false positive."""
+    old_cd = _exec_git_blob_as_module(BASE_REV, "scripts/foundry_command_deck.py",
+                                      "old_foundry_command_deck",
+                                      fake_file=os.path.join(SCRIPTS, "foundry_command_deck.py"))
+    atom = fr.Atom("charter-atom", None, None, [], charter_ref="specs/good/feat-good.md")
+    rel = fr.Release("prog-charter-red", "d", "active", [atom], ["charter-atom"])
+
+    old_out = old_cd.ready_set(rel, project_dir=corpus)
+    assert "escapes the corpus" in old_out["excluded"].get("charter-atom", ""), old_out   # RED
+
+    cur_out = cd.ready_set(rel, project_dir=corpus)
+    assert "escapes the corpus" not in cur_out["excluded"].get("charter-atom", ""), cur_out  # GREEN

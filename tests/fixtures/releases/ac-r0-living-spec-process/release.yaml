@@ -1,0 +1,102 @@
+# FIXTURE NOTE (release-loader-vocabulary, AC-RLV-5) — copied from the real workspace manifest
+# .foundry/releases/ac-r0-living-spec-process/release.yaml, byte-identical EXCEPT two lines,
+# both pre-existing YAML SYNTAX defects in the real file (confirmed: `yaml.safe_load` raises
+# ParserError on the real file as committed, for EVERY parser, independent of this loader):
+#   1. `value: [...]` — an unquoted flow-sequence item containing ` #1` starts a YAML comment
+#      mid-sequence (space + `#`), truncating the flow collection. Quoted below.
+#   2. `- "converged" as a review terminus` under `subtraction:` — a double-quoted scalar
+#      followed by trailing plain text on the same block-sequence item is not valid YAML (a
+#      quoted scalar must be the whole node). Unquoted below (content unchanged).
+# Reported to the operator as pre-existing defects in the real manifest, independent of this
+# atom's vocabulary work (see the atom's final report / PR body).
+#
+# SEPARATELY (also reported, NOT fixed here — outside this atom's authority to widen): every
+# atom below carries NONE of `spec_ref`/`contract_ref`/`charter_ref` (R0 predates the
+# charter_ref convention; it was driven by hand per its own `state.yaml`). Per AC-RLV-2 as
+# frozen, an atom carrying neither shape is refused BY NAME — so `fr.load_release` on this
+# fixture correctly RAISES ReleaseError, naming the first atom, exactly as AC-RLV-2 specifies.
+# That is a genuine gap against AC-RLV-5's literal text ("SHALL load without error"); see
+# tests/test_release.py's TestReleaseLoaderVocabulary.test_r0_fixture_top_level_vocabulary_ok
+# (proves the TOP-LEVEL vocabulary this atom adds) and
+# ...test_r0_fixture_atoms_refused_no_ref_shape (documents the exact refusal) for the evidence.
+id: ac-r0-living-spec-process
+program: autonomy-continuation
+version: 1.11.0
+description: >
+  R0 — the process change itself, shipped FIRST and kept minimal, per the operator decision of
+  2026-09-18 (.foundry/decisions/2026-09-18-spec-is-a-living-document.md): the spec is a living
+  document amended during implementation; first-wave specs and live code fast over polished paper;
+  later waves learn from earlier ones. Every release after this one is specified and built under the
+  new process, so it goes first. This is the LAST release built the old way, and it is sized so that
+  takes days, not weeks. Absorbs ac-r1b-front-gate-yield (now superseded) plus the two cheapest R1 atoms
+  the process needs before wave 1 starts: the audit-ledger allowlist and the yield/silent-yield
+  instrument. Plan: docs/programs/autonomy-continuation/PROGRAM.md §3.
+state: completed   # landed 2026-09-19: R fd381fa, R2 dcc03f2, tag v1.11.0 on R2 (loader vocabulary gap: see state.yaml open_risks)
+target_repo: agentic-foundry
+target_version: 1.11.0
+depends_on_release: []
+lane: factory for security:true atoms; charter for the rest (the decision applied to itself)
+value: ["V2 floor #1 holds", "V8 authorization spent only on work about to start", "V9 amendment costs one step unless it widens scope"]
+subtraction:
+  - the §8 audit-record precondition in foundry-authorize.py
+  - /foundry:authorize-release bulk signing (display kept)
+  - converged as a review terminus
+  - the run-metrics.jsonl writer (every row "unobserved") — replaced by the instrument
+
+atoms:
+  - id: authorize-drops-audit-precondition
+    kind: HC
+    depends_on: []
+    lands: first
+    security: true
+    # foundry-authorize.py:225-226 requires ledger.find_audit(spec_hash). Engine converged 0/17;
+    # "the §8 audit deadlock (O-61) is live — I hit it today". Remove; spec-review stays the review verb;
+    # deep audit operator-invoked only.
+  - id: audit-ledger-allowlist
+    kind: HC
+    depends_on: []
+    security: true
+    # The floor-#1 fail-open (foundry_audit_ledger.py:67,70,151; foundry-audit-record.py:37). Moot for
+    # authorization once the precondition is gone, but the ledger must not record a crashed audit as
+    # clean. One-line inversion + required --verdict + regression test.
+  - id: amend-verb
+    kind: NS
+    depends_on: [authorize-drops-audit-precondition]
+    security: true
+    # One-step amendment: diff the normative region → classify. WIDENING (allowed_paths, denied_paths,
+    # account ids, requires_capabilities, any security:true spec) → operator fork. Else the agent
+    # re-freezes, auth_seq bumps, the diff is recorded in the spec's `## Amendments`. Never quietly widen.
+  - id: spec-template-amendments-section
+    kind: NS
+    depends_on: []
+    # context/feat-spec-template.md and charter-template.md gain `## Amendments` (date · what changed ·
+    # why reality required it · auth_seq). The wave-1 depth rule is written into CONSTITUTION §12.
+  - id: charter-default-routing
+    kind: NS
+    depends_on: []
+    # intake routes by Beck's game test: charter lane by default; factory lane (frozen contract +
+    # review) for security:true atoms; operator override per atom. Bulk authorize-release signing
+    # retired; JIT authorization = the operator merges the spec when the atom is next.
+  - id: wave-learn
+    kind: NS
+    depends_on: [amend-verb]
+    # "next waves learn from previous ones": at wave close the deck writes
+    # .foundry/releases/<id>/state.yaml {decisions, artifacts.reuse_as, open_risks, amendments_needed};
+    # the next wave's intake reads it FIRST. Shares the state.yaml shape R3 later extends.
+  - id: coherence-and-two-rounds
+    kind: NS
+    depends_on: []
+    # /foundry:coherence-check (exists, unused) runs over a release before its first authorization —
+    # a contradiction is a Block naming both owners. Review rule: two rounds, then ship or park;
+    # round 3 is an operator fork; a Block cites a checkpoint id or file:line or it is a Risk.
+  - id: yield-and-silent-yield-instrument
+    kind: NS
+    depends_on: []
+    # scripts/ gets mine_failures.py + spec_signals.py with the six ratios: silent-yield,
+    # directive-reply, granted-verb denial, guard false-positive, authorized→built conversion,
+    # rounds per shipped atom. REPORT ONLY. Exists before wave 1 so wave 1 is measurable.
+
+exit:
+  - a wave-1 atom is authorized JIT, amended mid-build by the agent without an operator turn, and lands
+  - authorize refuses nothing for lack of an audit row; the ledger refuses to record a crashed audit as clean
+  - the instrument reports the six ratios over the previous 30 days as the wave-1 baseline

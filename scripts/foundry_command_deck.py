@@ -205,10 +205,17 @@ def ready_set(release, *, project_dir=None, branch="main", run_rows=None):
     # `target_repo`, into `git -C <dir>`. Confining AFTER the derivation would refuse the atom only
     # once those reads and that subprocess had already happened with attacker-named paths — the check
     # has to precede the reach, not merely precede the start.
+    #
+    # (release-loader-vocabulary, AC-RLV-3): a charter-lane atom carries `charter_ref` instead of
+    # spec_ref/contract_ref (both None) — `charter_ref` is the ONE manifest-supplied path that atom
+    # feeds into `open()`/`git log --` (see `foundry_release._charter_authorized`), so it gets
+    # exactly the same CONFINE-FIRST treatment; a factory-lane atom's check is unchanged.
     escaped = {}
     safe_atoms = []
     for atom in release.atoms:
-        bad = [f for f in (atom.spec_ref, atom.contract_ref) if not confined(f, corpus_root)]
+        refs_to_check = [atom.charter_ref] if atom.charter_ref else \
+            [f for f in (atom.spec_ref, atom.contract_ref) if f is not None]
+        bad = [f for f in refs_to_check if not confined(f, corpus_root)]
         if bad:
             escaped[atom.id] = "manifest path escapes the corpus: " + ", ".join(as_data(f) for f in bad)
         else:
