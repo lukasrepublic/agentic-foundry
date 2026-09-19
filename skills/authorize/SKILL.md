@@ -23,21 +23,19 @@ wrapper** — it never re-implements the freeze logic.
    contract exists, the atom is DRAFT — it must be authored first (a distinct
    contract-authoring phase; in dispatch mode by a separate `qa-engineer` worker).
 
-2. **Review precondition (HARDENED).** Confirm the spec has cleared a review — by default,
-   `/foundry:spec-review` (`skills/spec-review/SKILL.md`), not the retired-as-default deep
-   `adversarial-spec-audit` engine (`skills/audit/SKILL.md`, kept dormant-invocable for an
-   exceptional deep audit only). This script's own audit-ledger precondition (`find_audit`) is
-   UNCHANGED and is the **NORMAL path**: it fail-closes on a spec with no matching
-   `.foundry/audit-ledger.jsonl` row (`spec_sha256` match + `rounds >= 1` + a non-`{fail,rejected,
-   abandoned}` verdict). A spec reviewed via `/foundry:spec-review` already has this row —
-   `skills/spec-review/SKILL.md`'s Phase 3 records it (`foundry-audit-record.py --rounds 1 --tier
-   single-pass-review --verdict plateau-clean`) as part of the review itself, so `find_audit`
-   finds it the same way it always found a deep spec audit row; no special-casing, no code change. A spec
-   that instead ran the dormant deep audit records its ledger row the old way (see
-   `skills/audit/SKILL.md` step 7). **`--skip-audit-reason "<reason>"` stays the OPERATOR-ONLY
-   EXCEPTION** (an atom that skipped review outright, a deliberate operator override) — it is not
-   the routine path for a spec-review-covered atom, which should already satisfy `find_audit`
-   without it. Either path, do not authorize a DRAFT that cleared neither.
+2. **Review (recommended, not a precondition).** Confirm the spec has ideally cleared a review —
+   by default `/foundry:spec-review` (`skills/spec-review/SKILL.md`), or the dormant-invocable
+   deep `adversarial-spec-audit` engine (`skills/audit/SKILL.md`) for an exceptional deep audit.
+   `/foundry:audit` is **operator-invoked only** — never a step this skill or `foundry-authorize.py`
+   requires. `find_audit`'s lookup against `.foundry/audit-ledger.jsonl` is **informational only**
+   (feat-foundry-authorization-authorize-drops-audit-precondition): a spec with no row, or a row
+   with a non-passing verdict, freezes exactly the same as one with a clean row — `foundry-
+   authorize.py` prints what it found (or nothing) and proceeds either way. The freeze floors
+   (1-4) plus the operator's explicit confirmation at step 4 are what authorize the spec; a
+   recorded audit is corroborating evidence, not a gate. `--skip-audit-reason "<reason>"` is a
+   DEPRECATED no-op kept for one release (still accepted, still logged as an informational
+   `authorize-audit-flag-deprecated` record) — do not present it to the operator as a required
+   step.
 
 3. **Dry-run + DISPLAY.** Run the CLI WITHOUT `--yes`:
    ```bash
@@ -82,5 +80,5 @@ wrapper** — it never re-implements the freeze logic.
 - **Self-confirming.** The operator's explicit yes at step 4 is the authority; an agent must never supply `--yes` without it. Front-authorization is UNCONDITIONAL — there is NO skip phrase (unlike the deep spec audit).
 - **Relaxing the contract to pass the gate.** A failing freeze-floor means the contract is under-specified — re-specify it (re-author checkpoints), never weaken the floors.
 - **Re-implementing the freeze.** Always invoke `foundry-authorize.py`; never hand-write the `authorized:` block (byte-canonical hashing + newline canonicalization + monotonic `auth_seq` are easy to get subtly wrong).
-- **Authorizing a DRAFT that cleared no review** (no `/foundry:spec-review` evidence row, no dormant-deep-audit row) without the operator's explicit `--skip-audit-reason "<reason>"` flag — the ONLY escape hatch, reserved for a genuine operator exception, never the routine path (see step 2 above).
+- **Authorizing a DRAFT the operator has not reviewed.** No audit-ledger row is required (see step 2 above), but the operator's explicit confirmation at step 4 is — never substitute a ledger row, and never claim `/foundry:audit` or the ledger stand in for that confirmation.
 - **On a harness denial** (e.g. the classifier blocks `--yes`), see `docs/harness-denial-fallback.md` and STOP: hand the operator the exact denied invocation; never retry it or route around the classifier.
