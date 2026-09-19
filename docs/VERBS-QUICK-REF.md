@@ -44,6 +44,7 @@ matter on day one, see the `## Start here` table in [README.md](../README.md).
 | Verb | What it produces |
 |---|---|
 | `/foundry:authorize` | Freezes the spec and contract hashes and records your signed go-ahead |
+| `/foundry:amend` | Re-freezes an authorized spec after a non-widening amendment (new hashes, a bumped authorization sequence, an Amendments row); refuses a widening or security-surface change and routes it to `/foundry:authorize` |
 | `/foundry:dispatch` | Builds the authorized spec in an isolated worktree and opens a PR |
 | `/foundry:revert` | Rolls a merged change back out through the same governed loop |
 | `/foundry:upgrade` | After a `claude plugin update`, reports whether your adopter config has drifted from the current shape or gone malformed |
