@@ -209,6 +209,11 @@
       "rationale": "read-only intake schema-defect / grounding checker over a project dir"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_message_kind.py:*)",
+      "tier": "allow",
+      "rationale": "deterministic outgoing cross-session message lint (fleet-is-listagents, AC-FIL-3): reads its --in argument, checks the first line against the closed FINDING|NEEDS-INTERFACE|CHALLENGE|HANDOFF vocabulary and HANDOFF's json shape against schema/blocker.schema.json, prints a JSON verdict; writes nothing"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_repo_fleet.py status:*)",
       "tier": "allow",
       "rationale": "read-only per-repo status rows through the hardened choke point; no network, no mutation."

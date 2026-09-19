@@ -257,7 +257,24 @@ def _import_map_suite():
 # literally, never home-expanded — the harness only persists an `allow` rule as an absolute,
 # version-resolved path on ask-to-allow; an `ask` rule is prompted every time and never persists
 # that way, the same shape `foundry-permissions-compile.py --write`'s own row already carries).
-MERGE_BASE_ENTRIES_DIGEST = "4335652bd1a4c4e09ede55b19961af5a305f4c9781c3e00da65b352bf999a5e9"
+#
+# UPDATED for fleet-is-listagents (R3 of autonomy-continuation, charter-lane atom
+# `fleet-is-listagents`). This atom's charter carries the SAME per-contract exception
+# (`cli/permission-floor.json` + `docs/permission-floor.json` named in its own `allowed_paths`),
+# so this re-pin lands in the SAME reviewed diff as the map edit, per the R8 rule this guard
+# states. One new `allow` row for the new read-only lint script — it reads its `--in` argument,
+# checks a message's first line against the closed FINDING|NEEDS-INTERFACE|CHALLENGE|HANDOFF
+# vocabulary and HANDOFF's json block against `schema/blocker.schema.json`, prints a JSON
+# verdict; it never writes, the same read-only shape `foundry_blocker_check.py`'s own row already
+# carries. 69 -> 70 entries (one row added, none removed):
+#
+#   + Bash(.../foundry_message_kind.py:*)   tier `allow`
+#
+# tests/fixtures/floor-drift-corpus.json's `full-floor-verbatim` and `full-floor-home-expanded`
+# cases each gained the matching effective-allow row in the same diff. A sibling charter-lane atom
+# in the same wave may re-pin this constant again on rebase; the coordinator resolves the
+# resulting two-place conflict, per the lane README's own note on serial merges.
+MERGE_BASE_ENTRIES_DIGEST = "133a762d86352a1f674d3b0d2ce8c78963075c157075f5579787b06dfa36835d"
 
 
 # ================================================================================================ #

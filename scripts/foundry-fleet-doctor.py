@@ -16,6 +16,12 @@ Advisory by default (exit 0 with the report); --strict fails closed on any RED f
 Adopters are dirs containing .claude/foundry-operators.json (the registry marker). Project-scoped
 installs in ~/.claude/plugins/installed_plugins.json are folded in so a vendored-source adopter is
 never silently assumed to be on the marketplace.
+
+RETIRING (R4 subtraction-wave): fleet-is-listagents (R3 of autonomy-continuation, Decision 9)
+trims `skills/fleet/SKILL.md` to an annotation view over the native `/list-agents` and marks the
+whole fleet-scripts surface — this script and its three siblings — for removal in R4. It is NOT
+deleted here: it still runs standalone, its own tests still pass, and its permission-floor row is
+untouched until that wave lands.
 """
 import argparse
 import json
