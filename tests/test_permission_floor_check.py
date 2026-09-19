@@ -207,7 +207,7 @@ def _import_map_suite():
 # Net: 64 -> 63 entries (one row removed, net; the instrument's row was added then removed within
 # the same PR and never landed in `entries`). Enumerated entry-by-entry against origin/main before
 # this digest was re-pinned, same shape as PR #62's reconciliation above.
-MERGE_BASE_ENTRIES_DIGEST = "289774736824eb036ca980fc3a19a46aa98417707af8cd28d4a3686f2fba1633"
+MERGE_BASE_ENTRIES_DIGEST = "2c1bb13d67c7ba934bd32c89ee4ba002520d6da102d2fb8ecbfe537880469c7e"
 
 
 # ================================================================================================ #
