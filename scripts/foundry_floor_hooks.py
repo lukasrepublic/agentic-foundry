@@ -6,7 +6,9 @@ that move front-authorization and the `done_when` evidence gate INSIDE a team se
 PURE library: no argparse, no `main()`, no `__main__` — never in command position (the
 corresponding `not_invoked` row this atom adds to `docs/permission-floor.json` /
 `cli/permission-floor.json`). `hooks/foundry-task-created.py` and `hooks/foundry-task-completed.py`
-are the only callers.
+are the only callers, and both import this module LAZILY (inside their own guarded call, never at
+module load time) so a broken import becomes exit 2 through their own fail-closed wrapper rather
+than an uncaught traceback (review round 1, item 2).
 
 Real task JSON shape (inspected READ-ONLY on this machine, one team directory under
 `~/.claude/tasks/<team>/<task-id>.json`, re-read 2026-09-19): every sampled file is exactly
@@ -14,13 +16,33 @@ Real task JSON shape (inspected READ-ONLY on this machine, one team directory un
 `createdAt` key anywhere in the corpus. A whole-corpus grep for "created"/"createdAt" turned up
 only the plain-English substring "created" inside a few `description` prose fields, never a JSON
 key. So AC-FLH-2's "the task's creation time read from the tasks dir" is implemented here as the
-task FILE's own filesystem creation time (`os.stat(...).st_birthtime`, falling back to `st_mtime`
-on a platform that does not report a birth time) rather than a JSON field — the spec names "read
-from the tasks dir", not a specific field, so this is a within-spec implementation choice, not a
-spec change. Separately, the observed team directory name on this machine is a full session UUID
+task FILE's own filesystem creation time rather than a JSON field — the spec names "read from the
+tasks dir", not a specific field, so this is a within-spec implementation choice, not a spec
+change.
+
+RESIDUAL — platform + rewrite caveats on the task-creation-time signal (review round 1, item 5;
+tracked as R4 backfill material, not fixed here):
+  * `st_birthtime` (the file's true creation time) is macOS/BSD-only. On Linux `stat(2)` reports
+    no birth time at all — `hasattr(st, "st_birthtime")` is `False` there — so `task_created_at`
+    falls back to `st_mtime`. On Linux that means (a) the harness rewriting a task file on ANY
+    status change (not only creation) resets what this function treats as "creation time", which
+    could wrongly REFUSE a legitimate completion whose evidence predates a later, unrelated
+    status-only rewrite, and (b) a builder can `os.utime` the file backwards to defeat the
+    staleness check outright.
+  * ATOMIC-REWRITE CAVEAT (both platforms): a write-tmp-then-`rename` durable-write idiom (the
+    SAME one this codebase's own `foundry_release.save_release` uses) resets `st_birthtime` to the
+    rename's own time, not the file's original creation moment, if the harness's own task writer
+    ever uses that idiom for an in-place update. This function cannot distinguish "genuinely just
+    created" from "just rewritten in place."
+  Neither caveat is closed here. A durable, explicit creation-time record living IN the tasks dir
+  (rather than inferred from filesystem metadata) would close both, and is R4 material.
+
+Separately: the observed team directory name on this machine is a full session UUID
 (`~/.claude/tasks/<uuid>/`), not the truncated `session-<8>` form the lane README's PRIMARY-DOC
-FACTS quote for the sibling `~/.claude/teams/` path — `default_tasks_dir` below therefore keys off
-the payload's own `session_id` field verbatim, never truncated.
+FACTS quote for the sibling `~/.claude/teams/` path. `candidate_tasks_dirs` therefore tries BOTH
+shapes, in order (review round 1, item 9) — the full `session_id` verbatim first (what this
+machine's own team directory actually looks like), then the documented `session-<8>` truncated
+form — rather than betting on one.
 
 Reuses (never re-implements): `foundry_release.load_release` (release/atom resolution — the same
 primitive `derive_closure`/the merge gate use), `foundry_authz.is_authorized` (the factory-lane
@@ -38,7 +60,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
@@ -56,31 +78,48 @@ class FloorHookError(Exception):
     fail-closed on any exception, not only this one (AC-FLH-1/AC-FLH-2)."""
 
 
+class MalformedAtomSubjectError(FloorHookError):
+    """Raised by `parse_atom_subject` for a subject that STARTS WITH `atom:` (case-insensitive,
+    after stripping leading/trailing whitespace) but is not the exact form `atom:<slug>/<slug>`
+    (a lowercase `atom:` literal, both parts `[a-z0-9-]+`, nothing else — no extra whitespace, no
+    embedded newline, no case variation, no extra `/`, no `..`). Review round 1, item 7: a subject
+    that merely LOOKS like an atom reference must be refused (exit 2, naming it), never silently
+    treated as "any other subject" (which would exit 0 untouched)."""
+
+
 # --------------------------------------------------------------------------------------------- #
-# task_subject parsing (AC-FLH-11)
+# task_subject parsing (AC-FLH-11; review round 1 item 7 — the ONE rule)
 # --------------------------------------------------------------------------------------------- #
 
-# Recognizes the SHAPE "atom:<anything>/<anything>" — split at the LAST '/' (greedy first group)
-# so a release-id portion carrying an extra '/' or '..' (a path-traversal attempt) is still
-# recognized as an ATTEMPTED atom reference rather than silently falling through as "any other
-# subject" (AC-FLH-1's fail-closed "non-slug id" case; AC-FLH-3's "refused as non-slug"). Slug
-# validation of the two captured parts is deliberately a SEPARATE step (`is_slug` / `resolve_atom`
-# below) — a subject that merely LOOKS like an atom reference must be refused, never ignored.
-_ATOM_SUBJECT_SHAPE_RE = re.compile(r"^atom:(.+)/(.+)$")
+# Detection is DELIBERATELY lenient (case-insensitive, tolerant of surrounding whitespace) so no
+# attempted atom reference is ever silently mis-filed as "any other subject, exit 0 untouched".
+_ATOM_PREFIX_RE = re.compile(r"^atom:", re.IGNORECASE)
+# Validation is DELIBERATELY strict against the RAW (unstripped) subject: a lowercase `atom:`
+# literal, both parts `[a-z0-9-]+`, and `\Z` (not `$`, which in Python also matches just before a
+# single trailing newline) so an embedded/trailing newline never slips through.
+_EXACT_ATOM_SUBJECT_RE = re.compile(r"^atom:([a-z0-9-]+)/([a-z0-9-]+)\Z")
 _SLUG_RE = re.compile(r"^[a-z0-9-]+$")
 
 
 def parse_atom_subject(subject) -> "tuple[str, str] | None":
-    """Exact-form slug-SHAPE parsing (AC-FLH-11). Returns `(release_id, atom_id)` — the raw
-    captured strings, NOT yet slug-validated — whenever `subject` has the `atom:<X>/<Y>` SHAPE.
-    Returns `None` for any subject that does not even carry that shape (no `atom:` prefix, or no
-    `/` at all) — "any other subject", exiting 0 untouched (AC-FLH-1/AC-FLH-4). `None` is also
-    returned for a non-string subject."""
+    """Exact-form parsing (AC-FLH-11). Returns `(release_id, atom_id)` for the exact form
+    `atom:<slug>/<slug>`. Returns `None` when `subject` does not even START WITH `atom:` (case-
+    insensitive, after `.strip()`) — "any other subject", exiting 0 untouched (AC-FLH-1/AC-FLH-4).
+    Raises `MalformedAtomSubjectError` for everything in between — a subject that starts with
+    `atom:` (any case) but is not the exact form (uppercase, a stray leading/trailing space, an
+    embedded newline, extra `/`, `..`, …): refused (exit 2, naming it) rather than silently
+    ignored. `None` is also returned for a non-string subject."""
     if not isinstance(subject, str):
         return None
-    m = _ATOM_SUBJECT_SHAPE_RE.match(subject)
+    stripped = subject.strip()
+    if not _ATOM_PREFIX_RE.match(stripped):
+        return None  # does not even start with atom: (case-insensitive) — any other subject
+    m = _EXACT_ATOM_SUBJECT_RE.match(subject)
     if not m:
-        return None
+        raise MalformedAtomSubjectError(
+            f"task_subject {subject!r} starts with 'atom:' but is not the exact form "
+            f"atom:<slug>/<slug>"
+        )
     return m.group(1), m.group(2)
 
 
@@ -89,15 +128,44 @@ def is_slug(value) -> bool:
 
 
 # --------------------------------------------------------------------------------------------- #
+# the project dir (review round 1 item 6)
+# --------------------------------------------------------------------------------------------- #
+
+
+def resolve_project_dir(payload) -> str:
+    """The project dir a hook resolves atoms/evidence against. Payload `cwd` first — realpath'd,
+    and MUST already resolve to an existing directory (review round 1 item 6: an attacker-
+    controlled or simply stale `cwd` is refused rather than silently followed) — then
+    `CLAUDE_PROJECT_DIR` (same validation), then `os.getcwd()` (whatever that raises — e.g. a
+    deleted cwd — is left to the caller's own fail-closed `except Exception`, review item 2)."""
+    cwd = payload.get("cwd") if isinstance(payload, dict) else None
+    if isinstance(cwd, str) and cwd.strip():
+        real = os.path.realpath(cwd)
+        if not os.path.isdir(real):
+            raise FloorHookError(f"payload cwd {cwd!r} does not resolve to an existing directory")
+        return real
+    env_dir = os.environ.get("CLAUDE_PROJECT_DIR")
+    if env_dir:
+        real = os.path.realpath(env_dir)
+        if not os.path.isdir(real):
+            raise FloorHookError(
+                f"CLAUDE_PROJECT_DIR {env_dir!r} does not resolve to an existing directory"
+            )
+        return real
+    return os.getcwd()
+
+
+# --------------------------------------------------------------------------------------------- #
 # atom resolution + authorization (AC-FLH-1)
 # --------------------------------------------------------------------------------------------- #
 
 
 def resolve_atom(release_id: str, atom_id: str, project_dir: str):
-    """Resolve one atom, fail-closed. Raises `FloorHookError` for a non-slug id (before ever
-    touching disk); propagates `foundry_release.ReleaseError` (an unresolvable release, a
-    malformed manifest) and any other exception unchanged — the caller's `except Exception` is
-    what makes ALL of these fail-closed (AC-FLH-1), not a narrowed catch here."""
+    """Resolve one atom, fail-closed. Raises `FloorHookError` for a non-slug id (defensive — by
+    construction `parse_atom_subject` never hands this a non-slug part, but a direct caller
+    might); propagates `foundry_release.ReleaseError` (an unresolvable release, a malformed
+    manifest) and any other exception unchanged — the caller's `except Exception` is what makes
+    ALL of these fail-closed (AC-FLH-1), not a narrowed catch here."""
     if not is_slug(release_id) or not is_slug(atom_id):
         raise FloorHookError(
             f"task_subject names a non-slug release/atom id ({release_id!r}/{atom_id!r})"
@@ -166,40 +234,71 @@ def declared_done_when(atom, project_dir: str) -> list:
 
 
 # --------------------------------------------------------------------------------------------- #
-# the tasks dir + the task's creation time (AC-FLH-2)
+# the tasks dir + the task's creation time (AC-FLH-2; review round 1 items 5/6/9)
 # --------------------------------------------------------------------------------------------- #
 
-
-def default_tasks_dir(payload: dict) -> "str | None":
-    """Default `--tasks-dir`, derived from the payload's own `session_id` (see module docstring:
-    the observed team directory on this machine is a full session UUID, never `session-<8>`).
-    Returns `None` when the payload carries no usable `session_id` — the caller then refuses
-    (fail-closed), it never guesses a path."""
-    session_id = payload.get("session_id") if isinstance(payload, dict) else None
-    if isinstance(session_id, str) and session_id.strip():
-        return os.path.expanduser(os.path.join("~", ".claude", "tasks", session_id.strip()))
-    return None
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
-def task_created_at(task_id, tasks_dir) -> datetime:
-    """The task file's own filesystem creation time (see module docstring for why there is no
-    JSON field to read instead). Raises `FloorHookError` — naming the gap — for a missing/absent
-    `tasks_dir`, a non-slug-ish `task_id` (defensive: never used to escape `tasks_dir`), or a task
-    id absent from it (AC-FLH-2's "task id not found in the tasks dir")."""
-    if not tasks_dir:
+def candidate_tasks_dirs(session_id) -> list:
+    """The tasks-dir shapes worth trying for a given `session_id`, in order (review round 1 item
+    9): the full `session_id` verbatim (what this machine's own team directory actually looks
+    like — see module docstring), then the lane README's documented `session-<8>` truncated form.
+    `[]` when `session_id` is absent/blank — not itself a refusal, the caller decides what an
+    empty candidate list means. Raises `FloorHookError` for a `session_id` that is present but
+    unsafe: outside `[A-Za-z0-9._-]+`, or containing `..` (review round 1 item 6 — `/` is already
+    excluded by the charset, which also excludes an absolute path)."""
+    if session_id is None:
+        return []
+    if not isinstance(session_id, str) or not session_id.strip():
+        return []
+    sid = session_id.strip()
+    if not _SESSION_ID_RE.match(sid) or ".." in sid:
+        raise FloorHookError(f"session_id {session_id!r} is not a safe identifier")
+    candidates = [os.path.expanduser(os.path.join("~", ".claude", "tasks", sid))]
+    truncated = os.path.expanduser(os.path.join("~", ".claude", "tasks", f"session-{sid[:8]}"))
+    if truncated not in candidates:
+        candidates.append(truncated)
+    return candidates
+
+
+def resolve_task_file(task_id, *, tasks_dir=None, session_id=None) -> str:
+    """Resolve `<tasks-dir>/<task_id>.json`, trying `tasks_dir` (an explicit `--tasks-dir`
+    override) first, then each of `candidate_tasks_dirs(session_id)` in order — the first
+    candidate whose file actually EXISTS wins (review round 1 item 9). Raises `FloorHookError`
+    naming EVERY path tried when none contains the file, or when there was nothing to try at
+    all."""
+    if not isinstance(task_id, str) or not task_id.strip() or "/" in task_id or ".." in task_id:
+        raise FloorHookError(f"task_id {task_id!r} is not a usable id")
+    dirs = []
+    if tasks_dir:
+        dirs.append(tasks_dir)
+    dirs.extend(candidate_tasks_dirs(session_id))
+    if not dirs:
         raise FloorHookError(
             "no tasks dir resolved (pass --tasks-dir, or ensure the payload carries a session_id)"
         )
-    if not isinstance(task_id, str) or not task_id.strip() or "/" in task_id or ".." in task_id:
-        raise FloorHookError(f"task_id {task_id!r} is not a usable id")
-    path = os.path.join(tasks_dir, f"{task_id}.json")
-    try:
-        st = os.stat(path)
-    except OSError as e:
-        raise FloorHookError(f"task {task_id!r} not found in tasks dir {tasks_dir!r}: {e}") from e
-    ts = getattr(st, "st_birthtime", None)
-    if ts is None:
-        ts = st.st_mtime
+    tried = []
+    for d in dirs:
+        path = os.path.join(d, f"{task_id}.json")
+        tried.append(path)
+        if os.path.isfile(path):
+            return path
+    raise FloorHookError(f"task {task_id!r} not found in any tasks dir tried: {tried}")
+
+
+def task_created_at(task_id, *, tasks_dir=None, session_id=None) -> datetime:
+    """The task file's own filesystem creation time (see module docstring's RESIDUAL section for
+    the platform + atomic-rewrite caveats — review round 1 item 5). Raises `FloorHookError` —
+    naming the gap — via `resolve_task_file` for an unresolvable tasks dir or a task id absent
+    from every candidate tried (AC-FLH-2's "task id not found in the tasks dir")."""
+    path = resolve_task_file(task_id, tasks_dir=tasks_dir, session_id=session_id)
+    st = os.stat(path)
+    # Gate explicitly on `hasattr` (review round 1 item 5), not a `getattr(..., None) is None`
+    # check — the two are equivalent in practice (no platform reports `st_birthtime == None`),
+    # but `hasattr` says directly what is being tested: does THIS platform's stat_result carry a
+    # birth time at all.
+    ts = st.st_birthtime if hasattr(st, "st_birthtime") else st.st_mtime
     return datetime.fromtimestamp(ts, tz=timezone.utc)
 
 
@@ -262,3 +361,15 @@ def parse_utc(value) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def check_not_future(value: datetime, *, max_skew_seconds: int = 300, label: str = "timestamp") -> None:
+    """Refuse a timestamp more than `max_skew_seconds` (default 300s) past the REAL current time
+    (review round 1 item 4) — an evidence record naming a date far enough in the future to satisfy
+    "newer than the task" forever (e.g. `2099-01-01`) is refused, named, rather than trusted."""
+    now = datetime.now(timezone.utc)
+    if value > now + timedelta(seconds=max_skew_seconds):
+        raise FloorHookError(
+            f"{label} {value.isoformat()} is more than {max_skew_seconds}s in the future "
+            f"(now {now.isoformat()})"
+        )
