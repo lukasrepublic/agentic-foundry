@@ -219,6 +219,11 @@
       "rationale": "ceremony: front-authorization; --yes/--skip-audit-reason arrive after other args, not prefix-keyable, so the whole script is ask"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-amend.py:*)",
+      "tier": "ask",
+      "rationale": "writes the frozen authorized: trailer (re-freeze after a non-widening amendment) — operator-prompted until permissions.yaml (R1) tiers it; a widening is refused by the verb itself"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-bootstrap.sh:*)",
       "tier": "ask",
       "rationale": "writes GLOBAL git config (--global --unset-all/--get-regexp, two includeIf.*.path writes); machine-scope state"
