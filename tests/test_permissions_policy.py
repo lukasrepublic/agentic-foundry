@@ -467,3 +467,73 @@ def test_cli_check_real_process_exit_2_on_missing_policy(tmp_path):
     root = str(tmp_path)
     r = _run_cli(root, "--check")
     assert r.returncode == 2, r.stdout + r.stderr
+
+
+# =================================================================================================
+# PR #165 review hardening — blanket patterns, sidecar trust, coincidental ownership
+# =================================================================================================
+
+@pytest.mark.parametrize("pattern", ["*", ":*", "**", "*:*", " * ", "."])
+def test_blanket_pattern_is_refused_by_the_structural_floor(pattern):
+    import yaml
+    data = yaml.safe_load(_ONE_GRANT_YAML)
+    data["grants"][0]["pattern"] = pattern
+    errors = PC._structural_check(data)
+    assert any("blanket" in e for e in errors), errors
+
+
+def test_named_pattern_is_not_a_blanket():
+    import yaml
+    data = yaml.safe_load(_ONE_GRANT_YAML)
+    data["grants"][0]["pattern"] = "gh pr merge *"
+    assert not [e for e in PC._structural_check(data) if "blanket" in e]
+
+
+def test_unreadable_sidecar_fails_closed_exit_2(tmp_path):
+    root = str(tmp_path)
+    _write_yaml(root, _ONE_GRANT_YAML)
+    assert _run_cli(root, "--write").returncode == 0
+    with open(os.path.join(root, PC.SIDECAR_REL), "w", encoding="utf-8") as fh:
+        fh.write("{not json")
+    r = _run_cli(root, "--check")
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "unreadable" in (r.stdout + r.stderr)
+    r = _run_cli(root, "--write")
+    assert r.returncode == 2, r.stdout + r.stderr
+
+
+def test_write_never_removes_an_operator_deny_even_if_the_sidecar_claims_it(tmp_path):
+    root = str(tmp_path)
+    _write_yaml(root, _ONE_GRANT_YAML)
+    assert _run_cli(root, "--write").returncode == 0
+    settings = _read_settings(root)
+    settings["permissions"].setdefault("deny", []).append("Bash(rm -rf /:*)")
+    with open(os.path.join(root, PC.SETTINGS_REL), "w", encoding="utf-8") as fh:
+        json.dump(settings, fh)
+    with open(os.path.join(root, PC.SIDECAR_REL), encoding="utf-8") as fh:
+        sidecar = json.load(fh)
+    sidecar["rules"]["deny"].append("Bash(rm -rf /:*)")   # a tampered ownership claim
+    with open(os.path.join(root, PC.SIDECAR_REL), "w", encoding="utf-8") as fh:
+        json.dump(sidecar, fh)
+    assert _run_cli(root, "--write").returncode == 0
+    assert "Bash(rm -rf /:*)" in _read_settings(root)["permissions"]["deny"]
+
+
+def test_preexisting_operator_rule_coinciding_with_a_grant_is_never_owned(tmp_path):
+    root = str(tmp_path)
+    _write_yaml(root, _ONE_GRANT_YAML)
+    # derive the rule the one grant compiles to, then pre-seed it as the OPERATOR's own rule
+    assert _run_cli(root, "--write").returncode == 0
+    with open(os.path.join(root, PC.SIDECAR_REL), encoding="utf-8") as fh:
+        first = json.load(fh)
+    tier, rules = next((t, r) for t, r in first["rules"].items() if t != "deny" and r)
+    rule = rules[0]
+    os.remove(os.path.join(root, PC.SIDECAR_REL))        # forget ownership; the rule stays in settings
+    assert _run_cli(root, "--write").returncode == 0  # second first-write: the rule pre-exists
+    with open(os.path.join(root, PC.SIDECAR_REL), encoding="utf-8") as fh:
+        second = json.load(fh)
+    assert rule not in second["rules"][tier], "a pre-existing operator rule must not become owned"
+    # retiring the grant must therefore leave the operator's rule in place
+    _write_yaml(root, "schema_version: 1\ngrants: []\n")
+    assert _run_cli(root, "--write").returncode == 0
+    assert rule in _read_settings(root)["permissions"][tier]

@@ -34,6 +34,7 @@
           "pattern": {
             "type": "string",
             "minLength": 1,
+            "not": {"pattern": "^[\\s*:?/.]*$"},
             "description": "The native rule's parenthesised body -- the compiled rule is exactly `<tool>(<pattern>)`."
           },
           "mode": {

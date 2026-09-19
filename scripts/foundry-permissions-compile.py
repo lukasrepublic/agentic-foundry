@@ -76,6 +76,7 @@ PRECONDITIONS = (
     "branch-up-to-date",
 )
 _ID_RE = __import__("re").compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+_BLANKET_PATTERN_RE = __import__("re").compile(r"^[\s*:?/.]*$")
 
 POLICY_REL = os.path.join(".foundry", "permissions.yaml")
 SETTINGS_REL = os.path.join(".claude", "settings.json")
@@ -160,6 +161,10 @@ def _structural_check(data):
         pattern = g.get("pattern")
         if not isinstance(pattern, str) or not pattern:
             errors.append(f"grants[{i}].pattern must be a non-empty string, got {pattern!r}")
+        elif _BLANKET_PATTERN_RE.match(pattern):
+            # PR #165 security review: a wildcard-only body compiles to a blanket rule (`Bash(:*)`,
+            # `Edit(**)`) -- breadth is an operator decision, but a blanket is never a "grant".
+            errors.append(f"grants[{i}].pattern {pattern!r} is a blanket wildcard -- name the command/path")
         mode = g.get("mode")
         if mode not in MODES:
             errors.append(f"grants[{i}].mode must be one of {MODES}, got {mode!r}")
@@ -290,8 +295,10 @@ def _read_sidecar(project_dir):
             "ask": list(rules.get("ask", [])),
             "deny": list(rules.get("deny", [])),
         }
-    except Exception:
-        return None
+    except Exception as e:
+        # PR #165 security review: an unreadable sidecar used to read as "nothing owned", which let a
+        # retired grant's allow rule survive and --check report in-sync. Fail closed instead.
+        raise PolicyError(f"{SIDECAR_REL} is unreadable ({e}); repair or delete it before compiling")
 
 
 def _policy_sha256(project_dir):
@@ -354,7 +361,10 @@ def run_check(project_dir):
         return EXIT_MISSING_OR_INVALID, str(e)
     derived = derive_rules(grants)
     settings_rules = _effective_settings_rules(project_dir)
-    sidecar = _read_sidecar(project_dir)
+    try:
+        sidecar = _read_sidecar(project_dir)
+    except PolicyError as e:
+        return EXIT_MISSING_OR_INVALID, str(e)
     findings = compute_drift(derived, settings_rules, sidecar)
     if findings:
         return EXIT_DRIFT, "drift:\n  " + "\n  ".join(findings)
@@ -380,7 +390,10 @@ def run_write(project_dir):
     except PolicyError as e:
         return EXIT_MISSING_OR_INVALID, str(e)
 
-    prev_sidecar = _read_sidecar(project_dir)
+    try:
+        prev_sidecar = _read_sidecar(project_dir)
+    except PolicyError as e:
+        return EXIT_MISSING_OR_INVALID, str(e)
     owned_before = {
         tier: set(prev_sidecar[tier]) if prev_sidecar else set()
         for tier in _ALL_TIERS
@@ -389,14 +402,22 @@ def run_write(project_dir):
     perms = doc.get("permissions")
     if not isinstance(perms, dict):
         perms = {}
+    owned_after = {}
     for tier in _ALL_TIERS:
         existing = perms.get(tier, [])
         if not isinstance(existing, list):
             existing = []
         to_remove = owned_before[tier] - set(derived[tier])
+        if tier == "deny":
+            # PR #165 security review: an operator's own deny rule is never removed, whatever the
+            # sidecar claims -- only the compiler's two self-protection rules are ever retired.
+            to_remove &= set(POLICY_SELF_DENY_RULES)
         kept = [r for r in existing if r not in to_remove]
         to_add = [r for r in derived[tier] if r not in kept]
         perms[tier] = kept + to_add
+        # Ownership = what this compiler ADDED (now or earlier), never a pre-existing operator rule
+        # that merely coincides with a derived one (PR #165 code review).
+        owned_after[tier] = sorted((owned_before[tier] & set(derived[tier])) | set(to_add))
     doc["permissions"] = perms
 
     os.makedirs(os.path.dirname(settings_path), exist_ok=True)
@@ -404,7 +425,7 @@ def run_write(project_dir):
 
     sidecar_doc = {
         "yaml_sha256": _policy_sha256(project_dir),
-        "rules": {tier: derived[tier] for tier in _ALL_TIERS},
+        "rules": {tier: owned_after[tier] for tier in _ALL_TIERS},
     }
     sidecar_path = os.path.join(project_dir, SIDECAR_REL)
     os.makedirs(os.path.dirname(sidecar_path), exist_ok=True)
