@@ -304,9 +304,11 @@ model judgment, and cross-spec references to dead siblings that no gate resolved
    to write an evidence row bound to the spec's content hash into `.foundry/audit-ledger.jsonl`. Pass the
    engine's returned **`riskTier`** (T0–T3) as `--tier` — the ledger row's generic `tier` string field
    records the RISK tier here (distinct from the `auditModel` alias surfaced above). A `KILLED` terminus
-   maps to `--verdict killed --kill-reason <the engine's kill_reason>`. `/foundry:authorize` **fail-closes**
-   on a spec with no matching row (or the operator's logged `--skip-audit-reason`), so this step is the
-   gate, not optional bookkeeping. Also note the terminus + tier in the spec's Changelog section for humans.
+   maps to `--verdict killed --kill-reason <the engine's kill_reason>`. Since v1.11.0 the row is
+   **informational**: `/foundry:authorize` no longer requires it (authorize-drops-audit-precondition) — it
+   prints `§8 audit: recorded (verdict=<verdict>) — informational` when a row exists and proceeds either
+   way; `--skip-audit-reason` is a deprecated no-op. Record the row anyway: it is what makes the audit
+   auditable. Also note the terminus + tier in the spec's Changelog section for humans.
    (Threat model: the row binds to the signed `spec_sha256` and makes the audit auditable; it is the
    proportionate, non-crypto enforcement. See `scripts/foundry_audit_ledger.py`.)
 8. **Persist findings-carry for the NEXT re-audit (AC-ATC-6).** After recording, persist the run's FINAL
