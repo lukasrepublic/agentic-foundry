@@ -368,6 +368,7 @@ def test_the_update_package_manifest_has_no_lifecycle_scripts():
                             # upgrader's pin and own version move with it for the same reason.
         "0.12.0": "0.1.4",  # v1.12.0 -- cli/ moves for the R1 floor rows; the upgrader's pin and its
                             # own version move with it for the same reason as 0.1.3.
+        "0.12.1": "0.1.5",  # v1.12.1 -- template patch; pin and own version move together.
     }
     pin = deps["create-agentic-workspace"]
     expected_update_version = CLI_UPDATE_VERSION_BY_PIN.get(pin)
@@ -498,6 +499,9 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         # permissions-compile `allow`/`ask` rows (R1), so a scaffolded or reconciled workspace receives a
         # different floor than 0.11.0 wrote.
         "1.12.0": "0.12.0",
+        # v1.12.1: the scaffold's gitignore template changed (ER #169 — the workspace's record is
+        # tracked), so the tarball moves with the plugin patch.
+        "1.12.1": "0.12.1",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (
