@@ -295,8 +295,8 @@ model judgment, and cross-spec references to dead siblings that no gate resolved
    sibling).
 7. **Record the audit (ENFORCED at authorize).** Run
    ```
-   scripts/foundry-audit-record.py --spec <spec> --rounds <N> --operator <id> --tier <riskTier>
-       [--verdict converged|needs-operator|needs-reground|killed]
+   scripts/foundry-audit-record.py --spec <spec> --rounds <N> --operator <id> --tier <riskTier> \
+       --verdict converged|needs-operator|needs-reground|killed
        [--kill-reason watchdog|limit|error]   # required iff --verdict killed
        [--findings-new <findingsDelta.new>] [--findings-resolved <findingsDelta.resolved>]
          [--findings-open <findingsDelta.open>]
