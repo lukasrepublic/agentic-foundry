@@ -44,6 +44,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 
 import yaml
 
@@ -509,8 +510,25 @@ def write_wave_state(release, new_entries, *, project_dir=None, branch="main", f
 
     path = wave_state_path(release.id, project_dir=project_dir)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
-        yaml.safe_dump(merged, fh, sort_keys=False, default_flow_style=False, allow_unicode=True)
+    # Atomic write (same shape as `foundry_release.save_release`): serialize to a sibling temp
+    # file in the SAME directory, fsync it, then `os.replace()` into place. `os.replace` is a
+    # single filesystem rename — a crash mid-`yaml.safe_dump`, or the process being killed before
+    # the rename, leaves only the temp file partial/absent and `state.yaml` untouched. Writing
+    # straight into `state.yaml` would instead truncate it first, so an interrupted write could
+    # lose the very entries the merge above exists to preserve.
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".state-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            yaml.safe_dump(merged, fh, sort_keys=False, default_flow_style=False, allow_unicode=True)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     return merged
 
 

@@ -206,6 +206,38 @@ def test_write_refuses_invalid_new_entries(tmp_path):
     print("WVL-REFUSES-INVALID-ENTRIES-OK")
 
 
+def test_write_wave_state_is_atomic_on_a_mid_write_crash(tmp_path, monkeypatch):
+    """A crash mid-`yaml.safe_dump` must leave `state.yaml` exactly as it was — either the old
+    document or the new one, never truncated/partial (a temp-file + os.replace write, not a
+    write-in-place)."""
+    rid = "acme-wave-atomic"
+    release = _release(rid, str(tmp_path))
+    settled_rows = [{"id": "a1", "state": "merged"}]
+
+    cd.write_wave_state(release, _fixture("existing-state.yaml"),
+                         project_dir=str(tmp_path), run_rows=settled_rows)
+    path = cd.wave_state_path(rid, project_dir=str(tmp_path))
+    with open(path, "rb") as fh:
+        before = fh.read()
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("simulated crash mid-write")
+
+    monkeypatch.setattr(cd.yaml, "safe_dump", _boom)
+
+    with pytest.raises(RuntimeError):
+        cd.write_wave_state(release, _fixture("new-entries.yaml"),
+                             project_dir=str(tmp_path), run_rows=settled_rows)
+
+    with open(path, "rb") as fh:
+        after = fh.read()
+    assert after == before, "a crash mid-write must never touch the existing state.yaml"
+
+    leftover = [n for n in os.listdir(os.path.dirname(path)) if n.endswith(".tmp")]
+    assert leftover == [], f"a crashed write left a temp file behind: {leftover}"
+    print("WVL-ATOMIC-WRITE-OK")
+
+
 def test_release_completed_reuses_wave_settled_vocabulary():
     assert cd.release_completed([{"id": "a", "state": "merged"}, {"id": "b", "state": "superseded"}])
     assert not cd.release_completed([{"id": "a", "state": "merged"}, {"id": "b", "state": "runnable"}])
