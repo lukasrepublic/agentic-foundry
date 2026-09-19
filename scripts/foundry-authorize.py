@@ -54,9 +54,11 @@ def _front_authz_main() -> int:
     ap.add_argument("--mode", required=True, choices=["regular", "lean"])
     ap.add_argument("--reauth-after-impl", action="store_true")
     ap.add_argument("--skip-audit-reason", default=None,
-                    help="operator-only: proceed without a recorded §8 audit, logging this reason "
-                         "to the §22.5a trail (UL-0006; the skip path is itself un-cryptographic — "
-                         "see foundry_audit_ledger threat model)")
+                    help="DEPRECATED, no effect: the §8 audit ledger is no longer a precondition "
+                         "of authorization (feat-foundry-authorization-authorize-drops-audit-"
+                         "precondition). Still accepted and logged (an informational "
+                         "authorize-audit-flag-deprecated record) for one release so existing "
+                         "callers/muscle memory don't break; removal is a later subtraction.")
     ap.add_argument("--yes", action="store_true", help="perform the write (else dry-run)")
     args = ap.parse_args()
 
@@ -216,28 +218,22 @@ def _front_authz_main() -> int:
         print("Already AUTHORIZED and hashes match — nothing to do (idempotent).")
         return 0
 
-    # 3.5 §8 audit enforcement (UL-0006, AC-AUDITENF-1..3). Single-read spec hash: this SAME value
-    # binds the audit-evidence lookup AND the freeze below (kills the recorder↔authorize↔freeze
-    # TOCTOU). Fail-closed on --yes; a prominent warning on the dry-run. The skip path is
-    # operator-only + logged (and, by the operator-chosen non-crypto design, not agent-proof — see
-    # foundry_audit_ledger threat model).
+    # 3.5 §8 audit — INFORMATIONAL ONLY (feat-foundry-authorization-authorize-drops-audit-
+    # precondition, AC-ADAP-1..4). The audit ledger is no longer a precondition of authorization:
+    # a missing row, a non-existent row, or a row with a non-passing verdict never blocks the
+    # freeze — authorize proceeds exactly the same either way. Single-read spec hash: this SAME
+    # value binds the (informational) audit-evidence lookup AND the freeze below (kills the
+    # recorder↔authorize↔freeze TOCTOU; unrelated to the audit itself).
     spec_hash = fc.spec_sha256(args.spec)
     audit_rec = ledger.find_audit(spec_hash)
     if audit_rec:
-        print(f"§8 audit: recorded ({audit_rec.get('rounds')} round(s), "
-              f"verdict={audit_rec.get('verdict')}) for this spec content.")
-    elif args.skip_audit_reason:
-        print(f"§8 audit: SKIPPED by operator — reason: {args.skip_audit_reason} "
-              "(logged to the §22.5a trail).")
-    else:
-        msg = ("§8 adversarial spec-audit NOT recorded for this spec content "
-               f"(spec_sha256={spec_hash[:16]}…). Run /foundry:audit (it records via "
-               "foundry-audit-record.py), then re-run; or pass --skip-audit-reason \"<reason>\" "
-               "(operator-only, logged).")
-        if args.yes:
-            print(f"FAIL (fail-closed): {msg}", file=sys.stderr)
-            return 1
-        print(f"\n⚠️  AUDIT-ENFORCEMENT (will BLOCK the --yes freeze): {msg}")
+        print(f"§8 audit: recorded (verdict={audit_rec.get('verdict')}) — informational")
+    # --skip-audit-reason is a DEPRECATED no-op (kept for one release so operator muscle memory
+    # and existing callers don't break): the audit was never re-enforced after this atom, so
+    # there is nothing left for the flag to skip. Still logged (a forensic breadcrumb) below.
+    if args.skip_audit_reason:
+        print("§8 audit: SKIPPED — flag deprecated, the audit is no longer a precondition "
+              "(no effect)")
 
     # 4. Display what the operator signs.
     print(f"\noperator={operator_id}  mode={args.mode}"
@@ -251,17 +247,18 @@ def _front_authz_main() -> int:
     # 5. Record-before-action (fail-closed), then freeze, then completion record.
     pre_contract_hash = fc.contract_sha256(args.contract)
     # spec_hash already computed once in step 3.5 (single-read TOCTOU guard) — reused here.
-    if not audit_rec and args.skip_audit_reason:
+    if args.skip_audit_reason:
         try:
             al.append_record({
-                "action": "authorize-audit-skip",
+                "action": "authorize-audit-flag-deprecated",
                 "operator_id": operator_id,
                 "spec_ref": args.spec,
                 "spec_sha256": spec_hash,
                 "reason": args.skip_audit_reason,
             })
         except al.AuditLogError as e:
-            print(f"FAIL (fail-closed): could not log §8 audit skip to the §22.5a trail: {e}", file=sys.stderr)
+            print(f"FAIL (fail-closed): could not log the deprecated --skip-audit-reason flag "
+                  f"use to the §22.5a trail: {e}", file=sys.stderr)
             return 1
     try:
         intent_id = al.append_record({

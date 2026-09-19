@@ -1710,8 +1710,13 @@ def test_readme_and_changelog_name_the_cli():
 
     changelog = (REPO_ROOT / "CHANGELOG.md").read_text()
     headings = list(re.finditer(r"^## .+$", changelog, re.M))
-    assert len(headings) >= 2, "CHANGELOG.md needs at least two top-level release headings"
-    topmost_start = headings[0].end()
-    topmost_end = headings[1].start()
+    # A leading "## Unreleased" heading (the repo's own between-releases convention — atoms land
+    # under it and it is absorbed into a dated "## vX.Y.Z" section at cut-release) is not itself a
+    # release; skip it so "topmost" means the topmost *release* section, matching cut-release's own
+    # reading of CHANGELOG.md.
+    release_headings = [h for h in headings if h.group().strip() != "## Unreleased"]
+    assert len(release_headings) >= 2, "CHANGELOG.md needs at least two top-level release headings"
+    topmost_start = release_headings[0].end()
+    topmost_end = release_headings[1].start()
     topmost_section = changelog[topmost_start:topmost_end]
     assert "create-agentic-workspace" in topmost_section, "the topmost CHANGELOG.md section must name create-agentic-workspace"
