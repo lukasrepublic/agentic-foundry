@@ -75,7 +75,10 @@ warrants ceremony before the fact). Foundry's two lanes implement that split:
   is `security: true`, OR its scope names one of: **auth**, **secrets**, **custody**, a
   **production mutation**, or a **cross-repo pin**, OR its acceptance-contract's
   `mandatory_review` field names a security review. Any one of these routes to the factory
-  lane; none of them present means the atom stays on the charter lane.
+  lane; none of them present means the atom stays on the charter lane. This trigger is
+  re-checked when the contract is authored (spec-review → contract-author): a contract whose
+  `mandatory_review` names security re-routes the atom to the factory lane even if intake
+  placed it on the charter lane.
 
 **Operator override.** The operator may override the routed lane for an atom in either
 direction. When they do, record the override and its reason immediately: in the atom's charter
