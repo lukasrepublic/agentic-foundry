@@ -23,6 +23,14 @@ substitution/top-level `set -e`/`trap`/`exec`). The shape check is REUSED BY IMP
 `foundry_blocker_check.py` (`_handoff_errors`) — never re-copied — so the deck's blocker lint and
 this message lint cannot drift on what a safe handoff command looks like.
 
+A fifth kind, `TICK`, was added by the `routine-wake` atom (autonomy-continuation R3): a Routine's
+entire job is one message waking a named deck session, and that message needs no evidence — it
+carries only a programme identifier and a stamp. `TICK`'s first line SHALL be exactly `TICK
+<programme> <UTC-stamp>`, where `<programme>` is a `[a-z0-9-]+` slug and `<UTC-stamp>` has the
+shape `YYYY-MM-DDTHH:MM:SSZ` (`datetime.strftime("%Y-%m-%dT%H:%M:%SZ")`, the same shape
+`foundry_command_deck_watch._stamp` already renders elsewhere) — anything else on that line is
+invalid, named by the `tick-shape` rule.
+
 Usage:
     foundry_message_kind.py --in <path-to-text-file-or-'-'-for-stdin>
 
@@ -47,11 +55,15 @@ if _HERE_DIR not in sys.path:
 
 import foundry_blocker_check as _bc  # noqa: E402  (reuse _handoff_errors — never re-copy)
 
-KINDS = ("FINDING", "NEEDS-INTERFACE", "CHALLENGE", "HANDOFF")
+KINDS = ("FINDING", "NEEDS-INTERFACE", "CHALLENGE", "HANDOFF", "TICK")
 _EVIDENCE_KINDS = ("FINDING", "CHALLENGE")
 
-_FIRST_LINE_RE = re.compile(r"^(FINDING|NEEDS-INTERFACE|CHALLENGE|HANDOFF)(?::|\s|$)")
+_FIRST_LINE_RE = re.compile(r"^(FINDING|NEEDS-INTERFACE|CHALLENGE|HANDOFF|TICK)(?::|\s|$)")
 _JSON_FENCE_RE = re.compile(r"```json\s*\n(.*?)```", re.DOTALL)
+
+# AC-RWK-1/routine-wake: TICK's first line is exactly `TICK <programme> <UTC-stamp>` — a
+# [a-z0-9-]+ slug then a stamp shaped `YYYY-MM-DDTHH:MM:SSZ`. Nothing else on that line is valid.
+_TICK_LINE_RE = re.compile(r"^TICK ([a-z0-9-]+) (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)$")
 
 # An "evidence line" (AC-FIL-3): an explicit `evidence:` prefix, a URL, a repo-relative path with
 # an extension (optionally `:line`), or a captured command/prompt line.
@@ -113,6 +125,17 @@ def lint(text: str) -> dict:
         if failure:
             rule, reason = failure
             return {"valid": False, "kind": kind, "rule": rule, "reason": reason}
+    elif kind == "TICK":
+        if not _TICK_LINE_RE.match(first_line):
+            return {
+                "valid": False,
+                "kind": kind,
+                "rule": "tick-shape",
+                "reason": (
+                    "TICK's first line must be exactly 'TICK <programme> <UTC-stamp>' with a "
+                    f"[a-z0-9-]+ programme and a YYYY-MM-DDTHH:MM:SSZ stamp: {first_line[:80]!r}"
+                ),
+            }
     elif kind in _EVIDENCE_KINDS:
         if not _has_evidence_line(text):
             return {

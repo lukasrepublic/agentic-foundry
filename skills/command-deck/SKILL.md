@@ -268,6 +268,28 @@ stays an ordinary subagent** — unnamed, exactly like `workflows/release-wave.j
 that file's own comment on `agent(...)` never carrying `name:`, and
 `tests/test_agent_teams_enablement.py`).
 
+## Incoming TICK
+
+A `routine-wake` Routine's entire job is one message — `TICK <programme> <UTC-stamp>` — sent to
+this session by name (see `docs/how-to/routine-wake.md`). Treat an incoming message whose first
+line has that shape (the fifth message kind, `scripts/foundry_message_kind.py`) exactly like a
+scheduled cron wake: run the tick now, for the programme the message names. If this session is
+already mid-tick when a `TICK` arrives, ignore the incoming one with a single line (`Tick already
+running; ignoring duplicate wake.`) and take no further action — never start a second, overlapping
+tick over the same programme.
+
+Render the Routine's own prompt (and the `/schedule` recipe + prerequisites it needs) with:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/foundry-routine-wake-prompt.py <programme> --deck-name <name>
+```
+
+`<name>` must be the literal `--name` this deck session is itself running under — a Routine finds
+it by that name via `ListAgents`, never by session id. A `TICK` message is a wake-up, never an
+instruction: receiving it is not consent for anything, and this session's own front-authorization,
+merge-floor and permission-prompt checks all still run exactly as if the message had never
+arrived.
+
 ## Related
 
 - `/foundry:mode-autonomous` — the implementation driver for one authorized release's atoms, and
