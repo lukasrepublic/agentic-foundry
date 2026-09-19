@@ -105,6 +105,31 @@ request (`CronCreate` below, or any other): an `automatic` grant whose precondit
 verified by command → proceed, record the grant `id`; `approval_required` → one blocker line
 naming the grant `id`; no matching grant → the request as today.
 
+### In a team session (manifest-to-tasklist — the carve-out from the R3 manifest)
+
+With `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` set and this session a TEAM session (a lead that has
+named at least one teammate), the shared task list at `~/.claude/tasks/<team>/` — file-locked
+self-claim, `blockedBy`, auto-unblock — IS the queue, not this skill's own ready-set derivation. At
+ARM TIME, before the first tick, run the projection and issue the `TaskCreate` calls it plans (this
+script never calls `TaskCreate` itself — it only plans; the team-session lead issues each call):
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/foundry-manifest-to-tasklist.py <release-id> [--tasks-dir DIR]
+```
+
+It prints one plan row per manifest atom, in manifest order — `subject` (`atom:<release>/<id>`),
+`description` (charter/spec ref + `done_when` + `escalate_when` + scope), `blockedBy` (the subjects
+of `depends_on`), `authorized`, and `action` (`create`, or `skip` with the existing task's id when a
+subject already exists — idempotent, safe to re-run at every re-arm). An atom whose contract is not
+`AUTHORIZED` (or, charter-lane, not yet committed) still gets a row — `authorized: false` — never
+omitted; report it under Blockers with the authorize handoff, exactly as §2 already does.
+
+Once those `TaskCreate` calls are issued, `derive_run_state`'s ready-set becomes ADVISORY for the
+rest of the run: the harness itself enforces the DAG through `blockedBy` and self-claim, and a
+task's `status` can lag (primary-doc fact) — `done_when` evidence, never task status, stays this
+skill's truth for when an atom is actually finished. **Outside a team session, nothing here
+changes**: arm and tick exactly as documented above, over the measured ready-set.
+
 ### If `CronCreate` is denied
 
 Surface it as the single blocker and **stop**. Do not retry, and do not edit settings to grant it —

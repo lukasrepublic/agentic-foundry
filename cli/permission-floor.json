@@ -99,6 +99,11 @@
       "rationale": "read-only machinery index derived on demand from skills/agents frontmatter"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-manifest-to-tasklist.py:*)",
+      "tier": "allow",
+      "rationale": "read-only projection of a release manifest into a TaskCreate plan; prints JSON, executes nothing"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-native-todo-discipline.py:*)",
       "tier": "allow",
       "rationale": "SessionStart injection directive over the native Tasks list; no external writes"

@@ -1,0 +1,14 @@
+spec_ref: tests/fixtures/tasklist/sample-spec.md
+spec_sha256: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+scope:
+  allowed_paths:
+    - "scripts/fixture-manifest-to-tasklist/**"
+checkpoints:
+  - ac_id: AC-MTLFX-1
+    surface: "cli:x"
+    locator: "true"
+    expect: {op: matches, value: "OK", baseline: pre-change}
+done_when:
+  - "test:tests/test_manifest_to_tasklist.py"
+escalate_when:
+  - no-consensus-after-research
