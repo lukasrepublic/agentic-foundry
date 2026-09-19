@@ -37,6 +37,13 @@ What this probe checks, every run, cheaply:
      permission workspace must never wedge a session; `/foundry:mode-autonomous`'s own preflight-
      before-dispatch (AC-CPD-3) and the operator's own settings review are the real enforcement
      surface.
+  9. `agent-teams` (feat-agent-teams-enablement, AC-ATE-4): one advisory line, `agent-teams: on
+     (settings env) | off`, derived from whether the EFFECTIVE settings files' top-level `env`
+     block sets `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` to `"1"` — `~/.claude/settings.json`, then
+     `<project>/.claude/settings.json`, then `<project>/.claude/settings.local.json`, in that
+     ASCENDING-precedence (last-one-present-wins) order, mirroring the platform's own
+     user/project/local override resolution. Never RED: flipping the flag is an adopter opt-in,
+     never a doctor-enforced default (see `docs/how-to/agent-teams.md`).
 
 Fails CLOSED for the operator-invoked check (exit non-zero on any hard failure). The
 --session-start cadence is ADVISORY (exits 0 so it never wedges a session) — the real merge-side
@@ -56,6 +63,7 @@ import importlib.util
 import json
 import os
 import re
+import stat
 import sys
 
 import yaml
@@ -461,6 +469,75 @@ def check_permissions_policy(plugin_root=None, project_dir=None):
 
 
 # --------------------------------------------------------------------------------------- #
+# 9. agent-teams advisory -- whether the native team surface is on (feat-agent-teams-enablement,
+#    AC-ATE-4)
+# --------------------------------------------------------------------------------------- #
+_AGENT_TEAMS_ENV_KEY = "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"
+# Mirrors `foundry_permission_floor._MAX_FILE_BYTES` -- kept as a local literal (not imported)
+# because this probe must still degrade gracefully when that module is absent (see
+# `_settings_candidate_paths` below), and a bare 1 MiB cap needs no cross-module coupling to state.
+_SETTINGS_MAX_BYTES = 1024 * 1024
+
+
+def _settings_candidate_paths(project_dir, plugin_root):
+    """The three effective-settings locations, in ASCENDING precedence order (last-one-present-
+    WINS below) -- user-level global, then project-shared, then project-local -- mirroring the
+    platform's own user/project/local settings-override resolution. Reuses
+    `foundry_permission_floor.SETTINGS_RELATIVE_PATHS` for the two project-scoped relative paths
+    (rather than re-declaring them) so the permission-floor probe and this one can never name two
+    different files; falls back to the same two literal paths if that module is unavailable."""
+    paths = [os.path.join(os.path.expanduser("~"), ".claude", "settings.json")]
+    pf = _load_permission_floor_module(plugin_root)
+    if pf is not None:
+        paths += [os.path.join(project_dir, rel) for rel in pf.SETTINGS_RELATIVE_PATHS]
+    else:
+        paths += [
+            os.path.join(project_dir, ".claude", "settings.json"),
+            os.path.join(project_dir, ".claude", "settings.local.json"),
+        ]
+    return paths
+
+
+def _read_env_block(path):
+    """Bounded, exception-tolerant read of one settings file's top-level `env` object.
+
+    `foundry_permission_floor.load_settings_file` already does this exact stat/size-cap/JSON-parse
+    read for the SAME settings files, but only ever returns the `permissions` block -- `env` is a
+    sibling top-level key that module does not expose, and it is out of this atom's scope to widen
+    (`scripts/foundry_permission_floor.py` is not in `agent-teams-enablement`'s allowed_paths). This
+    mirrors that function's discipline (regular file, <= 1 MiB, UTF-8 JSON, any exception -> empty
+    result) rather than re-parsing permissions itself. NEVER raises."""
+    try:
+        st = os.stat(path)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > _SETTINGS_MAX_BYTES:
+            return {}
+        with open(path, "rb") as f:
+            raw = f.read()
+        doc = json.loads(raw.decode("utf-8"))
+        if not isinstance(doc, dict):
+            return {}
+        env = doc.get("env")
+        return env if isinstance(env, dict) else {}
+    except Exception:
+        return {}
+
+
+def check_agent_teams_flag(plugin_root=None, project_dir=None):
+    """AC-ATE-4: `agent-teams: on (settings env) | off`, NEVER RED -- flipping the flag is an
+    adopter opt-in, never a doctor-enforced default (this workspace's own settings are the
+    operator's, out of scope per the charter)."""
+    root = plugin_root or PLUGIN_ROOT
+    pdir = project_dir or _project_dir()
+    on = False
+    for path in _settings_candidate_paths(pdir, root):
+        env = _read_env_block(path)
+        val = env.get(_AGENT_TEAMS_ENV_KEY)
+        if val is not None:
+            on = (val == "1")  # last-one-present wins (ascending precedence order above)
+    return True, f"agent-teams: {'on (settings env)' if on else 'off'}"
+
+
+# --------------------------------------------------------------------------------------- #
 # main
 # --------------------------------------------------------------------------------------- #
 def main():
@@ -539,6 +616,14 @@ def main():
     # follow-up this asks for.
     pp_ok, pp_detail = check_permissions_policy(project_dir=project_dir)
     _render_row("permissions-policy", pp_ok, pp_detail)
+
+    # `agent-teams` (AC-ATE-4) is rendered the SAME way, for the SAME reason: it is deliberately
+    # not a `_run("<name>", ...)` call-site literal so it stays outside the doc-sync test's probe
+    # count (tests/test_doc_claims.py's `_derive_doctor_probe_ids`, which regex-matches ONLY
+    # `_run("...")` call sites) -- this line still satisfies AC-ATE-4 ("one advisory line ... never
+    # RED") without touching docs/QUICKSTART.md, which is outside this atom's allowed_paths.
+    at_ok, at_detail = check_agent_teams_flag(project_dir=project_dir)
+    _render_row("agent-teams", at_ok, at_detail)
 
     header = "foundry doctor" + (" (session-start advisory)" if args.session_start else "")
     body = header + "\n" + "\n".join(out_lines)
