@@ -150,6 +150,14 @@ Task) — read from the atom's contract or charter (absent ⇒ "(not declared)",
 finding, not permission to stop):
 {{DONE_ESCALATE}}
 
+§5b-DoD DEFINITION OF DONE, RECORDED (feat-foundry-authorization-floor-hooks, AC-FLH-5). Once a
+ready atom's `done_when` locators actually pass, write `.foundry/evidence/<atom>.json` with one
+`met` row per locator (`{"locator", "status": "met", "evidence": "<the command's captured last
+line>", "at": "<UTC>"}`, plus the record's own top-level `atom`/`recorded_by`/`at`) BEFORE marking
+the task complete — a team session's `TaskCompleted` hook reads this record and refuses completion
+without it. A refused completion is a Next Task, not a blocker: fix the gap the hook named and
+retry; never escalate a refused completion to the operator.
+
 §5c A BLOCKER WITHOUT EVIDENCE IS A NEXT TASK. Before you write §2's Blockers section, write every
 candidate blocker as JSON matching `schema/blocker.schema.json` — `claim`, `evidence` (≥1: a
 command's captured output, a file path, a URL, or verbatim error text — not a restatement of the

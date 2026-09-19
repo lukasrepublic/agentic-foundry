@@ -219,6 +219,15 @@ document and fixed in another.
 **Relax no floor; grant yourself no authority.** Never widen an authorized surface to close a finding:
 park it, with its tradeoff and what would unpark it.
 
+### Definition of done, recorded (AC-FLH-5)
+
+Once an atom's `done_when` locators actually pass, write `.foundry/evidence/<atom>.json` with one
+`met` row per locator (`{"locator", "status": "met", "evidence": "<the command's captured last
+line>", "at": "<UTC>"}`, plus the record's own top-level `atom`/`recorded_by`/`at`) BEFORE marking
+its task complete (feat-foundry-authorization-floor-hooks). In a team session, `TaskCompleted`
+reads this record and refuses completion — fail-closed — when it is missing, stale, or a declared
+locator is absent/unmet. **A refused completion is a Next Task, never a blocker:** fix the named
+gap and retry; do not escalate it to the operator.
 
 ## When to trigger
 
