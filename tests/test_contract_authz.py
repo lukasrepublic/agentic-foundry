@@ -200,6 +200,16 @@ class TestAllowedPathsGroundingErrors:
         errors = contract.allowed_paths_grounding_errors(doc, str(tmp_path))
         assert len(errors) == 2
 
+    @pytest.mark.parametrize("entry,surfaces,admitted", [
+        ("**", {"apps/x/y.ts"}, True),        # breadth is an authorization question, not a grounding one
+        ("**", set(), False),                  # nothing declared-new → nothing grounds it (empty venue)
+        ("", {"apps/x/y.ts"}, False),          # the empty entry never grounds by containment
+        ("apps/x/", {"apps/x/y.ts"}, True),    # trailing-slash directory literal
+        ("apps/x/", {"apps/xy/y.ts"}, False),  # exact-prefix: a sibling dir does not swallow
+    ])
+    def test_declared_new_under_edge_cases(self, entry, surfaces, admitted):
+        assert contract._declared_new_under(entry, surfaces) is admitted
+
 
 # ================================================== system-grounding-floor (Atom C, #121) ==== #
 
