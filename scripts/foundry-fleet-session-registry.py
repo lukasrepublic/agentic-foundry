@@ -15,6 +15,12 @@ enrichment). Read-only against sessions/repos/governance; the sole write is the 
 `.foundry/session-registry/<session_id>.json` enrichment file.
 
 CLI: list | read <id> | enrich <k=v...> | --selftest   (AC-SREG-1..5; selftest is hermetic).
+
+RETIRING (R4 subtraction-wave): fleet-is-listagents (R3 of autonomy-continuation, Decision 9)
+trims `skills/fleet/SKILL.md` to an annotation view over the native `/list-agents` and marks the
+whole fleet-scripts surface — this script and its three siblings — for removal in R4. It is NOT
+deleted here: it still runs standalone, its own tests still pass, and its permission-floor row is
+untouched until that wave lands.
 """
 import argparse
 import json
