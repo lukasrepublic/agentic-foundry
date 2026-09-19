@@ -353,3 +353,178 @@ def test_skill_states_no_audit_ledger_row_required():
     skill = os.path.join(REPO_ROOT, "skills", "amend", "SKILL.md")
     text = open(skill, encoding="utf-8").read().lower()
     assert "no audit-ledger row" in text, text
+
+
+# =================================================================================================
+# Round-2 remediation — BLOCK S1: the diff baseline must be VERIFIED against the frozen trailer,
+# never merely "whatever `--ref` (default HEAD) happens to hold".
+# =================================================================================================
+class TestBaselineVerifiedAgainstFrozenTrailer:
+    def test_committed_widened_contract_is_refused_not_silently_refrozen(self, tmp_path):
+        """(a) A caller commits an already-widened contract directly (bypassing amend/authorize —
+        the trailer, below the hash sentinel, is untouched) and then runs amend against HEAD. A
+        naive `git show HEAD:<path>` diff would compare the widened state against itself (old==new)
+        and silently re-freeze it. The verified walk must instead find the EARLIER commit whose
+        blobs actually match the frozen trailer and diff against THAT."""
+        spec_path, contract_path = _build_authorized_fixture(tmp_path)
+        widened_text = _mutate_scope_widen(contract_path.read_text(encoding="utf-8"))
+        contract_path.write_text(widened_text, encoding="utf-8")
+        _commit_all(tmp_path, "rogue widen, committed directly (bypassing amend/authorize)")
+
+        proc = _run_amend(tmp_path, spec_path, contract_path)
+        assert proc.returncode != 0, proc.stdout + proc.stderr
+        record = _last_json_line(proc.stdout)
+        assert record["status"] == "needs-operator", record
+        assert "scope.allowed_paths" in record["widened_fields"], record
+
+    def test_ref_before_the_real_baseline_fails_closed(self, tmp_path):
+        """(b) `--ref` pointed at an commit that PRE-DATES the real frozen baseline (so the walk's
+        ancestor set never reaches the commit that matches the trailer) must fail closed with a
+        clear message, never silently diff against the wrong (or no) baseline."""
+        _init_repo(tmp_path)
+        (tmp_path / "README.md").write_text("unrelated\n", encoding="utf-8")
+        _commit_all(tmp_path, "unrelated pre-baseline commit")
+        pre_baseline_ref = _git(["rev-parse", "HEAD"], tmp_path).stdout.strip()
+
+        (tmp_path / "scripts").mkdir()
+        (tmp_path / "scripts" / "placeholder.py").write_text("# placeholder\n", encoding="utf-8")
+        specs_dir = tmp_path / "specs"
+        specs_dir.mkdir()
+        spec_path = specs_dir / "amend-fixture.md"
+        contract_path = specs_dir / "acceptance-contract.yaml"
+        spec_path.write_text(SPEC_TEXT, encoding="utf-8")
+        spec_hash = fc.spec_sha256(str(spec_path))
+        contract_path.write_text(CONTRACT_TEMPLATE.format(spec_hash=spec_hash), encoding="utf-8")
+        az.authorize(spec_path=str(spec_path), contract_path=str(contract_path),
+                     operator_id="op_fixture", merge_autonomy_mode="lean",
+                     authorized_at="2026-09-18T00:00:00Z")
+        _commit_all(tmp_path, "initial authorization")
+
+        text = spec_path.read_text(encoding="utf-8")
+        spec_path.write_text(text.replace("returns hi.", "returns hi, robustly."), encoding="utf-8")
+
+        proc = _run_amend(tmp_path, spec_path, contract_path, extra_args=["--ref", pre_baseline_ref])
+        assert proc.returncode != 0, proc.stdout + proc.stderr
+        assert "no committed baseline matches the frozen trailer" in (proc.stdout + proc.stderr)
+
+
+# =================================================================================================
+# Round-2 remediation — BLOCK S2: a checkpoint whose ac_id is absent from the baseline (new, or
+# renamed-away-from) is evaluated against an EMPTY baseline for (c), not skipped.
+# =================================================================================================
+def test_renamed_checkpoint_identifier_against_empty_baseline_is_refused(tmp_path):
+    spec_path, contract_path = _build_authorized_fixture(tmp_path, contract_template=CONTRACT_TEMPLATE_RICH)
+    spec_path.write_text(spec_path.read_text(encoding="utf-8").replace("AC-FIX-1", "AC-FIX-2"),
+                          encoding="utf-8")
+    contract_text = contract_path.read_text(encoding="utf-8").replace("AC-FIX-1", "AC-FIX-2")
+    contract_text = contract_text.replace("875926135332", "362928919784")
+    contract_path.write_text(contract_text, encoding="utf-8")
+
+    proc = _run_amend(tmp_path, spec_path, contract_path)
+    assert proc.returncode != 0, proc.stdout + proc.stderr
+    record = _last_json_line(proc.stdout)
+    assert record["status"] == "needs-operator", record
+    assert "checkpoints[AC-FIX-2].locator" in record["widened_fields"], record
+
+
+def test_compute_diff_renamed_checkpoint_pure():
+    old_data = {"checkpoints": [{"ac_id": "AC-X-1", "surface": "cli:test",
+                                  "locator": "aws sts get-caller-identity → 875926135332",
+                                  "expect": {"op": "count_gte", "value": 4, "baseline": "pre-change"}}]}
+    new_data = {"checkpoints": [{"ac_id": "AC-X-2", "surface": "cli:test",
+                                  "locator": "aws sts get-caller-identity → 362928919784",
+                                  "expect": {"op": "count_gte", "value": 4, "baseline": "pre-change"}}]}
+    widened, summary = amend.compute_diff(old_data, new_data)
+    assert "checkpoints[AC-X-2].locator" in widened, widened
+    assert any("empty baseline" in line for line in summary), summary
+
+
+# =================================================================================================
+# Round-2 remediation — BLOCK C1: (1) an Amendments-section shape floor before ANY write, and
+# (2) the row is appended BEFORE az.authorize, with a hash-invariance assertion.
+# =================================================================================================
+def test_missing_amendments_section_refuses_before_any_write(tmp_path):
+    spec_text_no_amendments = SPEC_TEXT.split("## Amendments", 1)[0]
+    spec_path, contract_path = _build_authorized_fixture(tmp_path, spec_text=spec_text_no_amendments)
+    text = spec_path.read_text(encoding="utf-8")
+    spec_path.write_text(text.replace("returns hi.", "returns hi, robustly."), encoding="utf-8")
+    contract_before = contract_path.read_bytes()
+
+    proc = _run_amend(tmp_path, spec_path, contract_path)
+    assert proc.returncode != 0, proc.stdout + proc.stderr
+    assert "Amendments" in (proc.stdout + proc.stderr)
+    assert contract_path.read_bytes() == contract_before
+    assert not (tmp_path / ".foundry" / "security-audit.jsonl").exists()
+
+
+def test_amendments_section_ok_requires_placement_after_normative_close():
+    before_close = "## Amendments\n\n| date | what | why | auth_seq |\n|---|---|---|---|\n<!-- /normative -->\n"
+    assert amend.amendments_section_ok(before_close) is False
+    after_close = "<!-- /normative -->\n## Amendments\n\n| date | what | why | auth_seq |\n|---|---|---|---|\n"
+    assert amend.amendments_section_ok(after_close) is True
+    inside_fence = "<!-- /normative -->\n```\n## Amendments\n```\n"
+    assert amend.amendments_section_ok(inside_fence) is False
+
+
+# =================================================================================================
+# Round-2 remediation — RISK R1: `target_repo` is a BOUNDARY_FIELDS entry too (stricter than the
+# frozen AC-AMND-1(b) list).
+# =================================================================================================
+def test_target_repo_change_is_a_boundary_widening():
+    widened, _ = amend.compute_diff({"target_repo": "workspace"}, {"target_repo": "other-repo"})
+    assert "target_repo" in widened
+
+
+# =================================================================================================
+# Round-2 remediation — RISK R3: identifier-regex refinements.
+# =================================================================================================
+def test_arn_is_case_insensitive():
+    toks = amend.identifier_tokens("ARN:aws:iam::123456789012:role/x", set())
+    assert toks.get("arn"), toks
+
+
+def test_ipv4_literal_is_a_hostname_url_token():
+    toks = amend.identifier_tokens("connect to 10.0.0.5 for the probe", set())
+    assert "10.0.0.5" in toks.get("hostname-url", set())
+
+
+def test_bare_filename_extension_is_excluded_from_hostname_class():
+    toks = amend.identifier_tokens("run scripts/foundry_checks/module.py --selftest", set())
+    hosts = toks.get("hostname-url", set())
+    assert not any(t.endswith(".py") for t in hosts), hosts
+
+
+def test_url_is_never_extension_filtered():
+    toks = amend.identifier_tokens("fetch https://example.com/script.py for details", set())
+    assert "https://example.com/script.py" in toks.get("hostname-url", set())
+
+
+# =================================================================================================
+# Round-2 remediation — RISK R4: rigor-reduction edge cases (surface deletion, an op change
+# outside the fixed ranking, and any change to a `matches` regex value).
+# =================================================================================================
+def test_surface_deletion_convicts():
+    old_data = {"checkpoints": [{"ac_id": "AC-X-1", "surface": "cli:test", "locator": "l",
+                                  "expect": {"op": "matches", "value": "hi", "baseline": "pre-change"}}]}
+    new_data = {"checkpoints": [{"ac_id": "AC-X-1", "locator": "l",
+                                  "expect": {"op": "matches", "value": "hi", "baseline": "pre-change"}}]}
+    widened, _ = amend.compute_diff(old_data, new_data)
+    assert "checkpoints[AC-X-1].surface" in widened, widened
+
+
+def test_unranked_op_change_convicts_direction_unknowable():
+    old_data = {"checkpoints": [{"ac_id": "AC-X-1", "surface": "cli:test", "locator": "l",
+                                  "expect": {"op": "count_gte", "value": 4, "baseline": "pre-change"}}]}
+    new_data = {"checkpoints": [{"ac_id": "AC-X-1", "surface": "cli:test", "locator": "l",
+                                  "expect": {"op": "future-op", "value": 4, "baseline": "pre-change"}}]}
+    widened, _ = amend.compute_diff(old_data, new_data)
+    assert "checkpoints[AC-X-1].expect.op" in widened, widened
+
+
+def test_matches_regex_value_change_convicts_regardless_of_direction():
+    old_data = {"checkpoints": [{"ac_id": "AC-X-1", "surface": "cli:test", "locator": "l",
+                                  "expect": {"op": "matches", "value": "^hi$", "baseline": "pre-change"}}]}
+    new_data = {"checkpoints": [{"ac_id": "AC-X-1", "surface": "cli:test", "locator": "l",
+                                  "expect": {"op": "matches", "value": "^hi there$", "baseline": "pre-change"}}]}
+    widened, _ = amend.compute_diff(old_data, new_data)
+    assert "checkpoints[AC-X-1].expect.value" in widened, widened
