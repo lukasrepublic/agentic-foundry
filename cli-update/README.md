@@ -51,7 +51,9 @@ and want it to stay that way, disable it again after the update, or migrate that
    previewed.
 4. **Reinitialization** — the same never-clobber managed-file reconcile and additive permission-floor
    reconcile `create-agentic-workspace --existing` already implements: an operator-edited file is
-   reported drifted and left byte-identical, never overwritten.
+   reported drifted and left byte-identical, never overwritten. `.gitignore`'s own managed-block
+   reconcile runs here too, so a workspace that predates a later block content change catches up on
+   the next update run rather than staying stuck on whatever it was scaffolded with.
 
 Every run previews every `claude` invocation and every path it will touch **before** the first one
 happens, and ends with a per-phase summary (`changed` / `already current` / `skipped: <reason>`).
