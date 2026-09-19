@@ -106,6 +106,25 @@ the light lane from your copy of the workflow — it is four lines of shell.
 
 3. **The git-discipline hook** (`hooks/foundry-git-discipline.sh`, PreToolUse) — governs
    what an agent can do *from inside a Claude Code session*, fail-closed:
+
+   **Structured observations, not string-scan blindness** (feat-foundry-guards-guard-structured-
+   observations). Both this hook and its sibling `hooks/foundry-cloud-cli-exec-guard.sh` tokenize
+   the command with `scripts/foundry_shell_scan.py` — a small, stdlib-only, heredoc-aware scanner
+   — before scanning it: a guarded verb mentioned only in *prose* inside a provably inert-sink
+   heredoc body (`cat > <path>`, `cat >> <path>`, `tee <path>`, `git commit -F -`,
+   `gh pr create --body-file -`, `gh issue create --body-file -`, with no other consumer and no
+   collision with any other clause's mention of the same path) is admitted rather than blocked —
+   a commit message, doc, spec, or fixture that merely *names* `git push --force` no longer false-
+   blocks. Every clause rule above is unchanged; only what text it scans changed, and the closed
+   sink set convicts on any doubt (an unterminated heredoc, an unbalanced quote, a heredoc fed to
+   `bash`/`sh`/`eval`/`source`/`python3 -`, multiple heredocs on one clause, a variable/expansion
+   redirect target, CRLF line endings — all still block). When either hook blocks, it now
+   `exit`s with code `2` **and** prints one JSON object on stdout (`hookSpecificOutput.permissionDecision: "deny"` +
+   an `observation` naming the guard, the offending evidence, whether the block is `retryable`,
+   and an executable `remediation` — e.g. `/foundry:merge-when-green <pr>` for an unverifiable or
+   non-green `gh pr merge`, or the exact wrapped form for a bare cloud-CLI invocation); the
+   stderr line is the reason followed by that remediation, replacing the old blanket "run the
+   command yourself outside the agent" sentence.
    - `gh pr merge --admin` (a server-side-check bypass) → **refused outright**, no
      network call.
    - plain `gh pr merge` → admitted **only** after a live `gh pr checks` query returns

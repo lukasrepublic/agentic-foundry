@@ -273,10 +273,79 @@ def test_discipline_blocks_admin_merge_outright():
     "cat <<EOF\n EOF\ncat <<X\nEOF\ngit push --force origin main\nX",
     # `<<` in a comment, i.e. in no redirection position at all
     "cat notes.txt   # heredocs are written <<EOF\ngit push --force origin main\nEOF",
+
+    # --- feat-foundry-guards-guard-structured-observations (AC-GSO-3): the round-1-remediation
+    # rows, extending the tripwire from twelve to fourteen (still convict-only; the BLOCK set
+    # does not shrink). Both are otherwise-plausible "inert sink" shapes that must NOT be
+    # admitted by the new heredoc-aware tokenizer.
+    #
+    # A same-call write-then-run: the heredoc writes a script AND a later clause in the SAME
+    # command string runs it — AC-GSO-2(iv) requires the sink path to be unmentioned elsewhere.
+    "cat > f.sh <<EOF\ngit push --force origin main\nEOF\n; bash f.sh",
+    # A /dev/fd sink — AC-GSO-2(iii) excludes any path under /dev/ or /proc/ outright.
+    "cat > /dev/fd/3 <<EOF\ngit push --force origin main\nEOF",
 ])
 def test_discipline_convicts_through_heredoc_shapes(cmd):
     p = _discipline(cmd)
     assert p.returncode == 2, p.stdout + p.stderr
+
+
+# ==================================================================== AC-GSO-2/5 ================
+# feat-foundry-guards-guard-structured-observations: the flip side of the tripwire above — a
+# guarded verb mentioned ONLY in prose inside a provably inert-sink heredoc body is now admitted
+# (exit 0) through the real, live hook, not just through the tokenizer in isolation
+# (tests/test_shell_scan.py covers the tokenizer unit; this proves the wiring).
+
+def test_discipline_admits_guarded_verb_mentioned_only_inside_inert_sink_heredoc():
+    admit_cmd = "cat > docs/x.md <<'EOF'\nSee `git push --force origin main` for details.\nEOF"
+    p = _discipline(admit_cmd)
+    assert p.returncode == 0, p.stdout + p.stderr
+
+
+# ==================================================================== AC-GSO-4 ===================
+# feat-foundry-guards-guard-structured-observations: the verdict carrier. A BLOCK prints exactly
+# one JSON object on stdout — hookSpecificOutput.{hookEventName,permissionDecision,
+# permissionDecisionReason} + observation.{status,guard,reason,evidence,retryable,remediation} —
+# and the stderr line is the reason followed by the remediation; the retired "run the command
+# yourself" sentence must not appear.
+
+def test_block_emits_structured_observation_with_remediation():
+    p = _discipline("git push --force origin main")
+    assert p.returncode == 2, p.stdout + p.stderr
+    payload = json.loads(p.stdout.strip().splitlines()[0])
+    hso = payload["hookSpecificOutput"]
+    assert hso["hookEventName"] == "PreToolUse"
+    assert hso["permissionDecision"] == "deny"
+    assert hso["permissionDecisionReason"]
+    obs = payload["observation"]
+    assert obs["status"] == "blocked"
+    assert obs["guard"] == "git-discipline"
+    assert obs["reason"]
+    assert isinstance(obs["evidence"], list) and obs["evidence"]
+    assert isinstance(obs["retryable"], bool)
+    assert obs["remediation"]
+    assert "run the command yourself" not in p.stderr
+    assert obs["reason"] in p.stderr
+    assert obs["remediation"] in p.stderr
+
+
+def test_cloud_guard_block_emits_structured_observation_with_remediation(tmp_path):
+    project_dir = tmp_path / "project-with-seam"
+    project_dir.mkdir()
+    _write_exec_guard_seam(project_dir, wrapper="exec-wrapper run --")
+    payload_in = json.dumps({"tool_name": "Bash", "tool_input": {"command": "aws s3 ls"}})
+    p = _run_hook("foundry-cloud-cli-exec-guard.sh", stdin_text=payload_in,
+                 extra_env={"CLAUDE_PROJECT_DIR": str(project_dir)})
+    assert p.returncode == 2, p.stdout + p.stderr
+    payload = json.loads(p.stdout.strip().splitlines()[0])
+    hso = payload["hookSpecificOutput"]
+    assert hso["hookEventName"] == "PreToolUse"
+    assert hso["permissionDecision"] == "deny"
+    obs = payload["observation"]
+    assert obs["status"] == "blocked"
+    assert obs["guard"] == "cloud-cli-exec-guard"
+    assert "exec-wrapper run -- exec aws" in obs["remediation"]
+    assert "run it yourself outside the agent" not in p.stderr
 
 
 # ---- the EVIDENCE-RULE stub: the ONE committed tests/fixtures/gh-stub/gh, driven by env vars.
