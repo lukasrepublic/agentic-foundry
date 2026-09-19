@@ -18,6 +18,16 @@ export const meta = {
 // dispatch-queue. It is the unconditional default; the bespoke process-spawn fallback (the
 // deprecated `foundry-spawn-worker`/`foundry-fanout` scripts) does not ship — this workflow
 // never shells out to anything.
+//
+// feat-agent-teams-enablement (AC-ATE-2): every `agent(...)` call below carries NO `name` field
+// in its option object, deliberately — a NAMED subagent launches as a TEAMMATE the instant the
+// operator's own `settings.json` sets `env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"` (see
+// `docs/how-to/agent-teams.md`), and a teammate is a materially different (persistent, ~15×
+// costlier, cross-session-messageable) primitive than the disposable worker this fan-out wants.
+// Keeping every worker unnamed means this wave keeps running the cheap, disposable-subagent shape
+// UNCONDITIONALLY, whether or not the operator has the flag on — the wave never becomes a team by
+// accident of an adopter's own settings. `tests/test_agent_teams_enablement.py` greps this file's
+// `agent(...)` call sites for a `name` key inside their option object and asserts none.
 
 const IMPL_SCHEMA = {
   type: 'object',
