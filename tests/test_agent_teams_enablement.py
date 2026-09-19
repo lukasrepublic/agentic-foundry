@@ -18,11 +18,13 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 
 import pytest
 
 from conftest import REPO_ROOT, load_module
 from test_workflow_export_shape import elided_view
+from test_permission_floor_check import _functional_plugin_root
 
 RELEASE_WAVE_JS = os.path.join(REPO_ROOT, "workflows", "release-wave.js")
 COMMAND_DECK_SKILL = os.path.join(REPO_ROOT, "skills", "command-deck", "SKILL.md")
@@ -135,14 +137,14 @@ def test_agent_teams_off_when_no_settings_files_exist(tmp_path, monkeypatch):
     _, project = _fixture(tmp_path, monkeypatch)
     ok, detail = doctor.check_agent_teams_flag(plugin_root=REPO_ROOT, project_dir=project)
     assert ok is True
-    assert detail == "agent-teams: off"
+    assert detail == "off"
 
 
 def test_agent_teams_on_from_project_settings(tmp_path, monkeypatch):
     _, project = _fixture(tmp_path, monkeypatch, project_env={_ENV_KEY: "1"})
     ok, detail = doctor.check_agent_teams_flag(plugin_root=REPO_ROOT, project_dir=project)
     assert ok is True
-    assert detail == "agent-teams: on (settings env)"
+    assert detail == "on (settings env)"
 
 
 def test_agent_teams_on_from_user_global_settings(tmp_path, monkeypatch):
@@ -150,7 +152,7 @@ def test_agent_teams_on_from_user_global_settings(tmp_path, monkeypatch):
     _, project = _fixture(tmp_path, monkeypatch, home_env={_ENV_KEY: "1"})
     ok, detail = doctor.check_agent_teams_flag(plugin_root=REPO_ROOT, project_dir=project)
     assert ok is True
-    assert detail == "agent-teams: on (settings env)"
+    assert detail == "on (settings env)"
 
 
 def test_agent_teams_local_settings_override_project_settings_off_wins(tmp_path, monkeypatch):
@@ -160,7 +162,7 @@ def test_agent_teams_local_settings_override_project_settings_off_wins(tmp_path,
     )
     ok, detail = doctor.check_agent_teams_flag(plugin_root=REPO_ROOT, project_dir=project)
     assert ok is True
-    assert detail == "agent-teams: off"
+    assert detail == "off"
 
 
 def test_agent_teams_local_settings_override_project_settings_on_wins(tmp_path, monkeypatch):
@@ -170,7 +172,7 @@ def test_agent_teams_local_settings_override_project_settings_on_wins(tmp_path, 
     )
     ok, detail = doctor.check_agent_teams_flag(plugin_root=REPO_ROOT, project_dir=project)
     assert ok is True
-    assert detail == "agent-teams: on (settings env)"
+    assert detail == "on (settings env)"
 
 
 def test_agent_teams_project_settings_override_user_global(tmp_path, monkeypatch):
@@ -179,14 +181,14 @@ def test_agent_teams_project_settings_override_user_global(tmp_path, monkeypatch
     )
     ok, detail = doctor.check_agent_teams_flag(plugin_root=REPO_ROOT, project_dir=project)
     assert ok is True
-    assert detail == "agent-teams: off"
+    assert detail == "off"
 
 
 def test_agent_teams_boolean_true_is_not_the_documented_on_value(tmp_path, monkeypatch):
     _, project = _fixture(tmp_path, monkeypatch, project_env={_ENV_KEY: True})
     ok, detail = doctor.check_agent_teams_flag(plugin_root=REPO_ROOT, project_dir=project)
     assert ok is True
-    assert detail == "agent-teams: off"
+    assert detail == "off"
 
 
 def test_agent_teams_malformed_settings_file_is_tolerated_not_crashed(tmp_path, monkeypatch):
@@ -197,7 +199,7 @@ def test_agent_teams_malformed_settings_file_is_tolerated_not_crashed(tmp_path, 
         f.write("{ not valid json at all")
     ok, detail = doctor.check_agent_teams_flag(plugin_root=REPO_ROOT, project_dir=project)
     assert ok is True
-    assert detail == "agent-teams: off"
+    assert detail == "off"
 
 
 def test_agent_teams_oversized_settings_file_is_skipped(tmp_path, monkeypatch):
@@ -209,24 +211,119 @@ def test_agent_teams_oversized_settings_file_is_skipped(tmp_path, monkeypatch):
         json.dump({"env": {_ENV_KEY: "1"}, "_pad": padding}, f)
     ok, detail = doctor.check_agent_teams_flag(plugin_root=REPO_ROOT, project_dir=project)
     assert ok is True
-    assert detail == "agent-teams: off"
+    assert detail == "off"
 
 
 def test_agent_teams_absent_env_key_with_other_env_vars_present_is_off(tmp_path, monkeypatch):
     _, project = _fixture(tmp_path, monkeypatch, project_env={"SOME_OTHER_VAR": "1"})
     ok, detail = doctor.check_agent_teams_flag(plugin_root=REPO_ROOT, project_dir=project)
     assert ok is True
-    assert detail == "agent-teams: off"
+    assert detail == "off"
 
 
 def test_agent_teams_never_red_on_a_populated_workspace(tmp_path, monkeypatch):
-    """AC-ATE-4: never RED, regardless of on/off — `ok` is always literally `True`."""
+    """AC-ATE-4: never RED (never `False`), regardless of on/off — on a functioning plugin_root
+    `ok` is literally `True`; see the crash-fixture tests below for the ADVISORY path, also never
+    RED."""
     for env in (None, {_ENV_KEY: "1"}, {_ENV_KEY: "0"}, {_ENV_KEY: "garbage"}):
         _, project = _fixture(tmp_path / str(env), monkeypatch,
                                project_env=env) if env is not None else _fixture(
             tmp_path / "none", monkeypatch)
         ok, _detail = doctor.check_agent_teams_flag(plugin_root=REPO_ROOT, project_dir=project)
         assert ok is True
+
+
+# ------------------------------------------------------------------------------------------------ #
+# PR #185 review finding 1 (Block): `check_agent_teams_flag` must never RAISE — it is called
+# directly from `main()`, not through the crash-proof `_run("<name>", ...)` wrapper the `checks`
+# list uses, and it runs BEFORE the `--session-start` fail-open branch. A broken
+# `foundry_permission_floor.py` (reached via `_settings_candidate_paths` ->
+# `_load_permission_floor_module`) must degrade to an ADVISORY line, never wedge a session.
+# ------------------------------------------------------------------------------------------------ #
+
+def _broken_plugin_root(base):
+    """A functional plugin tree (`test_permission_floor_check._functional_plugin_root` — every
+    other doctor probe's dependency present) whose `scripts/foundry_permission_floor.py` is
+    syntactically broken."""
+    root = _functional_plugin_root(base)
+    broken_path = os.path.join(root, "scripts", "foundry_permission_floor.py")
+    with open(broken_path, "w", encoding="utf-8") as f:
+        f.write("def _broken(:\n    pass\n")
+    return root
+
+
+def test_agent_teams_survives_a_broken_permission_floor_import(tmp_path, monkeypatch):
+    """In-process variant of the crash fixture. `_load_permission_floor_module` does a bare
+    `import foundry_permission_floor as pf`, which is subject to ordinary `sys.modules` name
+    caching — since this test suite's own cross-import of `test_permission_floor_check` already
+    populated `sys.modules["foundry_permission_floor"]` with the REAL (working) module, a bare
+    re-import would silently return that cached module instead of ever touching the broken copy at
+    `broken_root`. `monkeypatch.delitem` evicts the cache entry for just this test (auto-restoring
+    the real cached module afterward), forcing a genuine re-import from `broken_root`'s `scripts/`."""
+    monkeypatch.delitem(sys.modules, "foundry_permission_floor", raising=False)
+    # `_load_permission_floor_module` also does `sys.path.insert(0, scripts_dir)` on the way to the
+    # failed import; swap in a throwaway COPY of `sys.path` so that in-place mutation is undone by
+    # monkeypatch's own teardown (reassigning the attribute back) rather than leaking `broken_root`
+    # onto the real `sys.path` for the rest of the test session.
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    home, project = _fixture(tmp_path, monkeypatch, project_env={_ENV_KEY: "1"})
+    broken_root = _broken_plugin_root(tmp_path / "broken-plugin")
+    ok, detail = doctor.check_agent_teams_flag(plugin_root=broken_root, project_dir=project)
+    assert ok is doctor.ADVISORY
+    assert detail.startswith("unknown (probe error"), detail
+
+
+def test_doctor_cli_session_start_survives_a_broken_permission_floor_import(tmp_path, monkeypatch):
+    """End-to-end: `--session-start` still exits 0 and the `agent-teams` line still renders (as
+    ADVISORY, not RED, not absent) even when the module this probe's settings-path resolution
+    depends on is broken."""
+    import subprocess
+    import sys
+
+    home, project = _fixture(tmp_path, monkeypatch, project_env={_ENV_KEY: "1"})
+    broken_root = _broken_plugin_root(tmp_path / "broken-plugin-cli")
+    env = dict(os.environ)
+    env["HOME"] = home
+    env["CLAUDE_PROJECT_DIR"] = project
+    env["CLAUDE_PLUGIN_ROOT"] = broken_root
+    r = subprocess.run(
+        [sys.executable, os.path.join(REPO_ROOT, "scripts", "foundry-doctor.py"), "--session-start"],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert r.returncode == 0, f"--session-start must fail open:\n{r.stdout}\n{r.stderr}"
+    assert "Traceback" not in r.stderr, f"doctor crashed instead of degrading:\n{r.stderr}"
+    combined = r.stdout + r.stderr
+    lines = [ln for ln in combined.splitlines() if "] agent-teams:" in ln]
+    assert len(lines) == 1, f"expected exactly one agent-teams line:\n{combined}"
+    assert "[adv " in lines[0]
+    assert "unknown (probe error" in lines[0]
+
+
+def test_doctor_cli_operator_invoked_survives_a_broken_permission_floor_import(tmp_path, monkeypatch):
+    """The operator-invoked (fail-CLOSED) cadence must COMPLETE without a traceback. Other probes
+    may legitimately turn the overall run RED for reasons unrelated to `agent-teams` on this
+    deliberately-broken fixture tree (e.g. `permission-floor` itself, which has its own documented
+    unimportable-module RED path) — only the absence of a crash and the `agent-teams` line's own
+    ADVISORY rendering are asserted here."""
+    import subprocess
+    import sys
+
+    home, project = _fixture(tmp_path, monkeypatch, project_env={_ENV_KEY: "1"})
+    broken_root = _broken_plugin_root(tmp_path / "broken-plugin-op")
+    env = dict(os.environ)
+    env["HOME"] = home
+    env["CLAUDE_PROJECT_DIR"] = project
+    env["CLAUDE_PLUGIN_ROOT"] = broken_root
+    r = subprocess.run(
+        [sys.executable, os.path.join(REPO_ROOT, "scripts", "foundry-doctor.py")],
+        capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert r.returncode in (0, 1), f"doctor did not complete cleanly:\n{r.stdout}\n{r.stderr}"
+    assert "Traceback" not in r.stderr, f"doctor crashed instead of degrading:\n{r.stderr}"
+    lines = [ln for ln in r.stdout.splitlines() if "] agent-teams:" in ln]
+    assert len(lines) == 1, f"expected exactly one agent-teams line:\n{r.stdout}"
+    assert "[adv " in lines[0]
+    assert "unknown (probe error" in lines[0]
 
 
 def test_agent_teams_line_is_not_a_run_call_site_literal():

@@ -1,11 +1,11 @@
 ---
 name: doctor
-description: Foundry health check (/foundry:doctor) — a thin, five-check probe (the v0.25.0 test-suite realignment shrank this from a 2,900-line drop-in-check registry to one file). Checks the plugin manifest loads, hooks.json parses with every referenced hook script present, every skills/*/SKILL.md frontmatter YAML-parses, the stack-profile lock (if any) resolves, and the operator registry resolves. Fails CLOSED for an operator-invoked check (exit non-zero on any hard failure); the --session-start cadence is advisory (fail-open, never wedges a session). Trigger when the operator says "/foundry:doctor", "foundry health check", or to diagnose why a session looks unhealthy.
+description: Foundry health check (/foundry:doctor) — a thin, seven-check probe (the v0.25.0 test-suite realignment shrank this from a 2,900-line drop-in-check registry to one file). Checks the plugin manifest loads, hooks.json parses with every referenced hook script present, every skills/*/SKILL.md frontmatter YAML-parses, the stack-profile lock (if any) resolves, the operator registry resolves, the control-plane preflight (no dangling repos{} path, no ancestor manifest already governing this project dir), and the permission-floor drift comparison (advisory-only). Plus two advisory-only lines never counted toward RED — permissions-policy and agent-teams. Fails CLOSED for an operator-invoked check (exit non-zero on any hard failure); the --session-start cadence is advisory (fail-open, never wedges a session). Trigger when the operator says "/foundry:doctor", "foundry health check", or to diagnose why a session looks unhealthy.
 ---
 
 # /foundry:doctor
 
-The Foundry self-diagnostic — a **thin, five-check probe** (the v0.25.0 test-suite realignment;
+The Foundry self-diagnostic — a **thin, seven-check probe** (the v0.25.0 test-suite realignment;
 `foundry-doctor.py` shrank from a 2,900-line drop-in-check registry, `--selftest` CLIs and all, to
 one file). The
 load-bearing behavioral assertions this file used to re-discover from the retired per-check
@@ -29,7 +29,7 @@ lane signal — Tier B advisory) plus `hooks/foundry-git-discipline.sh`'s determ
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-doctor.py"
    ```
-   The five checks, every run:
+   The seven checks, every run:
    1. **`manifest`** — `.claude-plugin/plugin.json` loads as JSON and carries a `version`.
    2. **`hooks`** — `hooks/hooks.json` parses as JSON and every referenced hook command script
       exists on disk.
@@ -38,6 +38,15 @@ lane signal — Tier B advisory) plus `hooks/foundry-git-discipline.sh`'s determ
    4. **`stack-profile-lock`** — `.foundry/stack-profile.lock` (if present) resolves against the
       shipped `packs/` tree; absent lock is `ok` ("not applicable"), not a failure.
    5. **`operator-registry`** — `.claude/foundry-operators.json` resolves via `foundry_authz`.
+   6. **`control-plane`** (feat-foundry-control-plane-preflight, AC-CPP-1/-2/-3/-3b) — no dangling
+      `repos{}` path in this project's own manifest, and no ancestor
+      `.claude/foundry-project.json` already names or governs this project directory as a hosted
+      repo — a mistake-catcher, not a floor.
+   7. **`permission-floor`** (feat-foundry-doctor-permission-floor-check, AC-DPF-1..8) — compares
+      the workspace's EFFECTIVE permission configuration (`.claude/settings.json` AND
+      `.claude/settings.local.json`, unioned) against the shipped `docs/permission-floor.json`.
+      ADVISORY-only — a mismatch never reddens the run; RED only on a malformed
+      `docs/permission-floor.json`.
 
    Plus advisory-only lines, rendered the same way but never counted toward `DOCTOR-RED`:
    - **`permissions-policy`** (feat-foundry-authorization-capability-preflight-at-dispatch,
@@ -59,10 +68,11 @@ lane signal — Tier B advisory) plus `hooks/foundry-git-discipline.sh`'s determ
    `--session-start` cadence.
 
 2. **Interpret**:
-   - `DOCTOR-GREEN` → all five checks passed.
+   - `DOCTOR-GREEN` → all seven checks passed.
    - `DOCTOR-RED` (exit 1) → at least one hard check failed; the `[XX ]`-marked line names it.
      Fix the named defect (edit the manifest / hooks.json / the offending skill frontmatter /
-     re-lock the stack profile / fix the operator registry) and re-run.
+     re-lock the stack profile / fix the operator registry / resolve the named control-plane
+     finding / repair a malformed `docs/permission-floor.json`) and re-run.
 
 3. **`--session-start` — advisory cadence, never blocks.** Wired into the SessionStart hook; on a
    failure it prints a `WARNING:` to stderr (naming the real merge-side floor) and **always exits
@@ -73,7 +83,7 @@ lane signal — Tier B advisory) plus `hooks/foundry-git-discipline.sh`'s determ
    wiring-hash-pin auto-heal machinery it used to drive (`.foundry/wiring-hash.pin`,
    `TRUSTED_ADVANCE`/`TAMPER`/`STALE` classification) was retired along with
    `foundry-wiring-hash.py` and `foundry-merge-gate.py` — there is no wiring-hash check in the
-   five above and nothing for `--heal` to do. It is kept callable only so a SessionStart hook or a
+   seven above and nothing for `--heal` to do. It is kept callable only so a SessionStart hook or a
    muscle-memory `/foundry:doctor --heal` from an older session does not hard-error.
 
 5. **`--repo <owner/repo>` — accepted for back-compat, unused.** The branch-protection
@@ -85,6 +95,9 @@ lane signal — Tier B advisory) plus `hooks/foundry-git-discipline.sh`'s determ
 - The Foundry plugin tree (`.claude-plugin/plugin.json`, `hooks/hooks.json`, `skills/*/SKILL.md`).
 - `.foundry/stack-profile.lock` (if present) + the shipped `packs/` tree.
 - `.claude/foundry-operators.json` (operator registry).
+- This project's own manifest + any ancestor `.claude/foundry-project.json` (control-plane).
+- `.claude/settings.json` + `.claude/settings.local.json` + the shipped
+  `docs/permission-floor.json` (permission-floor).
 
 ## Outputs
 
@@ -93,7 +106,7 @@ lane signal — Tier B advisory) plus `hooks/foundry-git-discipline.sh`'s determ
 
 ## Anti-patterns
 
-- **Treating a DOCTOR-GREEN as proof the merge floor is sound.** It checks five structural
+- **Treating a DOCTOR-GREEN as proof the merge floor is sound.** It checks seven structural
   invariants, not the merge-time floor — `.github/workflows/ci.yml` + `btb-gates` own that.
 - **Treating `--session-start`'s advisory WARNING as an enforcement signal.** It fails open by
   design; the real enforcement is at merge time, not session start.

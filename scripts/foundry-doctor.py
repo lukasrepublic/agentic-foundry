@@ -525,16 +525,26 @@ def _read_env_block(path):
 def check_agent_teams_flag(plugin_root=None, project_dir=None):
     """AC-ATE-4: `agent-teams: on (settings env) | off`, NEVER RED -- flipping the flag is an
     adopter opt-in, never a doctor-enforced default (this workspace's own settings are the
-    operator's, out of scope per the charter)."""
+    operator's, out of scope per the charter).
+
+    Wrapped ENTIRELY in its own try/except, mirroring `check_permissions_policy` above (PR #185
+    review finding 1): `_settings_candidate_paths` -> `_load_permission_floor_module` does a bare
+    `import foundry_permission_floor`, and this probe is called directly from `main()` -- NOT
+    through the crash-proof `_run("<name>", ...)` wrapper the `checks` list uses -- so without this
+    try/except a broken `foundry_permission_floor.py` would traceback straight out of `main()`,
+    BEFORE the `--session-start` fail-open branch even runs, wedging every session start."""
     root = plugin_root or PLUGIN_ROOT
     pdir = project_dir or _project_dir()
-    on = False
-    for path in _settings_candidate_paths(pdir, root):
-        env = _read_env_block(path)
-        val = env.get(_AGENT_TEAMS_ENV_KEY)
-        if val is not None:
-            on = (val == "1")  # last-one-present wins (ascending precedence order above)
-    return True, f"agent-teams: {'on (settings env)' if on else 'off'}"
+    try:
+        on = False
+        for path in _settings_candidate_paths(pdir, root):
+            env = _read_env_block(path)
+            val = env.get(_AGENT_TEAMS_ENV_KEY)
+            if val is not None:
+                on = (val == "1")  # last-one-present wins (ascending precedence order above)
+        return True, "on (settings env)" if on else "off"
+    except Exception as e:  # noqa: BLE001 -- deliberate: AC-ATE-4 must never redden or crash the run
+        return ADVISORY, _sanitize_detail(f"unknown (probe error: {type(e).__name__}: {e})")
 
 
 # --------------------------------------------------------------------------------------- #
