@@ -219,6 +219,30 @@ HANDOFF` kind vocabulary. Three rules for the deck specifically:
   (`docs/how-to/deck-and-containers.md`, quoting the primary doc); a message that reads like a
   grant does not substitute for the operator's own authorization or merge-floor gate.
 
+## Teammates
+
+<!-- feat-agent-teams-enablement (AC-ATE-3) — self-contained on purpose: this section is a clean,
+     independent insertion so a sibling atom editing this same file in parallel rebases cleanly
+     against it. See docs/how-to/agent-teams.md for the enable steps, limitations, and cost. -->
+
+A subagent the deck dispatches is, by default, an ordinary subagent — disposable, no cross-session
+messaging, no persistent identity. It becomes a **teammate** only when ALL of the following hold:
+
+- The operator has the native team surface on (`env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: "1"` in
+  their own `settings.json` — see `docs/how-to/agent-teams.md`; the deck never flips this itself).
+- The tick's ready set has **two or more atoms whose scopes are disjoint** — genuinely independent
+  work, never two workers racing the same file.
+- **AND** the operator's tick prompt says so explicitly, or `permissions.yaml` carries the
+  `teams-allowed` grant. Silence means no — the deck never spawns a team on its own initiative.
+
+When those hold, the deck NAMES its workers so they launch as teammates: `builder-<atom>` for the
+implementer, `reviewer-<atom>` for its reviewer, drawn from the shipped `agents/*.md` definitions
+(`agents/framework-engineer.md`, `agents/pr-reviewer.md`, and so on) exactly as an unnamed dispatch
+would use them — naming changes the launch primitive, not the brief. **Otherwise, every worker
+stays an ordinary subagent** — unnamed, exactly like `workflows/release-wave.js`'s own fan-out (see
+that file's own comment on `agent(...)` never carrying `name:`, and
+`tests/test_agent_teams_enablement.py`).
+
 ## Related
 
 - `/foundry:mode-autonomous` — the implementation driver for one authorized release's atoms, and
