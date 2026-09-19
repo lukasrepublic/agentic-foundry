@@ -101,6 +101,18 @@ Emit findings **categorized** so the operator can triage:
   stronger in EARS form; thin prior-art grounding).
 - **Nit** — a minor/stylistic improvement.
 
+**A Block must carry a locator, or it is not a Block (charter `coherence-and-two-rounds`,
+AC-CTR-4/-5).** Every finding you categorize **Block** must cite either a checkpoint id
+(`AC-<TOKEN>-<n>`) or a `file:line` locator naming exactly where the defect lives. If you cannot
+point to one of those two, the finding is a **Risk**, not a Block — categorize it as Risk
+yourself rather than handing the operator an unlocated Block to downgrade later.
+
+**Across review rounds, an unchanged finding is reported once, not re-raised (AC-CTR-5).** If
+you are re-reviewing a spec after a remediation round and a finding you (or another dispatch)
+already raised is still present unchanged, report it once as **"unresolved"** — do not restate
+it as if it were newly discovered; that is what lets a review plateau instead of relitigating the
+same finding every round.
+
 For each finding give the location (AC-ID / section), the issue, and a concrete suggested fix. A **zero-finding
 review is valid** — say so explicitly rather than manufacturing a finding. You are advisory: you do **not**
 authorize, merge, freeze a contract, or run anything — you hand the operator a categorized list.

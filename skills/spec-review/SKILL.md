@@ -1,6 +1,6 @@
 ---
 name: spec-review
-description: 'The single-pass spec review (/foundry:spec-review) — THE DEFAULT review verb before front-authorization, the multi-pass deep audit is opt-in only (measured: multi-pass runs do not converge, and paying findings land in rounds 1-2). Phase 0 deterministic pre-lints (the CONSTITUTION.md §12 BINDING size ceiling, no override; reference-closure; normative-region presence) — a REFUSE stops here, before any LLM spend. Phase 1 fans out THREE fresh-context questions via the spec-reviewer agent (prior-art / steel-man+adversarial consolidated / per-AC rubric) plus a conditional one-shot security question for security-flagged specs. Phase 2 is one remediation round. Phase 3, the operators merge of the spec to the workspace main, IS the authorization. workflows/spec-audit.js (the multi-pass engine) stays dormant-invocable for an exceptional deep audit — it is NEVER the default path. Trigger when a spec is drafted/refined and needs review before authorization.'
+description: 'The single-pass spec review (/foundry:spec-review) — THE DEFAULT review verb before front-authorization, the multi-pass deep audit is opt-in only (measured: multi-pass runs do not converge, and paying findings land in rounds 1-2). Phase 0 deterministic pre-lints (the CONSTITUTION.md §12 BINDING size ceiling, no override; reference-closure; normative-region presence) — a REFUSE stops here, before any LLM spend. Phase 1 fans out THREE fresh-context questions via the spec-reviewer agent (prior-art / steel-man+adversarial consolidated / per-AC rubric) plus a conditional one-shot security question for security-flagged specs. Phase 2 caps remediation at two rounds — a third requires an operator decision recorded in the spec Clarifications — and downgrades a locator-less Block to Risk. Phase 3, the operators merge of the spec to the workspace main, IS the authorization. workflows/spec-audit.js (the multi-pass engine) stays dormant-invocable for an exceptional deep audit — it is NEVER the default path. Trigger when a spec is drafted/refined and needs review before authorization.'
 ---
 
 # /foundry:spec-review — the single-pass review (THE default before authorization)
@@ -71,6 +71,37 @@ generalized from the retired engine's G-2/G-3/G-4 preconditions).
    AC-ID pattern from either preconditions module — not wrapped by `foundry-spec-lint.py`, since an
    absent normative region is a structural defect the size/reference checks above can't even reach).
    An absent or empty normative region REFUSES — there is nothing to review.
+3. **Release corpus coherence — only when `<spec>` belongs to a release (charter
+   `coherence-and-two-rounds`, AC-CTR-1/-2).** A spec "belongs to a release" when its atom id is
+   named in a `.foundry/releases/<release-id>/release.yaml`'s `atoms:` list, or it lives under that
+   release's `.foundry/releases/<release-id>/charters/` directory. When it does, run the EXISTING
+   advisory sweep (never re-implement its detection logic — `scripts/foundry-coherence-check.py`
+   is out of scope for this skill to change):
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-coherence-check.py" --scope specs
+   ```
+   Do this **before Phase 1 dispatches for any atom of that release** — the sweep is cheap
+   (stdlib-only, always a fresh walk), and running it every time a release atom reaches Phase 0 is
+   how "before any of them is authorized" (AC-CTR-1) holds without extra bookkeeping of which atom
+   went first. Parse the single JSON document on stdout:
+   - `counts.broken == 0` (exit `0`) → continue to Phase 1 as normal — the release corpus is
+     coherent as far as this sweep can tell.
+   - `counts.broken >= 1` (exit `1`, `findings` non-empty) → **this is not the sweep's own
+     advisory-only boundary** (that boundary is for the standalone `/foundry:coherence-check`
+     verb — see `skills/coherence-check/SKILL.md`; it never gates a merge). **Inside
+     `/foundry:spec-review`, a nonzero `findings` list across the release's atoms is a coherence
+     Block.** For each `findings[]` entry, derive the **owning atom of each side** — the path
+     segment immediately after `specs/` (or, for a charter-lane atom, the charter filename's
+     slug) for `src`, and the same segment parsed out of the raw `target` string, **even when
+     `target` did not resolve** (`resolved: null` — the broken citation is itself the trace of the
+     drift; do not require it to resolve to name the other side). Emit **one Block per finding,
+     naming BOTH owning atoms' spec paths** (never only the citing side) — this is "a contradiction
+     between two atoms Blocks authorization naming both owners," not a one-sided broken-link note.
+     **Authorization of EITHER named atom stays refused until that Block is cleared** (a corrected
+     citation, or a reconciled claim recorded in both specs) — refuse Phase 0 for both until then.
+   - `provenance.source == "error"` (exit `2`) is an **operational failure** (missing or
+     mis-resolved corpus root, or the walk found zero nodes) — REFUSE Phase 0 the same as any
+     other pre-lint failure; do not treat it as the advisory `1`.
 
 ## Phase 1 — the ceremony-tiered question fan-out (fresh context each, via `spec-reviewer`)
 
@@ -125,16 +156,37 @@ design"*) — never a loop, never repeated across rounds. The real, enforcing se
 the **`security-reviewer`** subagent at PR-diff time (CONSTITUTION.md §I.3) — this spec-time
 question is a proactive front-load, not a substitute for it.
 
-## Phase 2 — one remediation round
+## Phase 2 — the remediation rounds (capped at two; a third is the operator's fork)
 
 Consolidate every finding from Phase 1 (dedupe overlapping Block/Risk findings across the three
-questions) and revise the spec **once**, addressing each — or explicitly deferring a non-blocking
-one, naming it in the spec's `## Clarifications` or `## Residuals` section (CONSTITUTION.md §15).
-**There is no automatic second review pass.** The retired engine's own value-density curve (87% of
-real findings resolved in ≤2 rounds, convergence never actually reached beyond that) is the reason
-the default caps at **one remediation round**: a spec still contested after one round is either
+questions) and revise the spec, addressing each — or explicitly deferring a non-blocking one,
+naming it in the spec's `## Clarifications` or `## Residuals` section (CONSTITUTION.md §15).
+
+**Round budget (charter `coherence-and-two-rounds`, AC-CTR-3).** Phase 2's first pass is **round
+1**. If findings remain unresolved after round 1, **exactly one further remediation round (round
+2)** is allowed — dispatch it the same way, addressing what round 1 left open. **There is no
+automatic third round.** A third round requires an **operator decision recorded in the spec's
+`## Clarifications` section** (naming what rounds 1 and 2 left open and why a third is warranted)
+before it runs — absent that recorded decision, a spec still contested after round 2 is either
 **decomposed** (it was probably oversize/multi-capability to begin with) or gets an
-**operator-directed** re-review — never a silent automatic loop.
+**operator-directed disposition** (ship with the residual named, or park) — never a silent
+automatic loop. This is the same "no re-litigating" discipline the retired engine's own
+value-density curve motivated (87% of real findings resolved in ≤2 rounds, convergence never
+actually reached beyond that; a prior run reached 4 rounds / 26 Blocks and never converged) —
+codified here as a hard cap rather than a norm.
+
+**A finding unchanged across two rounds is reported once, as "unresolved" — never re-raised
+verbatim a third time** (AC-CTR-5). If round 2 leaves a finding exactly where round 1 left it,
+record it once in the review evidence as unresolved and let the operator-fork decision above
+(or decomposition/park) dispose of it — do not spend a round restating an already-recorded
+finding.
+
+**Block requires a locator, or it downgrades to Risk (AC-CTR-4/-5).** When consolidating
+findings, any finding categorised **Block** that cites **neither** a checkpoint id
+(`AC-<TOKEN>-<n>`) **nor** a `file:line` locator is **downgraded to Risk** — record why in the
+review evidence (e.g. "downgraded: no AC-ID/file:line locator given"). `agents/spec-reviewer.md`
+states this rule directly to the reviewer persona so it is applied at the source; Phase 2
+re-applies it defensively when consolidating, in case a Block without a locator slipped through.
 
 **Dedup before you re-litigate a finding twice** (feat-foundry-review-fanout-hardening,
 AC-RFH-12/-13 — the human/agent-run mirror of `workflows/release-wave.js`'s
@@ -189,8 +241,13 @@ the mechanical freeze (spec + contract hash binding), now finding the row record
 
 ## Anti-patterns
 
-- **Re-introducing a remediate-between-passes loop.** One remediation round, by default — that is
-  the measured knee of value, not a corner cut.
+- **Re-introducing a remediate-between-passes loop.** At most two remediation rounds, by
+  default — that is the measured knee of value, not a corner cut. A third round without a
+  recorded operator decision in `## Clarifications` is the loop this default exists to prevent.
+- **Re-raising a finding round 2 already restated verbatim.** Record it once as "unresolved" and
+  dispose of it via decomposition, park, or the operator fork — do not spend a round on it twice.
+- **Letting a locator-less Block through as a Block.** No AC-ID and no `file:line` → downgrade to
+  Risk and say why (AC-CTR-4/-5) — never wave it through un-downgraded because it "sounds severe."
 - **Combining the three Phase-1 questions into one dispatch.** Fresh context per question is what
   makes each lens honest; a combined prompt reintroduces the same-context bias the retired engine's
   critic/reviser split existed to avoid.
