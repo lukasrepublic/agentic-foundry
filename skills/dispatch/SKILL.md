@@ -85,16 +85,14 @@ multi-atom fan-out).
    CI checks (`docs/merge-floor.md`), plus `hooks/foundry-git-discipline.sh` for any merge attempted
    from inside a session. Merge per the atom's `merge_autonomy_mode` (Regular → operator/diff-review; Lean → pr-reviewer pass + merge-on-green (reviewer advisory, never the merge approval)).
 
-**Run-duration capture — release-wave path only (feat-foundry-run-duration-capture, AC-RDC-1..12,
-documentation note; this atom claims NO single-atom-dispatch coverage).** The SAME
-`PostToolUse(Agent|Workflow)` hook seam step 3 uses for `learnings[]` also carries
-`hooks/foundry-run-metrics.sh` (wired one additive entry after the learnings hook, same matcher) —
-it appends one gathering-only row per atom to `.foundry/run-metrics.jsonl` when a `workflows/
-release-wave.js` wave's tool call completes, host-reading the atom's fidelity fields
-(`spec_sha256`/`auth_seq_*`) off its frozen `acceptance-contract.yaml` rather than trusting the
-wave's return payload. This single-atom `/foundry:dispatch` path is **not** wired to that ledger —
-a `PostToolUse(Agent)` firing here produces no run-metrics row; see the spec's Residuals for the
-named follow-up that would add it.
+**Run-duration capture — RETIRED (feat-foundry-run-duration-capture, subtracted by
+feat-yield-and-silent-yield-instrument, 2026-09-18).** `hooks/foundry-run-metrics.sh` and
+`scripts/foundry_run_metrics.py` — the `PostToolUse(Agent|Workflow)` hook that appended one
+gathering-only row per atom to `.foundry/run-metrics.jsonl` — every row `measurement:
+"unobserved"`, nothing read it — have been removed. `scripts/foundry-autonomy-instrument.py`
+(report-only, run on demand, never gated on a hook seam) is the atom's successor: six ratios
+mined from transcripts + the authorization corpus, including the two the run-metrics ledger never
+computed (silent-yield, authorized→built conversion).
 
 ## Worker return contract (claim-check) — AC-WCD-2
 

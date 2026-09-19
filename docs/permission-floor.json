@@ -204,11 +204,6 @@
       "rationale": "Read-only registry-integrity report (feat-foundry-repo-registry-formalization): physical-confinement + gitignore-pairing + origin-match rows over .claude/foundry-project.json; single read-only git choke point, sanitizing emission sink, writes nothing. Tiered at merge-reconciliation when the script landed after the map (the closed-world tripwire firing as designed)."
     },
     {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_run_metrics.py:*)",
-      "tier": "allow",
-      "rationale": "posttooluse telemetry logger invoked by the run-metrics hook; appends a loss-tracking line"
-    },
-    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_session_mode.py:*)",
       "tier": "allow",
       "rationale": "session-scoped mode/fork-policy set-and-resolve state-writer; not a release/repo ceremony"
@@ -336,6 +331,10 @@
     {
       "script": "foundry_audit_preconditions.py",
       "rationale": "the shipped __main__ is a manual-invocation debug CLI for a human/operator; never instructed by any skill/hook"
+    },
+    {
+      "script": "foundry-autonomy-instrument.py",
+      "rationale": "deferred, not tiered: a standing Bash allow-rule is coordinator work (round-2 review remediation, PR #152) — the operator runs this report-only CLI manually and grants it per-invocation or via their own settings, never via a plugin-shipped allow row"
     },
     {
       "script": "foundry_authz.py",
