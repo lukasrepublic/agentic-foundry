@@ -198,3 +198,52 @@ def test_no_nonpass_denylist_remains_in_ledger_module():
     src = inspect.getsource(al.find_audit)
     assert "NONPASS" not in src, "find_audit must not reference a denylist symbol"
     assert "PASS_VERDICTS" in src, "find_audit must read the explicit pass allowlist"
+
+
+# ============================================================= hardening (round-3 review) ==== #
+
+def test_malformed_rounds_row_is_skipped_not_raised(tmp_path):
+    """A row whose `rounds` is not int-parsable (missing, `None`, a non-numeric string, a list)
+    must be treated as NON-matching — skipped, convict direction — never raise ValueError/
+    TypeError out of `find_audit` and hard-abort the caller (`foundry-authorize.py`) on junk
+    ledger data. A later well-formed row for the same spec_sha256 must still be found."""
+    project_dir = str(tmp_path)
+    ledger = al.ledger_path(project_dir)
+    sha = "9" * 64
+
+    os.makedirs(os.path.dirname(ledger), exist_ok=True)
+    malformed_rows = [
+        {"schema_version": 2, "ts": "2026-09-18T00:00:00Z", "run_id": "malformed-none",
+         "tier": "T1", "rounds": None, "findings": {"new": 0, "resolved": 0, "open": 0},
+         "spec_ref": "specs/x.md", "spec_sha256": sha, "operator": "agent:test",
+         "verdict": "converged"},
+        {"schema_version": 2, "ts": "2026-09-18T00:00:00Z", "run_id": "malformed-str",
+         "tier": "T1", "rounds": "not-a-number",
+         "findings": {"new": 0, "resolved": 0, "open": 0}, "spec_ref": "specs/x.md",
+         "spec_sha256": sha, "operator": "agent:test", "verdict": "converged"},
+        {"schema_version": 2, "ts": "2026-09-18T00:00:00Z", "run_id": "malformed-list",
+         "tier": "T1", "rounds": [1, 2], "findings": {"new": 0, "resolved": 0, "open": 0},
+         "spec_ref": "specs/x.md", "spec_sha256": sha, "operator": "agent:test",
+         "verdict": "converged"},
+        # `rounds` key entirely absent.
+        {"schema_version": 2, "ts": "2026-09-18T00:00:00Z", "run_id": "malformed-missing",
+         "tier": "T1", "findings": {"new": 0, "resolved": 0, "open": 0},
+         "spec_ref": "specs/x.md", "spec_sha256": sha, "operator": "agent:test",
+         "verdict": "converged"},
+    ]
+    with open(ledger, "a", encoding="utf-8") as fh:
+        for row in malformed_rows:
+            fh.write(json.dumps(row, sort_keys=True) + "\n")
+
+    # No exception, and none of the malformed rows count as a match (min_rounds=1 default,
+    # but "missing" coerces to 0 via the historical `rounds=0` default, which still fails
+    # `>= 1`; the point is nothing here raises and nothing here is wrongly found).
+    hit = al.find_audit(sha, project_dir=project_dir)
+    assert hit is None
+
+    # A subsequent WELL-FORMED row for the same spec_sha256 is still found — one malformed row
+    # never poisons the lookup for the rest of the ledger.
+    _write_v2_row(ledger, "converged", spec_sha256=sha, run_id="well-formed-after-malformed")
+    hit = al.find_audit(sha, project_dir=project_dir)
+    assert hit is not None
+    assert hit["run_id"] == "well-formed-after-malformed"

@@ -102,6 +102,18 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _coerce_rounds(value) -> int | None:
+    """Best-effort int coercion for a ledger row's `rounds` field — returns `None` (never
+    raises) when `value` is not int-parsable (missing default `0` still coerces fine; `None`, a
+    non-numeric string, a list, a dict, … do not). `find_audit` treats `None` here as a
+    non-match (convict direction): a malformed row is skipped, not a crash that propagates into
+    `foundry-authorize.py` and hard-aborts authorization on junk ledger data."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _default_run_id() -> str:
     """Best-effort session correlation (residual): prefixed with $CLAUDE_CODE_SESSION_ID when
     present; a freestanding opaque id (run_id only, no correlation) otherwise."""
@@ -147,7 +159,14 @@ def find_audit(spec_sha256: str, project_dir: str | None = None, min_rounds: int
     `V2_VERDICTS`) carry the SAME `spec_sha256`/`rounds`/`verdict` keys with the same meaning, so
     this lookup needs no shape-specific branching to accept either — a v1 `plateau` row keeps
     satisfying this floor exactly as before v2 shipped (`plateau` is explicitly in
-    `PASS_VERDICTS`)."""
+    `PASS_VERDICTS`).
+
+    MALFORMED `rounds` IS SKIPPED, NEVER RAISED: a row whose `rounds` field is not int-parsable
+    (missing, `None`, a non-numeric string, a list, …) is treated as NON-matching — the convict
+    direction, same as any other verdict/hash mismatch — rather than letting `ValueError`/
+    `TypeError` escape this function and hard-abort the caller (`foundry-authorize.py`) on junk
+    ledger data. One malformed row never blocks a match against a later, well-formed row for the
+    same `spec_sha256`."""
     p = ledger_path(project_dir)
     if not os.path.isfile(p):
         return None
@@ -161,8 +180,11 @@ def find_audit(spec_sha256: str, project_dir: str | None = None, min_rounds: int
                 r = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            rounds = _coerce_rounds(r.get("rounds", 0))
+            if rounds is None:
+                continue  # malformed rounds — skip this row, never raise (convict direction)
             if (r.get("spec_sha256") == spec_sha256
-                    and int(r.get("rounds", 0)) >= min_rounds
+                    and rounds >= min_rounds
                     and r.get("verdict") in PASS_VERDICTS):
                 hit = r  # keep last → most recent
     except OSError:
