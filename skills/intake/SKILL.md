@@ -28,6 +28,13 @@ downstream pipeline.
 
 1. **Ingest** the source(s). For design inputs, load the cited design assets first
    (the `design-context-load` discipline) so the spec is design-grounded.
+   **Read the previous wave's learning FIRST (feat wave-learn, AC-WVL-3/-4).** When the release
+   manifest being authored into declares `depends_on_release: [<id>, …]`, read each named
+   release's `.foundry/releases/<id>/state.yaml` **before the first discovery question** and
+   surface its four lists — `decisions`, `artifacts`, `open_risks`, `amendments_needed` — to the
+   operator as the opening context, so the interview starts from what the last wave already
+   learned instead of re-litigating it. If a named release has no `state.yaml`, say so in one
+   line and continue — do **not** fabricate learning that was never recorded.
 2. **Route the lane (the game test)** — see "Lane routing" below. Classify the atom
    **charter lane by default**; only a `security: true` atom, or one whose scope names auth,
    secrets, custody, a production mutation, or a cross-repo pin, or whose contract's

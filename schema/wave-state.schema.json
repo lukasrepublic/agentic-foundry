@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/lukasrepublic/agentic-foundry/schema/wave-state.schema.json",
+  "title": "Wave state (.foundry/releases/<id>/state.yaml)",
+  "description": "What one wave learned, for the next wave's /foundry:intake to read before it asks anything (feat wave-learn, AC-WVL-1/-2). Exactly four top-level keys, no per-atom status -- run-state is DERIVED (foundry_release.derive_run_state), never restated here. Written by the command deck at wave close (scripts/foundry_command_deck.py write_wave_state) and merged, never overwritten: a write must never drop an existing entry.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "decisions": {
+      "type": "array",
+      "description": "Dated, one-line decisions the wave made that the next wave should not re-litigate.",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "artifacts": {
+      "type": "array",
+      "description": "Reusable outputs of the wave -- a file worth citing or copying forward, not restating.",
+      "items": {
+        "type": "object",
+        "required": ["path", "reuse_as"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Repo-relative path to the artifact."
+          },
+          "reuse_as": {
+            "type": "string",
+            "minLength": 1,
+            "description": "How the next wave should use it -- a template, a reference implementation, a definition to cite."
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "open_risks": {
+      "type": "array",
+      "description": "Risks or loose ends the wave found but did not close, named so the next wave inherits them deliberately rather than by accident.",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "amendments_needed": {
+      "type": "array",
+      "description": "Spec/contract amendments reality forced during the wave, recorded here so the next wave's authoring starts from what actually shipped.",
+      "items": {"type": "string", "minLength": 1}
+    }
+  }
+}

@@ -1,0 +1,10 @@
+# Fixture: what a prior wave already recorded, before a new write merges into it.
+decisions:
+  - "2026-09-01: acme-wave-1 decided to build the read path before the write path"
+artifacts:
+  - path: specs/features/foundry/fixture-domain/fixture-capability/feat-fixture.md
+    reuse_as: "template for productA's next spec"
+open_risks:
+  - "the fixture's mock queue was never load-tested"
+amendments_needed:
+  - "fixture spec: AC-FIX-3 needs a re-check against the real queue depth"

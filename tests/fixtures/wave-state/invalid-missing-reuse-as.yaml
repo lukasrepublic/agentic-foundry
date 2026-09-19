@@ -1,0 +1,6 @@
+# Fixture: an artifacts[] item missing the required `reuse_as` field.
+decisions: []
+artifacts:
+  - path: scripts/fixture_helper.py
+open_risks: []
+amendments_needed: []

@@ -1,0 +1,5 @@
+# Fixture: `decisions` given as a scalar string instead of a list.
+decisions: "acme decided everything at once"
+artifacts: []
+open_risks: []
+amendments_needed: []

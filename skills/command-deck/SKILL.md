@@ -121,6 +121,24 @@ job is gone means **re-arm**, and the record exists precisely so a restarted ses
   covers.** A five-lens review of this capability once returned 16 Blocks of which 12 were phantom
   gaps assuming the operator had left the room. They have not.
 
+## Learning across waves (wave-learn)
+
+When a tick observes the programme reach `completed` — every atom in a terminal state per
+`derive_run_state` — write what the wave learned before you leave it, so the NEXT release's
+`/foundry:intake` (see `skills/intake/SKILL.md`, step 1) reads it before asking anything:
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/foundry_command_deck.py write-state <programme-id> \
+  --entries-json '{"decisions": ["…"], "artifacts": [{"path": "…", "reuse_as": "…"}], "open_risks": ["…"], "amendments_needed": ["…"]}'
+```
+
+This writes/merges `.foundry/releases/<programme-id>/state.yaml` — exactly the four keys
+`decisions` / `artifacts` / `open_risks` / `amendments_needed`, no per-atom status, validated
+against `schema/wave-state.schema.json`. It **merges**: whatever is already recorded stays: a new
+call only adds entries, it never drops one. It **refuses** (exit 2) rather than writing an invalid
+document, and it refuses the write itself — unless you pass `--force` — until the programme has
+actually reached `completed`, so this is a wave-close step, not a running log kept mid-wave.
+
 ## Escalation is a closed set
 
 Only two things reach the operator: **external provisioning or an interactive credential step the
@@ -135,6 +153,8 @@ and the deck's own unfinished work — is *Next Tasks*, never a blocker.
   fan-out. Reach for it when the deck's tick says "implement these three atoms".
 - `scripts/foundry_command_deck.py` — the derivation this skill measures with: `ready_set` (with the
   authorization re-derivation and the wave barrier), `is_idle`, `wake_seconds`, `may_land`,
-  `graph_action`. Read-only, no cursor, no memo: every tick re-derives from disk.
+  `graph_action`. Every one of those is read-only, no cursor, no memo: every tick re-derives from
+  disk. `write_wave_state` (the `write-state` CLI subcommand, above) is the one named exception —
+  the wave-close write "next waves learn from previous ones" needs.
 - `/foundry:authorize-release` — how a batch of atoms awaiting the gate is put in front of the
   operator in one turn.
