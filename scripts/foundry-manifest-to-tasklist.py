@@ -60,16 +60,22 @@ class PlanError(Exception):
     silent fallback to a different directory."""
 
 
+_WAVE_PLAN_MOD = None
+
+
 def _wave_plan_module():
-    """Import the hyphenated shipped wave planner by file path (mirrors
+    """Import (ONCE per process — build_plan calls this per atom; PR #188 review) the hyphenated shipped wave planner by file path. Import the hyphenated shipped wave planner by file path (mirrors
     `foundry_command_deck._import_wave_plan`) — reused here ONLY for its two charter/contract
     `allowed_paths` readers (`_load_charter_allowed_paths` / `_load_contract_allowed_paths`), never
     re-derived."""
-    path = os.path.join(HERE, "foundry-wave-plan.py")
-    spec = importlib.util.spec_from_file_location("_foundry_wave_plan_mtl", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    global _WAVE_PLAN_MOD
+    if _WAVE_PLAN_MOD is None:
+        path = os.path.join(HERE, "foundry-wave-plan.py")
+        spec = importlib.util.spec_from_file_location("_foundry_wave_plan_mtl", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _WAVE_PLAN_MOD = mod
+    return _WAVE_PLAN_MOD
 
 
 # ── tasks-dir resolution (AC-MTL-2 read surface; fail-closed containment) ──────────────────────── #
@@ -110,7 +116,12 @@ def _existing_subjects(tasks_dir):
     is a fresh `create`). A file that is absent/unreadable/not-JSON/not-a-mapping/has no string
     `subject` is skipped, never a crash; the FIRST file seen for a given subject wins (the native
     task list itself guarantees subject uniqueness within one team — this is defense in depth, not
-    a dedup policy of its own)."""
+    a dedup policy of its own).
+
+    Scoping note (PR #188 review): the match is on the SUBJECT string alone, across every team dir
+    under the tasks root. `atom:<release>/<id>` is unique per project in practice, so a hit is the
+    same atom re-armed in a persisted list; a second checkout of the SAME release id on this machine
+    would be mis-skipped. Pass `--tasks-dir <team-dir>` to scope the read when that matters."""
     subjects = {}
     if not tasks_dir or not os.path.isdir(tasks_dir):
         return subjects
