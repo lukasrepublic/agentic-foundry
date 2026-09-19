@@ -42,14 +42,38 @@ _LEGAL = {"backlog": "planned", "planned": "active", "active": "completed"}
 _TOP_REQUIRED_FIELDS = {"id", "description", "state", "atoms"}
 # (feat-*-certification): ADDITIVE optional top-level field — see `ACCEPT_VERDICTS`/
 # `append_acceptance` below. Never required, never touched by the RA/RD state machine.
-_TOP_OPTIONAL_FIELDS = {"acceptance"}
-_ATOM_FIELDS = {"id", "spec_ref", "contract_ref", "depends_on"}
+# (release-loader-vocabulary, AC-RLV-1): the programme-manifest vocabulary the autonomy-continuation
+# releases actually author (`program`, `version`, `target_repo`, `target_version`,
+# `depends_on_release`, `value`, `subtraction`, `lane`, `gate_before_authorize`, `supersedes_atoms`,
+# `exit`) — purely descriptive/free-text at THIS loader; none of it is read by the RA/RD state
+# machine, `derive_closure`, or `transition`. An unknown top-level field outside this closed set is
+# still refused by name.
+_TOP_OPTIONAL_FIELDS = {
+    "acceptance",
+    "program", "version", "target_repo", "target_version", "depends_on_release",
+    "value", "subtraction", "lane", "gate_before_authorize", "supersedes_atoms", "exit",
+}
+_ATOM_FIELDS = {"id", "depends_on"}
 # (feat-foundry-wave-plan): ADDITIVE optional atom fields consumed by
 # `scripts/foundry-wave-plan.py` — never required, never touched by the RA/RD state machine
 # above. `paths` is the atom's declared write-path scope (globset strings, same shape as an
 # acceptance-contract's `scope.allowed_paths`); `journeys` is a list of journey/AC tags. Absent
 # on an atom == `[]` (backward-compatible with every manifest authored before this extension).
-_ATOM_OPTIONAL_FIELDS = {"paths", "journeys"}
+# (release-loader-vocabulary, AC-RLV-2): `spec_ref`/`contract_ref` moved from _ATOM_FIELDS
+# (required) to here — an atom is now EITHER a factory-lane atom (both `spec_ref` + `contract_ref`,
+# validated below) OR a charter-lane atom (`charter_ref`, no contract to freeze); `kind`/`lane`/
+# `security` are the charter-lane's additional optional fields (`_validate` enforces their shapes).
+_ATOM_OPTIONAL_FIELDS = {
+    "paths", "journeys", "spec_ref", "contract_ref", "charter_ref", "kind", "lane", "security",
+    "lands",  # programme ordering hint ("first"), used by R0/R3 manifests — informational
+}
+_ATOM_LANE_VALUES = {"charter", "factory"}
+# (AC-RLV-4): `proposed` reads as a synonym of `planned` — `load_release` never writes anything
+# to disk, so a manifest authored with `state: proposed` stays byte-identical on disk (this loader
+# is read-only) while the in-memory `Release.state` normalizes to `planned`; a SUBSEQUENT
+# `transition`/`save_release` call (which does write) persists the real STATES vocabulary, never
+# `proposed` — the forward-only transition table (`_LEGAL`) is keyed on the real STATES only.
+_STATE_READ_SYNONYMS = {"proposed": "planned"}
 
 # (feat-*-certification, AC per charter 2026-07-27-phase5-certification): a CLOSED,
 # 2-value, BOTH-TERMINAL verdict enum for the operator's own acceptance record — "refuses
@@ -65,13 +89,23 @@ class ReleaseError(Exception):
 
 
 class Atom:
-    def __init__(self, id, spec_ref, contract_ref, depends_on, paths=None, journeys=None):
+    """A release atom. Either a FACTORY-lane atom (`spec_ref` + `contract_ref` both set, `charter_ref`
+    None — the frozen spec+contract pair every prior release used) or a CHARTER-lane atom
+    (`charter_ref` set, `spec_ref`/`contract_ref` None — release-loader-vocabulary, AC-RLV-2): no
+    contract freeze, the committed charter file is the record. `_validate` is the only place that
+    enforces which shape a given atom must have; this constructor stores whatever it is given."""
+    def __init__(self, id, spec_ref, contract_ref, depends_on, paths=None, journeys=None,
+                charter_ref=None, lane=None, kind=None, security=None):
         self.id = id
-        self.spec_ref = spec_ref
-        self.contract_ref = contract_ref
+        self.spec_ref = spec_ref             # None for a charter-lane atom
+        self.contract_ref = contract_ref     # None for a charter-lane atom
         self.depends_on = depends_on
         self.paths = list(paths or [])          # declared write-path scope (optional)
         self.journeys = list(journeys or [])     # journey/AC tags (optional)
+        self.charter_ref = charter_ref       # path to the committed charter .md (charter-lane only)
+        self.lane = lane                     # "charter" | "factory" | None (not declared)
+        self.kind = kind                     # free-text atom kind (e.g. "NS", "HC") — never gated
+        self.security = security             # bool | None — mirrors the manifest's own security flag
 
 
 class Release:
@@ -179,8 +213,10 @@ def _validate(doc, expected_id):
     if not isinstance(doc["description"], str) or not doc["description"].strip():
         raise ReleaseError(f"release {rid!r}: `description` must be a non-empty string")
     state = doc["state"]
+    state = _STATE_READ_SYNONYMS.get(state, state)      # AC-RLV-4: `proposed` reads as `planned`
     if state not in STATES:
-        raise ReleaseError(f"release {rid!r}: `state` {state!r} not in {STATES}")
+        raise ReleaseError(f"release {rid!r}: `state` {state!r} not in {STATES} "
+                           f"(also accepted on read: {sorted(_STATE_READ_SYNONYMS)})")
     atoms_raw = doc["atoms"]
     if not isinstance(atoms_raw, list) or not atoms_raw:
         raise ReleaseError(f"release {rid!r}: `atoms` must be a non-empty list")
@@ -202,9 +238,40 @@ def _validate(doc, expected_id):
         if aid in seen:
             raise ReleaseError(f"release {rid!r}: duplicate atom id {aid!r}")
         seen.add(aid)
-        for field in ("spec_ref", "contract_ref"):
-            if not isinstance(raw[field], str) or not raw[field].strip():
+        # (release-loader-vocabulary, AC-RLV-2): an atom is EITHER a charter-lane atom
+        # (`charter_ref`, no contract) OR a factory-lane atom (`spec_ref` + `contract_ref`, the
+        # pre-existing shape) — every field that IS present is still type/shape-checked (a
+        # malformed field is refused even when it is not the field deciding the atom's lane);
+        # an atom carrying neither shape is refused BY NAME (never a silent skip).
+        spec_ref = raw.get("spec_ref")
+        contract_ref = raw.get("contract_ref")
+        charter_ref = raw.get("charter_ref")
+        for field, value in (("spec_ref", spec_ref), ("contract_ref", contract_ref),
+                             ("charter_ref", charter_ref)):
+            if value is not None and (not isinstance(value, str) or not value.strip()):
                 raise ReleaseError(f"release {rid!r}: atom {aid!r} {field} must be a non-empty string")
+        has_charter = bool(charter_ref)
+        has_factory = bool(spec_ref) and bool(contract_ref)
+        if not has_charter and not has_factory:
+            raise ReleaseError(
+                f"release {rid!r}: atom {aid!r} must carry `charter_ref`, or both `spec_ref` + "
+                f"`contract_ref` — carries neither shape")
+        if has_charter and (spec_ref or contract_ref):
+            # PR #162 review: the two shapes are EXCLUSIVE — every consumer branches on charter_ref
+            # first, so a mixed atom would carry a contract_ref that ready_set never confines.
+            raise ReleaseError(
+                f"release {rid!r}: atom {aid!r} carries `charter_ref` AND `spec_ref`/`contract_ref` — "
+                f"one shape only (charter lane or factory lane)")
+        kind = raw.get("kind")
+        if kind is not None and (not isinstance(kind, str) or not kind.strip()):
+            raise ReleaseError(f"release {rid!r}: atom {aid!r} kind must be a non-empty string")
+        lane = raw.get("lane")
+        if lane is not None and lane not in _ATOM_LANE_VALUES:
+            raise ReleaseError(f"release {rid!r}: atom {aid!r} lane {lane!r} not in "
+                               f"{sorted(_ATOM_LANE_VALUES)}")
+        security = raw.get("security")
+        if security is not None and not isinstance(security, bool):
+            raise ReleaseError(f"release {rid!r}: atom {aid!r} security must be a boolean")
         dep = raw["depends_on"]
         if not isinstance(dep, list) or not all(isinstance(d, str) for d in dep):
             raise ReleaseError(f"release {rid!r}: atom {aid!r} depends_on must be a list of atom ids")
@@ -220,7 +287,8 @@ def _validate(doc, expected_id):
         if not isinstance(journeys, list) or not all(isinstance(j, str) and j.strip() for j in journeys):
             raise ReleaseError(f"release {rid!r}: atom {aid!r} journeys must be a list of "
                                f"non-empty, non-whitespace-only strings")
-        atoms.append(Atom(aid, raw["spec_ref"], raw["contract_ref"], dep, paths=paths, journeys=journeys))
+        atoms.append(Atom(aid, spec_ref, contract_ref, dep, paths=paths, journeys=journeys,
+                          charter_ref=charter_ref, lane=lane, kind=kind, security=security))
 
     order = _toposort(atoms)                      # raises on cycle / dangling edge
     acceptance = _validate_acceptance(rid, doc.get("acceptance", []))
@@ -253,10 +321,26 @@ def save_release(release, *, project_dir=None):
     path = release_path(release.id, project_dir)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     def _atom_doc(a):
-        d = {"id": a.id, "spec_ref": a.spec_ref, "contract_ref": a.contract_ref,
-             "depends_on": a.depends_on}
+        d = {"id": a.id}
+        # (release-loader-vocabulary): a charter-lane atom has no spec_ref/contract_ref (None) —
+        # round-trip only whichever ref shape the atom actually carries, so a factory-lane atom's
+        # doc is byte-identical to before this extension and a charter-lane atom never gains
+        # `spec_ref: null`/`contract_ref: null` noise.
+        if a.spec_ref is not None:
+            d["spec_ref"] = a.spec_ref
+        if a.contract_ref is not None:
+            d["contract_ref"] = a.contract_ref
+        if a.charter_ref is not None:
+            d["charter_ref"] = a.charter_ref
+        d["depends_on"] = a.depends_on
         # round-trip the optional fields only when populated, so a manifest
         # authored before this extension is re-saved byte-stable (no `paths: []` noise added).
+        if a.kind is not None:
+            d["kind"] = a.kind
+        if a.lane is not None:
+            d["lane"] = a.lane
+        if a.security is not None:
+            d["security"] = a.security
         if a.paths:
             d["paths"] = a.paths
         if a.journeys:
@@ -339,7 +423,11 @@ def append_acceptance(release_id, operator, verdict, note, *, project_dir=None, 
 def _contract_info(atom, project_dir):
     """Read (target_repo, contract_sha256) from an atom's contract_ref (resolved under the project dir).
     target_repo is the top-level CHECK-4b venue field (None = self-host/default repo); contract_sha256 is
-    the frozen authorized: block value. Returns (None, None) on any read error (fail-safe → not-merged)."""
+    the frozen authorized: block value. Returns (None, None) on any read error (fail-safe → not-merged).
+    (release-loader-vocabulary): a charter-lane atom has no `contract_ref` at all — that is likewise
+    "cannot read a contract", not a crash."""
+    if not atom.contract_ref:
+        return (None, None)
     path = os.path.join(_project_dir(project_dir), atom.contract_ref)
     try:
         with open(path, encoding="utf-8") as f:
@@ -350,10 +438,31 @@ def _contract_info(atom, project_dir):
     return (doc.get("target_repo"), blk.get("contract_sha256"))
 
 
+def _charter_authorized(atom, project_dir):
+    """AC-RLV-3: a charter-lane atom is authorized iff its `charter_ref` file exists under the
+    project dir AND is committed on the workspace branch — `git log -1 --format=%H -- <charter_ref>`
+    non-empty (the charter lane's own record IS the commit; there is no separate contract to freeze).
+    Fail-safe → False on any git/filesystem error (never raises)."""
+    pd = _project_dir(project_dir)
+    path = os.path.join(pd, atom.charter_ref)
+    if not os.path.isfile(path):
+        return False
+    try:
+        r = subprocess.run(["git", "-C", pd, "log", "-1", "--format=%H", "--", atom.charter_ref],
+                           capture_output=True, text=True)
+    except Exception:
+        return False
+    return r.returncode == 0 and bool(r.stdout.strip())
+
+
 def _default_authorized(atom, project_dir):
-    """Re-derive an atom's authorization via foundry_authz.is_authorized (recompute-match of spec_sha256 +
-    contract_sha256 over the live working-tree spec+contract — the same primitive the merge gate's CHECK 1
-    uses). Resolves spec_ref/contract_ref under the project dir. Fail-safe → False on any error."""
+    """Re-derive an atom's authorization. A charter-lane atom (AC-RLV-3) routes to
+    `_charter_authorized`; a factory-lane atom re-derives via `foundry_authz.is_authorized`
+    (recompute-match of spec_sha256 + contract_sha256 over the live working-tree spec+contract — the
+    same primitive the merge gate's CHECK 1 uses). Resolves spec_ref/contract_ref under the project
+    dir. Fail-safe → False on any error."""
+    if atom.charter_ref:
+        return _charter_authorized(atom, project_dir)
     sys.path.insert(0, HERE)
     try:
         import foundry_authz as fa
@@ -507,9 +616,15 @@ def derive_closure(release, *, project_dir=None, branch="main",
 
 
 def _require_specs_and_contracts(release, project_dir):
+    """A charter-lane atom (`charter_ref` set) is checked for its charter file; a factory-lane atom
+    is checked for both spec_ref + contract_ref, as before this extension."""
     pd = _project_dir(project_dir)
     missing = []
     for a in release.atoms:
+        if a.charter_ref:
+            if not os.path.isfile(os.path.join(pd, a.charter_ref)):
+                missing.append(f"{a.id}:charter_ref")
+            continue
         if not os.path.isfile(os.path.join(pd, a.spec_ref)):
             missing.append(f"{a.id}:spec_ref")
         if not os.path.isfile(os.path.join(pd, a.contract_ref)):
@@ -587,11 +702,14 @@ FANOUT_REL = os.path.join(".foundry", "fanout")   # the process-spawn dispatch-m
 
 
 def _probe_superseded(atom, project_dir):
-    """AC-RRS-2: (superseded_or_None, probe_error_or_None). None+error iff the atom's spec_ref is
-    itself unresolvable (absent/unreadable) — an unresolvable input per AC-RRS-5, not a silent False."""
-    path = os.path.join(_project_dir(project_dir), atom.spec_ref)
+    """AC-RRS-2: (superseded_or_None, probe_error_or_None). None+error iff the atom's spec_ref (or,
+    for a charter-lane atom, its charter_ref — release-loader-vocabulary — the same "is there a live
+    text artifact to probe for a supersession marker" question) is itself unresolvable
+    (absent/unreadable) — an unresolvable input per AC-RRS-5, not a silent False."""
+    ref = atom.charter_ref or atom.spec_ref     # load-time validation guarantees exactly one is set
+    path = os.path.join(_project_dir(project_dir), ref)
     if not os.path.isfile(path):
-        return None, f"{atom.id}: spec unreadable ({atom.spec_ref})"
+        return None, f"{atom.id}: spec unreadable ({ref})"
     try:
         with open(path, encoding="utf-8") as f:
             text = f.read()
@@ -642,7 +760,14 @@ def _probe_merged_on_main(atom, project_dir, branch):
     `authorized:` block yet (the common not-yet-authorized case — most backlog atoms) is NOT
     unresolvable: an atom cannot merge before it is authorized, so `False` is a confident, well-
     defined derivation here, not a probe failure (this is what keeps the `unauthorized` bucket
-    reachable — every un-authorized atom would otherwise misroute to UNKNOWN)."""
+    reachable — every un-authorized atom would otherwise misroute to UNKNOWN).
+
+    (release-loader-vocabulary, AC-RLV-3): a charter-lane atom (`contract_ref` None) has no
+    contract_sha256 mechanism to verify merged-on-main against — `merged_on_main` is `False`,
+    definitively (not unresolvable; the charter lane's own dispatch/landing evidence is out of
+    THIS atom's scope, same posture as "not yet authorized" above)."""
+    if not atom.contract_ref:
+        return False, None
     contract_path = os.path.join(_project_dir(project_dir), atom.contract_ref)
     if not os.path.isfile(contract_path):
         return None, f"{atom.id}: contract unreadable ({atom.contract_ref})"

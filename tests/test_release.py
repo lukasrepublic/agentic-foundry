@@ -287,6 +287,357 @@ class TestAcceptance:
             assert "acceptance" not in f.read()
 
 
+# ================================================ release-loader-vocabulary: AC-RLV-1..5 ==== #
+#
+# The autonomy-continuation programme manifests carry a vocabulary the ORIGINAL loader (base
+# f7cfa25) rejected outright: extra top-level fields (program/version/target_repo/...) and
+# charter-lane atoms (`charter_ref` instead of a frozen spec+contract). `_load_release_at_rev`
+# below proves the RED side directly (loads the base commit's `foundry_release.py` as an isolated
+# module and shows it refusing the exact same fixture this atom's own tests show GREEN) — a
+# real before/after over the same input, not an assertion about history.
+
+FIXTURES_DIR = os.path.join(REPO_ROOT, "tests", "fixtures", "releases")
+
+
+def _seed_release_fixture(project_dir, release_id):
+    """Copy the shipped `tests/fixtures/releases/<release_id>/release.yaml` into
+    `<project_dir>/.foundry/releases/<release_id>/release.yaml`, the layout `load_release` expects."""
+    import shutil
+    src = os.path.join(REPO_ROOT, "tests", "fixtures", "releases", release_id, "release.yaml")
+    dst_dir = os.path.join(project_dir, ".foundry", "releases", release_id)
+    os.makedirs(dst_dir, exist_ok=True)
+    shutil.copyfile(src, os.path.join(dst_dir, "release.yaml"))
+    return dst_dir
+
+
+def _load_release_module_at_rev(rev):
+    """Load `scripts/foundry_release.py` AS IT WAS AT `rev` (a git blob, via `git show`) into an
+    isolated module object — never touching the working tree/sys.modules cache — so a test can
+    prove what the loader used to do, over the SAME fixture input the current loader now accepts."""
+    import types
+    p = subprocess.run(["git", "-C", REPO_ROOT, "show", f"{rev}:scripts/foundry_release.py"],
+                       capture_output=True, text=True)
+    assert p.returncode == 0, f"git show {rev}:scripts/foundry_release.py failed: {p.stderr}"
+    mod = types.ModuleType(f"foundry_release_at_{rev}")
+    mod.__file__ = f"<git {rev}:scripts/foundry_release.py>"
+    sys.path.insert(0, os.path.join(REPO_ROOT, "scripts"))   # so its `import foundry_authz` resolves
+    exec(compile(p.stdout, mod.__file__, "exec"), mod.__dict__)
+    return mod
+
+
+BASE_REV = "f7cfa25"   # the commit release-loader-vocabulary's worktree branched from
+
+
+class TestReleaseLoaderVocabulary:
+    # ---- AC-RLV-1: top-level programme-manifest vocabulary ------------------------------------
+
+    def test_top_level_vocabulary_fields_accepted(self, tmp_path):
+        rel_dir = os.path.join(str(tmp_path), ".foundry", "releases", "r-vocab1")
+        os.makedirs(rel_dir, exist_ok=True)
+        doc = {
+            "id": "r-vocab1", "description": "d", "state": "backlog",
+            "program": "autonomy-continuation", "version": "1.12.0",
+            "target_repo": "agentic-foundry", "target_version": "1.12.0",
+            "depends_on_release": ["r-prior"], "value": ["V1 thing"],
+            "subtraction": ["some prose"], "lane": "charter by default",
+            "gate_before_authorize": True, "supersedes_atoms": ["old-atom"],
+            "exit": ["exit condition prose"],
+            "atoms": [{"id": "a1", "spec_ref": "specs/a1.md", "contract_ref": "specs/a1.yaml",
+                      "depends_on": []}],
+        }
+        with open(os.path.join(rel_dir, "release.yaml"), "w", encoding="utf-8") as f:
+            yaml.safe_dump(doc, f, sort_keys=False)
+        rel = release.load_release("r-vocab1", project_dir=str(tmp_path))   # must not raise
+        assert rel.id == "r-vocab1"
+
+    def test_unknown_top_level_field_still_refused_by_name(self, tmp_path):
+        rel_dir = os.path.join(str(tmp_path), ".foundry", "releases", "r-vocab2")
+        os.makedirs(rel_dir, exist_ok=True)
+        doc = {
+            "id": "r-vocab2", "description": "d", "state": "backlog",
+            "totally_unknown_field": "x",
+            "atoms": [{"id": "a1", "spec_ref": "specs/a1.md", "contract_ref": "specs/a1.yaml",
+                      "depends_on": []}],
+        }
+        with open(os.path.join(rel_dir, "release.yaml"), "w", encoding="utf-8") as f:
+            yaml.safe_dump(doc, f, sort_keys=False)
+        with pytest.raises(release.ReleaseError, match="totally_unknown_field"):
+            release.load_release("r-vocab2", project_dir=str(tmp_path))
+
+    # ---- AC-RLV-2: charter-lane atoms ----------------------------------------------------------
+
+    def test_charter_lane_atom_accepted_no_contract(self, tmp_path):
+        rel_dir = os.path.join(str(tmp_path), ".foundry", "releases", "r-vocab3")
+        os.makedirs(rel_dir, exist_ok=True)
+        doc = {
+            "id": "r-vocab3", "description": "d", "state": "backlog",
+            "atoms": [{"id": "charter-atom", "charter_ref": "charters/x.md", "depends_on": [],
+                      "kind": "NS", "lane": "charter", "security": False}],
+        }
+        with open(os.path.join(rel_dir, "release.yaml"), "w", encoding="utf-8") as f:
+            yaml.safe_dump(doc, f, sort_keys=False)
+        rel = release.load_release("r-vocab3", project_dir=str(tmp_path))
+        atom = rel.by_id["charter-atom"]
+        assert atom.charter_ref == "charters/x.md"
+        assert atom.spec_ref is None and atom.contract_ref is None
+        assert atom.kind == "NS" and atom.lane == "charter" and atom.security is False
+
+    def test_atom_neither_ref_shape_refused_naming_atom(self, tmp_path):
+        rel_dir = os.path.join(str(tmp_path), ".foundry", "releases", "r-vocab4")
+        os.makedirs(rel_dir, exist_ok=True)
+        doc = {
+            "id": "r-vocab4", "description": "d", "state": "backlog",
+            "atoms": [{"id": "bare-atom", "depends_on": []}],
+        }
+        with open(os.path.join(rel_dir, "release.yaml"), "w", encoding="utf-8") as f:
+            yaml.safe_dump(doc, f, sort_keys=False)
+        with pytest.raises(release.ReleaseError, match="bare-atom"):
+            release.load_release("r-vocab4", project_dir=str(tmp_path))
+
+    def test_atom_only_one_of_spec_or_contract_refused(self, tmp_path):
+        rel_dir = os.path.join(str(tmp_path), ".foundry", "releases", "r-vocab4b")
+        os.makedirs(rel_dir, exist_ok=True)
+        doc = {
+            "id": "r-vocab4b", "description": "d", "state": "backlog",
+            "atoms": [{"id": "half-atom", "spec_ref": "specs/a1.md", "depends_on": []}],
+        }
+        with open(os.path.join(rel_dir, "release.yaml"), "w", encoding="utf-8") as f:
+            yaml.safe_dump(doc, f, sort_keys=False)
+        with pytest.raises(release.ReleaseError, match="half-atom"):
+            release.load_release("r-vocab4b", project_dir=str(tmp_path))
+
+    def test_atom_lane_value_closed_set(self, tmp_path):
+        rel_dir = os.path.join(str(tmp_path), ".foundry", "releases", "r-vocab5")
+        os.makedirs(rel_dir, exist_ok=True)
+        doc = {
+            "id": "r-vocab5", "description": "d", "state": "backlog",
+            "atoms": [{"id": "bad-lane", "charter_ref": "charters/x.md", "depends_on": [],
+                      "lane": "not-a-real-lane"}],
+        }
+        with open(os.path.join(rel_dir, "release.yaml"), "w", encoding="utf-8") as f:
+            yaml.safe_dump(doc, f, sort_keys=False)
+        with pytest.raises(release.ReleaseError, match="bad-lane"):
+            release.load_release("r-vocab5", project_dir=str(tmp_path))
+
+    def test_atom_security_must_be_boolean(self, tmp_path):
+        rel_dir = os.path.join(str(tmp_path), ".foundry", "releases", "r-vocab6")
+        os.makedirs(rel_dir, exist_ok=True)
+        doc = {
+            "id": "r-vocab6", "description": "d", "state": "backlog",
+            "atoms": [{"id": "bad-sec", "charter_ref": "charters/x.md", "depends_on": [],
+                      "security": "true"}],   # a string, not a bool
+        }
+        with open(os.path.join(rel_dir, "release.yaml"), "w", encoding="utf-8") as f:
+            yaml.safe_dump(doc, f, sort_keys=False)
+        with pytest.raises(release.ReleaseError, match="bad-sec"):
+            release.load_release("r-vocab6", project_dir=str(tmp_path))
+
+    def test_charter_atom_round_trips_no_null_noise(self, tmp_path):
+        rel_dir = os.path.join(str(tmp_path), ".foundry", "releases", "r-vocab7")
+        os.makedirs(rel_dir, exist_ok=True)
+        doc = {
+            "id": "r-vocab7", "description": "d", "state": "backlog",
+            "atoms": [{"id": "charter-atom", "charter_ref": "charters/x.md", "depends_on": []}],
+        }
+        with open(os.path.join(rel_dir, "release.yaml"), "w", encoding="utf-8") as f:
+            yaml.safe_dump(doc, f, sort_keys=False)
+        rel = release.load_release("r-vocab7", project_dir=str(tmp_path))
+        release.save_release(rel, project_dir=str(tmp_path))
+        with open(os.path.join(rel_dir, "release.yaml"), encoding="utf-8") as f:
+            text = f.read()
+        assert "spec_ref" not in text and "contract_ref" not in text
+        assert "charter_ref: charters/x.md" in text
+        release.load_release("r-vocab7", project_dir=str(tmp_path))   # still loads after round-trip
+
+    # ---- AC-RLV-3: charter-lane authorization + merged-on-main / dependency gate --------------
+
+    def test_charter_authorized_iff_file_exists_and_committed(self, tmp_path):
+        pd = str(tmp_path)
+        _mkgit(pd)
+        charter_dir = os.path.join(pd, "charters")
+        os.makedirs(charter_dir, exist_ok=True)
+        charter_path = os.path.join(charter_dir, "x.md")
+        atom = release.Atom("c1", None, None, [], charter_ref="charters/x.md")
+
+        # 1. file absent -> not authorized
+        assert release._default_authorized(atom, pd) is False
+
+        # 2. file present but UNCOMMITTED -> not authorized (git log -1 -- <file> is empty)
+        with open(charter_path, "w", encoding="utf-8") as f:
+            f.write("# charter\n")
+        assert release._default_authorized(atom, pd) is False
+
+        # 3. file committed -> authorized
+        _run(["git", "-C", pd, "add", "charters/x.md"])
+        _run(["git", "-C", pd, "commit", "-q", "-m", "add charter"])
+        assert release._default_authorized(atom, pd) is True
+
+    def test_dependency_gate_and_merged_on_main_unchanged_for_charter_atom(self, tmp_path):
+        """AC-RLV-3: merged_on_main + the depends_on gate are UNCHANGED — a charter-lane atom has
+        no contract_sha256 mechanism, so its `merged_on_main` is a well-defined False (never
+        unresolvable), and a factory atom depending on it stays `blocked` naming it, exactly the
+        same as a factory atom depending on an unmerged factory atom would."""
+        pd = str(tmp_path)
+        _mkgit(pd)
+        charter_dir = os.path.join(pd, "charters")
+        os.makedirs(charter_dir, exist_ok=True)
+        with open(os.path.join(charter_dir, "c1.md"), "w", encoding="utf-8") as f:
+            f.write("# charter\n")
+        _run(["git", "-C", pd, "add", "-A"])
+        _run(["git", "-C", pd, "commit", "-q", "-m", "add charter"])
+        _run(["git", "-C", pd, "branch", "-M", "main"])   # derive_run_state's default branch
+
+        os.makedirs(os.path.join(pd, ".claude"), exist_ok=True)
+        json.dump({"schema_version": 1, "operators": {"op_test": {"name": "T", "github": "t",
+                                                                   "added_at": "2026-01-01"}}},
+                  open(os.path.join(pd, ".claude", "foundry-operators.json"), "w"))
+        spec_rel, contract_rel = _make_spec_contract(pd, "f1", "AC-F1-1")
+        ok, out = _authorize(pd, spec_rel, contract_rel)
+        assert ok, out   # f1 itself must be authorized so the test reaches the DEPENDENCY gate,
+                         # not the (already-covered) "not authorized" bucket
+        rel_dir = os.path.join(pd, ".foundry", "releases", "r-charter-dep")
+        os.makedirs(rel_dir, exist_ok=True)
+        doc = {
+            "id": "r-charter-dep", "description": "d", "state": "active",
+            "atoms": [
+                {"id": "c1", "charter_ref": "charters/c1.md", "depends_on": []},
+                {"id": "f1", "spec_ref": spec_rel, "contract_ref": contract_rel,
+                 "depends_on": ["c1"]},
+            ],
+        }
+        with open(os.path.join(rel_dir, "release.yaml"), "w", encoding="utf-8") as f:
+            yaml.safe_dump(doc, f, sort_keys=False)
+        rel = release.load_release("r-charter-dep", project_dir=pd)
+        rows = release.derive_run_state(rel, project_dir=pd)
+        by_id = {r["id"]: r for r in rows}
+        assert by_id["c1"]["authorized"] is True         # committed charter -> authorized
+        assert by_id["c1"]["merged_on_main"] is False     # no contract mechanism -> definitively False
+        assert by_id["c1"]["probe_error"] is None         # a definite False, not "unresolvable"
+        assert by_id["f1"]["state"] == "blocked"
+        assert "c1" in (by_id["f1"]["blocked_reason"] or "")
+
+    def test_require_specs_and_contracts_accepts_charter_ref(self, tmp_path):
+        """`transition(..., "planned")` — AC-RLV-3's "unchanged" mechanism must not crash on a
+        charter atom; it checks the charter file exists instead of spec_ref/contract_ref."""
+        pd = str(tmp_path)
+        rel_dir = os.path.join(pd, ".foundry", "releases", "r-plan-charter")
+        os.makedirs(rel_dir, exist_ok=True)
+        charter_dir = os.path.join(pd, "charters")
+        os.makedirs(charter_dir, exist_ok=True)
+        doc = {
+            "id": "r-plan-charter", "description": "d", "state": "backlog",
+            "atoms": [{"id": "c1", "charter_ref": "charters/c1.md", "depends_on": []}],
+        }
+        with open(os.path.join(rel_dir, "release.yaml"), "w", encoding="utf-8") as f:
+            yaml.safe_dump(doc, f, sort_keys=False)
+        rel = release.load_release("r-plan-charter", project_dir=pd)
+        with pytest.raises(release.ReleaseError, match="c1:charter_ref"):
+            release.transition(rel, "planned", project_dir=pd)   # charter file absent -> refused
+        with open(os.path.join(charter_dir, "c1.md"), "w", encoding="utf-8") as f:
+            f.write("# c1\n")
+        # `rel.state` was never mutated by the failed call above (the precondition raises BEFORE
+        # `release.state = target`) — the same in-memory Release is reusable for the retry.
+        release.transition(rel, "planned", project_dir=pd)             # now succeeds
+
+    # ---- AC-RLV-4: `proposed` reads as `planned` ------------------------------------------------
+
+    def test_state_proposed_reads_as_planned(self, tmp_path):
+        rel_dir = os.path.join(str(tmp_path), ".foundry", "releases", "r-proposed")
+        os.makedirs(rel_dir, exist_ok=True)
+        doc = {
+            "id": "r-proposed", "description": "d", "state": "proposed",
+            "atoms": [{"id": "a1", "spec_ref": "specs/a1.md", "contract_ref": "specs/a1.yaml",
+                      "depends_on": []}],
+        }
+        with open(os.path.join(rel_dir, "release.yaml"), "w", encoding="utf-8") as f:
+            yaml.safe_dump(doc, f, sort_keys=False)
+        rel = release.load_release("r-proposed", project_dir=str(tmp_path))
+        assert rel.state == "planned"
+        # the forward-only transition table is unchanged: "planned" -> "active" is still legal
+        assert release._LEGAL["planned"] == "active"
+
+    def test_state_unknown_synonym_still_refused(self, tmp_path):
+        rel_dir = os.path.join(str(tmp_path), ".foundry", "releases", "r-badstate")
+        os.makedirs(rel_dir, exist_ok=True)
+        doc = {
+            "id": "r-badstate", "description": "d", "state": "not-a-real-state",
+            "atoms": [{"id": "a1", "spec_ref": "specs/a1.md", "contract_ref": "specs/a1.yaml",
+                      "depends_on": []}],
+        }
+        with open(os.path.join(rel_dir, "release.yaml"), "w", encoding="utf-8") as f:
+            yaml.safe_dump(doc, f, sort_keys=False)
+        with pytest.raises(release.ReleaseError, match="not-a-real-state"):
+            release.load_release("r-badstate", project_dir=str(tmp_path))
+
+    # ---- AC-RLV-5: the two real programme-manifest fixtures ------------------------------------
+
+    def test_ac_r1_fixture_manifest_loads_clean(self, tmp_path):
+        pd = str(tmp_path)
+        _seed_release_fixture(pd, "ac-r1-stop-stopping")
+        rel = release.load_release("ac-r1-stop-stopping", project_dir=pd)
+        assert rel.id == "ac-r1-stop-stopping"
+        assert rel.state == "active"
+        ids = {a.id for a in rel.atoms}
+        assert ids == {"release-loader-vocabulary", "contract-done-when-escalate-when",
+                       "standing-grants-as-policy", "blocker-requires-evidence",
+                       "operator-handoff-schema"}
+        charter_atom = rel.by_id["release-loader-vocabulary"]
+        assert charter_atom.charter_ref and charter_atom.spec_ref is None
+        factory_atom = rel.by_id["standing-grants-as-policy"]
+        assert factory_atom.spec_ref and factory_atom.contract_ref and factory_atom.security is True
+
+    def test_ac_r1_fixture_refused_by_the_pre_change_loader_RED_before_GREEN(self, tmp_path):
+        """RED-before-GREEN: the SAME fixture bytes, loaded by `foundry_release.py` as it stood at
+        BASE_REV (before this atom), are refused; loaded by the current module (previous test),
+        they succeed. This is the atom's own change-attribution evidence, not a claim about the
+        current code — it re-derives the RED side every run rather than asserting history."""
+        pd = str(tmp_path)
+        _seed_release_fixture(pd, "ac-r1-stop-stopping")
+        old = _load_release_module_at_rev(BASE_REV)
+        with pytest.raises(old.ReleaseError):
+            old.load_release("ac-r1-stop-stopping", project_dir=pd)
+
+    def test_ac_r0_fixture_top_level_vocabulary_loads_clean(self, tmp_path):
+        """AC-RLV-1 over the R0 fixture: every top-level field the real manifest carries
+        (program/version/target_repo/target_version/depends_on_release/value/subtraction/lane/
+        exit) is in the closed optional set — demonstrated directly against `_TOP_OPTIONAL_FIELDS`
+        rather than via `load_release` (see the next test for why the FULL load does not succeed)."""
+        with open(os.path.join(FIXTURES_DIR, "ac-r0-living-spec-process", "release.yaml"),
+                 encoding="utf-8") as f:
+            doc = yaml.safe_load(f)
+        top_keys = set(doc.keys())
+        required, optional = release._TOP_REQUIRED_FIELDS, release._TOP_OPTIONAL_FIELDS
+        assert top_keys - required - optional == set(), \
+            f"unexpected top-level field(s) in the real R0 manifest: {top_keys - required - optional}"
+
+    def test_mixed_shape_atom_refused_by_name(self, tmp_path):
+        """PR #162 review Risk: an atom carrying charter_ref AND a contract_ref is refused — the shapes
+        are exclusive, so no contract_ref can bypass ready_set's charter-first confinement."""
+        pd = str(tmp_path)
+        _seed_release_fixture(pd, "ac-r1-stop-stopping")
+        path = os.path.join(pd, ".foundry", "releases", "ac-r1-stop-stopping", "release.yaml")
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        text = text.replace("    charter_ref: .foundry/releases/ac-r1-stop-stopping/charters/release-loader-vocabulary.md\n",
+                            "    charter_ref: .foundry/releases/ac-r1-stop-stopping/charters/release-loader-vocabulary.md\n"
+                            "    contract_ref: specs/x/acceptance-contract.yaml\n", 1)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        with pytest.raises(release.ReleaseError, match="release-loader-vocabulary.*one shape only"):
+            release.load_release("ac-r1-stop-stopping", project_dir=pd)
+
+    def test_ac_r0_fixture_manifest_loads_clean(self, tmp_path):
+        """AC-RLV-5: the R0 manifest (repaired on the workspace side 2026-09-19 — valid YAML, every atom
+        carrying spec_ref+contract_ref or charter_ref, `lands: first` on the first atom) loads without
+        error; three factory-lane atoms and five charter-lane atoms."""
+        pd = str(tmp_path)
+        _seed_release_fixture(pd, "ac-r0-living-spec-process")
+        rel = release.load_release("ac-r0-living-spec-process", project_dir=pd)
+        assert len(rel.atoms) == 8
+        assert sum(1 for a in rel.atoms if a.charter_ref) == 5
+        assert sum(1 for a in rel.atoms if a.spec_ref and a.contract_ref) == 3
+
+
 # ============================================================ foundry_release.py: run-state ==== #
 
 def _run(cmd, **kw):

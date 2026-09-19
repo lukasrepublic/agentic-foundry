@@ -1,0 +1,100 @@
+id: ac-r0-living-spec-process
+program: autonomy-continuation
+version: 1.11.0
+description: >
+  R0 — the process change itself, shipped FIRST and kept minimal, per the operator decision of
+  2026-09-18 (.foundry/decisions/2026-09-18-spec-is-a-living-document.md): the spec is a living
+  document amended during implementation; first-wave specs and live code fast over polished paper;
+  later waves learn from earlier ones. Every release after this one is specified and built under the
+  new process, so it goes first. This is the LAST release built the old way, and it is sized so that
+  takes days, not weeks. Absorbs ac-r1b-front-gate-yield (now superseded) plus the two cheapest R1 atoms
+  the process needs before wave 1 starts: the audit-ledger allowlist and the yield/silent-yield
+  instrument. Plan: docs/programs/autonomy-continuation/PROGRAM.md §3.
+state: completed   # landed 2026-09-19: R fd381fa, R2 dcc03f2, tag v1.11.0 on R2 (loader vocabulary gap: see state.yaml open_risks)
+target_repo: agentic-foundry
+target_version: 1.11.0
+depends_on_release: []
+lane: "factory for security:true atoms; charter for the rest (the decision applied to itself)"
+value: ["V2 floor #1 holds", "V8 authorization spent only on work about to start", "V9 amendment costs one step unless it widens scope"]
+subtraction:
+  - the §8 audit-record precondition in foundry-authorize.py
+  - /foundry:authorize-release bulk signing (display kept)
+  - "'converged' as a review terminus"
+  - the run-metrics.jsonl writer (every row "unobserved") — replaced by the instrument
+
+atoms:
+  - id: authorize-drops-audit-precondition
+    lane: factory
+    spec_ref: specs/features/foundry/authorization/authorize-drops-audit-precondition/feat-foundry-authorization-authorize-drops-audit-precondition.md
+    contract_ref: specs/features/foundry/authorization/authorize-drops-audit-precondition/acceptance-contract.yaml
+    kind: HC
+    depends_on: []
+    lands: first
+    security: true
+    # foundry-authorize.py:225-226 requires ledger.find_audit(spec_hash). Engine converged 0/17;
+    # "the §8 audit deadlock (O-61) is live — I hit it today". Remove; spec-review stays the review verb;
+    # deep audit operator-invoked only.
+  - id: audit-ledger-allowlist
+    lane: factory
+    spec_ref: specs/features/foundry/authorization/audit-ledger-allowlist/feat-foundry-authorization-audit-ledger-allowlist.md
+    contract_ref: specs/features/foundry/authorization/audit-ledger-allowlist/acceptance-contract.yaml
+    kind: HC
+    depends_on: []
+    security: true
+    # The floor-#1 fail-open (foundry_audit_ledger.py:67,70,151; foundry-audit-record.py:37). Moot for
+    # authorization once the precondition is gone, but the ledger must not record a crashed audit as
+    # clean. One-line inversion + required --verdict + regression test.
+  - id: amend-verb
+    lane: factory
+    spec_ref: specs/features/foundry/authorization/amend-verb/feat-foundry-authorization-amend-verb.md
+    contract_ref: specs/features/foundry/authorization/amend-verb/acceptance-contract.yaml
+    kind: NS
+    depends_on: [authorize-drops-audit-precondition]
+    security: true
+    # One-step amendment: diff the normative region → classify. WIDENING (allowed_paths, denied_paths,
+    # account ids, requires_capabilities, any security:true spec) → operator fork. Else the agent
+    # re-freezes, auth_seq bumps, the diff is recorded in the spec's `## Amendments`. Never quietly widen.
+  - id: spec-template-amendments-section
+    lane: charter
+    charter_ref: .foundry/releases/ac-r0-living-spec-process/charters/spec-template-amendments-section.md
+    kind: NS
+    depends_on: []
+    # context/feat-spec-template.md and charter-template.md gain `## Amendments` (date · what changed ·
+    # why reality required it · auth_seq). The wave-1 depth rule is written into CONSTITUTION §12.
+  - id: charter-default-routing
+    lane: charter
+    charter_ref: .foundry/releases/ac-r0-living-spec-process/charters/charter-default-routing.md
+    kind: NS
+    depends_on: []
+    # intake routes by Beck's game test: charter lane by default; factory lane (frozen contract +
+    # review) for security:true atoms; operator override per atom. Bulk authorize-release signing
+    # retired; JIT authorization = the operator merges the spec when the atom is next.
+  - id: wave-learn
+    lane: charter
+    charter_ref: .foundry/releases/ac-r0-living-spec-process/charters/wave-learn.md
+    kind: NS
+    depends_on: [amend-verb]
+    # "next waves learn from previous ones": at wave close the deck writes
+    # .foundry/releases/<id>/state.yaml {decisions, artifacts.reuse_as, open_risks, amendments_needed};
+    # the next wave's intake reads it FIRST. Shares the state.yaml shape R3 later extends.
+  - id: coherence-and-two-rounds
+    lane: charter
+    charter_ref: .foundry/releases/ac-r0-living-spec-process/charters/coherence-and-two-rounds.md
+    kind: NS
+    depends_on: []
+    # /foundry:coherence-check (exists, unused) runs over a release before its first authorization —
+    # a contradiction is a Block naming both owners. Review rule: two rounds, then ship or park;
+    # round 3 is an operator fork; a Block cites a checkpoint id or file:line or it is a Risk.
+  - id: yield-and-silent-yield-instrument
+    lane: charter
+    charter_ref: .foundry/releases/ac-r0-living-spec-process/charters/yield-and-silent-yield-instrument.md
+    kind: NS
+    depends_on: []
+    # scripts/ gets mine_failures.py + spec_signals.py with the six ratios: silent-yield,
+    # directive-reply, granted-verb denial, guard false-positive, authorized→built conversion,
+    # rounds per shipped atom. REPORT ONLY. Exists before wave 1 so wave 1 is measurable.
+
+exit:
+  - a wave-1 atom is authorized JIT, amended mid-build by the agent without an operator turn, and lands
+  - authorize refuses nothing for lack of an audit row; the ledger refuses to record a crashed audit as clean
+  - the instrument reports the six ratios over the previous 30 days as the wave-1 baseline
