@@ -50,7 +50,10 @@ class TestNativeTodoDiscipline:
     def test_session_start_emitter_present_and_executable(self):
         script = os.path.join(REPO_ROOT, "scripts", "foundry-native-todo-discipline.py")
         assert os.path.isfile(script)
-        proc = subprocess.run([sys.executable, script, "--session-start"],
+        # task-tool-instruction-fix (R2): the task-list discipline is emitted only in a team-enabled
+        # session; this test asserts that branch, tests/test_native_todo_discipline.py covers both.
+        env = dict(os.environ, CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS="1")
+        proc = subprocess.run([sys.executable, script, "--session-start"], env=env,
                               capture_output=True, text=True)
         assert proc.returncode == 0
         for tool in ("TaskCreate", "TaskUpdate", "TaskList"):
