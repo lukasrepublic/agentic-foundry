@@ -3,7 +3,7 @@ program: autonomy-continuation
 version: 1.12.0
 description: >
   R1 of autonomy-continuation — the FIRST release built under the living-spec process. Attacks the
-  measured #1 failure (silent yield after a chunk — piiq 81% of handoffs, wax 52% of stops answered
+  measured #1 failure (silent yield after a chunk — adopter A 81% of handoffs, adopter B 52% of stops answered
   "merge it"/"go") and gives the deck a manifest it can actually load. No experimental flags, no
   guard-parser work. Plan + value: docs/programs/autonomy-continuation/PROGRAM.md §4. Intake read
   ac-r0-living-spec-process/state.yaml first (2026-09-19): the loader gap is the first atom; the
