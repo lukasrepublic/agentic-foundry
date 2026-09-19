@@ -541,9 +541,16 @@ def _system_grounding_structural_errors(data: dict) -> list[str]:
 
 
 _DWE_LOCATOR_RE = re.compile(r"^(test|cli|file|checkpoint):.+")
+# `operator-approval` added by feat-foundry-authorization-capability-preflight-at-dispatch
+# (AC-CPD-5, R2 of autonomy-continuation): an `approval_required` permissions.yaml grant, or a
+# missing capability the preflight names, surfaces as a blocker whose why_operator is this member
+# -- byte-identical across this set, schema/acceptance-contract.schema.json's escalate_when enum,
+# schema/blocker.schema.json's why_operator enum, and scripts/foundry_blocker_check.py's
+# _WHY_OPERATOR_SET (all four asserted by
+# tests/test_capability_preflight.py::test_operator_approval_member_is_byte_identical_across_four_sites).
 _DWE_ESCALATE_SET = {
     "external-provisioning", "credential-step", "no-consensus-after-research",
-    "security-widening", "irreversible-action",
+    "security-widening", "irreversible-action", "operator-approval",
 }
 
 

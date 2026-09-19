@@ -146,6 +146,36 @@ once said "successfully initialized" while the state had not migrated, and only 
 revealed it was empty. **If verifying needs the same capability that forced the handover, say so and
 stop** — never report an unverified outcome as verified.
 
+### Capability preflight before dispatch (AC-CPD-3)
+
+**Before dispatching any atom** — per-wave `Workflow` fan-out or a standalone `/foundry:dispatch` —
+run the capability preflight over its frozen contract (a charter-lane atom: its charter)
+(feat-foundry-authorization-capability-preflight-at-dispatch):
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-capability-preflight.py" --contract <path-to-acceptance-contract.yaml>
+# or, for a charter-lane atom:
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-capability-preflight.py" --charter <path-to-charter.md>
+```
+
+- **`status: "missing"`** → surface **ONE blocker** (`why_operator: operator-approval`) whose
+  `handoff.command` is the exact fix the verdict named for the first missing rule — either the
+  `/permissions` addition for a missing `allow` rule in `.claude/settings.json`, or the
+  `.foundry/permissions.yaml` grant to add — **instead of starting the build**. Never retry, and
+  never edit `.claude/settings.json` or `.foundry/permissions.yaml` yourself to grant it —
+  self-granting is refused, correctly, and the preflight only ever reports; the operator (or a
+  later `foundry-permissions-compile.py --write`) is the one who acts.
+- **`preconditions_unverified` non-empty** → for each listed grant, **verify its preconditions by
+  command** before relying on it to cover the capability — the same "verified by command" bar the
+  standing-grants section above already holds every `automatic` grant to. An unverified
+  precondition is not a grant.
+- **`status: "ok"`** → proceed to dispatch as below.
+
+This is a preflight, not a new authority: it never edits settings or the policy, and it does not
+decide who may dispatch — the front-authorization gate (every atom `AUTHORIZED`) still does. It
+only stops a build from starting into a wall of classifier denials the operator already meant to
+grant but the running session cannot see.
+
 ### Escalate on a closed set
 
 The closed set now lives in one place, not restated here: the atom's contract carries a top-level
@@ -192,12 +222,14 @@ park it, with its tradeoff and what would unpark it.
 
 1. **Resolve the release** → its ordered list of AUTHORIZED atom specs (the durable
    work-list; no `impl-progress.yaml`).
-2. **Per wave, run the fan-out Workflow:**
+2. **Capability preflight, per atom about to start this wave** — see *Capability preflight before
+   dispatch* above. `missing` → one blocker instead of starting that atom; `ok` → proceed.
+3. **Per wave, run the fan-out Workflow:**
    ```
    Workflow({ name: "foundry-release-wave", args: { /* this wave's authorized atom specs */ } })
    ```
    Each atom flows `implement → verify` independently (native concurrency cap + journal).
-3. **Native floor + merge authority.** For each atom PR, confirm the native floor is GREEN
+4. **Native floor + merge authority.** For each atom PR, confirm the native floor is GREEN
    (the `ci.yml` command battery on the candidate branch + the `btb-gates` `spec-link`/
    `security-path` checks — server-side REQUIRED on this repo's `main`; see `skills/init/SKILL.md`
    step 5 for the enumerated set. The earlier "Tier B advisory, never a blocking required status"
@@ -208,10 +240,10 @@ park it, with its tradeoff and what would unpark it.
    `gh pr checks` reports every check passing. The `sd-review` / `pr-reviewer` pass is
    **advisory** (a mistake-catcher for the operator), never a merge approval — a review finding
    never gates or triggers the merge. The driver never relaxes any floor.
-4. **Advance.** State is derived from merged-PR facts + gate verdicts (machine-derived,
+5. **Advance.** State is derived from merged-PR facts + gate verdicts (machine-derived,
    never a hand-written counter) — so a killed/resumed loop re-derives where it is and
    cannot silently halt on a reverted counter.
-5. **Closeout** when every atom is merged + walked. Emit the release closeout.
+6. **Closeout** when every atom is merged + walked. Emit the release closeout.
 
 ## Inputs / Outputs
 

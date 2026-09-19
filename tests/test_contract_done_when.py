@@ -54,7 +54,7 @@ class TestDoneWhenEscalateWhenAccepted:
 
     def test_escalate_when_each_closed_member_accepted(self):
         for member in ("external-provisioning", "credential-step", "no-consensus-after-research",
-                       "security-widening", "irreversible-action"):
+                       "security-widening", "irreversible-action", "operator-approval"):
             doc = _golden()
             doc["escalate_when"] = [member]
             ok, errors, _ = contract.validate_contract_bytes(_bytes(doc))

@@ -58,7 +58,22 @@ manifest path, and a state snapshot. Read it before arming — it is the operati
 watcher will run under, and the one section you should extend is §4, with the traps a worker on
 *this* project has already hit twice.
 
-**3 — Load the scheduler tool, then arm it.**
+**3 — Capability preflight, then load the scheduler tool and arm it.**
+
+Before arming, run the capability preflight over every atom the ready-set names this wave
+(feat-foundry-authorization-capability-preflight-at-dispatch, AC-CPD-3 — the same rule
+`skills/mode-autonomous/SKILL.md`'s *Capability preflight before dispatch* section carries for the
+implementation driver, cited here rather than restated):
+
+```bash
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/foundry-capability-preflight.py --contract <atom's acceptance-contract.yaml>
+```
+
+On `missing`, surface **ONE blocker** (`why_operator: operator-approval`) whose `handoff.command`
+is the exact `/permissions` addition (or `.foundry/permissions.yaml` grant) the verdict named,
+**instead of arming the watcher** — a tick that starts is a tick that will hit the same classifier
+wall every wake. On `preconditions_unverified`, verify each precondition by command before relying
+on the grant. On `ok`, arm as below.
 
 ```
 ToolSearch("select:CronCreate,CronDelete,CronList")

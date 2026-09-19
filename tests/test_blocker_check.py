@@ -67,7 +67,7 @@ def test_schema_is_well_formed_json_schema():
     assert set(doc["properties"].keys()) == {"claim", "evidence", "attempted", "why_operator", "handoff"}
     assert doc["properties"]["why_operator"]["enum"] == [
         "external-provisioning", "credential-step", "no-consensus-after-research",
-        "security-widening", "irreversible-action",
+        "security-widening", "irreversible-action", "operator-approval",
     ]
     # AC-OHS-1: handoff is now constrained — cwd/command/why/expect, additionalProperties false.
     handoff_schema = doc["properties"]["handoff"]
@@ -229,7 +229,7 @@ def test_credential_and_provisioning_blockers_require_handoff(why_operator):
 
 
 @pytest.mark.parametrize("why_operator", [
-    "no-consensus-after-research", "security-widening", "irreversible-action",
+    "no-consensus-after-research", "security-widening", "irreversible-action", "operator-approval",
 ])
 def test_other_why_operator_values_do_not_require_handoff(why_operator):
     b = _valid_blocker(why_operator=why_operator)

@@ -45,9 +45,13 @@ _SCHEMA_PATH = os.path.join(os.path.dirname(_HERE_DIR), "schema", "blocker.schem
 # The SAME closed set schema/acceptance-contract.schema.json's `escalate_when` enum fixes
 # (feat-foundry-contract-done-when-escalate-when, AC-DWE-1) — not redefined independently here,
 # restated only as the literal values so this module has no import-time dependency on that one.
+# `operator-approval` added by feat-foundry-authorization-capability-preflight-at-dispatch
+# (AC-CPD-5) — byte-identical to the same member added to the other three sites (the schema/
+# acceptance-contract.schema.json escalate_when enum, scripts/foundry_contract.py's
+# _DWE_ESCALATE_SET, and schema/blocker.schema.json's why_operator enum).
 _WHY_OPERATOR_SET = {
     "external-provisioning", "credential-step", "no-consensus-after-research",
-    "security-widening", "irreversible-action",
+    "security-widening", "irreversible-action", "operator-approval",
 }
 
 _REQUIRED_FIELDS = ("claim", "evidence", "attempted", "why_operator")
