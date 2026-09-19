@@ -108,6 +108,12 @@ view REGENERATED from it**, never a second source of truth. Drive it in three st
    safe** — a stale/abandoned Task graph is never a second ground truth to reconcile, it is thrown
    away and regenerated.
 
+   **Gated on `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`** (task-tool-instruction-fix, AC-TTI-3): the
+   native `TaskCreate`/`TaskUpdate`/`TaskList` tools this step names exist only in a session with
+   that flag set to `1`. Without it, skip this step — the manifest IS the queue: work directly
+   from `plan.atoms` (the wave plan's own output) and the release's `state.yaml`, with no native
+   Task graph to materialize or keep in sync.
+
 3. **Dispatch via `release-wave.js`, wave-barriered.** `release-wave.js`'s impl/verify prompts
    need each wave element to be an **atom SPEC PATH** (the same shape its original flat-array
    arg always required — `"Implement the AUTHORIZED atom ${atom} against its frozen
