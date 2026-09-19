@@ -44,6 +44,32 @@ def _print_checkpoints(contract_path: str) -> None:
         print(f"        expect: {exp.get('op')} {exp.get('value','')} (baseline={exp.get('baseline')})")
 
 
+def _latest_audit_row(spec_hash: str) -> dict | None:
+    """The most recent audit-ledger row for this spec hash, ANY verdict (informational display
+    only — never a gate). Malformed lines are skipped; a missing ledger is None. Distinct from
+    `ledger.find_audit`, which is the passing-verdict query and returns None for non-pass rows."""
+    import json
+    path = ledger.ledger_path()
+    if not os.path.exists(path):
+        return None
+    latest = None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(row, dict) and row.get("spec_sha256") == spec_hash:
+                    latest = row
+    except OSError:
+        return None
+    return latest
+
+
 def _front_authz_main() -> int:
     """The front-authorization entrypoint body (historically named `main()`, kept as a separate
     function so `main()` below can dispatch to it directly)."""
@@ -225,7 +251,11 @@ def _front_authz_main() -> int:
     # value binds the (informational) audit-evidence lookup AND the freeze below (kills the
     # recorder↔authorize↔freeze TOCTOU; unrelated to the audit itself).
     spec_hash = fc.spec_sha256(args.spec)
-    audit_rec = ledger.find_audit(spec_hash)
+    # Read the LATEST row for this hash regardless of verdict. `ledger.find_audit` is the
+    # passing-verdict query (audit-ledger-allowlist, AC-ALAL-1/2 — it returns None for a killed/
+    # refused/needs-operator row by design); the informational line must still NAME a non-pass
+    # verdict (AC-ADAP-3), so it reads the raw rows here rather than the allowlisted query.
+    audit_rec = _latest_audit_row(spec_hash)
     if audit_rec:
         print(f"§8 audit: recorded (verdict={audit_rec.get('verdict')}) — informational")
     # --skip-audit-reason is a DEPRECATED no-op (kept for one release so operator muscle memory
