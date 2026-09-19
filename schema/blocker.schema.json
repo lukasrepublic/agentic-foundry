@@ -45,10 +45,10 @@
           "type": "string",
           "minLength": 1,
           "allOf": [
-            {"not": {"pattern": "(&&|;|\\||\\r|\\n)"}},
+            {"not": {"pattern": "(&&|;|\\||\\r|\\n|\\$\\(|`)"}},
             {"not": {"pattern": "(^|\\s)(set\\s+-[a-zA-Z]*e[a-zA-Z]*|trap|exec)(\\s|$)"}}
           ],
-          "description": "ONE bare command, atomic and alone -- no chaining (`&&`, `;`, `|`), no newline, and no top-level `set -e`/`trap`/`exec` (any of which could alter or exit the operator's own shell). Preconditions are verified separately beforehand, never chained into this field."
+          "description": "ONE bare command, atomic and alone -- no chaining (`&&`, `;`, `|`), no command substitution (`$(`, backtick), no newline, and no top-level `set -e`/`trap`/`exec` (any of which could alter or exit the operator's own shell). Preconditions are verified separately beforehand, never chained into this field."
         },
         "why": {
           "type": "string",

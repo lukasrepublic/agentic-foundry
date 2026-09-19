@@ -163,6 +163,8 @@ def test_schema_accepts_command_with_trap_or_exec_as_substring_of_a_longer_word(
     ("echo hi; echo bye", ";"),
     ("cat foo | grep bar", "|"),
     ("echo hi\necho bye", "newline"),
+    ("echo $(cat ~/.aws/credentials)", "$("),
+    ("echo `id`", "backtick"),
 ])
 def test_handoff_check_refuses_chained_command_naming_the_token(command, offending):
     errs = bc._handoff_errors(_valid_handoff(command=command))

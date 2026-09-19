@@ -62,7 +62,10 @@ _WHY_OPERATOR_REQUIRES_HANDOFF = {"credential-step", "external-provisioning"}
 _HANDOFF_REQUIRED_FIELDS = ("cwd", "command", "why", "expect")
 # AC-OHS-1: a bare command is refused if it chains -- these are checked as plain substrings so the
 # offending token can be named verbatim in the reason, regardless of where in the command it sits.
-_HANDOFF_CHAIN_TOKENS = (("&&", "&&"), (";", ";"), ("|", "|"), ("\n", "newline"), ("\r", "carriage return"))
+_HANDOFF_CHAIN_TOKENS = (("&&", "&&"), (";", ";"), ("|", "|"), ("\n", "newline"), ("\r", "carriage return"),
+                         # PR #166 review: command substitution forks arbitrary extra work inside "one
+                         # bare command" -- refused in both layers, same as chaining.
+                         ("$(", "$( command substitution"), ("`", "backtick command substitution"))
 # Refused only at the TOP LEVEL (as the command's own leading word or flag), never as a substring
 # of a longer word (e.g. "trap_handler.sh" or "execute.sh" are fine) -- shlex tokenization is what
 # makes that distinction possible.
