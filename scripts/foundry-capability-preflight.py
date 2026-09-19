@@ -29,7 +29,8 @@ Coverage (AC-CPD-2, auth_seq 2 — the PLATFORM's own matching, not the permissi
 canonicalization): a declared capability counts as granted only when an `allow` rule (from
 `.claude/settings.json`, `.claude/settings.local.json`, or the user-scope `~/.claude/settings.json`,
 in that effective order) or an `automatic` grant (`.foundry/permissions.yaml`) COVERS it: the
-rule's tool is equal AND its pattern is equal or is a PREFIX AT A TOKEN BOUNDARY — the rule's
+rule's tool is equal AND its pattern is equal or is a literal STRING PREFIX (the platform's own
+semantics — `Bash(git:*)` also covers `Bash(gitleaks …)`; the deny direction stays fail-closed) — the rule's
 pattern ends `<prefix>:*`, `<prefix> *`, `<prefix>*`, or `<prefix>**`, and the capability's pattern
 starts with that literal `<prefix>` — for EVERY tool alike, Bash included. This deliberately does
 NOT route through `foundry_permission_floor.covers`/`canonicalize`: that module folds a leading
