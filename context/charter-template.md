@@ -40,6 +40,12 @@ denied_paths: []          # security surfaces are refused by the lane itself; li
 
 ## Merge
 operator-merges            # or: auto-merge-on-green (explicit opt-in, per PR)
+
+## Amendments
+<!-- The charter is a living document, adjusted during implementation when reality requires it.
+Leave the table empty (header only) until the first amendment lands. -->
+| date | what changed | why reality required it | auth_seq |
+|---|---|---|---|
 ```
 
 ## Rules of the lane (unchanged by this template)
