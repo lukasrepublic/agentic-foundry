@@ -141,10 +141,18 @@ actually reached `completed`, so this is a wave-close step, not a running log ke
 
 ## Escalation is a closed set
 
-Only two things reach the operator: **external provisioning or an interactive credential step the
-deck cannot perform**, and **a genuine no-consensus fork after prior-art research**. Anything
-authorization-adjacent or irreversible parks. Everything else — including CI waits, review rounds
-and the deck's own unfinished work — is *Next Tasks*, never a blocker.
+The vocabulary is the atom's contract `escalate_when` field, not restated here: the closed enum
+`external-provisioning`, `credential-step`, `no-consensus-after-research`, `security-widening`,
+`irreversible-action` (schema `schema/acceptance-contract.schema.json`), or, for a charter-lane
+atom, the charter's own `## Escalate when` section — the one carve-out from *yield ONLY on
+`done_when` met | `escalate_when` hit | a fork the fork policy parks; anything else is a Next
+Task and the tick continues* (feat-foundry-contract-done-when-escalate-when, AC-DWE-1/-4). Of the
+five members, only **external-provisioning** / **credential-step** and a genuine
+**no-consensus-after-research** fork reach the operator as a deck blocker; **security-widening**
+and **irreversible-action** are the two-way-door fork policy's PARK members instead (see
+`mode-autonomous`'s fork policy) — authorization-adjacent or irreversible parks rather than
+escalates. Everything else — including CI waits, review rounds and the deck's own unfinished
+work — is *Next Tasks*, never a blocker.
 
 ## Related
 

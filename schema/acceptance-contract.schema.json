@@ -392,6 +392,32 @@
       "enum": ["envelope"],
       "description": "OPTIONAL top-level discriminator (feat-foundry-envelope-ledger-mandate / AC-ELM-1, closes ER #211): stamped by `foundry_authz.envelope_auto_rebaseline` into the contract-PROPER (hash-covered into contract_sha256) whenever a MECHANICAL drift auto-rebaselines under the delegable-authorization-envelope (A7). Absent on an operator-signed authorization and on every pre-0.20.1 contract. The merge gate's CHECK-3b (AC-ELM-2) reads this ONLY from the proper-only parse and MANDATES a covering, chain-valid `.foundry/authz-ledger.jsonl` record for any pinned authorization carrying it. Declared here so a stamped contract validates (`additionalProperties: false` would otherwise reject the new key) and so a trailer-override to any non-`envelope` value fails the schema when jsonschema is present (defense-in-depth over the proper-only read)."
     },
+    "done_when": {
+      "type": "array",
+      "minItems": 1,
+      "description": "OPTIONAL top-level task-contract slot (feat-foundry-contract-done-when-escalate-when, AC-DWE-1): the machine-checkable locator(s) this atom's driver (deck tick / mode-autonomous) treats as its stop criterion — a yield is legitimate ONLY when one of these is met, `escalate_when` is hit, or the fork policy parks the fork; anything else is a Next Task. Top-level (sibling of `scope`/`checkpoints`), not per-checkpoint. Lives in the contract-proper region -> hash-covered into contract_sha256 (widening or narrowing it is a re-authorization, exactly like `allowed_paths`). This schema fixes only the SHAPE; enforcement is the driver's read of this field (out of scope here). Omitted ⇒ no declared done-when (back-compat, unchanged) — the driver falls back to the charter's `## Done when` section when the atom has a `charter_ref` instead of a `contract_ref`.",
+      "items": {
+        "type": "string",
+        "pattern": "^(test|cli|file|checkpoint):.+"
+      }
+    },
+    "escalate_when": {
+      "type": "array",
+      "uniqueItems": true,
+      "description": "OPTIONAL top-level task-contract slot (feat-foundry-contract-done-when-escalate-when, AC-DWE-1): the CLOSED set of forks this atom's driver escalates to the operator on, subtracted from 'anything else is a Next Task'. Top-level (sibling of `scope`/`checkpoints`). Lives in the contract-proper region -> hash-covered into contract_sha256 (widening/narrowing is a re-authorization). This schema fixes only the SHAPE; enforcement is the driver's read of this field (out of scope here). Omitted ⇒ no declared escalate-when (back-compat, unchanged) — the driver falls back to the charter's `## Escalate when` section when the atom has a `charter_ref` instead of a `contract_ref`.",
+      "items": {
+        "type": "string",
+        "enum": ["external-provisioning", "credential-step", "no-consensus-after-research", "security-widening", "irreversible-action"]
+      }
+    },
+    "requires_capabilities": {
+      "type": "array",
+      "description": "OPTIONAL top-level task-contract slot (feat-foundry-contract-done-when-escalate-when, AC-DWE-1): the capabilities (e.g. network egress, a credential, a cloud CLI) this atom's build needs — already a member of the amend-verb's BOUNDARY_FIELDS (scripts/foundry-amend.py), so a change to this list classifies as AC-AMND-1(b) (a boundary-widening amendment) without any change to the amend classifier. Top-level (sibling of `scope`/`checkpoints`). Lives in the contract-proper region -> hash-covered into contract_sha256. This schema fixes only the SHAPE; enforcement is deferred to consumers. Omitted ⇒ no declared capability requirements (back-compat, unchanged).",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
     "authorized": {
       "type": "object",
       "additionalProperties": false,

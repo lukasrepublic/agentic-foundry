@@ -1,0 +1,18 @@
+spec_ref: tests/fixtures/done-when/sample-spec.md
+spec_sha256: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+scope:
+  allowed_paths:
+    - "scripts/fixture-done-when/**"
+checkpoints:
+  - ac_id: AC-DWFX-1
+    surface: "cli:x"
+    locator: "true"
+    expect: {op: matches, value: "OK", baseline: pre-change}
+done_when:
+  - "test:tests/test_command_deck_watch.py::test_fixture_contract_renders"
+  - "cli:python3 scripts/foundry_command_deck_watch.py status fixture-programme"
+escalate_when:
+  - external-provisioning
+  - no-consensus-after-research
+requires_capabilities:
+  - "network-egress"
