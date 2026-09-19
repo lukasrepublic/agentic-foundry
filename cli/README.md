@@ -33,6 +33,11 @@ it does invoke `claude` (bounded by a closed allowlist — see its own README).
 - Scaffolds a seven-file, schema-valid workspace seed.
 - Re-running is a **reconcile with a drift report** — an edited managed file is reported
   `drifted` and left byte-identical, never overwritten. Never-clobber is unconditional.
+- `.gitignore` gets its own narrower reconcile on top of that: the file also carries a
+  `FOUNDRY-RUNTIME-GITIGNORE-BEGIN`/`-END` managed block, converged independently of the
+  whole-file compare above (so an adopter's own surrounding lines never block it from catching
+  up) — reported `[converged]`, `[unchanged]`, or, for a malformed sentinel state or a symlinked
+  `.gitignore`, `[refused]` and left untouched.
 
 ## Flags
 

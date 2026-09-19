@@ -18,6 +18,7 @@ import {
   resolveTarget, readTarget, readTrackedRules, planAdditions, applyAdditions,
   writeTargetAtomically, renderPlan,
 } from './floorReconcile.mjs';
+import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from './gitignoreReconcile.mjs';
 
 export { DECLARED_PATH_SET };
 
@@ -168,6 +169,23 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
 
     print(renderPreview({ plan, machineScopeWrites, map }));
 
+    // gitignore-block-reconcile (ER #177, AC-GBR-1/-2/-3): the generic managed-file row above
+    // already covers `.gitignore` for the CREATE case (absent -> the full template lands verbatim,
+    // already converged) and for the byte-identical case, but once an adopter's `.gitignore` also
+    // carries its own lines it will never again match the template byte-for-byte, so that row reads
+    // `drifted` forever and the never-clobber plan never writes it — which is exactly why the
+    // sentinel-delimited block needs its OWN, narrower reconcile. Computed here (before the
+    // dry-run return) so --dry-run reports the same action a real run would take; `null` for an
+    // absent `.gitignore`, which is the CREATE path's business and prints nothing extra.
+    const gitignorePlan = reconcileGitignorePlan({
+      physicalRoot, templatesDir: path.join(pkgDir, 'templates'),
+    });
+    const gitignoreRow = renderGitignoreRow(gitignorePlan);
+    if (gitignoreRow) {
+      print('');
+      print(gitignoreRow);
+    }
+
     // Resolved HERE — before the write phase and before the dry-run return — because the reconcile
     // below must know what it would add in order to decide whether to write at all, and --dry-run
     // must be able to report those rules. That requirement is carried by the TRACKED classification
@@ -227,6 +245,12 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
     }
 
     applyPlan(plan);
+    // A `refused` gitignorePlan is a no-op here — applyGitignorePlan only writes on `converged` /
+    // `appended` — so a malformed managed block never blocks the rest of this run's writes; it is
+    // reported (the row above, and the exit code below) rather than escalated to a hard refusal,
+    // since it is a data-integrity issue local to one file, not the security-shaped case
+    // --reconcile-floor's pre-write refusal exists for.
+    applyGitignorePlan(gitignorePlan);
 
     if (floorPlan && floorPlan.total > 0) {
       writeTargetAtomically(floorTarget.path, applyAdditions(floorPlan.settingsObj, floorPlan, { map, pins }));
@@ -285,7 +309,14 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
       reconciledExisting: Boolean(floorPlan && floorPlan.total > 0),
     }));
 
-    return { exitCode: exitCodeForPlan(plan), output: lines.join('\n') };
+    // A refused gitignore block joins the SAME non-zero bucket `drifted` files use (exit 2, "needs
+    // the operator's attention") rather than exit 1's hard-refusal bucket — the rest of the run's
+    // writes already landed, so "refused" here must not read as "nothing happened".
+    const gitignoreRefused = Boolean(gitignorePlan && gitignorePlan.action === 'refused');
+    return {
+      exitCode: gitignoreRefused ? Math.max(2, exitCodeForPlan(plan)) : exitCodeForPlan(plan),
+      output: lines.join('\n'),
+    };
   } catch (e) {
     if (e instanceof RefusalError) {
       print(`refused: ${e.message}`);

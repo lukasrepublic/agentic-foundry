@@ -12,6 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runUpdate, renderSummary } from '../src/update.mjs';
 import { DECLARED_PATH_SET } from '../src/scaffold.mjs';
+import { BEGIN_TOKEN, END_TOKEN, loadDesiredBlock } from '../src/gitignoreReconcile.mjs';
 
 const CLI_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const CLI_UPDATE_DIR = path.join(CLI_DIR, '..', 'cli-update');
@@ -282,5 +283,83 @@ test('a second run over a current workspace performs no write syscall', async ()
     assert.equal(a.mtimeMs, b.mtimeMs, `${rel}: mtime changed on the second run`);
     assert.deepEqual(fs.readFileSync(path.join(cwd, rel)), beforeBytes[rel], `${rel}: bytes changed on the second run`);
   }
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+// ================================================================================================
+// gitignore-block-reconcile (ER #177, AC-GBR-1) — Phase 4's row and verdict
+// ================================================================================================
+
+// A pre-#170 stale block, the shape the bash applier itself once wrote (longer sentinel line text,
+// proving the row's detection is substring-based) — same fixture shape gitignore-reconcile.test.mjs
+// uses, kept local because this file is deliberately self-contained (this module's own convention).
+const STALE_BLOCK = [
+  `# ${BEGIN_TOKEN} (managed by scripts/foundry-apply-runtime-gitignore.sh -- do not edit by hand)`,
+  '# .foundry/ runtime partitions are ignored by default; the designed-tracked set is re-included.',
+  '/.foundry/*',
+  '!/.foundry/README.md',
+  '!/.foundry/build-provenance.yaml',
+  '!/.foundry/stack-profile.lock',
+  `# ${END_TOKEN} (re-run the applier to converge; do not edit by hand)`,
+];
+
+test('Phase 4 converges a stale gitignore block left over from an older workspace, and only that', async () => {
+  const { root, cwd, configDir } = steadyStateFixture('gbr-uaw-');
+  const first = await invokeUpdate({ cwd, configDir });
+  assert.notEqual(first.res.exitCode, 1, first.res.output);
+  // the fixture's own `reinitialization` phase settles to already-current once the floor is added —
+  // a second run before touching .gitignore proves the workspace really is fully converged already,
+  // so the NEXT run's `changed` verdict can only be attributed to this atom's gitignore reconcile.
+  const settled = await invokeUpdate({ cwd, configDir });
+  assert.match(settled.res.output, /\[reinitialization] already current/, settled.res.output);
+
+  const statOf = (rel) => fs.statSync(path.join(cwd, rel));
+  const beforeStats = Object.fromEntries(
+    DECLARED_PATH_SET.filter((rel) => rel !== '.gitignore').map((rel) => [rel, statOf(rel)]),
+  );
+
+  // corrupt ONLY the managed block, preserving an adopter line on each side
+  const gitignorePath = path.join(cwd, '.gitignore');
+  fs.writeFileSync(
+    gitignorePath,
+    ['# adopter comment above', ...STALE_BLOCK, 'dist/'].map((l) => `${l}\n`).join(''),
+  );
+
+  const { res, text } = await invokeUpdate({ cwd, configDir });
+  assert.notEqual(res.exitCode, 1, res.output);
+
+  // the preview names the row before the first write (AC-UAW-7's own ordering, reused here)
+  assert.match(text, /\[converged] \.gitignore \(managed block\)/, text);
+  // the phase this atom wires into reports `changed` — attributable to nothing but the gitignore
+  // convergence, since every other declared path is about to be asserted byte/inode-stable below
+  assert.match(text, /\[reinitialization] changed/, text);
+
+  const converged = fs.readFileSync(gitignorePath, 'utf-8').split('\n');
+  const body = converged[converged.length - 1] === '' ? converged.slice(0, -1) : converged;
+  assert.equal(body[0], '# adopter comment above', 'the adopter line above the block was not preserved');
+  assert.equal(body[body.length - 1], 'dist/', 'the adopter line below the block was not preserved');
+  const desired = loadDesiredBlock(path.join(CLI_DIR, 'templates'));
+  assert.deepEqual(body.slice(1, 1 + desired.length), desired, 'the block was not converged onto the template');
+
+  for (const rel of Object.keys(beforeStats)) {
+    const a = statOf(rel);
+    assert.equal(a.ino, beforeStats[rel].ino, `${rel}: inode changed by a run that should only touch .gitignore`);
+    assert.equal(a.mtimeMs, beforeStats[rel].mtimeMs, `${rel}: mtime changed by a run that should only touch .gitignore`);
+  }
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('Phase 4 leaves an already-converged gitignore block untouched (no write syscall)', async () => {
+  const { root, cwd, configDir } = steadyStateFixture('gbr-uaw-stable-');
+  await invokeUpdate({ cwd, configDir }); // creates .gitignore already matching the template
+
+  const gitignorePath = path.join(cwd, '.gitignore');
+  const before = fs.readFileSync(gitignorePath);
+  const beforeIno = fs.statSync(gitignorePath).ino;
+
+  const { text } = await invokeUpdate({ cwd, configDir });
+  assert.match(text, /\[unchanged] \.gitignore \(managed block\)/, text);
+  assert.deepEqual(fs.readFileSync(gitignorePath), before, 'an already-converged .gitignore was rewritten');
+  assert.equal(fs.statSync(gitignorePath).ino, beforeIno, 'an already-converged .gitignore was rewritten');
   fs.rmSync(root, { recursive: true, force: true });
 });

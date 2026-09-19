@@ -14,6 +14,7 @@ import { planManagedFiles, applyPlan } from './reconcile.mjs';
 import {
   resolveTarget, readTarget, readTrackedRules, planAdditions, applyAdditions, writeTargetAtomically,
 } from './floorReconcile.mjs';
+import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from './gitignoreReconcile.mjs';
 import {
   ALLOWED_CLAUDE_SUBCOMMANDS, resolveClaudeOnPath, runClaude,
   defaultScopes, snapshotScopes, classifyMigration, migrationActions, migrateScope,
@@ -161,6 +162,12 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
       })
       : null;
 
+    // gitignore-block-reconcile (ER #177, AC-GBR-1): PREVIEW-ONLY, same caveat as previewFloorPlan
+    // above — `.gitignore` is not a migration target, but Phase 4 recomputes fresh from disk anyway,
+    // for the same "never apply a stale pre-migration plan" reason.
+    const templatesDir = path.join(pkgDir, 'templates');
+    const previewGitignorePlan = reconcileGitignorePlan({ physicalRoot, templatesDir });
+
     // ── AC-UAW-7: the preview, before the first `claude` invocation and the first write ─────────
     const previewLines = ['The following claude invocations will be made:'];
     for (const { scopeSnap, trigger } of migrations) {
@@ -191,6 +198,8 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     } else {
       previewLines.push('  [permission-floor] .claude/settings.json absent — left to the create path');
     }
+    const previewGitignoreRow = renderGitignoreRow(previewGitignorePlan);
+    if (previewGitignoreRow) previewLines.push(previewGitignoreRow);
     print(previewLines.join('\n'));
 
     const env = { ...spawnEnv, CLAUDE_CONFIG_DIR: configDir };
@@ -255,15 +264,41 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
         writeTargetAtomically(freshFloorTarget.path, applyAdditions(settingsObj, floorPlan, { map, pins }));
       }
     }
+    // Recomputed FRESH from disk, same reasoning as floorPlan just above: never apply a plan
+    // captured before Phases 1-3 ran, even though `.gitignore` is not itself a migration target.
+    // Skipped entirely when THIS run's own filePlan just CREATED `.gitignore` — AC-GBR-2 leaves the
+    // absent case to the create path, and re-planning immediately after applyPlan would otherwise
+    // find the just-written file already converged and print a redundant `[unchanged]` row for a
+    // file that never existed before this run.
+    const gitignoreFileAction = filePlan.find((f) => f.relPath === '.gitignore')?.action;
+    let freshGitignorePlan = null;
+    if (gitignoreFileAction !== 'create') {
+      freshGitignorePlan = reconcileGitignorePlan({ physicalRoot, templatesDir });
+      applyGitignorePlan(freshGitignorePlan);
+      const gitignoreRow = renderGitignoreRow(freshGitignorePlan);
+      if (gitignoreRow) print(gitignoreRow);
+    }
+
     const anyCreated = filePlan.some((f) => f.action === 'create');
     const anyFloorAdded = Boolean(floorPlan && floorPlan.total > 0);
-    phases.push({ name: 'reinitialization', verdict: anyCreated || anyFloorAdded ? 'changed' : 'already current' });
+    const anyGitignoreChanged = Boolean(
+      freshGitignorePlan && (freshGitignorePlan.action === 'converged' || freshGitignorePlan.action === 'appended'),
+    );
+    phases.push({
+      name: 'reinitialization',
+      verdict: anyCreated || anyFloorAdded || anyGitignoreChanged ? 'changed' : 'already current',
+    });
 
     print('');
     print(renderSummary(phases));
 
     const anyDrifted = filePlan.some((f) => f.action === 'drifted');
-    return { exitCode: anyDrifted ? 2 : 0, output: lines.join('\n') };
+    // Same bucket a `drifted` managed file uses (exit 2), not the hard-refusal exit 1 — Phases 1-4
+    // already ran and wrote what they could; a malformed gitignore block is reported, not escalated
+    // into "the update failed" for the whole run (run.mjs makes the identical choice; see its own
+    // comment on `gitignoreRefused`).
+    const gitignoreRefused = Boolean(freshGitignorePlan && freshGitignorePlan.action === 'refused');
+    return { exitCode: anyDrifted || gitignoreRefused ? 2 : 0, output: lines.join('\n') };
   } catch (e) {
     if (e instanceof RefusalError) {
       print(`refused: ${e.message}`);
