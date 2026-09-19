@@ -17,6 +17,10 @@ Dispatch before doing any coordination yourself: coordination is serial, builds 
 must never wait on it.
 The ready-set is COMPUTED, not judged — take it from the measurement command below, which applies
 the authorization re-derivation and the wave barrier. Do not talk yourself into or out of a row.
+[manifest-to-tasklist carve-out] In a TEAM session, this ready-set is ADVISORY once the arm-time
+projection (`skills/command-deck/SKILL.md`, "In a team session") has issued its `TaskCreate` calls —
+the shared task list's own `blockedBy` + self-claim enforce the DAG from here. Outside a team
+session, nothing in this paragraph changes anything below.
 ANNOUNCE the claim before dispatching, not when the PR appears — the build window is structurally
 invisible to any PR-based check, and two sessions have built the same atom under a correct predicate.
 If nothing is ready, say WHY for each remaining atom BY NAME — the measurement prints an exclusion

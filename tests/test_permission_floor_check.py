@@ -274,7 +274,21 @@ def _import_map_suite():
 # cases each gained the matching effective-allow row in the same diff. A sibling charter-lane atom
 # in the same wave may re-pin this constant again on rebase; the coordinator resolves the
 # resulting two-place conflict, per the lane README's own note on serial merges.
-MERGE_BASE_ENTRIES_DIGEST = "133a762d86352a1f674d3b0d2ce8c78963075c157075f5579787b06dfa36835d"
+#
+# UPDATED for manifest-to-tasklist (R3 of autonomy-continuation, charter-lane atom
+# `manifest-to-tasklist`). This atom's charter carries the SAME per-contract exception
+# (`cli/permission-floor.json` + `docs/permission-floor.json` named in its own `allowed_paths`),
+# so this re-pin lands in the SAME reviewed diff as the map edit, per the R8 rule this guard
+# states. One new `allow` row for the new read-only projection script — it prints a JSON plan of
+# `TaskCreate` calls derived from a release manifest + the tasks-dir idempotence read; it never
+# writes and never calls `TaskCreate` itself, the same read-only shape `foundry-wave-plan.py`'s own
+# row already carries. 70 -> 71 entries (one row added, none removed):
+#
+#   + Bash(.../foundry-manifest-to-tasklist.py:*)   tier `allow`
+#
+# tests/fixtures/floor-drift-corpus.json's `full-floor-verbatim` and `full-floor-home-expanded`
+# cases each gained the matching effective-allow row in the same diff.
+MERGE_BASE_ENTRIES_DIGEST = "f124a37fac8aabab4ce50a4a744c9b259b67b4c4e29bd1dc3443b1e7cb76c95c"
 
 
 # ================================================================================================ #
