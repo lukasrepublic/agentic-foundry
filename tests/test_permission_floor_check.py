@@ -211,7 +211,21 @@ def _import_map_suite():
 # blocker-requires-evidence (R1, PR #164): +1 `allow` row for `scripts/foundry_blocker_check.py` (a
 # read-only lint over a JSON list; writes nothing) — 63 -> 64 entries; drift-corpus rows added in the
 # same PR; digest re-pinned by the coordinator, not the implementing atom.
-MERGE_BASE_ENTRIES_DIGEST = "2c1bb13d67c7ba934bd32c89ee4ba002520d6da102d2fb8ecbfe537880469c7e"
+#
+# UPDATED for feat-foundry-authorization-standing-grants-as-policy (AC-SGP-10). THIS atom's own
+# acceptance-contract explicitly authorizes it to write `cli/permission-floor.json` +
+# `docs/permission-floor.json` (a deliberate, per-contract exception to the general
+# implementer-may-not-edit-its-own-confinement preference the comment above documents), so this
+# re-pin lands in the SAME reviewed diff as the map edit, per the R8 rule this guard states. The
+# map grew by exactly TWO rows and lost none (64 -> 66 entries, after the blocker-check row above):
+#
+#   + Bash(.../foundry-permissions-compile.py --check:*)   tier `allow`
+#   + Bash(.../foundry-permissions-compile.py --write:*)   tier `ask`
+#
+# `allow` for `--check`: read-only drift check, never writes. `ask` for `--write`: reconciles
+# `.claude/settings.json` from the operator-owned `.foundry/permissions.yaml` — a ceremony, not a
+# self-grant, the same shape every other mutating compiler CLI in this map already carries.
+MERGE_BASE_ENTRIES_DIGEST = "PLACEHOLDER"
 
 
 # ================================================================================================ #

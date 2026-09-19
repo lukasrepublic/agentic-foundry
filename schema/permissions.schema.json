@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/lukasrepublic/agentic-foundry/schema/permissions.schema.json",
+  "title": "Foundry standing-grants policy (.foundry/permissions.yaml)",
+  "description": "feat-foundry-authorization-standing-grants-as-policy (AC-SGP-1). One workspace-owned file the operator edits and the agent never does (see cli/permission-floor.json's deny rules on this path): each grant is `automatic` (proceed once its preconditions are verified) or `approval_required` (surface one blocker line naming the grant). `scripts/foundry-permissions-compile.py` compiles this into the native `permissions.allow`/`permissions.ask` rule sets `.claude/settings.json` already enforces -- no policy engine of our own.",
+  "type": "object",
+  "required": ["schema_version", "grants"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "The one schema_version this build understands."
+    },
+    "grants": {
+      "type": "array",
+      "description": "Duplicate `id`s are refused by the compiler (AC-SGP-1); a JSON Schema `uniqueItems` cannot express uniqueness over a single subfield, so this is enforced structurally in scripts/foundry-permissions-compile.py.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "tool", "pattern", "mode"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "minLength": 1,
+            "description": "A slug -- the identifier surfaced in a report line or a blocker line."
+          },
+          "tool": {
+            "type": "string",
+            "enum": ["Bash", "Edit", "Write", "Read", "WebFetch", "Agent"],
+            "description": "The native Claude Code tool this grant's compiled rule gates."
+          },
+          "pattern": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The native rule's parenthesised body -- the compiled rule is exactly `<tool>(<pattern>)`."
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["automatic", "approval_required"],
+            "description": "`automatic`: proceed once every listed precondition has been verified by command. `approval_required`: one blocker line naming this grant's `id`."
+          },
+          "preconditions": {
+            "type": "array",
+            "description": "Closed set (AC-SGP-1). Machine enforcement of these is out of scope for this atom -- the agent verifies each by command and records having done so.",
+            "items": {
+              "type": "string",
+              "enum": [
+                "ci-green",
+                "security-reviewed-label",
+                "spec-authorized",
+                "charter-committed",
+                "worktree-clean",
+                "branch-up-to-date"
+              ]
+            }
+          },
+          "note": {
+            "type": "string",
+            "description": "Free-text operator note; never consulted for enforcement."
+          }
+        }
+      }
+    }
+  }
+}

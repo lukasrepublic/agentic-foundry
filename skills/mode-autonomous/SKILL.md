@@ -119,6 +119,19 @@ sat in a different, still-open, red PR.
 
 ### Handing a command to the operator
 
+**Consult `.foundry/permissions.yaml` FIRST, before surfacing any permission request**
+(feat-foundry-authorization-standing-grants-as-policy, AC-SGP-5). The operator's standing grants —
+"proceed on green CI," "drive this forward" — live there, one file the operator edits and the
+agent never does. Before handing a command to the operator or asking for approval:
+- **`automatic` grant whose listed preconditions you have verified by command** → proceed; record
+  the grant `id` in your report instead of asking.
+- **`approval_required` grant** → surface **one blocker line naming the grant `id`** (not a fresh
+  ad hoc ask).
+- **No matching grant** → fall through to the request-as-today flow below.
+A grant never widens what the floor already denies — `.foundry/permissions.yaml` itself cannot be
+edited by the agent (a `cli/permission-floor.json` deny rule), and an `automatic` grant whose
+preconditions you have NOT actually verified by command is not a grant at all.
+
 Any command that may be refused is issued **alone**. Preconditions run as separate, independently
 verified steps. Hand over **exactly one self-contained command**, only after verifying every
 precondition is actually in place, and state **which guard refused it and why**. The failure this comes
