@@ -290,3 +290,56 @@ def test_non_utf8_input_is_malformed_exit_2(tmp_path):
     proc = subprocess.run([sys.executable, CLI_PATH, "--in", str(f)], capture_output=True, text=True)
     assert proc.returncode == 2, proc.stderr
     assert "REFUSED" in proc.stderr
+
+
+# ================================================================================================ #
+# TICK — the fifth kind (routine-wake, AC-RWK-1)
+# ================================================================================================ #
+
+def test_tick_with_valid_shape_is_valid():
+    verdict = mk.lint(_msg("TICK autonomy-continuation 2026-09-19T10:07:00Z"))
+    assert verdict == {"valid": True, "kind": "TICK"}
+
+
+def test_tick_needs_no_evidence_line():
+    # No evidence line anywhere, and still valid — TICK is explicitly evidence-free.
+    verdict = mk.lint("TICK autonomy-continuation 2026-09-19T10:07:00Z\n")
+    assert verdict["valid"] is True
+
+
+@pytest.mark.parametrize("first_line", [
+    "TICK autonomy-continuation not-a-stamp",
+    "TICK autonomy-continuation 2026-09-19 10:07:00Z",
+    "TICK autonomy-continuation 2026-09-19T10:07:00",
+    "TICK Autonomy-Continuation 2026-09-19T10:07:00Z",
+    "TICK autonomy_continuation 2026-09-19T10:07:00Z",
+    "TICK autonomy-continuation",
+    "TICK autonomy-continuation 2026-09-19T10:07:00Z extra-trailing-text",
+])
+def test_tick_shape_violations_are_invalid(first_line):
+    verdict = mk.lint(_msg(first_line))
+    assert verdict["valid"] is False
+    assert verdict["kind"] == "TICK"
+    assert verdict["rule"] == "tick-shape"
+
+
+def test_tick_is_case_sensitive():
+    verdict = mk.lint(_msg("tick autonomy-continuation 2026-09-19T10:07:00Z"))
+    assert verdict["valid"] is False
+    assert verdict["rule"] == "first-line-kind"
+    assert verdict["kind"] is None
+
+
+def test_cli_exit_0_on_valid_tick(tmp_path):
+    proc = _run_cli(_msg("TICK autonomy-continuation 2026-09-19T10:07:00Z"), tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert out == {"valid": True, "kind": "TICK"}
+
+
+def test_cli_exit_3_on_tick_shape_violation(tmp_path):
+    proc = _run_cli(_msg("TICK autonomy-continuation garbage"), tmp_path)
+    assert proc.returncode == 3
+    out = json.loads(proc.stdout)
+    assert out["valid"] is False
+    assert out["rule"] == "tick-shape"

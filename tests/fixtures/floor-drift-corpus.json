@@ -208,6 +208,10 @@
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-capability-preflight.py:*)",
             "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-routine-wake-prompt.py:*)",
+            "origin": "settings.json"
           }
         ],
         "ask": [
@@ -503,6 +507,10 @@
           },
           {
             "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-capability-preflight.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-routine-wake-prompt.py:*)",
             "origin": "settings.json"
           }
         ],
