@@ -262,3 +262,41 @@ def test_the_hooks_own_clause_admits_the_exact_command_this_cli_issues(tmp_path)
     env = _gh_stub_env(tmp_path, GH_STUB_CHECKS_EXIT=0, GH_STUB_CHECKS_OUTPUT="check-a\tpass\t1s\turl")
     p = _discipline("gh pr merge 42 --squash", extra_env=env)
     assert p.returncode == 0, p.stdout + p.stderr
+
+
+# ------------------------------------------------------------------------------------------ #
+# ER #186 -- gh's exit codes are verdicts: 8 = pending, 1 = some failed, 0 = all passed.
+# The shared stub cannot derive them from the rows (git-discipline's tests own its defaults), so
+# each scenario sets GH_STUB_CHECKS_EXIT to what real gh returns for those rows.
+# ------------------------------------------------------------------------------------------ #
+
+def test_pending_exit_8_keeps_polling_and_merges_once_rows_pass(tmp_path):
+    p = _run_mwg(
+        tmp_path, 42, "--timeout-min", "1",
+        GH_STUB_CHECKS_SEQUENCE="check-a\tpending\t1s\turl\x1echeck-a\tpass\t1s\turl",
+        GH_STUB_CHECKS_EXIT=8,
+        GH_STUB_VIEW_JSON=json.dumps({"mergeStateStatus": "CLEAN", "mergeCommit": {"oid": "er186"}}),
+    )
+    assert p.returncode == 0, p.stdout + p.stderr
+    doc = _last_json_line(p.stdout)
+    assert doc["status"] == "merged"
+    assert "checks query failed" not in p.stdout
+    assert _log_text(tmp_path).count("pr checks") >= 2
+
+
+def test_failed_exit_1_blocks_naming_the_check_not_the_query(tmp_path):
+    p = _run_mwg(tmp_path, 42, GH_STUB_CHECKS_OUTPUT="check-a\tfail\t1s\turl", GH_STUB_CHECKS_EXIT=1)
+    assert p.returncode == 3, p.stdout + p.stderr
+    doc = _last_json_line(p.stdout)
+    assert doc["status"] == "blocked"
+    assert "failing check(s): check-a" in doc["reason"]
+    assert "checks query failed" not in doc["reason"]
+
+
+def test_other_exit_or_no_rows_is_still_a_query_failure(tmp_path):
+    p = _run_mwg(tmp_path, 42, GH_STUB_CHECKS_OUTPUT="check-a\tpass\t1s\turl", GH_STUB_CHECKS_EXIT=4)
+    assert p.returncode == 3
+    assert "checks query failed" in _last_json_line(p.stdout)["reason"]
+    p = _run_mwg(tmp_path, 42, GH_STUB_CHECKS_OUTPUT="", GH_STUB_CHECKS_EXIT=8)
+    assert p.returncode == 3
+    assert "checks query failed" in _last_json_line(p.stdout)["reason"]
