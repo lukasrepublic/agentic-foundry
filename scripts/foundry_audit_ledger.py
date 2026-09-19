@@ -64,12 +64,18 @@ _HERE_DIR = os.path.dirname(os.path.abspath(__file__))
 if _HERE_DIR not in sys.path:
     sys.path.insert(0, _HERE_DIR)
 
-_NONPASS_VERDICTS = {"fail", "rejected", "abandoned"}   # v1 (legacy) vocabulary, untouched.
-
 # ── v2 taxonomy (AC-ALT-1) ──────────────────────────────────────────────────────────────────────────
 V2_VERDICTS = ("converged", "plateau-clean", "plateau-security", "needs-reground",
                "needs-operator", "killed", "dedupe-skip", "refused")
 KILL_REASONS = ("watchdog", "limit", "error")
+
+# feat-foundry-authorization-audit-ledger-allowlist (AC-ALAL-1, AC-ALAL-5): the explicit PASS
+# allowlist `find_audit` reads against — a rule that CONVICTS (allowlist of what passes) fails
+# safe; a denylist of what fails (the prior `_NONPASS_VERDICTS`) fails open the moment the
+# vocabulary grows, which is exactly what happened when V2_VERDICTS was added beside it. `plateau`
+# is the documented pre-v2 alias (AC-ALT-4 above): v1 rows are never rewritten and stay readable.
+# No denylist of non-pass verdicts remains anywhere in this module as a gate input (AC-ALAL-5).
+PASS_VERDICTS = frozenset({"converged", "plateau-clean", "plateau-security", "plateau"})
 
 _V2_REQUIRED_FIELDS = ("schema_version", "ts", "run_id", "tier", "rounds", "findings",
                        "spec_ref", "spec_sha256", "operator", "verdict")
@@ -94,6 +100,18 @@ def _schema_path() -> str:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _coerce_rounds(value) -> int | None:
+    """Best-effort int coercion for a ledger row's `rounds` field — returns `None` (never
+    raises) when `value` is not int-parsable (missing default `0` still coerces fine; `None`, a
+    non-numeric string, a list, a dict, … do not). `find_audit` treats `None` here as a
+    non-match (convict direction): a malformed row is skipped, not a crash that propagates into
+    `foundry-authorize.py` and hard-aborts authorization on junk ledger data."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _default_run_id() -> str:
@@ -126,13 +144,29 @@ def record_audit(spec_ref: str, spec_sha256: str, rounds: int, operator: str,
 
 def find_audit(spec_sha256: str, project_dir: str | None = None, min_rounds: int = 1):
     """Return the most-recent audit row whose `spec_sha256` matches AND rounds>=min_rounds AND the
-    verdict is not a non-pass — else None. Hash-keyed: this is what binds the evidence to the exact
-    spec content authorize is about to sign (no cross-spec replay, no post-audit mutation).
+    verdict is in the explicit `PASS_VERDICTS` allowlist — else None. Hash-keyed: this is what
+    binds the evidence to the exact spec content authorize is about to sign (no cross-spec replay,
+    no post-audit mutation).
+
+    ALLOWLIST READ (AC-ALAL-1, AC-ALAL-2): any verdict NOT in `PASS_VERDICTS` — the full v2
+    non-pass taxonomy (`killed`, `refused`, `needs-operator`, `needs-reground`, `dedupe-skip`) and
+    the legacy v1 non-pass strings (`fail`, `rejected`, `abandoned`) alike — reads as "no audit
+    found", never as clean. This is the fail-closed fix for the fail-open denylist this replaced:
+    a denylist of three v1 strings let every new v2 non-pass terminus read as accepted the moment
+    the taxonomy grew.
 
     BOTH-SHAPES READ (AC-ALT-4): a v1 row (`verdict="plateau"`) and a v2 row (`verdict` one of
     `V2_VERDICTS`) carry the SAME `spec_sha256`/`rounds`/`verdict` keys with the same meaning, so
     this lookup needs no shape-specific branching to accept either — a v1 `plateau` row keeps
-    satisfying this floor exactly as before v2 shipped."""
+    satisfying this floor exactly as before v2 shipped (`plateau` is explicitly in
+    `PASS_VERDICTS`).
+
+    MALFORMED `rounds` IS SKIPPED, NEVER RAISED: a row whose `rounds` field is not int-parsable
+    (missing, `None`, a non-numeric string, a list, …) is treated as NON-matching — the convict
+    direction, same as any other verdict/hash mismatch — rather than letting `ValueError`/
+    `TypeError` escape this function and hard-abort the caller (`foundry-authorize.py`) on junk
+    ledger data. One malformed row never blocks a match against a later, well-formed row for the
+    same `spec_sha256`."""
     p = ledger_path(project_dir)
     if not os.path.isfile(p):
         return None
@@ -146,9 +180,12 @@ def find_audit(spec_sha256: str, project_dir: str | None = None, min_rounds: int
                 r = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            rounds = _coerce_rounds(r.get("rounds", 0))
+            if rounds is None:
+                continue  # malformed rounds — skip this row, never raise (convict direction)
             if (r.get("spec_sha256") == spec_sha256
-                    and int(r.get("rounds", 0)) >= min_rounds
-                    and r.get("verdict") not in _NONPASS_VERDICTS):
+                    and rounds >= min_rounds
+                    and r.get("verdict") in PASS_VERDICTS):
                 hit = r  # keep last → most recent
     except OSError:
         return None

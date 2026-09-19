@@ -9,15 +9,21 @@ LEDGER v2 (feat-foundry-audit-ledger-taxonomy, AC-ALT-1..3): this CLI writes ONE
 v2 JSONL row per invocation — a FLAT verdict enum plus an orthogonal `--kill-reason` present IFF
 `--verdict killed`, `ts`/`run_id`/`tier`/`rounds`/`findings`/`spec_ref`/`spec_sha256`/a
 registry-bound `operator`. The bare string "plateau" is never written by this v2 code path
-(AC-ALT-1): a legacy invocation that omits `--verdict` (still used by foundry-doctor.py's own
-audit-enforcement selftest — `--rounds N --operator X`, no `--verdict`) and an EXPLICIT
-`--verdict plateau` both map deterministically onto `plateau-clean` (the corpus's own convention:
-plateau -> plateau-clean unless the atom was security-flagged, in which case call this with
-`--verdict plateau-security` explicitly).
+(AC-ALT-1): an EXPLICIT `--verdict plateau` maps deterministically onto `plateau-clean` (the
+corpus's own convention: plateau -> plateau-clean unless the atom was security-flagged, in which
+case call this with `--verdict plateau-security` explicitly).
 
-  foundry-audit-record.py --spec <path> --rounds N --operator <id>
-      [--verdict converged|plateau-clean|plateau-security|needs-reground|needs-operator|
-                 killed|dedupe-skip|refused|plateau(legacy, mapped)]
+feat-foundry-authorization-audit-ledger-allowlist (AC-ALAL-3): `--verdict` is now REQUIRED —
+omitting it is a usage error (argparse exits non-zero) and nothing is appended to the ledger. A
+crashed or refused audit run must never be recorded (and therefore never later read) as clean; the
+prior default (`plateau-clean` when `--verdict` was omitted) let exactly that happen. The one
+in-repo caller that omitted the flag was `tests/test_release.py:339`'s `_authorize()` helper —
+NOT foundry-doctor.py, which has no audit-enforcement selftest that invokes this CLI — and that
+caller now passes `--verdict plateau-clean` explicitly, in the same change as this fix.
+
+  foundry-audit-record.py --spec <path> --rounds N --operator <id> --verdict <verdict>
+      --verdict converged|plateau-clean|plateau-security|needs-reground|needs-operator|
+                killed|dedupe-skip|refused|plateau(legacy, mapped)     # REQUIRED
       [--kill-reason watchdog|limit|error]     # required iff --verdict killed
       [--tier <alias>]                         # audit-engine model tier this run executed under
       [--run-id <id>]                          # else best-effort session-derived / generated
@@ -31,10 +37,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import foundry_contract as fc          # noqa: E402
 import foundry_audit_ledger as al      # noqa: E402
 
-# AC-ALT-1: the bare string "plateau" is never written by v2 code — both the omitted-flag legacy
-# shape and an explicit `--verdict plateau` map onto plateau-clean deterministically.
+# AC-ALT-1: the bare string "plateau" is never written by v2 code — an explicit `--verdict
+# plateau` maps onto plateau-clean deterministically.
 _LEGACY_VERDICT_MAP = {"plateau": "plateau-clean"}
-_DEFAULT_VERDICT = "plateau-clean"
 
 
 def main() -> int:
@@ -44,10 +49,11 @@ def main() -> int:
                     help="number of §8 audit rounds run (>=0; 0 only for a terminus that never "
                          "ran a round, e.g. dedupe-skip/refused)")
     ap.add_argument("--operator", required=True)
-    ap.add_argument("--verdict", default=None,
-                    help="converged|plateau-clean|plateau-security|needs-reground|needs-operator|"
-                         "killed|dedupe-skip|refused (legacy 'plateau' accepted, mapped to "
-                         "plateau-clean; omitted also defaults to plateau-clean)")
+    ap.add_argument("--verdict", required=True,
+                    help="REQUIRED (AC-ALAL-3): converged|plateau-clean|plateau-security|"
+                         "needs-reground|needs-operator|killed|dedupe-skip|refused (legacy "
+                         "'plateau' accepted, mapped to plateau-clean). Omitting this flag is a "
+                         "usage error; nothing is appended to the ledger.")
     ap.add_argument("--kill-reason", default=None, choices=list(al.KILL_REASONS),
                     help="required iff --verdict killed; refused otherwise")
     ap.add_argument("--tier", default="unspecified",
@@ -66,9 +72,7 @@ def main() -> int:
         print("FAIL: --rounds must be >= 0", file=sys.stderr)
         return 1
 
-    if args.verdict is None:
-        verdict = _DEFAULT_VERDICT
-    elif args.verdict in _LEGACY_VERDICT_MAP:
+    if args.verdict in _LEGACY_VERDICT_MAP:
         verdict = _LEGACY_VERDICT_MAP[args.verdict]
     elif args.verdict in al.V2_VERDICTS:
         verdict = args.verdict
