@@ -66,7 +66,8 @@ class MessageKindError(Exception):
 
 
 def _has_evidence_line(text: str) -> bool:
-    for line in text.split("\n"):
+    # The kind line itself never counts: a claim that merely names a path or URL is still prose.
+    for line in text.split("\n")[1:]:
         if (_EVIDENCE_PREFIX_RE.search(line) or _URL_RE.search(line)
                 or _PATH_RE.search(line) or _CMD_OUTPUT_RE.match(line)):
             return True
@@ -130,12 +131,15 @@ def lint(text: str) -> dict:
 
 def _load_input(path: str) -> str:
     if path == "-":
-        raw = sys.stdin.read()
+        try:
+            raw = sys.stdin.read()
+        except UnicodeDecodeError as e:
+            raise MessageKindError(f"stdin is not UTF-8: {e}") from e
     else:
         try:
             with open(path, encoding="utf-8") as fh:
                 raw = fh.read()
-        except OSError as e:
+        except (OSError, UnicodeDecodeError) as e:
             raise MessageKindError(f"cannot read {path!r}: {e}") from e
     if raw.strip() == "":
         raise MessageKindError(f"{path!r} yields no content")

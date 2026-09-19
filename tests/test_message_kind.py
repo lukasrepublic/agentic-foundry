@@ -274,3 +274,19 @@ def test_merge_base_entries_digest_matches_docs_permission_floor():
         "docs/permission-floor.json `entries` digest does not match the pinned "
         "MERGE_BASE_ENTRIES_DIGEST — re-pin it in the same diff (R8)"
     )
+
+
+def test_claim_line_alone_is_not_evidence():
+    # A FINDING whose only path/URL sits in the kind line is prose, not a finding.
+    v = mk.lint(_msg("FINDING: docs/README.md is stale"))
+    assert v["valid"] is False and v["rule"] == "evidence-required"
+    v = mk.lint(_msg("FINDING: docs/README.md is stale", "evidence: `grep -c TODO docs/README.md` -> 3"))
+    assert v == {"valid": True, "kind": "FINDING"}
+
+
+def test_non_utf8_input_is_malformed_exit_2(tmp_path):
+    f = tmp_path / "msg.txt"
+    f.write_bytes(b"FINDING: \xff\xfe bad bytes\n")
+    proc = subprocess.run([sys.executable, CLI_PATH, "--in", str(f)], capture_output=True, text=True)
+    assert proc.returncode == 2, proc.stderr
+    assert "REFUSED" in proc.stderr
