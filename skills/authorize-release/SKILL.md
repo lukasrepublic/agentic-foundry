@@ -5,8 +5,8 @@ description: Release-level authorization DASHBOARD (/foundry:authorize-release) 
 
 # /foundry:authorize-release
 
-A **display + routing** surface over a release's atoms — not a bulk-authorization loop.
-Piiq's measured history (462 atoms authorized, 24 built — 438 authorized-never-built from
+A **display + routing** surface over a release's atoms — not a bulk-authorization loop. An
+adopter's measured history (462 atoms authorized, 24 built — 438 authorized-never-built from
 bulk pre-authorization of a backlog) is why the bulk-sign loop that used to live in this
 skill's prose is **retired**: authorization is now **just-in-time**, one atom at a time, at
 the moment that atom is next.

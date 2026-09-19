@@ -1,8 +1,8 @@
 """tests/test_charter_default_routing.py — charter `charter-default-routing`
 (`.foundry/releases/ac-r0-living-spec-process/charters/charter-default-routing.md`).
 
-Measured: piiq authorized 462 atoms and built 24; 438 authorized-never-built came from bulk
-pre-authorization of a backlog. The operator decided the charter lane is the default lane and
+Measured: an adopter authorized 462 atoms and built 24; 438 authorized-never-built came from
+bulk pre-authorization of a backlog. The operator decided the charter lane is the default lane and
 authorization is just-in-time (`.foundry/decisions/2026-09-18-spec-is-a-living-document.md`,
 decision 4 in `.foundry/decisions/2026-09-18-autonomy-continuation-forks-resolved.md`). This
 atom makes `/foundry:intake` route each atom to a lane by Beck's game test, retires the
