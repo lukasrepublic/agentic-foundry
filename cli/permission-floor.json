@@ -398,6 +398,10 @@
       "rationale": "library: no argparse/__main__; acceptance-contract schema/hash helpers imported by other scripts"
     },
     {
+      "script": "foundry_floor_hooks.py",
+      "rationale": "library: no argparse/__main__; shared subject-parsing/authorization/evidence helpers imported by hooks/foundry-task-created.py and hooks/foundry-task-completed.py"
+    },
+    {
       "script": "foundry_graph.py",
       "rationale": "library: no argparse/__main__; citation-graph primitives imported by the graph CLIs"
     },
