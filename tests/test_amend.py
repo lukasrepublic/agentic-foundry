@@ -528,3 +528,17 @@ def test_matches_regex_value_change_convicts_regardless_of_direction():
                                   "expect": {"op": "matches", "value": "^hi there$", "baseline": "pre-change"}}]}
     widened, _ = amend.compute_diff(old_data, new_data)
     assert "checkpoints[AC-X-1].expect.value" in widened, widened
+
+
+def test_checkpoint_deletion_convicts():
+    """Round-2 security Block: deleting a whole checkpoint (not just its surface) must convict
+    even when the matching AC is deleted from the normative region too."""
+    old_data = {"checkpoints": [
+        {"ac_id": "AC-X-1", "surface": "cli:test", "locator": "l",
+         "expect": {"op": "matches", "value": "hi", "baseline": "pre-change"}},
+        {"ac_id": "AC-X-2", "surface": "cli:test", "locator": "l",
+         "expect": {"op": "matches", "value": "hi", "baseline": "pre-change"}}]}
+    new_data = {"checkpoints": [old_data["checkpoints"][0]]}
+    widened, summary = amend.compute_diff(old_data, new_data)
+    assert widened == ["checkpoints[AC-X-2]"], widened
+    assert any("AC-AMND-1(d)" in line for line in summary), summary

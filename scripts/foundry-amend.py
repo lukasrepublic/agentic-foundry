@@ -89,7 +89,7 @@ BOUNDARY_FIELDS = [
 ]
 
 # AC-AMND-1(d) — a fixed strictness ranking for the closed `expect.op` enum
-# (non-empty/count_gte/equals/matches). A change to a STRICTLY LOWER rank is a
+# (non-empty < matches < equals < count_gte). A change to a STRICTLY LOWER rank is a
 # weakening. `expect.op` is a per-checkpoint RIGOR field (d) — it is NOT one of the
 # top-level BOUNDARY_FIELDS (b) above, and there is no boundary-diff fallback that
 # would otherwise catch an op change. An op change where either side falls OUTSIDE
@@ -449,6 +449,18 @@ def compute_diff(old_data: dict, new_data: dict) -> "tuple[list, list]":
                 summary.append(f"{path} deleted (was {old_surf!r}) — AC-AMND-1(d)")
             else:
                 summary.append(f"{path} repointed {old_surf!r}→{new_surf!r} — AC-AMND-1(d)")
+
+    # ROUND-2 SECURITY BLOCK: a checkpoint present in the baseline and ABSENT from the
+    # candidate is a rigor reduction (AC-AMND-1(d)) — strictly stronger than deleting its
+    # `surface`, which already convicts above. Bijection alone does not catch it when the AC
+    # is deleted from the normative region too (normative text is not itself a signal).
+    for ac_id in old_cps:
+        if ac_id in new_cps:
+            continue
+        label = ac_id if isinstance(ac_id, str) else "/".join(ac_id)
+        path = f"checkpoints[{label}]"
+        widened.append(path)
+        summary.append(f"{path} deleted — AC-AMND-1(d)")
 
     return widened, summary
 
