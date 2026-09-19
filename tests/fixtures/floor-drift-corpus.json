@@ -186,10 +186,6 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_run_metrics.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_session_mode.py:*)",
             "origin": "settings.json"
           }
@@ -454,10 +450,6 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry_run_metrics.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry_session_mode.py:*)",
             "origin": "settings.json"
           }
@@ -707,10 +699,6 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_repo_registry.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_run_metrics.py:*)",
             "origin": "settings.json"
           },
           {
@@ -1002,10 +990,6 @@
             "origin": "settings.local.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_run_metrics.py:*)",
-            "origin": "settings.local.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_session_mode.py:*)",
             "origin": "settings.local.json"
           }
@@ -1273,10 +1257,6 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_repo_registry.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_run_metrics.py:*)",
             "origin": "settings.json"
           },
           {

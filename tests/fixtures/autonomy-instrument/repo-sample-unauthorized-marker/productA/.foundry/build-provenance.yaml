@@ -1,0 +1,9 @@
+foundry_version: 1.10.0
+merge_autonomy_mode: lean
+built_at: '2026-09-18T00:00:00Z'
+authorizations:
+- spec_ref: specs/features/foo/bar/feat-foo-bar.md
+  foundry_authorized_against: agentic-workspace@0123abc
+  spec_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1
+  contract_sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  auth_seq: 1

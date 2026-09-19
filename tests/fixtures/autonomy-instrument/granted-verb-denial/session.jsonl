@@ -1,0 +1,6 @@
+{"type": "assistant", "sessionId": "sess-1", "timestamp": "2023-11-14T22:13:20Z", "message": {"content": [{"type": "text", "text": "Pushing now."}, {"type": "tool_use", "id": "tu-1", "name": "Bash", "input": {"command": "git push origin main"}}]}}
+{"type": "user", "sessionId": "sess-1", "timestamp": "2023-11-14T22:13:22Z", "message": {"content": [{"type": "tool_result", "tool_use_id": "tu-1", "content": "hook blocked: git push requires the merge floor to pass first", "is_error": true}]}}
+{"type": "assistant", "sessionId": "sess-1", "timestamp": "2023-11-14T22:13:24Z", "message": {"content": [{"type": "text", "text": "Applying infra."}, {"type": "tool_use", "id": "tu-2", "name": "Bash", "input": {"command": "tofu apply -auto-approve"}}]}}
+{"type": "user", "sessionId": "sess-1", "timestamp": "2023-11-14T22:13:26Z", "message": {"content": [{"type": "tool_result", "tool_use_id": "tu-2", "content": "permission denied: tofu apply is not in the allowlist", "is_error": true}]}}
+{"type": "assistant", "sessionId": "sess-1", "timestamp": "2023-11-14T22:13:28Z", "message": {"content": [{"type": "text", "text": "Both mutations were blocked; stopping here."}]}}
+{"type": "user", "sessionId": "sess-1", "timestamp": "2023-11-14T22:13:30Z", "origin": {"kind": "human"}, "message": {"content": [{"type": "text", "text": "understood"}]}}
