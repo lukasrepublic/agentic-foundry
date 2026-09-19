@@ -31,7 +31,43 @@
     },
     "handoff": {
       "type": "object",
-      "description": "OPTIONAL, deliberately UNCONSTRAINED here (no nested schema) -- the operator-handoff-schema atom (out of scope for this one, see the blocker-requires-evidence charter's Out of scope) constrains this shape next. A blocker MAY carry one today; this schema does not yet check its contents."
+      "description": "feat-foundry-operator-handoff-schema, AC-OHS-1: anything the operator must run is DATA, not prose to parse -- the directory to run it from, the one bare command, why, and what success looks like. OPTIONAL on the schema itself (see the `if`/`then` below for when it becomes required), but constrained whenever present.",
+      "additionalProperties": false,
+      "required": ["cwd", "command", "why", "expect"],
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(~(/.*)?|/.*)$",
+          "description": "The working directory to run `command` from -- an absolute path (starts with `/`) or a `~`-relative path (`~` or `~/...`). Never a bare relative path: the operator's own shell cwd at handoff time is unknown to the tick."
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "allOf": [
+            {"not": {"pattern": "(&&|;|\\||\\r|\\n|\\$\\(|`)"}},
+            {"not": {"pattern": "(^|\\s)(set\\s+-[a-zA-Z]*e[a-zA-Z]*|trap|exec)(\\s|$)"}}
+          ],
+          "description": "ONE bare command, atomic and alone -- no chaining (`&&`, `;`, `|`), no command substitution (`$(`, backtick), no newline, and no top-level `set -e`/`trap`/`exec` (any of which could alter or exit the operator's own shell). Preconditions are verified separately beforehand, never chained into this field."
+        },
+        "why": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why the operator, not the agent, must run this -- the escalation reason in one line."
+        },
+        "expect": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The observable success -- what the operator should see when `command` worked."
+        }
+      }
     }
+  },
+  "if": {
+    "properties": {"why_operator": {"enum": ["credential-step", "external-provisioning"]}},
+    "required": ["why_operator"]
+  },
+  "then": {
+    "required": ["handoff"]
   }
 }
