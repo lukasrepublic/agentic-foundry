@@ -227,6 +227,33 @@ def _write_contract(tmp_path, name, allowed_paths):
     return name   # contract_ref is manifest-relative-to-project-dir, so return the bare name
 
 
+def _charter_atom(id, charter_ref, depends_on=None, paths=None):
+    """A charter-lane atom dict (release-loader-vocabulary, AC-RLV-2): `charter_ref` set, no
+    `spec_ref`/`contract_ref` at all -- the schema's other, exclusive atom shape."""
+    d = {"id": id, "charter_ref": charter_ref, "depends_on": depends_on or []}
+    if paths is not None:
+        d["paths"] = paths
+    return d
+
+
+def _write_charter(tmp_path, name, allowed_paths):
+    lines = ["# Charter: test\n", "\n", "## Goal\n", "Test charter.\n", "\n",
+              "## Scope (write boundary)\n", "allowed_paths:\n"]
+    for p in allowed_paths:
+        lines.append(f"  - {p}\n")
+    lines += ["denied_paths: []\n", "\n", "## Done when\n", "- test:tests/test_x.py\n"]
+    path = tmp_path / name
+    path.write_text("".join(lines), encoding="utf-8")
+    return name   # charter_ref is manifest-relative-to-project-dir, so return the bare name
+
+
+def _write_charter_no_scope(tmp_path, name):
+    path = tmp_path / name
+    path.write_text("# Charter: test\n\n## Goal\nSomething with no Scope section at all.\n",
+                     encoding="utf-8")
+    return name
+
+
 class TestPathsSubsetOfContract:
     def test_subset_passes_no_violation(self, tmp_path):
         _write_contract(tmp_path, "a-contract.yaml", ["src/a/**", "src/shared/**"])
@@ -291,6 +318,99 @@ class TestPathsSubsetOfContract:
         r = subprocess.run([sys.executable, WAVE_PLAN_SCRIPT, "--check", path],
                             capture_output=True, text=True, env=env)
         assert r.returncode == 0
+        assert "OK" in r.stdout
+
+
+# ============== --check: a CHARTER-lane atom's paths[] vs its charter's Scope (write boundary) ==#
+# r1-followups charter, AC-RFU-1 -- R1's open_risk: `check_paths_subset_of_contract` called
+# `os.path.join(pd, atom.contract_ref)` unconditionally for every atom with declared `paths[]`,
+# which raises `TypeError` on a charter-lane atom (`contract_ref` is `None` by construction --
+# release-loader-vocabulary, AC-RLV-2). These pin the fix: a charter-lane atom is checked against
+# its charter's parsed `allowed_paths:` the same way a factory-lane atom is checked against its
+# contract, and an unparseable/absent charter scope SKIPS (named), never crashes.
+
+class TestPathsSubsetOfCharter:
+    def test_charter_atom_in_scope_paths_passes(self, tmp_path):
+        _write_charter(tmp_path, "charter.md", ["scripts/a.py", "tests/test_a.py"])
+        doc = _manifest([_charter_atom("a", "charter.md", paths=["scripts/a.py"])])
+        path = _write_manifest(tmp_path, doc)
+        release = wp.load_manifest(path)
+        violations, skipped = wp.check_paths_subset_of_contract(release, project_dir=str(tmp_path))
+        assert violations == []
+        assert skipped == []
+
+    def test_charter_atom_out_of_scope_path_is_a_violation(self, tmp_path):
+        _write_charter(tmp_path, "charter.md", ["scripts/a.py"])
+        doc = _manifest([_charter_atom("a", "charter.md",
+                                       paths=["scripts/a.py", "scripts/OTHER.py"])])
+        path = _write_manifest(tmp_path, doc)
+        release = wp.load_manifest(path)
+        violations, skipped = wp.check_paths_subset_of_contract(release, project_dir=str(tmp_path))
+        assert len(violations) == 1
+        assert "scripts/OTHER.py" in violations[0]
+        assert skipped == []
+
+    def test_charter_atom_no_parseable_scope_is_skipped_not_a_crash(self, tmp_path):
+        _write_charter_no_scope(tmp_path, "charter.md")
+        doc = _manifest([_charter_atom("a", "charter.md", paths=["scripts/a.py"])])
+        path = _write_manifest(tmp_path, doc)
+        release = wp.load_manifest(path)
+        violations, skipped = wp.check_paths_subset_of_contract(release, project_dir=str(tmp_path))
+        assert violations == []
+        assert len(skipped) == 1
+        assert "a" in skipped[0]
+
+    def test_charter_atom_missing_charter_file_is_skipped_not_a_crash(self, tmp_path):
+        doc = _manifest([_charter_atom("a", "does-not-exist.md", paths=["scripts/a.py"])])
+        path = _write_manifest(tmp_path, doc)
+        release = wp.load_manifest(path)
+        violations, skipped = wp.check_paths_subset_of_contract(release, project_dir=str(tmp_path))
+        assert violations == []
+        assert len(skipped) == 1
+        assert "does-not-exist.md" in skipped[0]
+
+    def test_charter_atom_with_no_declared_paths_is_never_checked(self, tmp_path):
+        # A charter-lane atom with an unresolvable charter_ref and NO declared paths[] is not even
+        # a candidate -- this is the exact shape R1's open_risk names (an atom that declares no
+        # non-empty `paths[]` never reaches the paths-subset check at all).
+        doc = _manifest([_charter_atom("a", "does-not-exist.md")])
+        path = _write_manifest(tmp_path, doc)
+        release = wp.load_manifest(path)
+        violations, skipped = wp.check_paths_subset_of_contract(release, project_dir=str(tmp_path))
+        assert violations == [] and skipped == []
+
+    def test_cli_check_mode_ok_on_charter_subset(self, tmp_path):
+        _write_charter(tmp_path, "charter.md", ["scripts/a.py"])
+        doc = _manifest([_charter_atom("a", "charter.md", paths=["scripts/a.py"])])
+        path = _write_manifest(tmp_path, doc)
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(tmp_path))
+        r = subprocess.run([sys.executable, WAVE_PLAN_SCRIPT, "--check", path],
+                            capture_output=True, text=True, env=env)
+        assert r.returncode == 0
+        assert "OK" in r.stdout
+
+    def test_cli_check_mode_refuses_on_charter_violation(self, tmp_path):
+        _write_charter(tmp_path, "charter.md", ["scripts/a.py"])
+        doc = _manifest([_charter_atom("a", "charter.md",
+                                       paths=["scripts/a.py", "scripts/OTHER.py"])])
+        path = _write_manifest(tmp_path, doc)
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(tmp_path))
+        r = subprocess.run([sys.executable, WAVE_PLAN_SCRIPT, "--check", path],
+                            capture_output=True, text=True, env=env)
+        assert r.returncode == 2
+        assert "scripts/OTHER.py" in r.stderr
+
+    def test_cli_check_mode_never_crashes_on_charter_atom_no_parseable_scope(self, tmp_path):
+        # The exact regression this charter closes: pre-fix, this invocation raised TypeError
+        # (os.path.join(pd, None)) instead of exiting 0/2 with a named SKIP.
+        _write_charter_no_scope(tmp_path, "charter.md")
+        doc = _manifest([_charter_atom("a", "charter.md", paths=["scripts/a.py"])])
+        path = _write_manifest(tmp_path, doc)
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=str(tmp_path))
+        r = subprocess.run([sys.executable, WAVE_PLAN_SCRIPT, "--check", path],
+                            capture_output=True, text=True, env=env)
+        assert r.returncode == 0
+        assert "SKIP" in r.stderr
         assert "OK" in r.stdout
 
 

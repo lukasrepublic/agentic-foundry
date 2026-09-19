@@ -28,6 +28,14 @@ parseable contract, `paths[]` must be a verbatim subset of that contract's `scop
 not silent) rather than assuming consistency it cannot verify. See
 `check_paths_subset_of_contract` below.
 
+A CHARTER-lane atom (release-loader-vocabulary, AC-RLV-2 — `charter_ref` set, `contract_ref` None:
+no hash-frozen contract exists, the committed charter IS the record) is checked the same way against
+its charter's `## Scope (write boundary)` → `allowed_paths:` list instead (a lenient markdown/
+yaml-ish read, mirroring `foundry_command_deck_watch.py`'s `done_when`/`escalate_when` charter
+reader) — never `contract_ref`, so the two shapes can never be confused into
+`os.path.join(pd, None)` (r1-followups charter, AC-RFU-1). A charter with no parseable
+`## Scope (write boundary)` section SKIPS the check for that atom, named, never a crash.
+
 Declared-path overlap is computed on the SAME globset shape an acceptance-contract's
 `scope.allowed_paths` uses (e.g. `"src/foo/**"`, `"scripts/*.py"`) — each path is first
 `posixpath.normpath`-normalized (collapsing `./`/`a/../b` and a leading `/`), then reduced to a
@@ -53,6 +61,7 @@ import argparse
 import json
 import os
 import posixpath
+import re
 import sys
 
 import yaml
@@ -244,29 +253,106 @@ def _load_contract_allowed_paths(contract_ref, project_dir):
     return allowed
 
 
+_MD_HEADING_RE = re.compile(r"^(#+)\s*(.*?)\s*$")
+_YAMLISH_BULLET_RE = re.compile(r"^\s*-\s+(\S.*)$")
+_CHARTER_SCOPE_HEADING = "scope (write boundary)"
+
+
+def _load_charter_allowed_paths(charter_ref, project_dir):
+    """A charter-lane atom's write-boundary `allowed_paths` — parsed leniently from its charter's
+    `## Scope (write boundary)` section, e.g.
+
+        ## Scope (write boundary)
+        allowed_paths:
+          - scripts/foo.py
+          - tests/test_foo.py
+        denied_paths: []
+
+    A charter-lane atom carries no hash-frozen `acceptance-contract.yaml` (the committed charter
+    IS the record — see the charter-lane README), so this is the read
+    `check_paths_subset_of_contract` uses in place of `_load_contract_allowed_paths` for such an
+    atom. Returns `None` (never `[]`) when the charter file is absent/unreadable, the
+    `## Scope (write boundary)` heading is absent, or no `allowed_paths:` bullet list is found under
+    it — a definite "cannot check", mirroring `_load_contract_allowed_paths`'s contract-side
+    contract. This is a best-effort prose reader (like
+    `foundry_command_deck_watch.py`'s `done_when`/`escalate_when` charter parser), not a
+    schema-validated one — a charter that says something the parser cannot read SKIPS, it never
+    REFUSES on a parse failure alone."""
+    path = os.path.join(project_dir, charter_ref)
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return None
+
+    in_section = False
+    in_allowed_key = False
+    items = []
+    for line in text.splitlines():
+        heading = _MD_HEADING_RE.match(line)
+        if heading:
+            level = len(heading.group(1))
+            title = heading.group(2).strip().casefold()
+            if in_section and level <= 2:
+                break   # left the Scope section at a same-or-shallower heading
+            in_section = level == 2 and title == _CHARTER_SCOPE_HEADING
+            in_allowed_key = False
+            continue
+        if not in_section:
+            continue
+        bullet = _YAMLISH_BULLET_RE.match(line)
+        if bullet:
+            if in_allowed_key:
+                items.append(bullet.group(1).strip().strip("'\""))
+            continue
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # a bare "key:" or "key: value" line at this indent ends/starts the allowed_paths run —
+        # e.g. "allowed_paths:" opens it, "denied_paths: []" closes it.
+        key = stripped.split(":", 1)[0].strip()
+        in_allowed_key = bool(key) and key == "allowed_paths"
+
+    return items or None
+
+
 def check_paths_subset_of_contract(release, *, project_dir=None):
-    """For every atom with a non-empty `paths[]`: if its `contract_ref` resolves to a parseable
-    contract, its declared `paths[]` MUST be a verbatim (string-literal — globs compared as
-    written, never glob-expanded/intersected) SUBSET of that contract's `scope.allowed_paths`;
-    otherwise the atom's contract is unresolvable/unreadable/malformed and the check is SKIPPED for
-    it (named, not silent). Returns `(violations, skipped)`, both lists of human-readable strings —
-    the caller REFUSES iff `violations` is non-empty."""
+    """For every atom with a non-empty `paths[]`: a FACTORY-lane atom (`contract_ref` set) is
+    checked against its frozen contract's `scope.allowed_paths`; a CHARTER-lane atom (`charter_ref`
+    set instead — release-loader-vocabulary, AC-RLV-2) is checked the same way against its
+    charter's `## Scope (write boundary)` → `allowed_paths:` list (r1-followups charter, AC-RFU-1).
+    Either way the declared `paths[]` MUST be a verbatim (string-literal — globs compared as
+    written, never glob-expanded/intersected) SUBSET of the resolved allowed-paths list; when
+    neither source resolves/parses, the check is SKIPPED for that atom (named, not silent) rather
+    than crashing or assuming consistency it cannot verify — a charter-lane atom never falls into
+    the contract-only code path (so `contract_ref` is never `None`-joined). Returns
+    `(violations, skipped)`, both lists of human-readable strings — the caller REFUSES iff
+    `violations` is non-empty."""
     pd = project_dir or fr._project_dir()
     violations, skipped = [], []
     for atom in release.atoms:
         if not atom.paths:
             continue
-        allowed = _load_contract_allowed_paths(atom.contract_ref, pd)
+        if atom.charter_ref:
+            allowed = _load_charter_allowed_paths(atom.charter_ref, pd)
+            source, source_desc, ref_field = (
+                atom.charter_ref, "charter `## Scope (write boundary)` allowed_paths", "charter_ref"
+            )
+        else:
+            allowed = _load_contract_allowed_paths(atom.contract_ref, pd)
+            source, source_desc, ref_field = (
+                atom.contract_ref, "contract scope.allowed_paths", "contract_ref"
+            )
         if allowed is None:
-            skipped.append(f"{atom.id}: contract_ref unresolvable/unreadable/malformed "
-                            f"({atom.contract_ref}) — paths-subset check skipped for this atom")
+            skipped.append(f"{atom.id}: {ref_field} unresolvable/unreadable/malformed/no "
+                            f"parseable scope ({source}) — paths-subset check skipped for this atom")
             continue
         allowed_set = set(allowed)
         extra = sorted(p for p in atom.paths if p not in allowed_set)
         if extra:
             violations.append(
-                f"{atom.id}: declared paths {extra} are NOT a verbatim subset of contract "
-                f"scope.allowed_paths {sorted(allowed_set)} ({atom.contract_ref})"
+                f"{atom.id}: declared paths {extra} are NOT a verbatim subset of {source_desc} "
+                f"{sorted(allowed_set)} ({source})"
             )
     return violations, skipped
 
