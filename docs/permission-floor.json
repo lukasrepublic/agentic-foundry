@@ -114,6 +114,11 @@
       "rationale": "reconciles .claude/settings.json permissions.allow/ask from the operator-owned .foundry/permissions.yaml; a ceremony, not a self-grant"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-capability-preflight.py:*)",
+      "tier": "allow",
+      "rationale": "feat-foundry-authorization-capability-preflight-at-dispatch (AC-CPD-1): reads a contract/charter's requires_capabilities plus the effective settings.json/settings.local.json/user-scope settings and .foundry/permissions.yaml, prints one JSON verdict; never edits settings or the policy"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-prepublication-leak-scan.py:*)",
       "tier": "allow",
       "rationale": "pre-visibility-flip leak scan; read-only denylist/term-matching over the tree"

@@ -40,12 +40,13 @@ lane signal — Tier B advisory) plus `hooks/foundry-git-discipline.sh`'s determ
    5. **`operator-registry`** — `.claude/foundry-operators.json` resolves via `foundry_authz`.
 
    Plus one advisory-only line, rendered the same way but never counted toward `DOCTOR-RED`:
-   - **`permissions-policy`** (feat-foundry-authorization-standing-grants-as-policy, AC-SGP-6) —
-     `absent` when `.foundry/permissions.yaml` does not exist, else `in-sync` or `drift (<n>
-     rule(s))` from the same derivation `scripts/foundry-permissions-compile.py --check` runs.
-     Never RED: a stale policy must never wedge a session. Run
-     `foundry-permissions-compile.py --write` (an `ask`-tier ceremony) to reconcile a reported
-     drift.
+   - **`permissions-policy`** (feat-foundry-authorization-capability-preflight-at-dispatch,
+     AC-CPD-4 — replaces the R1 drift-only advisory, feat-foundry-authorization-standing-grants-
+     as-policy AC-SGP-6) — runs `scripts/foundry-capability-preflight.py` over every atom of every
+     ACTIVE release under `.foundry/releases/*/release.yaml`, printing `preflight ok (<n> atoms)`
+     or `preflight: <n> missing rule(s)`, followed by the R1 drift state on the SAME line —
+     `; policy absent|in-sync|drift (<k>)`, the same derivation `foundry-permissions-compile.py
+     --check` runs. Never RED: a stale-permission workspace must never wedge a session.
 
    Each probe is individually crash-proof — an unexpected exception inside one check is reported
    as that check's own RED result (`probe crashed: <type>: <detail>`), never an uncaught

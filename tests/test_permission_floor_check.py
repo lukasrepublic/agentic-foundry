@@ -225,7 +225,23 @@ def _import_map_suite():
 # `allow` for `--check`: read-only drift check, never writes. `ask` for `--write`: reconciles
 # `.claude/settings.json` from the operator-owned `.foundry/permissions.yaml` — a ceremony, not a
 # self-grant, the same shape every other mutating compiler CLI in this map already carries.
-MERGE_BASE_ENTRIES_DIGEST = "3ba1ee9b1c17e6950875e2cb98f3f10ff671b785f3944d1fac88f637666bb715"
+#
+# UPDATED for feat-foundry-authorization-capability-preflight-at-dispatch (AC-CPD-1, R2 of
+# autonomy-continuation). One new `allow` row for the new read-only preflight script — it reads
+# a contract's/charter's `requires_capabilities`, the three effective settings files, and
+# `.foundry/permissions.yaml`'s automatic grants, and prints a JSON verdict; it never edits
+# settings or the policy, the same read-only shape `foundry_blocker_check.py`'s own row already
+# carries. 66 -> 67 entries (one row added, none removed):
+#
+#   + Bash(.../foundry-capability-preflight.py:*)   tier `allow`
+#
+# This is the atom's OWN registration (its acceptance-contract explicitly authorizes writing both
+# `cli/permission-floor.json` and `docs/permission-floor.json`, mirroring standing-grants-as-
+# policy's precedent above), so — per the R8 rule this guard states — the map edit and this
+# re-pin land in the SAME reviewed diff. tests/fixtures/floor-drift-corpus.json's
+# `full-floor-verbatim` and `full-floor-home-expanded` cases (the only two cases asserted to leave
+# no `allow-absent` residue) each gained the matching effective-allow row in the same diff.
+MERGE_BASE_ENTRIES_DIGEST = "3867f92ee41d9322557bc5fd899d7d56f5af95aac9a73cafe194e7c4ce8a3460"
 
 
 # ================================================================================================ #

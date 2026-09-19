@@ -1,0 +1,28 @@
+{
+  "_comment": "feat-foundry-authorization-capability-preflight-at-dispatch (AC-CPD-8). A scrubbed, realistic .claude/settings.json allow-list shaped like one adopter's real workspace (no client names -- 'adopter-a'): the everyday read/inspect/local-git verbs an autonomous session actually uses, deliberately WITHOUT the two rules that adopter's sessions hit permission-classifier blocks on (the measured 44/192-block finding this atom's spec cites) -- `Bash(gh pr merge:*)` and `CronCreate`. Used only as a hermetic pytest fixture; never read by any shipped verb.",
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git checkout:*)",
+      "Bash(git rebase:*)",
+      "Bash(gh pr create:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(pytest:*)",
+      "Bash(python3 -m pytest:*)",
+      "Bash(python3 scripts/foundry-doctor.py:*)",
+      "Read(**)",
+      "Edit(scripts/**)",
+      "Write(scripts/**)"
+    ],
+    "ask": [
+      "Bash(gh pr merge --admin:*)"
+    ],
+    "deny": []
+  }
+}
