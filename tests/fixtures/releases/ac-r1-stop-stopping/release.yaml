@@ -1,14 +1,3 @@
-# FIXTURE NOTE (release-loader-vocabulary, AC-RLV-5) — copied from the real workspace manifest
-# .foundry/releases/ac-r1-stop-stopping/release.yaml, byte-identical EXCEPT two lines, both
-# PRE-EXISTING YAML SYNTAX defects in the real file (confirmed: `yaml.safe_load` raises on the
-# real file as committed, for EVERY YAML parser — independent of this loader/atom entirely):
-#   1. `value: [...]` — an unquoted flow-sequence item containing ` #1` starts a YAML comment
-#      mid-sequence (space + `#` inside `[...]`), truncating the flow collection. Quoted below.
-#   2. `lane: ... for the security: true atom ...` — a plain (unquoted) scalar containing an
-#      embedded `: ` (colon+space) is parsed as a nested mapping key, which is illegal at this
-#      position ("mapping values are not allowed here"). Quoted below (content unchanged).
-# Reported to the operator as pre-existing defects in the real manifest, independent of this
-# atom's vocabulary work — see the atom's final report / PR body.
 id: ac-r1-stop-stopping
 program: autonomy-continuation
 version: 1.12.0

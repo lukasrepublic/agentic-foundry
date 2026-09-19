@@ -65,6 +65,7 @@ _ATOM_FIELDS = {"id", "depends_on"}
 # `security` are the charter-lane's additional optional fields (`_validate` enforces their shapes).
 _ATOM_OPTIONAL_FIELDS = {
     "paths", "journeys", "spec_ref", "contract_ref", "charter_ref", "kind", "lane", "security",
+    "lands",  # programme ordering hint ("first"), used by R0/R3 manifests — informational
 }
 _ATOM_LANE_VALUES = {"charter", "factory"}
 # (AC-RLV-4): `proposed` reads as a synonym of `planned` — `load_release` never writes anything

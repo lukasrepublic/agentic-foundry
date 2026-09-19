@@ -610,21 +610,16 @@ class TestReleaseLoaderVocabulary:
         assert top_keys - required - optional == set(), \
             f"unexpected top-level field(s) in the real R0 manifest: {top_keys - required - optional}"
 
-    def test_ac_r0_fixture_atoms_refused_no_ref_shape_FINDING(self, tmp_path):
-        """FINDING, not a spec violation of this atom: R0 predates the charter_ref convention — its
-        8 atoms (`.foundry/releases/ac-r0-living-spec-process/release.yaml` in the real workspace,
-        confirmed 2026-09-19) carry NONE of spec_ref/contract_ref/charter_ref (R0 was "driven by
-        hand", per its own state.yaml). AC-RLV-2, as frozen, refuses that atom shape BY NAME — so
-        the fixture's full `load_release` correctly RAISES here; AC-RLV-5's literal "SHALL load
-        without error" is UNMET for the R0 fixture specifically, and fixing it needs either (a) the
-        real R0 manifest amended with a ref for each atom (a workspace edit outside this atom's
-        write boundary — the workspace is read-only to this atom), or (b) an operator-authorized
-        widening of AC-RLV-2 to also accept a fully ref-less atom. Reported, not resolved, here."""
+    def test_ac_r0_fixture_manifest_loads_clean(self, tmp_path):
+        """AC-RLV-5: the R0 manifest (repaired on the workspace side 2026-09-19 — valid YAML, every atom
+        carrying spec_ref+contract_ref or charter_ref, `lands: first` on the first atom) loads without
+        error; three factory-lane atoms and five charter-lane atoms."""
         pd = str(tmp_path)
         _seed_release_fixture(pd, "ac-r0-living-spec-process")
-        with pytest.raises(release.ReleaseError,
-                           match="authorize-drops-audit-precondition"):   # first atom in the manifest
-            release.load_release("ac-r0-living-spec-process", project_dir=pd)
+        rel = release.load_release("ac-r0-living-spec-process", project_dir=pd)
+        assert len(rel.atoms) == 8
+        assert sum(1 for a in rel.atoms if a.charter_ref) == 5
+        assert sum(1 for a in rel.atoms if a.spec_ref and a.contract_ref) == 3
 
 
 # ============================================================ foundry_release.py: run-state ==== #
