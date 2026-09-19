@@ -288,6 +288,7 @@ def _load_charter_allowed_paths(charter_ref, project_dir):
     in_section = False
     in_allowed_key = False
     items = []
+    seen_allowed_key = False
     for line in text.splitlines():
         heading = _MD_HEADING_RE.match(line)
         if heading:
@@ -312,8 +313,15 @@ def _load_charter_allowed_paths(charter_ref, project_dir):
         # e.g. "allowed_paths:" opens it, "denied_paths: []" closes it.
         key = stripped.split(":", 1)[0].strip()
         in_allowed_key = bool(key) and key == "allowed_paths"
+        if in_allowed_key:
+            seen_allowed_key = True
 
-    return items or None
+    # PR #174 review: an EXPLICIT `allowed_paths:` (even with zero bullets, e.g. `allowed_paths: []`)
+    # is a declared empty scope → return [] so a declared paths[] becomes a VIOLATION, never a skip.
+    # Only a charter with no `allowed_paths:` key at all is "no parseable scope" (None → skipped).
+    if seen_allowed_key:
+        return items
+    return None
 
 
 def check_paths_subset_of_contract(release, *, project_dir=None):

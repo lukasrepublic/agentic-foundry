@@ -360,6 +360,16 @@ class TestPathsSubsetOfCharter:
         assert len(skipped) == 1
         assert "a" in skipped[0]
 
+    def test_charter_atom_explicit_empty_scope_is_a_violation_not_a_skip(self, tmp_path):
+        """PR #174 review: `allowed_paths: []` is a DECLARED empty scope — a declared paths[] violates it."""
+        _write_charter(tmp_path, "charter.md", [])           # writes "allowed_paths:" with no bullets
+        doc = _manifest([_charter_atom("a", "charter.md", paths=["scripts/a.py"])])
+        path = _write_manifest(tmp_path, doc)
+        release = wp.load_manifest(path)
+        violations, skipped = wp.check_paths_subset_of_contract(release, project_dir=str(tmp_path))
+        assert skipped == []
+        assert len(violations) == 1 and "scripts/a.py" in violations[0]
+
     def test_charter_atom_missing_charter_file_is_skipped_not_a_crash(self, tmp_path):
         doc = _manifest([_charter_atom("a", "does-not-exist.md", paths=["scripts/a.py"])])
         path = _write_manifest(tmp_path, doc)
