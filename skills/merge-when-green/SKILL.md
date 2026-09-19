@@ -73,6 +73,9 @@ escalates through this path even when none of them would ever trigger on the PR'
 changed files; that finer partition is deferred to a follow-up atom. See
 `scripts/foundry-merge-when-green.py`'s own module docstring.
 
+A zero-checks poll never merges even when `mergeStateStatus` already reads `CLEAN` — left as-is,
+fail-closed by design: no CI reporting at all means there is no merge floor to have gone green.
+
 ## Anti-patterns
 
 - **Sleeping an arbitrary interval and re-running `gh pr checks` by hand.** That is exactly the

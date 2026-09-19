@@ -19,6 +19,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 from conftest import REPO_ROOT
 
 SCRIPT = os.path.join(REPO_ROOT, "scripts", "foundry-merge-when-green.py")
@@ -112,6 +114,25 @@ def test_blocked_behind_main_carries_rebase_remediation(tmp_path):
     doc = _last_json_line(p.stdout)
     assert doc["status"] == "blocked"
     assert doc["remediation"] == "git rebase origin/main"
+
+
+@pytest.mark.parametrize("state", ["skipped", "neutral", "cancelled"])
+def test_blocked_immediately_on_terminal_nonpass_conclusion(tmp_path, state):
+    # PR #180 round 2: a skipped/neutral/cancelled conclusion is TERMINAL, never "still waiting"
+    # -- none of the three ever becomes `pass` on its own. Sequenced pending -> <state> (via the
+    # stub's GH_STUB_CHECKS_SEQUENCE) and asserted to resolve on the SECOND poll rather than
+    # riding out the full --timeout-min as an undifferentiated "timed out".
+    p = _run_mwg(
+        tmp_path, 30, "--timeout-min", "5",
+        GH_STUB_CHECKS_SEQUENCE=f"check-a\tpending\t1s\turl\x1echeck-a\t{state}\t1s\turl",
+    )
+    assert p.returncode == 3, p.stdout + p.stderr
+    doc = _last_json_line(p.stdout)
+    assert doc["status"] == "blocked"
+    assert f"check-a ({state})" in doc["reason"]
+    assert doc["remediation"] == "re-run the workflow or make it a required context"
+    log = _log_text(tmp_path)
+    assert log.count("pr checks 30") == 2, log  # resolved on poll 2, not the full timeout
 
 
 def test_blocked_on_timeout_when_never_settles(tmp_path):

@@ -14,10 +14,13 @@ guess each time.
     foundry-merge-when-green.py <pr> [--timeout-min N] [--squash] [--poll-interval-sec N]
                                       [--no-checks-grace-min N] [--watch]
 
-Exit codes: 0 merged, 3 blocked (a failing check, or a non-CLEAN mergeStateStatus -- named in
-`reason`; a behind-main state carries `remediation: git rebase origin/main`), 4 escalate (AC-MWG-2
--- no check has reported for `--no-checks-grace-min` minutes, default 5, and no workflow is
-configured for this repo at all, so waiting is provably pointless).
+Exit codes: 0 merged, 3 blocked (a failing check, a `skipped`/`neutral`/`cancelled` check
+conclusion -- each TERMINAL, never treated as "still waiting" since none becomes `pass` on its
+own, named in `reason` with remediation "re-run the workflow or make it a required context" -- or
+a non-CLEAN mergeStateStatus named in `reason`; a behind-main state carries `remediation: git
+rebase origin/main`), 4 escalate (AC-MWG-2 -- no check has reported for `--no-checks-grace-min`
+minutes, default 5, and no workflow is configured for this repo at all, so waiting is provably
+pointless).
 
 Prints one JSON object on stdout: `{"status": "merged"|"blocked"|"escalate"|"waiting", "pr",
 "merge_commit", "checks": [...], "reason", "remediation"}`. In `--watch` mode, one such object is
@@ -39,6 +42,12 @@ correct special case of that condition: the workflow list for the repo is EMPTY 
 provably no CI configured at all, so no workflow's paths -- there being none -- can ever match).
 A repo with one or more configured workflows never escalates through this path, even if none of
 them happen to trigger on the PR's specific changed files; that finer partition is deferred.
+
+Left as-is, by design (coordinator review, PR #180 round 2): a zero-checks poll never attempts a
+merge even when `mergeStateStatus` already reads `CLEAN` -- `gh pr view` is never even queried
+while `rows` is empty, so an empty checks list plus a coincidentally-CLEAN merge state still falls
+through to the AC-MWG-2 grace/escalate path, not a merge. Fail-closed on purpose: no CI reporting
+at all means there is no merge floor to have gone green in the first place.
 """
 from __future__ import annotations
 
@@ -65,6 +74,12 @@ _POLL_FLOOR_TEST_ENV = "FOUNDRY_MWG_TEST_POLL_FLOOR_SEC"
 # BEHIND in the charter's own "BLOCKED-behind-main" naming) -- every other non-CLEAN value is
 # reported verbatim with a generic remediation rather than guessed at.
 _REBASE_STATES = frozenset({"BEHIND", "BLOCKED"})
+
+# `gh pr checks` conclusions that will NEVER become `pass` on their own -- terminal non-pass,
+# blocked immediately rather than treated as "still pending" (coordinator review, PR #180 round
+# 2). `fail` is handled separately above (a different reason/remediation); this is every other
+# conclusion that is done reporting without having passed.
+_TERMINAL_NONPASS_STATES = frozenset({"skipped", "neutral", "cancelled"})
 
 
 class GhUnavailable(Exception):
@@ -205,6 +220,19 @@ def run(pr: int, *, timeout_min: float, poll_interval_sec: float, no_checks_grac
                                       f"foundry-merge-when-green.py {pr} once it is green.")
             return doc, 3
 
+        # A `skipped`/`neutral`/`cancelled` conclusion is TERMINAL, never "still waiting": none of
+        # the three will ever become `pass` on their own (coordinator review, PR #180 round 2) --
+        # the git-discipline hook's own clause misses exactly this gap (`gh pr checks` exits 0 for
+        # them), so this CLI must close it rather than spin until --timeout-min on an undifferentiated
+        # "timed out".
+        terminal_nonpass = [r for r in rows if r["state"] in _TERMINAL_NONPASS_STATES]
+        if terminal_nonpass:
+            names = ", ".join(f"{r['name']} ({r['state']})" for r in terminal_nonpass)
+            doc = _result("blocked", pr, rows,
+                          reason=f"check(s) concluded without passing: {names}",
+                          remediation="re-run the workflow or make it a required context")
+            return doc, 3
+
         if rows:
             # Checks are reporting at all -- the AC-MWG-2 grace clock is about a query that comes
             # back with NO rows whatsoever, not a still-pending one, so any non-empty result
@@ -289,7 +317,9 @@ def main(argv=None) -> int:
                     help="always on -- squash is the only merge strategy this primitive issues; "
                          "the flag is accepted for explicitness and forward compatibility")
     ap.add_argument("--poll-interval-sec", type=float, default=_DEFAULT_POLL_INTERVAL_SEC,
-                    help=f"floored at {_DEFAULT_POLL_INTERVAL_SEC}s in production")
+                    help=f"floored at {_DEFAULT_POLL_INTERVAL_SEC}s in production; the ONLY way "
+                         f"under that floor is the test-only {_POLL_FLOOR_TEST_ENV} env escape "
+                         "(see the module docstring) -- never advertised to an operator")
     ap.add_argument("--no-checks-grace-min", type=float, default=_DEFAULT_NO_CHECKS_GRACE_MIN)
     ap.add_argument("--watch", action="store_true",
                     help="print one line per observed state change; arm a native Monitor on it")
