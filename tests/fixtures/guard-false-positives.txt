@@ -1,0 +1,544 @@
+# tests/fixtures/guard-false-positives.txt
+# feat-foundry-guards-guard-structured-observations (AC-GSO-5).
+#
+# The measured false-positive corpus: realistic shapes where a guarded verb is
+# mentioned only in PROSE inside an inert-sink heredoc body (a commit message, a
+# doc/spec/runbook write, a PR/issue body) across the six closed AC-GSO-2 sink forms.
+# Each ADMIT case is paired with a CONVICT sibling that differs ONLY in the ONE
+# AC-GSO-2 property under test (PR #178 security review round 2: an earlier revision
+# paired several admits with a convict that also dropped the redirect target entirely,
+# convicting on 'not a recognized sink shape' rather than the property named in the
+# comment below each builder) — same sink + a pipe consumer (AC-GSO-2(ii)), same sink
+# under a scratch/tmp path (AC-GSO-2(iii)), or same sink with its path ALSO mentioned
+# in a later clause (AC-GSO-2(iv)). AC-GSO-2 is convict-first: an admit row is only as
+# good as the sibling that proves the tokenizer still convicts the adjacent unsafe
+# variant of the exact same shape.
+#
+# Format: repeated blocks of
+#   @@@ CASE <n>
+#   --- ADMIT ---
+#   <command, verbatim, until the next '--- CONVICT ---' marker line>
+#   --- CONVICT ---
+#   <command, verbatim, until the next '@@@ CASE' marker or EOF>
+# Parsed by tests/test_shell_scan.py::test_false_positive_corpus_admits_and_each_row_has_a_paired_convict.
+
+@@@ CASE 1
+--- ADMIT ---
+cat > docs/x.md <<'EOF'
+See the guarded verb in this example: `git push --force origin main`.
+EOF
+--- CONVICT ---
+cat > docs/x.md <<'EOF' | tee >(bash)
+See the guarded verb in this example: `git push --force origin main`.
+EOF
+
+@@@ CASE 2
+--- ADMIT ---
+cat >> README.md <<'EOF'
+Update: do not run `git push --force origin main` directly.
+EOF
+--- CONVICT ---
+cat >> /tmp/x <<'EOF'
+Update: do not run `git push --force origin main` directly.
+EOF
+
+@@@ CASE 3
+--- ADMIT ---
+tee CHANGELOG.md <<'EOF'
+Runbook note: the incident involved `git push --force origin main` being attempted.
+EOF
+--- CONVICT ---
+tee CHANGELOG.md <<'EOF'
+Runbook note: the incident involved `git push --force origin main` being attempted.
+EOF
+; cat CHANGELOG.md
+
+@@@ CASE 4
+--- ADMIT ---
+git commit -F - <<'EOF'
+fix: document why `git push --force origin main` is refused by the guard
+
+See docs/merge-floor.md for detail.
+EOF
+--- CONVICT ---
+git commit -F - <<'EOF' | cat
+fix: document why `git push --force origin main` is refused by the guard
+
+See docs/merge-floor.md for detail.
+EOF
+
+@@@ CASE 5
+--- ADMIT ---
+gh pr create --title 'guard docs' --body-file - <<'EOF'
+This PR explains the `git push --force origin main` guard clause and its remediation.
+EOF
+--- CONVICT ---
+gh pr create --title 'guard docs' --body-file - <<'EOF' | cat
+This PR explains the `git push --force origin main` guard clause and its remediation.
+EOF
+
+@@@ CASE 6
+--- ADMIT ---
+gh issue create --title 'false positive' --body-file - <<'EOF'
+Bug report: a false BLOCK triggers when prose mentions `git push --force origin main`.
+EOF
+--- CONVICT ---
+gh issue create --title 'false positive' --body-file - <<'EOF' | cat
+Bug report: a false BLOCK triggers when prose mentions `git push --force origin main`.
+EOF
+
+@@@ CASE 7
+--- ADMIT ---
+cat > memory/note.md <<'EOF'
+See the guarded verb in this example: `git push -f origin main`.
+EOF
+--- CONVICT ---
+cat > memory/note.md <<'EOF' | tee >(bash)
+See the guarded verb in this example: `git push -f origin main`.
+EOF
+
+@@@ CASE 8
+--- ADMIT ---
+cat >> docs/troubleshooting.md <<'EOF'
+Update: do not run `git push -f origin main` directly.
+EOF
+--- CONVICT ---
+cat >> /tmp/x <<'EOF'
+Update: do not run `git push -f origin main` directly.
+EOF
+
+@@@ CASE 9
+--- ADMIT ---
+tee docs/merge-floor.md <<'EOF'
+Runbook note: the incident involved `git push -f origin main` being attempted.
+EOF
+--- CONVICT ---
+tee docs/merge-floor.md <<'EOF'
+Runbook note: the incident involved `git push -f origin main` being attempted.
+EOF
+; cat docs/merge-floor.md
+
+@@@ CASE 10
+--- ADMIT ---
+git commit -F - <<'EOF'
+fix: document why `git push -f origin main` is refused by the guard
+
+See docs/merge-floor.md for detail.
+EOF
+--- CONVICT ---
+git commit -F - <<'EOF' | cat
+fix: document why `git push -f origin main` is refused by the guard
+
+See docs/merge-floor.md for detail.
+EOF
+
+@@@ CASE 11
+--- ADMIT ---
+gh pr create --title 'guard docs' --body-file - <<'EOF'
+This PR explains the `git push -f origin main` guard clause and its remediation.
+EOF
+--- CONVICT ---
+gh pr create --title 'guard docs' --body-file - <<'EOF' | cat
+This PR explains the `git push -f origin main` guard clause and its remediation.
+EOF
+
+@@@ CASE 12
+--- ADMIT ---
+gh issue create --title 'false positive' --body-file - <<'EOF'
+Bug report: a false BLOCK triggers when prose mentions `git push -f origin main`.
+EOF
+--- CONVICT ---
+gh issue create --title 'false positive' --body-file - <<'EOF' | cat
+Bug report: a false BLOCK triggers when prose mentions `git push -f origin main`.
+EOF
+
+@@@ CASE 13
+--- ADMIT ---
+cat > docs/guides/git-safety.md <<'EOF'
+See the guarded verb in this example: `git branch -D main`.
+EOF
+--- CONVICT ---
+cat > docs/guides/git-safety.md <<'EOF' | tee >(bash)
+See the guarded verb in this example: `git branch -D main`.
+EOF
+
+@@@ CASE 14
+--- ADMIT ---
+cat >> CONTRIBUTING.md <<'EOF'
+Update: do not run `git branch -D main` directly.
+EOF
+--- CONVICT ---
+cat >> /tmp/x <<'EOF'
+Update: do not run `git branch -D main` directly.
+EOF
+
+@@@ CASE 15
+--- ADMIT ---
+tee docs/postmortems/2026-09-19.md <<'EOF'
+Runbook note: the incident involved `git branch -D main` being attempted.
+EOF
+--- CONVICT ---
+tee docs/postmortems/2026-09-19.md <<'EOF'
+Runbook note: the incident involved `git branch -D main` being attempted.
+EOF
+; cat docs/postmortems/2026-09-19.md
+
+@@@ CASE 16
+--- ADMIT ---
+git commit -F - <<'EOF'
+fix: document why `git branch -D main` is refused by the guard
+
+See docs/merge-floor.md for detail.
+EOF
+--- CONVICT ---
+git commit -F - <<'EOF' | cat
+fix: document why `git branch -D main` is refused by the guard
+
+See docs/merge-floor.md for detail.
+EOF
+
+@@@ CASE 17
+--- ADMIT ---
+gh pr create --title 'guard docs' --body-file - <<'EOF'
+This PR explains the `git branch -D main` guard clause and its remediation.
+EOF
+--- CONVICT ---
+gh pr create --title 'guard docs' --body-file - <<'EOF' | cat
+This PR explains the `git branch -D main` guard clause and its remediation.
+EOF
+
+@@@ CASE 18
+--- ADMIT ---
+gh issue create --title 'false positive' --body-file - <<'EOF'
+Bug report: a false BLOCK triggers when prose mentions `git branch -D main`.
+EOF
+--- CONVICT ---
+gh issue create --title 'false positive' --body-file - <<'EOF' | cat
+Bug report: a false BLOCK triggers when prose mentions `git branch -D main`.
+EOF
+
+@@@ CASE 19
+--- ADMIT ---
+cat > notes/runbook.md <<'EOF'
+See the guarded verb in this example: `git filter-repo --path secrets.txt --invert-paths`.
+EOF
+--- CONVICT ---
+cat > notes/runbook.md <<'EOF' | tee >(bash)
+See the guarded verb in this example: `git filter-repo --path secrets.txt --invert-paths`.
+EOF
+
+@@@ CASE 20
+--- ADMIT ---
+cat >> specs/features/foo/feat-foo.md <<'EOF'
+Update: do not run `git filter-repo --path secrets.txt --invert-paths` directly.
+EOF
+--- CONVICT ---
+cat >> /tmp/x <<'EOF'
+Update: do not run `git filter-repo --path secrets.txt --invert-paths` directly.
+EOF
+
+@@@ CASE 21
+--- ADMIT ---
+tee .foundry/decisions/2026-09-19-note.md <<'EOF'
+Runbook note: the incident involved `git filter-repo --path secrets.txt --invert-paths` being attempted.
+EOF
+--- CONVICT ---
+tee .foundry/decisions/2026-09-19-note.md <<'EOF'
+Runbook note: the incident involved `git filter-repo --path secrets.txt --invert-paths` being attempted.
+EOF
+; cat .foundry/decisions/2026-09-19-note.md
+
+@@@ CASE 22
+--- ADMIT ---
+git commit -F - <<'EOF'
+fix: document why `git filter-repo --path secrets.txt --invert-paths` is refused by the guard
+
+See docs/merge-floor.md for detail.
+EOF
+--- CONVICT ---
+git commit -F - <<'EOF' | cat
+fix: document why `git filter-repo --path secrets.txt --invert-paths` is refused by the guard
+
+See docs/merge-floor.md for detail.
+EOF
+
+@@@ CASE 23
+--- ADMIT ---
+gh pr create --title 'guard docs' --body-file - <<'EOF'
+This PR explains the `git filter-repo --path secrets.txt --invert-paths` guard clause and its remediation.
+EOF
+--- CONVICT ---
+gh pr create --title 'guard docs' --body-file - <<'EOF' | cat
+This PR explains the `git filter-repo --path secrets.txt --invert-paths` guard clause and its remediation.
+EOF
+
+@@@ CASE 24
+--- ADMIT ---
+gh issue create --title 'false positive' --body-file - <<'EOF'
+Bug report: a false BLOCK triggers when prose mentions `git filter-repo --path secrets.txt --invert-paths`.
+EOF
+--- CONVICT ---
+gh issue create --title 'false positive' --body-file - <<'EOF' | cat
+Bug report: a false BLOCK triggers when prose mentions `git filter-repo --path secrets.txt --invert-paths`.
+EOF
+
+@@@ CASE 25
+--- ADMIT ---
+cat > fixtures/example.md <<'EOF'
+See the guarded verb in this example: `git filter-branch --tree-filter 'rm -f secrets.txt' HEAD`.
+EOF
+--- CONVICT ---
+cat > fixtures/example.md <<'EOF' | tee >(bash)
+See the guarded verb in this example: `git filter-branch --tree-filter 'rm -f secrets.txt' HEAD`.
+EOF
+
+@@@ CASE 26
+--- ADMIT ---
+cat >> docs/handoff/2026-09-19-note.md <<'EOF'
+Update: do not run `git filter-branch --tree-filter 'rm -f secrets.txt' HEAD` directly.
+EOF
+--- CONVICT ---
+cat >> /tmp/x <<'EOF'
+Update: do not run `git filter-branch --tree-filter 'rm -f secrets.txt' HEAD` directly.
+EOF
+
+@@@ CASE 27
+--- ADMIT ---
+tee runbooks/incident.md <<'EOF'
+Runbook note: the incident involved `git filter-branch --tree-filter 'rm -f secrets.txt' HEAD` being attempted.
+EOF
+--- CONVICT ---
+tee runbooks/incident.md <<'EOF'
+Runbook note: the incident involved `git filter-branch --tree-filter 'rm -f secrets.txt' HEAD` being attempted.
+EOF
+; cat runbooks/incident.md
+
+@@@ CASE 28
+--- ADMIT ---
+git commit -F - <<'EOF'
+fix: document why `git filter-branch --tree-filter 'rm -f secrets.txt' HEAD` is refused by the guard
+
+See docs/merge-floor.md for detail.
+EOF
+--- CONVICT ---
+git commit -F - <<'EOF' | cat
+fix: document why `git filter-branch --tree-filter 'rm -f secrets.txt' HEAD` is refused by the guard
+
+See docs/merge-floor.md for detail.
+EOF
+
+@@@ CASE 29
+--- ADMIT ---
+gh pr create --title 'guard docs' --body-file - <<'EOF'
+This PR explains the `git filter-branch --tree-filter 'rm -f secrets.txt' HEAD` guard clause and its remediation.
+EOF
+--- CONVICT ---
+gh pr create --title 'guard docs' --body-file - <<'EOF' | cat
+This PR explains the `git filter-branch --tree-filter 'rm -f secrets.txt' HEAD` guard clause and its remediation.
+EOF
+
+@@@ CASE 30
+--- ADMIT ---
+gh issue create --title 'false positive' --body-file - <<'EOF'
+Bug report: a false BLOCK triggers when prose mentions `git filter-branch --tree-filter 'rm -f secrets.txt' HEAD`.
+EOF
+--- CONVICT ---
+gh issue create --title 'false positive' --body-file - <<'EOF' | cat
+Bug report: a false BLOCK triggers when prose mentions `git filter-branch --tree-filter 'rm -f secrets.txt' HEAD`.
+EOF
+
+@@@ CASE 31
+--- ADMIT ---
+cat > docs/x.md <<'EOF'
+See the guarded verb in this example: `rm -rf .git`.
+EOF
+--- CONVICT ---
+cat > docs/x.md <<'EOF' | tee >(bash)
+See the guarded verb in this example: `rm -rf .git`.
+EOF
+
+@@@ CASE 32
+--- ADMIT ---
+cat >> README.md <<'EOF'
+Update: do not run `rm -rf .git` directly.
+EOF
+--- CONVICT ---
+cat >> /tmp/x <<'EOF'
+Update: do not run `rm -rf .git` directly.
+EOF
+
+@@@ CASE 33
+--- ADMIT ---
+tee CHANGELOG.md <<'EOF'
+Runbook note: the incident involved `rm -rf .git` being attempted.
+EOF
+--- CONVICT ---
+tee CHANGELOG.md <<'EOF'
+Runbook note: the incident involved `rm -rf .git` being attempted.
+EOF
+; cat CHANGELOG.md
+
+@@@ CASE 34
+--- ADMIT ---
+git commit -F - <<'EOF'
+fix: document why `rm -rf .git` is refused by the guard
+
+See docs/merge-floor.md for detail.
+EOF
+--- CONVICT ---
+git commit -F - <<'EOF' | cat
+fix: document why `rm -rf .git` is refused by the guard
+
+See docs/merge-floor.md for detail.
+EOF
+
+@@@ CASE 35
+--- ADMIT ---
+gh pr create --title 'guard docs' --body-file - <<'EOF'
+This PR explains the `rm -rf .git` guard clause and its remediation.
+EOF
+--- CONVICT ---
+gh pr create --title 'guard docs' --body-file - <<'EOF' | cat
+This PR explains the `rm -rf .git` guard clause and its remediation.
+EOF
+
+@@@ CASE 36
+--- ADMIT ---
+gh issue create --title 'false positive' --body-file - <<'EOF'
+Bug report: a false BLOCK triggers when prose mentions `rm -rf .git`.
+EOF
+--- CONVICT ---
+gh issue create --title 'false positive' --body-file - <<'EOF' | cat
+Bug report: a false BLOCK triggers when prose mentions `rm -rf .git`.
+EOF
+
+@@@ CASE 37
+--- ADMIT ---
+cat > memory/note.md <<'EOF'
+See the guarded verb in this example: `git commit --no-verify -m wip`.
+EOF
+--- CONVICT ---
+cat > memory/note.md <<'EOF' | tee >(bash)
+See the guarded verb in this example: `git commit --no-verify -m wip`.
+EOF
+
+@@@ CASE 38
+--- ADMIT ---
+cat >> docs/troubleshooting.md <<'EOF'
+Update: do not run `git commit --no-verify -m wip` directly.
+EOF
+--- CONVICT ---
+cat >> /tmp/x <<'EOF'
+Update: do not run `git commit --no-verify -m wip` directly.
+EOF
+
+@@@ CASE 39
+--- ADMIT ---
+tee docs/merge-floor.md <<'EOF'
+Runbook note: the incident involved `git commit --no-verify -m wip` being attempted.
+EOF
+--- CONVICT ---
+tee docs/merge-floor.md <<'EOF'
+Runbook note: the incident involved `git commit --no-verify -m wip` being attempted.
+EOF
+; cat docs/merge-floor.md
+
+@@@ CASE 40
+--- ADMIT ---
+git commit -F - <<'EOF'
+fix: document why `git commit --no-verify -m wip` is refused by the guard
+
+See docs/merge-floor.md for detail.
+EOF
+--- CONVICT ---
+git commit -F - <<'EOF' | cat
+fix: document why `git commit --no-verify -m wip` is refused by the guard
+
+See docs/merge-floor.md for detail.
+EOF
+
+@@@ CASE 41
+--- ADMIT ---
+gh pr create --title 'guard docs' --body-file - <<'EOF'
+This PR explains the `git commit --no-verify -m wip` guard clause and its remediation.
+EOF
+--- CONVICT ---
+gh pr create --title 'guard docs' --body-file - <<'EOF' | cat
+This PR explains the `git commit --no-verify -m wip` guard clause and its remediation.
+EOF
+
+@@@ CASE 42
+--- ADMIT ---
+gh issue create --title 'false positive' --body-file - <<'EOF'
+Bug report: a false BLOCK triggers when prose mentions `git commit --no-verify -m wip`.
+EOF
+--- CONVICT ---
+gh issue create --title 'false positive' --body-file - <<'EOF' | cat
+Bug report: a false BLOCK triggers when prose mentions `git commit --no-verify -m wip`.
+EOF
+
+@@@ CASE 43
+--- ADMIT ---
+cat > docs/guides/git-safety.md <<'EOF'
+See the guarded verb in this example: `gh pr merge 42 --admin --merge`.
+EOF
+--- CONVICT ---
+cat > docs/guides/git-safety.md <<'EOF' | tee >(bash)
+See the guarded verb in this example: `gh pr merge 42 --admin --merge`.
+EOF
+
+@@@ CASE 44
+--- ADMIT ---
+cat >> CONTRIBUTING.md <<'EOF'
+Update: do not run `gh pr merge 42 --admin --merge` directly.
+EOF
+--- CONVICT ---
+cat >> /tmp/x <<'EOF'
+Update: do not run `gh pr merge 42 --admin --merge` directly.
+EOF
+
+@@@ CASE 45
+--- ADMIT ---
+tee docs/postmortems/2026-09-19.md <<'EOF'
+Runbook note: the incident involved `gh pr merge 42 --admin --merge` being attempted.
+EOF
+--- CONVICT ---
+tee docs/postmortems/2026-09-19.md <<'EOF'
+Runbook note: the incident involved `gh pr merge 42 --admin --merge` being attempted.
+EOF
+; cat docs/postmortems/2026-09-19.md
+
+@@@ CASE 46
+--- ADMIT ---
+git commit -F - <<'EOF'
+fix: document why `gh pr merge 42 --admin --merge` is refused by the guard
+
+See docs/merge-floor.md for detail.
+EOF
+--- CONVICT ---
+git commit -F - <<'EOF' | cat
+fix: document why `gh pr merge 42 --admin --merge` is refused by the guard
+
+See docs/merge-floor.md for detail.
+EOF
+
+@@@ CASE 47
+--- ADMIT ---
+gh pr create --title 'guard docs' --body-file - <<'EOF'
+This PR explains the `gh pr merge 42 --admin --merge` guard clause and its remediation.
+EOF
+--- CONVICT ---
+gh pr create --title 'guard docs' --body-file - <<'EOF' | cat
+This PR explains the `gh pr merge 42 --admin --merge` guard clause and its remediation.
+EOF
+
+@@@ CASE 48
+--- ADMIT ---
+gh issue create --title 'false positive' --body-file - <<'EOF'
+Bug report: a false BLOCK triggers when prose mentions `gh pr merge 42 --admin --merge`.
+EOF
+--- CONVICT ---
+gh issue create --title 'false positive' --body-file - <<'EOF' | cat
+Bug report: a false BLOCK triggers when prose mentions `gh pr merge 42 --admin --merge`.
+EOF
+

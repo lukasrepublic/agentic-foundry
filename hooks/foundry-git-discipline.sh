@@ -66,6 +66,14 @@
 # subsequent internal error => exit 2 (BLOCK, fail-closed).
 set -uo pipefail
 
+# Resolve this plugin's own scripts/ dir (feat-foundry-guards-guard-structured-observations):
+# the embedded evaluator imports scripts/foundry_shell_scan.py for heredoc-aware tokenization.
+# Same fallback shape as hooks/foundry-env-reap.sh — CLAUDE_PLUGIN_ROOT first, else derive from
+# this script's own path (a live PreToolUse invocation always sets it; a direct/test invocation
+# may not).
+HERE_DIR="$(cd "$(dirname "$0")" && pwd)"
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$HERE_DIR/.." && pwd)}"
+
 # ----------------------------------------------------------------------------------------
 # Config (ARGUMENTS ONLY — never env, never a session file). `main` is always protected.
 # ----------------------------------------------------------------------------------------
@@ -117,8 +125,13 @@ except Exception:
 # bash 3.2's command-substitution scanner mis-tracks backquotes/quotes across heredoc content
 # (feat-foundry-bash32-parse-guard), so the substitution below contains only the function call.
 _git_discipline_eval() {
-  PROTECTED="$PROTECTED" STRICT_HISTORY="$STRICT_HISTORY" CMD="$cmd" python3 - <<'PY'
-import os, re, shlex, subprocess, sys
+  PROTECTED="$PROTECTED" STRICT_HISTORY="$STRICT_HISTORY" CMD="$cmd" PLUGIN_ROOT="$PLUGIN_ROOT" python3 - <<'PY'
+import json, os, re, shlex, subprocess, sys
+
+sys.path.insert(0, os.path.join(os.environ.get("PLUGIN_ROOT", ""), "scripts"))
+import foundry_shell_scan          # feat-foundry-guards-guard-structured-observations (AC-GSO-1)
+
+GUARD_NAME = "git-discipline"
 
 cmd = os.environ.get("CMD", "")
 protected = {b.strip() for b in os.environ.get("PROTECTED", "main").split(",") if b.strip()}
@@ -134,8 +147,35 @@ _SECRET_ASSIGN = re.compile(
 def _redact(s):
     return _SECRET_ASSIGN.sub(r"\1=<redacted>", s)
 
-def block(reason):
-    print("BLOCK " + _redact(reason))
+# AC-GSO-4: exit 2 + one JSON object on stdout (hookSpecificOutput deny + observation) + a
+# stderr reason-then-remediation line. The "run the command yourself" sentence is retired as
+# the guard's ANSWER — a genuinely irreversible op with no safe in-session alternative still
+# says so, but now as one field of a structured verdict, alongside retryable/evidence, not as
+# the whole message.
+_DEFAULT_REMEDIATION = ("This is an irreversible/destructive git operation with no in-session "
+                         "override by design. If you intend it, run it yourself in a terminal "
+                         "outside this agent session.")
+
+def block(reason, remediation=None, retryable=False, evidence=None):
+    reason = _redact(reason)
+    remediation = _redact(remediation) if remediation else _DEFAULT_REMEDIATION
+    ev = [_redact(e) for e in (evidence if evidence is not None else [cmd])]
+    payload = {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        },
+        "observation": {
+            "status": "blocked",
+            "guard": GUARD_NAME,
+            "reason": reason,
+            "evidence": ev,
+            "retryable": bool(retryable),
+            "remediation": remediation,
+        },
+    }
+    print("BLOCK_JSON:" + json.dumps(payload))
     sys.exit(0)
 
 def allow():
@@ -152,7 +192,13 @@ def allow():
 # shell indirection (`bash -c "…"`, `eval`, `$(…)`, variable indirection), which remain the
 # spec's honest §8 BOUNDED RESIDUALS, not closed holes. Two-char operators are spaced before
 # the single-char ones so `&&`/`||` are not shredded into `& &` / `| |`. ---
-norm = cmd
+# feat-foundry-guards-guard-structured-observations (AC-GSO-2/5): a guarded verb mentioned only
+# inside a `data`-classified heredoc body (a closed inert-sink shape: `cat > <path>`, `tee
+# <path>`, `git commit -F -`, `gh pr create --body-file -`, …) is neutralized to blank text
+# BEFORE any of the clause detection below runs. Every existing clause rule is unchanged; only
+# what text it scans changes. A `code`-classified heredoc body (anything the tokenizer cannot
+# prove is an inert sink — AC-GSO-6 convicts on doubt) is untouched and scans exactly as before.
+norm = foundry_shell_scan.neutralize(cmd)
 # A backslash LINE CONTINUATION is removed by the shell BEFORE it parses words, so it must be
 # removed here FIRST — before the newline rule below turns it into a separator. Two defects
 # otherwise, both verified: `gi\<newline>t push --force origin main` executes `git push --force`
@@ -492,9 +538,13 @@ for i, t in enumerate(low):
     # whose protection requires REVIEWS, that form bypasses the review requirement even when the
     # checks the clause verifies are green.
     if any(a == "--admin" or a.startswith("--admin=") for a in largs):
+        _pr_hint = bare[2] if len(bare) >= 3 else "<pr>"
         block("gh pr merge --admin (server-side-check bypass) refused outright — the native "
               "floor may be Tier B advisory on this repo (see docs/merge-floor.md) and --admin would "
-              "skip it entirely. Command: " + cmd)
+              "skip it entirely. Command: " + cmd,
+              remediation=f"/foundry:merge-when-green {_pr_hint} — wait for checks, then merge "
+                           "without --admin.",
+              retryable=False)
 
     # --- CONTEXT BINDING (feat-foundry-merge-verify-context, AC-MVC-1..8) -------------------
     # The verification MUST grade THE PR BEING MERGED. `gh` resolves a PR from ambient state —
@@ -511,7 +561,11 @@ for i, t in enumerate(low):
         block("gh pr merge refused: the PR being merged cannot be resolved unambiguously from "
               "this command, so its checks CANNOT be verified against the right PR. " + detail +
               " Re-run naming the PR explicitly — a PR number or URL, plus `--repo owner/name` "
-              "when the target repo is not the working directory's. Command: " + cmd)
+              "when the target repo is not the working directory's. Command: " + cmd,
+              remediation="Re-run gh pr merge naming the PR explicitly (a number or URL, plus "
+                           "--repo owner/name when needed), or use /foundry:merge-when-green "
+                           "<pr> once it can be named unambiguously.",
+              retryable=False)
 
     def clause_start(idx):
         """Index of the first token of the clause containing token `idx`."""
@@ -649,10 +703,16 @@ for i, t in enumerate(low):
         # absolute path in the first place. Say that, rather than reporting it as a red check.
         block("gh pr checks could not run: `gh` is not on this guard's PATH, so the merge cannot "
               "be verified; fail-closed. This is a tooling problem, not a failing check — the PR's "
-              "checks were never queried. Command: " + cmd)
+              "checks were never queried. Command: " + cmd,
+              remediation="Fix gh's availability on PATH, then re-run gh pr merge, or use "
+                           f"/foundry:merge-when-green {pr_ref} once gh is resolvable.",
+              retryable=True)
     except Exception as e:
         block(f"gh pr checks query failed ({type(e).__name__}: {e}) — cannot confirm the "
-              "native floor is green; fail-closed. Command: " + cmd)
+              "native floor is green; fail-closed. Command: " + cmd,
+              remediation=f"Retry, or use /foundry:merge-when-green {pr_ref} once the checks "
+                           "query succeeds.",
+              retryable=True)
     # The query's output is echoed into refusals, i.e. into the agent's own transcript. It is
     # UNTRUSTED CONTENT — it comes from whatever host GH_HOST resolved to — so redact and cap it
     # before it is quoted, and never treat it as directive text.
@@ -662,10 +722,16 @@ for i, t in enumerate(low):
     out = _redact(out)
     if proc.returncode != 0:
         block("gh pr checks reports a non-zero exit (not every check is green) — merge "
-              f"refused. gh pr checks output:\n{out}\nCommand: {cmd}")
+              f"refused. gh pr checks output:\n{out}\nCommand: {cmd}",
+              remediation=f"/foundry:merge-when-green {pr_ref} — it waits for checks to resolve "
+                           "and merges once green.",
+              retryable=True)
     if re.search(r"\bfail\b|\bpending\b", out, re.IGNORECASE):
         block("gh pr checks output names a failing or pending check — merge refused. "
-              f"gh pr checks output:\n{out}\nCommand: {cmd}")
+              f"gh pr checks output:\n{out}\nCommand: {cmd}",
+              remediation=f"/foundry:merge-when-green {pr_ref} — it waits for checks to resolve "
+                           "and merges once green.",
+              retryable=True)
     # Every check reports passing => admit this clause.
 
 allow()
@@ -678,20 +744,45 @@ rc=$?
 # or emitted nothing, AND a command was recovered, BLOCK (an internal error after a command
 # is recovered fails closed). We cannot know whether a destructive token was present if the
 # scan itself failed, so we fail closed conservatively.
+#
+# AC-GSO-4: every BLOCK — including these two internal fail-closed paths — prints one JSON
+# object on stdout (hookSpecificOutput deny + observation) and a stderr line of reason then
+# remediation. `_emit_static_block` builds that JSON with python for correct escaping; the
+# command is deliberately withheld on these two paths (Security review 2026-08-02: an inline
+# GH_TOKEN=<pat> could leak verbatim when the redacting evaluator itself has failed).
+_emit_static_block() {
+  reason="$1"; remediation="$2"
+  python3 -c '
+import json, sys
+reason, remediation = sys.argv[1], sys.argv[2]
+print(json.dumps({
+    "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                            "permissionDecisionReason": reason},
+    "observation": {"status": "blocked", "guard": "git-discipline", "reason": reason,
+                     "evidence": ["(command withheld: evaluator failed)"],
+                     "retryable": True, "remediation": remediation},
+}))
+' "$reason" "$remediation"
+  echo "FOUNDRY GIT-DISCIPLINE GUARD: BLOCKED (fail-closed) — $reason" >&2
+  echo "  $remediation" >&2
+}
+
 if [ "$rc" -ne 0 ] || [ -z "$verdict" ]; then
-  echo "foundry-git-discipline: internal evaluator error while a command was recovered; fail-closed BLOCK." >&2
-  # Security review 2026-08-02: never echo the raw command on the error path — an inline
-  # GH_TOKEN=<pat> or similar would leak verbatim into the transcript exactly when the
-  # evaluator (which knows how to handle it) has failed.
-  echo "  (command withheld: evaluator failed, raw echo could leak inline credentials)" >&2
+  _emit_static_block \
+    "Internal evaluator error while a command was recovered; fail-closed BLOCK." \
+    "Re-run once python3 / this guard's own scripts import cleanly; if this persists it is a framework defect, not a policy block."
   exit 2
 fi
 
 case "$verdict" in
-  BLOCK\ *)
+  BLOCK_JSON:*)
+    json_line="${verdict#BLOCK_JSON:}"
+    printf '%s\n' "$json_line"
     echo "FOUNDRY GIT-DISCIPLINE GUARD: BLOCKED (fail-closed) — irreversible/destructive git op refused." >&2
-    echo "  ${verdict#BLOCK }" >&2
-    echo "  This guard has NO in-session off-switch. To proceed, run the command yourself outside the agent." >&2
+    printf '%s' "$json_line" | python3 -c 'import json,sys
+d=json.load(sys.stdin)["observation"]
+print("  " + d["reason"])
+print("  " + d["remediation"])' >&2
     exit 2
     ;;
   ALLOW)
@@ -699,7 +790,9 @@ case "$verdict" in
     ;;
   *)
     # Unrecognized verdict while a command was recovered => fail-closed.
-    echo "foundry-git-discipline: unrecognized evaluator verdict; fail-closed BLOCK." >&2
+    _emit_static_block \
+      "Unrecognized evaluator verdict; fail-closed BLOCK." \
+      "Re-run once this guard's evaluator emits a recognized verdict; if this persists it is a framework defect, not a policy block."
     exit 2
     ;;
 esac
