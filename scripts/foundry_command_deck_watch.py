@@ -333,29 +333,58 @@ def _snapshot(m: dict) -> str:
     return "\n".join(lines)
 
 
+# Review round 1 of PR #184: the same <=12-PHYSICAL-line ceiling AC-PSM-3 states for the
+# SessionStart injection is enforced HERE too, defensively -- a state.yaml with many entries must
+# not blow up the tick prompt either.
+_STATE_SUMMARY_LINE_CEILING = 12
+
+
 def _state_summary(release, project_dir=None) -> str:
     """§-1 of the prompt (AC-PSM-2): the programme's `state.yaml`, next_action first, rendered
-    BEFORE the ready set is ever discussed. Absence -- no state.yaml at all, or one that fails to
-    load -- is reported as one line, never fabricated as an empty summary."""
+    BEFORE the ready set is ever discussed. Absence -- no state.yaml at all -- is reported as one
+    line, never fabricated as an empty summary; an existing-but-empty state.yaml is reported as
+    such too, distinctly.
+
+    Every free-text value (`next_action`, and every entry of the four lists) is routed through
+    `cd.as_data()` -- the same manifest-free-text sanitizer the rest of this module already
+    trusts for dispatch prompts -- before it ever reaches this string: a state.yaml is
+    operator-authored today, but it is written by `write-state` too, and an embedded newline,
+    ANSI escape, bidi override or zero-width run must never render deceptively or widen this
+    block by a physical line (PR #184 review round 1, finding 1)."""
     try:
         state = cd.load_wave_state(release.id, project_dir=project_dir)
     except cd.CommandDeckError as e:
-        return f"state.yaml exists but did not load: {e}"
-    if not state:
+        return f"state.yaml exists but did not load: {cd.as_data(str(e))}"
+    if state is None:
         return "No state.yaml recorded for this programme yet."
+    if not state:
+        return "state.yaml is empty."
     lines = []
     next_action = state.get("next_action")
-    lines.append(f"next_action: {next_action}" if next_action else "next_action: (none recorded)")
+    next_action_text = (
+        cd.as_data(next_action) if isinstance(next_action, str) and next_action.strip() else ""
+    )
+    lines.append(f"next_action: {next_action_text}" if next_action_text else "next_action: (none recorded)")
     for key in ("decisions", "artifacts", "open_risks", "amendments_needed"):
         vals = state.get(key) or []
         if not vals:
             continue
         if key == "artifacts":
-            rendered = "; ".join(f"{a.get('path')} ({a.get('reuse_as')})" for a in vals)
+            rendered = "; ".join(
+                f"{cd.as_data(a.get('path'))} ({cd.as_data(a.get('reuse_as'))})"
+                for a in vals if isinstance(a, dict)
+            )
         else:
-            rendered = "; ".join(vals)
+            rendered = "; ".join(cd.as_data(v) for v in vals)
         lines.append(f"{key}: {rendered}")
-    return "\n".join(lines)
+    # Defense in depth, re-derived from the ASSEMBLED text rather than trusted as an invariant of
+    # the sanitizer above: split on the physical newline and cap it, so a future key this function
+    # forgets to route through as_data() still cannot widen the block past the ceiling.
+    text = "\n".join(lines)
+    physical = text.split("\n")
+    if len(physical) > _STATE_SUMMARY_LINE_CEILING:
+        text = "\n".join(physical[:_STATE_SUMMARY_LINE_CEILING])
+    return text
 
 
 def render_prompt(programme: str, project_dir=None, branch="main", cron=DEFAULT_CRON) -> str:

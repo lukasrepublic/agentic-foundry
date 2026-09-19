@@ -16,6 +16,7 @@ private helpers.
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -268,8 +269,7 @@ HOOKS_DIR = os.path.join(os.path.dirname(HERE), "hooks")
 
 
 def _run_session_start_hook(project_dir, *, source="startup", cwd=None, session_id="psm-fixture"):
-    import json as _json
-    payload = _json.dumps({
+    payload = json.dumps({
         "source": source, "session_id": session_id,
         "cwd": cwd or project_dir, "hook_event_name": "SessionStart",
     })
@@ -367,3 +367,137 @@ def test_session_start_hook_inert_on_non_session_start_source(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     assert r.stdout == ""
     print("PSM-SESSIONSTART-INERT-UNKNOWN-SOURCE-OK")
+
+
+# ───────────────────────── PR #184 review round 1, finding 1: sanitization + physical-line cap ==== #
+
+# The same adversarial payload against BOTH render paths: an embedded physical newline, a raw
+# ANSI escape sequence, and a bidi right-to-left-override codepoint (U+202E) -- exactly the shapes
+# `foundry_command_deck.as_data()` exists to neutralize.
+_MALICIOUS_NEXT_ACTION = "line one\nline two\x1b[31mred‮evil"
+
+
+def test_render_prompt_sanitizes_next_action_and_holds_line_cap(corpus):
+    """The tick-prompt path (`_state_summary`) routes next_action through the SAME sanitizer
+    `foundry_command_deck.as_data()` already uses for dispatch prompts: the raw newline, ANSI
+    escape and bidi override must never reach the rendered text, and the block must not be
+    widened by a physical line."""
+    _write_state_yaml(corpus, "prog-dwe", {
+        "decisions": [], "artifacts": [], "open_risks": [], "amendments_needed": [],
+        "next_action": _MALICIOUS_NEXT_ACTION,
+    })
+    text = watch.render_prompt("prog-dwe", project_dir=corpus)
+
+    # the raw control/bidi bytes must be ABSENT from the rendered text.
+    assert "\x1b[31m" not in text
+    assert "‮" not in text
+    # the sanitized value renders as a SINGLE line -- "line one" and "line two" must not land on
+    # two separate physical lines of the rendered prompt.
+    for line in text.split("\n"):
+        assert not (line.strip() == "line one" or line.strip().endswith("line one")), (
+            f"the embedded newline widened the block into its own physical line: {line!r}"
+        )
+    assert "line one" in text and "line two" in text   # the sanitized text content still shows
+    print("PSM-RENDER-PROMPT-SANITIZES-OK")
+
+
+def test_session_start_hook_sanitizes_next_action_and_holds_line_cap(tmp_path):
+    """The SessionStart path (`_programme_state_summary`, the hook's embedded python) imports
+    and reuses `foundry_command_deck.as_data()` for the exact same guarantee."""
+    root = str(tmp_path)
+    _write_release_manifest(root, "psm-hostile", state="active")
+    _write_state_yaml(root, "psm-hostile", {
+        "decisions": [], "artifacts": [], "open_risks": [], "amendments_needed": [],
+        "next_action": _MALICIOUS_NEXT_ACTION,
+    })
+    r = _run_session_start_hook(root, source="startup")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "\x1b[31m" not in r.stdout
+    assert "‮" not in r.stdout
+    lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
+    assert len(lines) <= 12, r.stdout
+    assert not any(ln.strip() == "line one" for ln in lines), (
+        f"the embedded newline widened the block into its own physical line: {r.stdout!r}"
+    )
+    assert "line one" in r.stdout and "line two" in r.stdout
+    print("PSM-SESSIONSTART-SANITIZES-OK")
+
+
+# ──────────────────────── PR #184 review round 1, finding 2: broken/unreadable state survives ==== #
+
+def test_session_start_hook_survives_malformed_release_yaml(tmp_path):
+    """A syntactically broken release.yaml for one release must not crash the hook -- that
+    release is skipped, never RED, never blocks."""
+    root = str(tmp_path)
+    d = os.path.join(root, ".foundry", "releases", "psm-broken-release")
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "release.yaml"), "w", encoding="utf-8") as fh:
+        fh.write("id: psm-broken-release\nstate: [this is not, valid: yaml: at all\n")
+    r = _run_session_start_hook(root, source="startup")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout == ""
+    print("PSM-SESSIONSTART-SURVIVES-BROKEN-RELEASE-YAML-OK")
+
+
+def test_session_start_hook_survives_malformed_state_yaml(tmp_path):
+    """A syntactically broken state.yaml for an otherwise-valid active release must not crash the
+    hook -- that release contributes nothing to the summary, never RED, never blocks."""
+    root = str(tmp_path)
+    _write_release_manifest(root, "psm-broken-state", state="active")
+    d = os.path.join(root, ".foundry", "releases", "psm-broken-state")
+    with open(os.path.join(d, "state.yaml"), "w", encoding="utf-8") as fh:
+        fh.write("next_action: [this is not, valid: yaml: at all\n")
+    r = _run_session_start_hook(root, source="startup")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout == ""
+    print("PSM-SESSIONSTART-SURVIVES-BROKEN-STATE-YAML-OK")
+
+
+def test_session_start_hook_survives_unreadable_releases_dir(tmp_path):
+    """`.foundry/releases` existing but unreadable (permission denied on listdir) must not crash
+    the hook -- never RED, never blocks, prints nothing for this summary."""
+    root = str(tmp_path)
+    base = os.path.join(root, ".foundry", "releases")
+    os.makedirs(base, exist_ok=True)
+    os.chmod(base, 0o000)
+    try:
+        r = _run_session_start_hook(root, source="startup")
+    finally:
+        os.chmod(base, 0o755)   # restore before tmp_path teardown tries to remove it
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout == ""
+    print("PSM-SESSIONSTART-SURVIVES-UNREADABLE-RELEASES-DIR-OK")
+
+
+# ────────────────────────── PR #184 review round 1, finding 3: the widened SessionStart matcher ==== #
+
+def test_hooks_json_matcher_covers_all_sessionstart_sources():
+    """AC-PSM-3 (amended): the SessionStart matcher wired to foundry-compact-reinject.sh in
+    hooks/hooks.json covers all four standard SessionStart sources, not just `compact` -- the
+    summary above proves the SCRIPT handles all four; this proves the REGISTERED MATCHER admits
+    them too, so it actually fires on a fresh session in production."""
+    hooks_json_path = os.path.join(os.path.dirname(HERE), "hooks", "hooks.json")
+    with open(hooks_json_path, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    matchers = [
+        entry.get("matcher")
+        for entry in doc.get("hooks", {}).get("SessionStart", [])
+        if any("foundry-compact-reinject.sh" in h.get("command", "")
+               for h in entry.get("hooks", []))
+    ]
+    assert len(matchers) == 1, f"expected exactly one SessionStart entry for the hook, got {matchers}"
+    sources = set(matchers[0].split("|"))
+    assert sources == {"startup", "resume", "clear", "compact"}, sources
+    print("PSM-HOOKS-JSON-MATCHER-COVERS-ALL-SOURCES-OK")
+
+
+# ───────────────────────────────────────── PR #184 review round 1, finding 4: empty vs absent ==== #
+
+def test_render_prompt_state_yaml_present_but_empty_reads_as_empty_not_absent(corpus):
+    """An existing-but-empty state.yaml (e.g. `{}` on disk) reads as "state.yaml is empty.",
+    distinct from the "No state.yaml recorded" wording used for genuine absence."""
+    _write_state_yaml(corpus, "prog-dwe", {})
+    text = watch.render_prompt("prog-dwe", project_dir=corpus)
+    assert "state.yaml is empty." in text
+    assert "No state.yaml recorded for this programme yet." not in text
+    print("PSM-RENDER-PROMPT-EMPTY-STATE-OK")
