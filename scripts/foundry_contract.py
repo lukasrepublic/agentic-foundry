@@ -333,7 +333,7 @@ def validate_contract_bytes(raw: bytes, spec_ac_ids: list[str] | None = None) ->
                           "(it must live only in the excluded trailer)")
         for _k in ("spec_ref", "spec_sha256", "target_repo", "scope", "checkpoints", "system_grounding",
                    "preconditions", "build_gates", "post_apply_checks", "mandatory_review",
-                   "drift_policy"):
+                   "drift_policy", "done_when", "escalate_when", "requires_capabilities"):
             if data.get(_k) != _proper_data.get(_k):
                 errors.append(f"integrity: field '{_k}' is not fully within the hashed "
                               f"contract-proper region (authorization-sentinel injection?)")
@@ -365,6 +365,10 @@ def validate_contract_bytes(raw: bytes, spec_ac_ids: list[str] | None = None) ->
     # `system_grounding` block must never slip through under an unconfigured/None snapshot. Only
     # the CONSISTENCY floor (system_grounding_errors, below) is gated on grounding_configured.
     errors += _system_grounding_structural_errors(data)
+
+    # AC-DWE-1 (done_when/escalate_when/requires_capabilities shape). UNCONDITIONAL for the
+    # same reason as system_grounding above: the jsonschema floor is opportunistic, this is not.
+    errors += _done_when_escalate_when_structural_errors(data)
 
     # Minimal hand-rolled structural floor (so the gate works without jsonschema).
     for key in ("spec_ref", "spec_sha256", "scope", "checkpoints"):
@@ -532,6 +536,67 @@ def _system_grounding_structural_errors(data: dict) -> list[str]:
                               f"{pair!r} — already declared elsewhere in the block (AC-SGC-1)")
             else:
                 seen_pairs.add(pair)
+
+    return errors
+
+
+_DWE_LOCATOR_RE = re.compile(r"^(test|cli|file|checkpoint):.+")
+_DWE_ESCALATE_SET = {
+    "external-provisioning", "credential-step", "no-consensus-after-research",
+    "security-widening", "irreversible-action",
+}
+
+
+def _done_when_escalate_when_structural_errors(data: dict) -> list[str]:
+    """AC-DWE-1: structural validation of PRESENT `done_when`/`escalate_when`/
+    `requires_capabilities` top-level fields. Returns [] for an absent field (all three
+    are optional). UNCONDITIONAL — like `_system_grounding_structural_errors`, this runs
+    regardless of `jsonschema` availability, so the closed `escalate_when` set and the
+    non-empty `done_when` floor are never silently unenforced in the structural-fallback
+    mode (UL-0011)."""
+    errors: list[str] = []
+
+    if "done_when" in data:
+        dw = data.get("done_when")
+        if not isinstance(dw, list) or len(dw) < 1:
+            errors.append("done_when must be a non-empty list of locator strings (AC-DWE-1)")
+        else:
+            for i, item in enumerate(dw):
+                if not isinstance(item, str) or not _DWE_LOCATOR_RE.match(item):
+                    errors.append(
+                        f"done_when[{i}] must match ^(test|cli|file|checkpoint):.+, got {item!r} (AC-DWE-1)"
+                    )
+
+    if "escalate_when" in data:
+        ew = data.get("escalate_when")
+        if not isinstance(ew, list):
+            errors.append("escalate_when must be a list (AC-DWE-1)")
+        else:
+            seen: set = set()
+            dupes = False
+            for i, item in enumerate(ew):
+                if not isinstance(item, str) or item not in _DWE_ESCALATE_SET:
+                    errors.append(
+                        f"escalate_when[{i}] unknown member {item!r} — must be one of "
+                        f"{sorted(_DWE_ESCALATE_SET)} (AC-DWE-1)"
+                    )
+                    continue
+                if item in seen:
+                    dupes = True
+                seen.add(item)
+            if dupes:
+                errors.append("escalate_when must not contain duplicates (uniqueItems, AC-DWE-1)")
+
+    if "requires_capabilities" in data:
+        rc = data.get("requires_capabilities")
+        if not isinstance(rc, list):
+            errors.append("requires_capabilities must be a list (AC-DWE-1)")
+        else:
+            for i, item in enumerate(rc):
+                if not isinstance(item, str) or not item.strip():
+                    errors.append(
+                        f"requires_capabilities[{i}] must be a non-empty string, got {item!r} (AC-DWE-1)"
+                    )
 
     return errors
 

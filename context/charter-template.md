@@ -24,6 +24,22 @@ Copy the block below; keep it under a page. Delete guidance comments.
 - WHILE <state>, THE SYSTEM SHALL <invariant>.
 - IF <unwanted condition>, THEN THE SYSTEM SHALL <required response>.
 
+## Done when
+<!-- >=1 machine-checkable locator: test:<path>[::name] | cli:<command> | file:<path> |
+     checkpoint:AC-<TOKEN>-<n>. The driver (deck tick / mode-autonomous) yields on these — a
+     stop with none met and no escalate_when hit is a silent yield, not a finish. -->
+- <locator>
+
+## Escalate when
+<!-- closed set only: external-provisioning | credential-step | no-consensus-after-research |
+     security-widening | irreversible-action. Omit a member that does not apply; add none new. -->
+- <member>
+
+## Requires capabilities
+<!-- OPTIONAL: what this build needs (network egress, a credential, a cloud CLI). A later change
+     here is a boundary widening (AC-AMND-1(b)). -->
+- <capability>
+
 ## Out of scope
 <!-- what a reasonable implementer might assume is included, but is not -->
 - <explicitly excluded item>

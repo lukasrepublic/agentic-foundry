@@ -19,4 +19,11 @@ checkpoints:
       op: count_gte       # non-empty | count_gte | equals | matches — a POSITIVE lower bound
       value: 1            # count_gte:1 (never :0); equals:<literal>; matches:<non-vacuous regex>
       baseline: pre-change   # pre-change = attributable (RED on base, GREEN on candidate); >=1 checkpoint MUST be pre-change
+# done_when:              # OPTIONAL, >=1 item — the driver's (deck tick / mode-autonomous) stop
+#   - "test:<path>[::name]"   # closed locator-prefix set: test: | cli: | file: | checkpoint:AC-<TOKEN>-<n>
+# escalate_when:           # OPTIONAL — CLOSED set only, the one carve-out from "anything else is a Next Task":
+#   - "external-provisioning"      # | "credential-step" | "no-consensus-after-research"
+#                                   # | "security-widening" | "irreversible-action"
+# requires_capabilities:   # OPTIONAL — non-empty strings; a later change is AC-AMND-1(b) (boundary widening)
+#   - "<capability>"
 # /foundry:authorize appends the signed `authorized:` trailer below a sentinel (excluded from contract_sha256).

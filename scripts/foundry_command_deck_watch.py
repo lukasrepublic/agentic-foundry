@@ -34,6 +34,8 @@ import re
 import shlex
 import sys
 
+import yaml
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import foundry_command_deck as cd  # noqa: E402
@@ -190,6 +192,106 @@ def measure(programme: str, project_dir=None, branch="main") -> dict:
     }
 
 
+# ── done_when / escalate_when (AC-DWE-3) ────────────────────────────────────────────────────────
+
+# The one standing rule every ready atom's stop criterion is subtracted from
+# (feat-foundry-contract-done-when-escalate-when, AC-DWE-3). Rendered verbatim into the tick
+# prompt — never paraphrased, so a diff against the charter's wording stays a literal string
+# compare.
+STANDING_YIELD_RULE = (
+    "yield ONLY on done_when met | escalate_when hit | a fork the fork policy parks; "
+    "anything else is a Next Task and the tick continues."
+)
+
+_MD_BULLET_RE = re.compile(r"^\s*[-*]\s+(\S.*)$")
+
+
+def _parse_markdown_list_section(text: str, heading: str) -> list:
+    """Leniently parse a `## <heading>` section's bullet list out of charter markdown. Stops at
+    the next heading of level <= 2. Returns [] when the section or its bullets are absent — this
+    is a best-effort reader over prose, not a schema-validated parse (the contract path is the
+    schema-validated one)."""
+    items: list = []
+    in_section = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            level = len(stripped) - len(stripped.lstrip("#"))
+            title = stripped[level:].strip()
+            if in_section and level <= 2:
+                break
+            if level == 2 and title.casefold() == heading.casefold():
+                in_section = True
+            continue
+        if in_section:
+            m = _MD_BULLET_RE.match(line)
+            if m:
+                items.append(m.group(1).strip())
+    return items
+
+
+def _done_escalate_from_contract(root: str, contract_ref: str) -> "tuple[list, list]":
+    path = os.path.join(root, contract_ref)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh) or {}
+    except (OSError, yaml.YAMLError):
+        return [], []
+    if not isinstance(doc, dict):
+        return [], []
+    dw = doc.get("done_when")
+    ew = doc.get("escalate_when")
+    return ([str(x) for x in dw] if isinstance(dw, list) else [],
+            [str(x) for x in ew] if isinstance(ew, list) else [])
+
+
+def _done_escalate_from_charter(root: str, charter_ref: str) -> "tuple[list, list]":
+    path = os.path.join(root, charter_ref)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return [], []
+    return (_parse_markdown_list_section(text, "Done when"),
+            _parse_markdown_list_section(text, "Escalate when"))
+
+
+def done_when_escalate_when(atom, project_dir=None) -> "tuple[list, list]":
+    """AC-DWE-3: this atom's (done_when, escalate_when) lists — read from its contract when it
+    carries a `contract_ref` with those fields set, or from its charter's `## Done when` /
+    `## Escalate when` sections when it carries a `charter_ref` (added to `Atom` by a sibling
+    atom, release-loader-vocabulary, riding in parallel — read via `getattr` so neither atom's
+    Atom-class edit conflicts with the other's; NEVER import a `charter_ref` symbol directly).
+    `charter_ref` takes precedence when present: a charter-lane atom's contract is not the
+    hash-frozen record (the charter README: "no hash freeze... the committed charter is the
+    record"), so its stop criteria live in the charter, not the contract.
+    Returns ([], []) — rendered as "(not declared)" by the caller — on any read/parse failure or
+    when neither field is populated."""
+    root = fr._project_dir(project_dir)
+    charter_ref = getattr(atom, "charter_ref", None)
+    if charter_ref:
+        return _done_escalate_from_charter(root, charter_ref)
+    contract_ref = getattr(atom, "contract_ref", None)
+    if contract_ref:
+        return _done_escalate_from_contract(root, contract_ref)
+    return [], []
+
+
+def _render_done_escalate_block(release, ready_ids, project_dir=None) -> str:
+    if not ready_ids:
+        return "(no ready atoms)"
+    lines = []
+    for aid in ready_ids:
+        atom = release.by_id.get(aid)
+        done, escalate = done_when_escalate_when(atom, project_dir) if atom else ([], [])
+        done_text = "; ".join(done) if done else "(not declared)"
+        escalate_text = "; ".join(escalate) if escalate else "(not declared)"
+        lines.append(f"  - {aid}")
+        lines.append(f"      done_when: {done_text}")
+        lines.append(f"      escalate_when: {escalate_text}")
+    return "\n".join(lines)
+
+
 # ── the tick prompt ──────────────────────────────────────────────────────────────────────────
 
 def _template_text() -> str:
@@ -234,6 +336,7 @@ def _snapshot(m: dict) -> str:
 def render_prompt(programme: str, project_dir=None, branch="main", cron=DEFAULT_CRON) -> str:
     root = fr._project_dir(project_dir)
     m = measure(programme, project_dir=project_dir, branch=branch)
+    release = cd.resolve_programme(programme, project_dir=project_dir)
     # The prompt renders shell the tick will run, so the workspace path is quoted for the shell.
     # A macOS home directory with a space in it otherwise renders a `cd` that silently truncates —
     # and running from the wrong directory is the exact failure §0b of the template exists to catch.
@@ -250,6 +353,8 @@ def render_prompt(programme: str, project_dir=None, branch="main", cron=DEFAULT_
         "{{CRON}}": cron,
         "{{ARMED_AT}}": m["measured_at"],
         "{{SNAPSHOT}}": _snapshot(m),
+        "{{STANDING_YIELD_RULE}}": STANDING_YIELD_RULE,
+        "{{DONE_ESCALATE}}": _render_done_escalate_block(release, m["ready"], project_dir=project_dir),
     }
     text = _template_text()
     for key, value in subs.items():
