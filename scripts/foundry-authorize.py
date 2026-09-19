@@ -54,7 +54,7 @@ def _latest_audit_row(spec_hash: str) -> dict | None:
         return None
     latest = None
     try:
-        with open(path, encoding="utf-8") as fh:
+        with open(path, encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 line = line.strip()
                 if not line:
@@ -257,7 +257,10 @@ def _front_authz_main() -> int:
     # verdict (AC-ADAP-3), so it reads the raw rows here rather than the allowlisted query.
     audit_rec = _latest_audit_row(spec_hash)
     if audit_rec:
-        print(f"§8 audit: recorded (verdict={audit_rec.get('verdict')}) — informational")
+        # The row is agent-written data: strip control characters before echoing the verdict.
+        import re as _re
+        verdict = _re.sub(r"[\x00-\x1f\x7f]", "", str(audit_rec.get("verdict")))[:64]
+        print(f"§8 audit: recorded (verdict={verdict}) — informational")
     # --skip-audit-reason is a DEPRECATED no-op (kept for one release so operator muscle memory
     # and existing callers don't break): the audit was never re-enforced after this atom, so
     # there is nothing left for the flag to skip. Still logged (a forensic breadcrumb) below.
