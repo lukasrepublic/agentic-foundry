@@ -56,7 +56,13 @@ This is a **different axis** from `skills/mode-autonomous` / `skills/mode-intera
 - **`noninteractive`** — one atom on a one-page **charter**: see
   `${CLAUDE_PLUGIN_ROOT}/context/charter-template.md`. Charter committed to the workspace →
   isolated-worktree build → PR (CI green + fresh-context review) → operator merges (or
-  auto-merge-on-green when the charter opts in). Requirement changes = edit the charter.
+  auto-merge-on-green when the charter opts in). Requirement changes = edit the charter. **The
+  charter lane is the DEFAULT LANE for product work** (`.foundry/decisions/2026-09-18-spec-is-a-living-document.md`):
+  `/foundry:intake` routes an atom here unless it lands in the security set (`security: true`,
+  or its scope names auth, secrets, custody, a production mutation, or a cross-repo pin, or its
+  contract's `mandatory_review` names a security review) — see `skills/intake/SKILL.md` "Lane
+  routing". The security set is what the **factory lane** (spec + frozen acceptance-contract +
+  `/foundry:authorize` + mandatory review) is reserved for.
 - **`interactive`** — zero-process vibe/debug session. No spec, no charter needed for
   exploration; work lands by ordinary commit/PR at the operator's discretion. Git discipline
   (protected `main`, no destructive ops) still applies — it is floor #4, not ceremony.
