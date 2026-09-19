@@ -4,8 +4,16 @@
 // create, byte-identical -> unchanged, anything else -> drifted, never written. That correctly
 // protects an adopter's own lines, but it also means the FOUNDRY-RUNTIME-GITIGNORE-BEGIN/END block
 // the template ships never converges once the file carries anything else — which is every existing
-// workspace. This module reconciles ONLY that sentinel-delimited block; these tests drive it exactly
-// the way run.mjs / update.mjs do, over hermetic temp directories.
+// workspace. This module reconciles ONLY that sentinel-delimited block's INTERIOR; these tests drive
+// it exactly the way run.mjs / update.mjs do, over hermetic temp directories.
+//
+// PR #179 review, load-bearing for most of this file: `cli/templates/gitignore.tmpl` ships BARE
+// sentinel lines while `scripts/foundry-apply-runtime-gitignore.sh` writes ANNOTATED ones, and every
+// bootstrapped workspace in practice carries the annotated form. Comparing/replacing whole lines
+// (sentinels included) made the two tools flip a workspace's sentinel text back and forth on
+// alternating runs. The fix — and what most of the tests below exist to pin — is: compare/replace
+// only the interior, preserve whichever sentinel text a found block already has verbatim, and use
+// the bash applier's own annotated form only when APPENDING a block that had no prior sentinel.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -13,14 +21,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  BEGIN_TOKEN, END_TOKEN, scanSentinels, loadDesiredBlock, resolveGitignoreTarget,
-  planGitignoreBlock, reconcileGitignorePlan, applyGitignorePlan, writeGitignoreAtomically,
-  renderGitignoreRow,
+  BEGIN_TOKEN, END_TOKEN, ANNOTATED_BEGIN_LINE, ANNOTATED_END_LINE, scanSentinels,
+  loadDesiredBlock, loadDesiredInterior, resolveGitignoreTarget, planGitignoreBlock,
+  reconcileGitignorePlan, applyGitignorePlan, writeGitignoreAtomically, renderGitignoreRow,
 } from '../src/gitignoreReconcile.mjs';
 
 const CLI_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const TEMPLATES_DIR = path.join(CLI_DIR, 'templates');
-const DESIRED = loadDesiredBlock(TEMPLATES_DIR);
+const DESIRED_INTERIOR = loadDesiredInterior(TEMPLATES_DIR);
+// The template's OWN sentinel line text — bare, no annotation. Exactly what a fresh scaffold
+// writes (scaffold.mjs materializes gitignore.tmpl verbatim), so this is the shape a brand-new
+// workspace's block starts in, before any applier or reconcile run has touched it.
+const TEMPLATE_BLOCK = loadDesiredBlock(TEMPLATES_DIR);
+const BARE_BEGIN_LINE = TEMPLATE_BLOCK[0];
+const BARE_END_LINE = TEMPLATE_BLOCK[TEMPLATE_BLOCK.length - 1];
 
 // realpath: macOS's /var -> /private/var symlink otherwise defeats confinedJoin's own root check,
 // exactly as run-orchestration.test.mjs's own `scratch()` comment explains.
@@ -43,58 +57,110 @@ function reconcile(dir) {
   return plan;
 }
 
-// A pre-#170 stale block: the bash applier's OWN (longer, annotated) sentinel line text — proving
-// the scan is substring-based, not an exact-line match — carrying only the first three re-includes
-// and missing ER #169's releases/decisions/permissions.yaml trio. This is the exact shape the
-// charter's motivating defect left every existing adopter workspace holding.
-const STALE_BLOCK = [
-  `# ${BEGIN_TOKEN} (managed by scripts/foundry-apply-runtime-gitignore.sh -- do not edit by hand)`,
+/** Strip the file's own trailing-newline artifact from a `split('\n')` result. */
+function body(lines) {
+  return lines[lines.length - 1] === '' ? lines.slice(0, -1) : lines;
+}
+
+// A pre-#170 stale block carrying the bash applier's OWN annotated sentinel line text — proving
+// the scan is substring-based, not an exact-line match — and only the first three re-includes,
+// missing ER #169's releases/decisions/permissions.yaml trio. This is the exact shape the
+// charter's motivating defect left every existing adopter workspace holding (PR #179 review: this
+// annotated form, not the template's bare one, is what a workspace that ever ran the bash applier
+// actually carries).
+const STALE_INTERIOR = [
   '# .foundry/ runtime partitions are ignored by default; the designed-tracked set is re-included.',
   '/.foundry/*',
   '!/.foundry/README.md',
   '!/.foundry/build-provenance.yaml',
   '!/.foundry/stack-profile.lock',
-  `# ${END_TOKEN} (re-run the applier to converge; do not edit by hand)`,
 ];
+const STALE_BLOCK_ANNOTATED = [ANNOTATED_BEGIN_LINE, ...STALE_INTERIOR, ANNOTATED_END_LINE];
+const STALE_BLOCK_BARE = [BARE_BEGIN_LINE, ...STALE_INTERIOR, BARE_END_LINE];
 
 // ================================================================================================
-// AC-GBR-1 — converge: adopter lines above and below the block survive byte-for-byte
+// AC-GBR-1 — converge: adopter lines survive byte-for-byte; the EXISTING sentinel line text is
+// preserved verbatim (PR #179 review) regardless of whether it was annotated or bare
 // ================================================================================================
 
-test('converges a stale block, preserving adopter lines above and below byte-for-byte', () => {
+test('converges an annotated-sentinel block with a stale interior; the sentinel lines are byte-identical afterwards', () => {
   const dir = target();
   const above = ['node_modules/', '# my own notes', ''];
   const below = ['', 'dist/', '*.log'];
-  writeGitignore(dir, [...above, ...STALE_BLOCK, ...below].map((l) => `${l}\n`).join(''));
+  writeGitignore(dir, [...above, ...STALE_BLOCK_ANNOTATED, ...below].map((l) => `${l}\n`).join(''));
 
   const plan = reconcile(dir);
   assert.equal(plan.action, 'converged');
 
-  const lines = readGitignore(dir).split('\n');
-  const hasFinalNewline = lines[lines.length - 1] === '';
-  const body = hasFinalNewline ? lines.slice(0, -1) : lines;
+  const lines = body(readGitignore(dir).split('\n'));
+  assert.deepEqual(lines.slice(0, above.length), above, 'adopter lines above the block changed');
 
-  assert.deepEqual(body.slice(0, above.length), above, 'adopter lines above the block changed');
-  assert.deepEqual(body.slice(above.length, above.length + DESIRED.length), DESIRED,
-    'the block was not replaced with the template\'s own');
-  assert.deepEqual(body.slice(above.length + DESIRED.length), below, 'adopter lines below the block changed');
+  const blockStart = above.length;
+  const blockEnd = blockStart + 1 + DESIRED_INTERIOR.length; // index of the (preserved) END line
+  assert.equal(lines[blockStart], ANNOTATED_BEGIN_LINE, 'the existing annotated BEGIN line was rewritten');
+  assert.deepEqual(lines.slice(blockStart + 1, blockEnd), DESIRED_INTERIOR, 'the interior did not converge onto the template');
+  assert.equal(lines[blockEnd], ANNOTATED_END_LINE, 'the existing annotated END line was rewritten');
+  assert.deepEqual(lines.slice(blockEnd + 1), below, 'adopter lines below the block changed');
 });
 
-test('an identical block reports unchanged and is reported as such', () => {
+test('converges a bare-sentinel block with a stale interior; the sentinel lines are byte-identical afterwards', () => {
   const dir = target();
-  const content = ['keep-me/', ...DESIRED, 'also-keep-me/'].map((l) => `${l}\n`).join('');
-  writeGitignore(dir, content);
+  const above = ['# adopter comment'];
+  const below = ['dist/'];
+  writeGitignore(dir, [...above, ...STALE_BLOCK_BARE, ...below].map((l) => `${l}\n`).join(''));
 
-  const plan = reconcileGitignorePlan({ physicalRoot: dir, templatesDir: TEMPLATES_DIR });
+  const plan = reconcile(dir);
+  assert.equal(plan.action, 'converged');
+
+  const lines = body(readGitignore(dir).split('\n'));
+  const blockStart = above.length;
+  const blockEnd = blockStart + 1 + DESIRED_INTERIOR.length;
+  assert.equal(lines[blockStart], BARE_BEGIN_LINE, 'the existing bare BEGIN line was rewritten');
+  assert.deepEqual(lines.slice(blockStart + 1, blockEnd), DESIRED_INTERIOR, 'the interior did not converge onto the template');
+  assert.equal(lines[blockEnd], BARE_END_LINE, 'the existing bare END line was rewritten');
+  assert.deepEqual(lines.slice(blockEnd + 1), below, 'adopter lines below the block changed');
+});
+
+test('an identical interior reports unchanged, regardless of the sentinel line text carried', () => {
+  for (const [label, beginLine, endLine] of [
+    ['bare (fresh scaffold shape)', BARE_BEGIN_LINE, BARE_END_LINE],
+    ['annotated (bash-applier shape)', ANNOTATED_BEGIN_LINE, ANNOTATED_END_LINE],
+  ]) {
+    const dir = target();
+    const content = ['keep-me/', beginLine, ...DESIRED_INTERIOR, endLine, 'also-keep-me/']
+      .map((l) => `${l}\n`).join('');
+    writeGitignore(dir, content);
+
+    const plan = reconcileGitignorePlan({ physicalRoot: dir, templatesDir: TEMPLATES_DIR });
+    assert.equal(plan.action, 'unchanged', `${label}: expected unchanged`);
+    assert.equal(renderGitignoreRow(plan), '  [unchanged] .gitignore (managed block)', label);
+  }
+});
+
+test('a second run after the bash applier itself converges the same file is unchanged', () => {
+  // Exactly what scripts/foundry-apply-runtime-gitignore.sh would have just written: its own
+  // annotated sentinel lines wrapping the SAME interior this module's template block carries.
+  // This is the regression PR #179 caught: before the fix, this run rewrote the annotated
+  // sentinels to bare, and running the bash applier again would have flipped them straight back.
+  const dir = target();
+  writeGitignore(
+    dir,
+    ['# adopter line', ANNOTATED_BEGIN_LINE, ...DESIRED_INTERIOR, ANNOTATED_END_LINE, 'dist/']
+      .map((l) => `${l}\n`).join(''),
+  );
+  const before = fs.readFileSync(path.join(dir, '.gitignore'));
+
+  const plan = reconcile(dir);
   assert.equal(plan.action, 'unchanged');
-  assert.equal(renderGitignoreRow(plan), '  [unchanged] .gitignore (managed block)');
+  assert.deepEqual(fs.readFileSync(path.join(dir, '.gitignore')), before,
+    'a file already converged by the bash applier was rewritten');
 });
 
 // ================================================================================================
-// AC-GBR-2 — append: no sentinel block present
+// AC-GBR-2 — append: no sentinel block present; the NEW block uses the applier's annotated form
 // ================================================================================================
 
-test('appends the template block preceded by one blank line when no block exists', () => {
+test('appends a new block preceded by one blank line, using the bash applier\'s own annotated sentinel form', () => {
   const dir = target();
   const adopterLines = ['node_modules/', 'dist/'];
   writeGitignore(dir, adopterLines.map((l) => `${l}\n`).join(''));
@@ -103,11 +169,21 @@ test('appends the template block preceded by one blank line when no block exists
   assert.equal(plan.action, 'appended');
   assert.equal(renderGitignoreRow(plan), '  [converged] .gitignore (managed block appended)');
 
-  const lines = readGitignore(dir).split('\n');
-  const body = lines[lines.length - 1] === '' ? lines.slice(0, -1) : lines;
-  assert.deepEqual(body.slice(0, adopterLines.length), adopterLines, 'adopter lines changed');
-  assert.equal(body[adopterLines.length], '', 'no blank line precedes the appended block');
-  assert.deepEqual(body.slice(adopterLines.length + 1), DESIRED, 'the appended block does not match the template');
+  const lines = body(readGitignore(dir).split('\n'));
+  assert.deepEqual(lines.slice(0, adopterLines.length), adopterLines, 'adopter lines changed');
+  assert.equal(lines[adopterLines.length], '', 'no blank line precedes the appended block');
+  assert.equal(lines[adopterLines.length + 1], ANNOTATED_BEGIN_LINE,
+    'the appended block used the template\'s bare sentinel instead of the applier\'s annotated one');
+  assert.deepEqual(
+    lines.slice(adopterLines.length + 2, adopterLines.length + 2 + DESIRED_INTERIOR.length),
+    DESIRED_INTERIOR,
+    'the appended interior does not match the template',
+  );
+  assert.equal(
+    lines[adopterLines.length + 2 + DESIRED_INTERIOR.length],
+    ANNOTATED_END_LINE,
+    'the appended block used the template\'s bare sentinel instead of the applier\'s annotated one',
+  );
 });
 
 test('absent .gitignore is left entirely to the existing managed-file create path', () => {
@@ -193,7 +269,7 @@ test('a symlinked .gitignore is refused the same way, and the link target is unt
 
 test('planning alone (the --dry-run shape) never writes', () => {
   const dir = target();
-  writeGitignore(dir, [...STALE_BLOCK].map((l) => `${l}\n`).join(''));
+  writeGitignore(dir, [...STALE_BLOCK_ANNOTATED].map((l) => `${l}\n`).join(''));
   const before = fs.readFileSync(path.join(dir, '.gitignore'));
   const beforeStat = fs.statSync(path.join(dir, '.gitignore'));
 
@@ -206,7 +282,7 @@ test('planning alone (the --dry-run shape) never writes', () => {
 
 test('a second run over an already-converged file performs no write syscall (byte/inode-stable)', () => {
   const dir = target();
-  writeGitignore(dir, [...STALE_BLOCK].map((l) => `${l}\n`).join(''));
+  writeGitignore(dir, [...STALE_BLOCK_ANNOTATED].map((l) => `${l}\n`).join(''));
   const first = reconcile(dir);
   assert.equal(first.action, 'converged');
 
@@ -222,7 +298,7 @@ test('a second run over an already-converged file performs no write syscall (byt
 
 test('a converge leaves no temp residue behind', () => {
   const dir = target();
-  writeGitignore(dir, [...STALE_BLOCK].map((l) => `${l}\n`).join(''));
+  writeGitignore(dir, [...STALE_BLOCK_ANNOTATED].map((l) => `${l}\n`).join(''));
   reconcile(dir);
   const strays = fs.readdirSync(dir).filter((f) => f.includes('.tmp'));
   assert.deepEqual(strays, [], `temp residue left behind: ${strays}`);
@@ -233,12 +309,27 @@ test('a converge leaves no temp residue behind', () => {
 // ================================================================================================
 
 test('planGitignoreBlock is pure and mirrors the end-to-end action for each shape', () => {
-  assert.equal(planGitignoreBlock({ currentLines: [...DESIRED], desiredBlock: DESIRED }).action, 'unchanged');
-  assert.equal(planGitignoreBlock({ currentLines: ['x'], desiredBlock: DESIRED }).action, 'appended');
-  assert.equal(planGitignoreBlock({ currentLines: [], desiredBlock: DESIRED }).action, 'appended');
-  assert.deepEqual(planGitignoreBlock({ currentLines: [], desiredBlock: DESIRED }).nextLines, DESIRED,
-    'appending to a truly empty file must not open it with a leading blank line');
-  assert.equal(planGitignoreBlock({ currentLines: STALE_BLOCK, desiredBlock: DESIRED }).action, 'converged');
+  assert.equal(
+    planGitignoreBlock({
+      currentLines: [BARE_BEGIN_LINE, ...DESIRED_INTERIOR, BARE_END_LINE],
+      desiredInterior: DESIRED_INTERIOR,
+    }).action,
+    'unchanged',
+  );
+  assert.equal(planGitignoreBlock({ currentLines: ['x'], desiredInterior: DESIRED_INTERIOR }).action, 'appended');
+  assert.equal(planGitignoreBlock({ currentLines: [], desiredInterior: DESIRED_INTERIOR }).action, 'appended');
+  assert.deepEqual(
+    planGitignoreBlock({ currentLines: [], desiredInterior: DESIRED_INTERIOR }).nextLines,
+    [ANNOTATED_BEGIN_LINE, ...DESIRED_INTERIOR, ANNOTATED_END_LINE],
+    'appending to a truly empty file must not open it with a leading blank line, and must use the annotated sentinel form',
+  );
+
+  const converged = planGitignoreBlock({ currentLines: STALE_BLOCK_ANNOTATED, desiredInterior: DESIRED_INTERIOR });
+  assert.equal(converged.action, 'converged');
+  assert.equal(converged.nextLines[0], ANNOTATED_BEGIN_LINE, 'the existing sentinel line was not preserved verbatim');
+  assert.equal(converged.nextLines[converged.nextLines.length - 1], ANNOTATED_END_LINE,
+    'the existing sentinel line was not preserved verbatim');
+  assert.deepEqual(converged.nextLines.slice(1, -1), DESIRED_INTERIOR, 'the interior did not converge');
 });
 
 test('writeGitignoreAtomically replaces by rename, not in-place truncation', () => {

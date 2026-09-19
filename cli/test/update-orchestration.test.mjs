@@ -12,7 +12,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runUpdate, renderSummary } from '../src/update.mjs';
 import { DECLARED_PATH_SET } from '../src/scaffold.mjs';
-import { BEGIN_TOKEN, END_TOKEN, loadDesiredBlock } from '../src/gitignoreReconcile.mjs';
+import { BEGIN_TOKEN, END_TOKEN, loadDesiredInterior } from '../src/gitignoreReconcile.mjs';
 
 const CLI_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const CLI_UPDATE_DIR = path.join(CLI_DIR, '..', 'cli-update');
@@ -338,8 +338,14 @@ test('Phase 4 converges a stale gitignore block left over from an older workspac
   const body = converged[converged.length - 1] === '' ? converged.slice(0, -1) : converged;
   assert.equal(body[0], '# adopter comment above', 'the adopter line above the block was not preserved');
   assert.equal(body[body.length - 1], 'dist/', 'the adopter line below the block was not preserved');
-  const desired = loadDesiredBlock(path.join(CLI_DIR, 'templates'));
-  assert.deepEqual(body.slice(1, 1 + desired.length), desired, 'the block was not converged onto the template');
+  // PR #179 review: the EXISTING (annotated) sentinel lines are preserved verbatim — only the
+  // interior converges onto the template.
+  const desiredInterior = loadDesiredInterior(path.join(CLI_DIR, 'templates'));
+  assert.equal(body[1], STALE_BLOCK[0], 'the existing annotated BEGIN line was rewritten');
+  assert.deepEqual(body.slice(2, 2 + desiredInterior.length), desiredInterior,
+    'the interior was not converged onto the template');
+  assert.equal(body[2 + desiredInterior.length], STALE_BLOCK[STALE_BLOCK.length - 1],
+    'the existing annotated END line was rewritten');
 
   for (const rel of Object.keys(beforeStats)) {
     const a = statOf(rel);

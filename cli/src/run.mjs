@@ -302,19 +302,25 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
     // on the path is the check that covers both — a directory-only test would tell a worktree user
     // to re-init a repository they already have.
     const isGitRepo = fs.existsSync(path.join(targetRoot, '.git'));
+    const gitignoreWrote = Boolean(
+      gitignorePlan && (gitignorePlan.action === 'converged' || gitignorePlan.action === 'appended'),
+    );
     print(TRUST_HANDOFF_TEXT(targetRoot, {
       isGitRepo,
       // only when a reconcile actually wrote — a dry run, a no-op second run, or a plain scaffold
-      // all keep the standard hand-off
-      reconciledExisting: Boolean(floorPlan && floorPlan.total > 0),
+      // all keep the standard hand-off. The gitignore-block-reconcile counts too: it is the SAME
+      // kind of write to an already-trusted workspace floorPlan's own comment describes, just to a
+      // different file.
+      reconciledExisting: Boolean(floorPlan && floorPlan.total > 0) || gitignoreWrote,
     }));
 
     // A refused gitignore block joins the SAME non-zero bucket `drifted` files use (exit 2, "needs
     // the operator's attention") rather than exit 1's hard-refusal bucket — the rest of the run's
-    // writes already landed, so "refused" here must not read as "nothing happened".
+    // writes already landed, so "refused" here must not read as "nothing happened". exitCodeForPlan
+    // only ever returns 0 or 2, so a refusal simply forces 2 rather than deferring to it.
     const gitignoreRefused = Boolean(gitignorePlan && gitignorePlan.action === 'refused');
     return {
-      exitCode: gitignoreRefused ? Math.max(2, exitCodeForPlan(plan)) : exitCodeForPlan(plan),
+      exitCode: gitignoreRefused ? 2 : exitCodeForPlan(plan),
       output: lines.join('\n'),
     };
   } catch (e) {
