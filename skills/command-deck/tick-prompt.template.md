@@ -113,6 +113,13 @@ DISPATCHING
 §5 STATE AT ARM TIME (re-measure, do not trust this line).
 {{SNAPSHOT}}
 
+§5b STOP CRITERIA — READ BEFORE YOU YIELD. The standing rule: {{STANDING_YIELD_RULE}}
+Per ready atom, its declared done_when (the machine-checkable locator(s) that satisfy a stop) and
+escalate_when (the closed set of forks that are legitimately an operator escalation, not a Next
+Task) — read from the atom's contract or charter (absent ⇒ "(not declared)", which is itself a
+finding, not permission to stop):
+{{DONE_ESCALATE}}
+
 §6 QUIET TICKS ARE CORRECT when work is genuinely in flight and moving. A tick that reports
 progress while the census shows zero workers is NOT quiet, it is stalled. Do NOT manufacture work to
 look busy, and do NOT re-report a resolved item to fill a section.

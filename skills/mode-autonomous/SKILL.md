@@ -133,8 +133,21 @@ stop** — never report an unverified outcome as verified.
 
 ### Escalate on a closed set
 
-Surface a fork **only** for (a) external provisioning you cannot perform, or (b) a fork the session's
-fork policy parks. Resolve everything else by prior-art research (`research-first`) and record it.
+The closed set now lives in one place, not restated here: the atom's contract carries a top-level
+`escalate_when` list (schema `schema/acceptance-contract.schema.json` — the closed enum
+`external-provisioning`, `credential-step`, `no-consensus-after-research`, `security-widening`,
+`irreversible-action`), or, for a charter-lane atom, the charter's own `## Escalate when` section.
+Surface a fork **only** when it is a member of that list, or a fork the session's fork policy
+parks; resolve everything else by prior-art research (`research-first`) and record it. This is the
+**subtraction** from the standing yield rule: *yield ONLY on `done_when` met | `escalate_when` hit
+| a fork the fork policy parks; anything else is a Next Task and the tick continues*
+(feat-foundry-contract-done-when-escalate-when, AC-DWE-1/-4). An `escalate_when` absent from the
+contract/charter is a finding ("not declared"), not license to escalate on anything.
+
+**Set the native goal.** In an interactive session driving one atom, set the native `/goal` to that
+atom's `done_when` (its contract's `done_when` list, or its charter's `## Done when` section) at the
+start of the drive — the harness's own stop-tracking then reads the same criterion this skill's
+yield rule does, instead of two independent, possibly-divergent ideas of "done."
 
 This is the atom's reason for existing, and it is measured rather than stylistic: dispatched workers
 cost 0.22-0.54 operator interventions per 100 turns; **decks cost 10.66-12.07** — a 20-50x
