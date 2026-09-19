@@ -261,7 +261,7 @@ Honest full comparison: **[docs/comparison.md](docs/comparison.md)**.
 
 ## Built with itself (the numbers)
 
-More than 1900 pytest tests (twice the "More than 1000 pytest tests" mark of v1.0) · doctor green in under a second · every third-party GitHub Action
+More than 2000 pytest tests · doctor green in under a second · every third-party GitHub Action
 SHA-pinned · every release specced, reviewed, authorized, floor-gated, and certified through
 the tool itself · the changelog documents every security-review disposition per release.
 These claims are **CI-locked** — a doc-drift test fails the build when they stop being true.

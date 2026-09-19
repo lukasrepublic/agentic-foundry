@@ -178,17 +178,25 @@ def test_changelog_has_a_section_for_the_shipped_version():
 
 # ------------------------------------------------------------------ the evidence claims --
 def test_test_count_claim_is_true():
-    """README says 'More than 1000 pytest tests'. The claim is COLLECTION-true (parametrization
-    expands ~911 test functions past 1,000 cases), so the lock measures a real collection —
-    the same number an adopter's `pytest --collect-only` reports."""
+    """r1-followups charter (AC-RFU-2): README says 'More than <n> pytest tests' -- READ <n> from
+    the README itself (no hard-coded literal; the prior '1000' literal happened to still substring
+    -match the v1.0 parenthetical this file no longer carries, which is exactly the collision
+    R1's state.yaml flagged as an open_risk) and assert the claim is COLLECTION-true: the SAME
+    number an adopter's `pytest --collect-only` reports is >= the claimed floor."""
     import subprocess, sys
-    assert "More than 1000 pytest tests" in _read(README)
+    text = _read(README)
+    m = re.search(r"More than (\d+) pytest tests", text)
+    assert m, "README must carry a 'More than <n> pytest tests' claim"
+    claimed = int(m.group(1))
     r = subprocess.run([sys.executable, "-m", "pytest", "tests/", "--collect-only", "-q",
                         "-p", "no:cacheprovider"],
                        cwd=REPO_ROOT, capture_output=True, text=True, timeout=300)
-    m = re.search(r"(\d+) tests collected", r.stdout)
-    assert m, f"could not read the collection count: {r.stdout[-300:]}"
-    assert int(m.group(1)) >= 1000, f"the README claims >1,000 tests; collected {m.group(1)}"
+    cm = re.search(r"(\d+) tests collected", r.stdout)
+    assert cm, f"could not read the collection count: {r.stdout[-300:]}"
+    collected = int(cm.group(1))
+    assert collected >= claimed, (
+        f"the README claims >{claimed} tests; collected {collected}"
+    )
 
 
 def _quick_ref_roster():
@@ -750,10 +758,21 @@ def test_docs_truth_negative_controls_all_fire():
 # new. See tests/test_bootstrap_install_pin.py's matching note on AC-BIP-13/AC-ILU-3, and the memory
 # note "Atom-scoped checks decay on merge" for why a merge-base diff assertion cannot outlive its
 # own atom's authorized follow-on.
+#
+# `test_test_count_claim_is_true` is likewise DELIBERATELY ABSENT as of the r1-followups charter
+# (AC-RFU-2, ac-r2-gates-stop-lying) -- the ONE reviewed edit that charter authorizes to a
+# pre-existing case. R1's state.yaml open_risk: the case hard-coded the literal
+# 'More than 1000 pytest tests' and this very guard forbade editing it on a feature PR, while
+# tests/test_doc_claims.py's test-count-band needs the README's claim to stay >= half the derived
+# count as the suite grows -- the two guards collided the moment the suite passed 2x the pinned
+# literal. The fix reads `<n>` out of the README's own 'More than <n> pytest tests' phrase instead
+# of hard-coding it, so this case's body is expected to differ from its merge-base pre-image;
+# re-baselined here in the SAME PR that makes the edit, per this charter, with the name staying in
+# the suite (checkpoints/AC-RFU-4 still reference it by node id) -- least-weakening option: only
+# THIS one case loses byte-identity tracking, every other pre-existing case keeps it.
 _PREEXISTING_DOCS_CLAIMS_CASES = (
     "test_readme_status_matches_the_manifests",
     "test_changelog_has_a_section_for_the_shipped_version",
-    "test_test_count_claim_is_true",
     "test_every_shipped_skill_is_in_the_verb_reference",
     "test_the_verb_reference_lists_no_phantom_verbs",
     "test_relative_doc_links_resolve",

@@ -1533,7 +1533,11 @@ COVERED_CLAIMS = [
         "claim_id": "test-count-band",
         "doc": "README.md",
         "mutation_class": "remove-unit",
-        "tokens": frozenset({"1900", "1000"}),
+        # r1-followups charter (AC-RFU-3): the v1.0 "(twice the ... mark of v1.0)" parenthetical
+        # (which carried the "1900"/"1000" tokens) is retired -- the claim is now the single
+        # literal "2000", the largest round number that stays inside the test-count-band's
+        # [half-derived, derived] window (suite ~2024 at authoring time).
+        "tokens": frozenset({"2000"}),
         "derive": _derive_test_count,
         "check": _check_test_count,
         "make_mutated": _mutate_test_count,
