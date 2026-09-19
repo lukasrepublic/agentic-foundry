@@ -211,3 +211,159 @@ def test_render_prompt_lists_done_when_and_escalate_when_per_ready_atom(corpus):
     # the bare atom (no done_when/escalate_when declared) renders the absence, not silence
     assert "bareatom" in text
     assert "(not declared)" in text
+
+
+# ──────────────────────────────── feat programme-state-minimal (AC-PSM-2/-4): tick ordering ==== #
+
+def _write_state_yaml(root, rid, doc):
+    d = os.path.join(root, ".foundry", "releases", rid)
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "state.yaml"), "w", encoding="utf-8") as fh:
+        yaml.safe_dump(doc, fh, sort_keys=False)
+
+
+def test_render_prompt_opens_with_state_yaml_before_ready_set(corpus):
+    """AC-PSM-2: the rendered prompt opens with the programme's state.yaml -- next_action first,
+    ahead of decisions/artifacts/open_risks/amendments_needed -- and that whole block sits BEFORE
+    any ready-set content (the §0 STEP ZERO dispatch section, and the measurement command that
+    prints the ready set)."""
+    _write_state_yaml(corpus, "prog-dwe", {
+        "decisions": ["2026-09-19: fixture decided to ship the ordering test"],
+        "artifacts": [],
+        "open_risks": ["fixture open risk"],
+        "amendments_needed": [],
+        "next_action": "dispatch contractatom",
+    })
+    text = watch.render_prompt("prog-dwe", project_dir=corpus)
+
+    next_action_idx = text.index("next_action: dispatch contractatom")
+    decisions_idx = text.index("2026-09-19: fixture decided to ship the ordering test")
+    open_risks_idx = text.index("fixture open risk")
+    step_zero_idx = text.index("§0 STEP ZERO")
+    measurement_idx = text.index("Run: python3")
+
+    # next_action opens the state block, ahead of the other four lists.
+    assert next_action_idx < decisions_idx
+    assert next_action_idx < open_risks_idx
+    # the whole state.yaml block sits BEFORE the ready-set / §0 dispatch content.
+    assert decisions_idx < step_zero_idx
+    assert open_risks_idx < step_zero_idx
+    assert next_action_idx < measurement_idx
+    print("PSM-RENDER-PROMPT-ORDERING-OK")
+
+
+def test_render_prompt_state_yaml_absence_is_one_line_not_fabricated(corpus):
+    """AC-PSM-2: absence (no state.yaml for this programme) is one line, never fabricated."""
+    text = watch.render_prompt("prog-dwe", project_dir=corpus)
+    assert "No state.yaml recorded for this programme yet." in text
+    state_block_idx = text.index("No state.yaml recorded for this programme yet.")
+    step_zero_idx = text.index("§0 STEP ZERO")
+    assert state_block_idx < step_zero_idx
+    print("PSM-RENDER-PROMPT-ABSENCE-OK")
+
+
+# ──────────────────────────── feat programme-state-minimal (AC-PSM-3/-4): SessionStart injection ==== #
+
+HOOKS_DIR = os.path.join(os.path.dirname(HERE), "hooks")
+
+
+def _run_session_start_hook(project_dir, *, source="startup", cwd=None, session_id="psm-fixture"):
+    import json as _json
+    payload = _json.dumps({
+        "source": source, "session_id": session_id,
+        "cwd": cwd or project_dir, "hook_event_name": "SessionStart",
+    })
+    return subprocess.run(
+        [os.path.join(HOOKS_DIR, "foundry-compact-reinject.sh")],
+        input=payload, capture_output=True, text=True, timeout=60,
+        env={**os.environ, "CLAUDE_PROJECT_DIR": project_dir},
+    )
+
+
+def _write_release_manifest(root, rid, *, state="active"):
+    d = os.path.join(root, ".foundry", "releases", rid)
+    os.makedirs(d, exist_ok=True)
+    doc = {"id": rid, "description": f"fixture programme {rid}", "state": state,
+           "atoms": [{"id": "a1", "spec_ref": "specs/fixture/feat-fixture.md",
+                      "contract_ref": "specs/fixture/acceptance-contract.yaml", "depends_on": []}]}
+    with open(os.path.join(d, "release.yaml"), "w", encoding="utf-8") as fh:
+        yaml.safe_dump(doc, fh, sort_keys=False)
+
+
+def test_session_start_hook_injects_next_action_first(tmp_path):
+    root = str(tmp_path)
+    _write_release_manifest(root, "psm-active", state="active")
+    _write_state_yaml(root, "psm-active", {
+        "decisions": [], "artifacts": [], "open_risks": [], "amendments_needed": [],
+        "next_action": "review the PSM PR",
+    })
+    r = _run_session_start_hook(root, source="startup")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "next_action: review the PSM PR" in r.stdout, r.stdout
+    assert "psm-active" in r.stdout, r.stdout
+    print("PSM-SESSIONSTART-NEXT-ACTION-OK")
+
+
+def test_session_start_hook_includes_planned_release_too(tmp_path):
+    root = str(tmp_path)
+    _write_release_manifest(root, "psm-planned", state="planned")
+    _write_state_yaml(root, "psm-planned", {
+        "decisions": [], "artifacts": [], "open_risks": [], "amendments_needed": [],
+        "next_action": "authorize the planned wave",
+    })
+    r = _run_session_start_hook(root, source="startup")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "next_action: authorize the planned wave" in r.stdout, r.stdout
+    print("PSM-SESSIONSTART-PLANNED-INCLUDED-OK")
+
+
+def test_session_start_hook_absent_state_yaml_prints_nothing(tmp_path):
+    """AC-PSM-3: absent -> nothing. No active/planned release with a state.yaml at all."""
+    root = str(tmp_path)
+    r = _run_session_start_hook(root, source="startup")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout == ""
+    print("PSM-SESSIONSTART-ABSENT-NOTHING-OK")
+
+
+def test_session_start_hook_never_blocks_on_garbage_payload():
+    """never RED, never blocks -- even malformed stdin exits 0 with no crash."""
+    r = subprocess.run(
+        [os.path.join(HOOKS_DIR, "foundry-compact-reinject.sh")],
+        input="not json at all {{{", capture_output=True, text=True, timeout=60,
+        env={**os.environ, "CLAUDE_PROJECT_DIR": "/nonexistent-psm-fixture-dir"},
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    print("PSM-SESSIONSTART-NEVER-BLOCKS-OK")
+
+
+def test_session_start_hook_line_count_ceiling(tmp_path):
+    """<=12 lines total for the programme-state summary."""
+    root = str(tmp_path)
+    for i in range(20):
+        rid = f"psm-many-{i:02d}"
+        _write_release_manifest(root, rid, state="active")
+        _write_state_yaml(root, rid, {
+            "decisions": [], "artifacts": [], "open_risks": [], "amendments_needed": [],
+            "next_action": f"do thing {i}",
+        })
+    r = _run_session_start_hook(root, source="startup")
+    assert r.returncode == 0, r.stdout + r.stderr
+    summary_lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
+    # only the programme-state summary should be present (no compact-only pinned context on a
+    # non-compact source), so the whole stdout is bounded by the <=12-line ceiling.
+    assert len(summary_lines) <= 12, r.stdout
+    print("PSM-SESSIONSTART-LINE-CEILING-OK")
+
+
+def test_session_start_hook_inert_on_non_session_start_source(tmp_path):
+    root = str(tmp_path)
+    _write_release_manifest(root, "psm-active-2", state="active")
+    _write_state_yaml(root, "psm-active-2", {
+        "decisions": [], "artifacts": [], "open_risks": [], "amendments_needed": [],
+        "next_action": "should not appear",
+    })
+    r = _run_session_start_hook(root, source="some-other-event")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout == ""
+    print("PSM-SESSIONSTART-INERT-UNKNOWN-SOURCE-OK")

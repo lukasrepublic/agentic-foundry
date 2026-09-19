@@ -354,6 +354,10 @@ def is_complete(run_row, deploy_verdict=None, *, has_live_surface=True):
 # the top level, per `schema/wave-state.schema.json`). Deliberately closed: this is the one place
 # per-atom status could leak back in, which the charter's "Out of scope" line forbids.
 _WAVE_STATE_KEYS = ("decisions", "artifacts", "open_risks", "amendments_needed")
+# Optional scalar keys -- NOT accumulated like the four list keys above: a write that names one
+# REPLACES it, a write that omits it leaves whatever is already on disk untouched (AC-PSM-1).
+_WAVE_STATE_SCALAR_KEYS = ("next_action",)
+_WAVE_STATE_ALL_KEYS = _WAVE_STATE_KEYS + _WAVE_STATE_SCALAR_KEYS
 
 
 def _default_wave_state():
@@ -391,9 +395,9 @@ def validate_wave_state(doc):
     if not isinstance(doc, dict):
         return [f"wave state must be a mapping, got {type(doc).__name__}"]
     errors = []
-    extra = sorted(set(doc.keys()) - set(_WAVE_STATE_KEYS))
+    extra = sorted(set(doc.keys()) - set(_WAVE_STATE_ALL_KEYS))
     if extra:
-        errors.append(f"unknown top-level key(s) {extra} (allowed: {list(_WAVE_STATE_KEYS)})")
+        errors.append(f"unknown top-level key(s) {extra} (allowed: {list(_WAVE_STATE_ALL_KEYS)})")
     for key in _WAVE_STATE_KEYS:
         if key not in doc:
             continue
@@ -417,6 +421,12 @@ def validate_wave_state(doc):
             for i, item in enumerate(val):
                 if not isinstance(item, str) or not item.strip():
                     errors.append(f"{key}[{i}] must be a non-empty string")
+    for key in _WAVE_STATE_SCALAR_KEYS:
+        if key not in doc:
+            continue
+        val = doc[key]
+        if not isinstance(val, str) or not val.strip():
+            errors.append(f"{key!r} must be a non-empty string, got {type(val).__name__}")
     errors += _wave_jsonschema_check(doc)
     return errors
 
@@ -424,7 +434,12 @@ def validate_wave_state(doc):
 def merge_wave_state(existing, new):
     """Merge `new` entries into `existing`, per key, preserving order and NEVER dropping an
     existing entry. Exact-duplicate items (a repeated decision string, or an artifact with the same
-    `path`+`reuse_as`) are not appended twice; everything else new is appended after what is there."""
+    `path`+`reuse_as`) are not appended twice; everything else new is appended after what is there.
+
+    The scalar `next_action` key is NOT accumulated like the four list keys: `new`'s value
+    REPLACES the existing one when present and non-empty; an omitted/empty `new["next_action"]`
+    leaves the existing value (if any) untouched -- "never dropping an existing entry" for a
+    scalar means never dropping it by omission, not appending to it."""
     existing = existing or _default_wave_state()
     new = new or {}
     merged = {}
@@ -447,6 +462,13 @@ def merge_wave_state(existing, new):
                     merged_list.append(item)
                     seen.add(item)
         merged[key] = merged_list
+    new_next_action = new.get("next_action")
+    if isinstance(new_next_action, str) and new_next_action.strip():
+        merged["next_action"] = new_next_action
+    else:
+        existing_next_action = existing.get("next_action")
+        if isinstance(existing_next_action, str) and existing_next_action.strip():
+            merged["next_action"] = existing_next_action
     return merged
 
 
@@ -553,9 +575,11 @@ def _cmd_ready(args):
 
 
 def _cmd_write_state(args):
-    """feat wave-learn (AC-WVL-1): write/merge `.foundry/releases/<programme>/state.yaml` at wave
-    close. `--entries-json`/`--entries-file` name the NEW decisions/artifacts/open_risks/
-    amendments_needed to merge in; whatever is already on disk is kept."""
+    """feat wave-learn (AC-WVL-1); next_action added by feat programme-state-minimal (AC-PSM-1).
+    Write/merge `.foundry/releases/<programme>/state.yaml` at wave close. `--entries-json`/
+    `--entries-file` name the NEW decisions/artifacts/open_risks/amendments_needed to merge in
+    (whatever is already on disk is kept) and MAY also name `next_action`, which REPLACES the
+    prior value rather than accumulating."""
     rel = resolve_programme(args.programme, project_dir=args.root)
     try:
         if args.entries_file:
@@ -581,7 +605,8 @@ def main(argv=None):
     ap.add_argument("--root", default=os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
     ap.add_argument("--branch", default="main")
     ap.add_argument("--entries-json", default=None,
-                     help="write-state: a JSON object with any of the four wave-state keys")
+                     help="write-state: a JSON object with any of the four wave-state keys "
+                          "(decisions/artifacts/open_risks/amendments_needed) plus optional next_action")
     ap.add_argument("--entries-file", default=None,
                      help="write-state: a path to a JSON file, same shape as --entries-json")
     ap.add_argument("--force", action="store_true",

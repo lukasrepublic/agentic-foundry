@@ -333,6 +333,31 @@ def _snapshot(m: dict) -> str:
     return "\n".join(lines)
 
 
+def _state_summary(release, project_dir=None) -> str:
+    """§-1 of the prompt (AC-PSM-2): the programme's `state.yaml`, next_action first, rendered
+    BEFORE the ready set is ever discussed. Absence -- no state.yaml at all, or one that fails to
+    load -- is reported as one line, never fabricated as an empty summary."""
+    try:
+        state = cd.load_wave_state(release.id, project_dir=project_dir)
+    except cd.CommandDeckError as e:
+        return f"state.yaml exists but did not load: {e}"
+    if not state:
+        return "No state.yaml recorded for this programme yet."
+    lines = []
+    next_action = state.get("next_action")
+    lines.append(f"next_action: {next_action}" if next_action else "next_action: (none recorded)")
+    for key in ("decisions", "artifacts", "open_risks", "amendments_needed"):
+        vals = state.get(key) or []
+        if not vals:
+            continue
+        if key == "artifacts":
+            rendered = "; ".join(f"{a.get('path')} ({a.get('reuse_as')})" for a in vals)
+        else:
+            rendered = "; ".join(vals)
+        lines.append(f"{key}: {rendered}")
+    return "\n".join(lines)
+
+
 def render_prompt(programme: str, project_dir=None, branch="main", cron=DEFAULT_CRON) -> str:
     root = fr._project_dir(project_dir)
     m = measure(programme, project_dir=project_dir, branch=branch)
@@ -353,6 +378,7 @@ def render_prompt(programme: str, project_dir=None, branch="main", cron=DEFAULT_
         "{{CRON}}": cron,
         "{{ARMED_AT}}": m["measured_at"],
         "{{SNAPSHOT}}": _snapshot(m),
+        "{{STATE_SUMMARY}}": _state_summary(release, project_dir=project_dir),
         "{{STANDING_YIELD_RULE}}": STANDING_YIELD_RULE,
         "{{DONE_ESCALATE}}": _render_done_escalate_block(release, m["ready"], project_dir=project_dir),
     }
