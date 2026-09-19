@@ -207,6 +207,10 @@ def _import_map_suite():
 # Net: 64 -> 63 entries (one row removed, net; the instrument's row was added then removed within
 # the same PR and never landed in `entries`). Enumerated entry-by-entry against origin/main before
 # this digest was re-pinned, same shape as PR #62's reconciliation above.
+#
+# blocker-requires-evidence (R1, PR #164): +1 `allow` row for `scripts/foundry_blocker_check.py` (a
+# read-only lint over a JSON list; writes nothing) — 63 -> 64 entries; drift-corpus rows added in the
+# same PR; digest re-pinned by the coordinator, not the implementing atom.
 MERGE_BASE_ENTRIES_DIGEST = "2c1bb13d67c7ba934bd32c89ee4ba002520d6da102d2fb8ecbfe537880469c7e"
 
 

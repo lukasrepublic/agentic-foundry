@@ -120,6 +120,18 @@ def test_partition_on_a_mixed_list():
     assert demoted_claims == {"no evidence at all", "bad why_operator"}
 
 
+def test_partition_non_object_items_are_demoted_not_fatal():
+    """PR #164 review Risk: a non-object ITEM inside an otherwise-valid list is a per-candidate shape
+    failure — it lands in next_tasks with its reason, never exit 2 (only the top-level shape is the
+    instrument's hard precondition)."""
+    candidates = [_valid_blocker(claim="valid one"), "just a string", 42, None]
+    verdict = bc.partition(candidates)
+    assert [b["claim"] for b in verdict["blockers"]] == ["valid one"]
+    assert len(verdict["next_tasks"]) == 3
+    assert all("not a JSON object" in nt["reason"] for nt in verdict["next_tasks"])
+    assert [nt["candidate"] for nt in verdict["next_tasks"]] == ["just a string", 42, None]
+
+
 def test_partition_empty_list_is_both_empty():
     verdict = bc.partition([])
     assert verdict == {"blockers": [], "next_tasks": []}
