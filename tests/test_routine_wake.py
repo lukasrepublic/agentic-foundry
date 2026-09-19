@@ -219,9 +219,5 @@ def test_module_reads_no_release_or_filesystem_state(tmp_path, monkeypatch):
 
 
 def test_render_names_the_send_tool_for_the_single_message():
-    out = _render("ac-r3", "deck-main") if "_render" in globals() else None
-    if out is None:
-        import subprocess, sys
-        out = subprocess.run([sys.executable, SCRIPT, "ac-r3", "--deck-name", "deck-main"],
-                             capture_output=True, text=True).stdout
+    out = rwp.render("autonomy-continuation", "my-deck")
     assert "SendMessage" in out and "exactly ONE" in out
