@@ -331,6 +331,8 @@ def read_evidence_record(atom_id: str, project_dir: str) -> dict:
     for key in ("atom", "done_when", "recorded_by", "at"):
         if key not in doc:
             raise FloorHookError(f"evidence record {path} missing required field {key!r}")
+    if doc["atom"] != atom_id:
+        raise FloorHookError(f"evidence record {path} names atom {doc['atom']!r}, not {atom_id!r}")
     if not isinstance(doc["done_when"], list):
         raise FloorHookError(f"evidence record {path}: done_when must be a list")
     for i, row in enumerate(doc["done_when"]):

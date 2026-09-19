@@ -793,3 +793,40 @@ def test_created_charter_git_failure_distinct_from_uncommitted(tmp_path, monkeyp
         assert created_hook.run(payload, project_dir=project_dir) == 2
     assert "commit the charter" not in buf2.getvalue()
     assert "128" in buf2.getvalue() or "not a git repository" in buf2.getvalue()
+
+
+# ------------------------------------------------------------------------------------------ #
+# security review round 2 (PR #190): the four residual fail-open shapes
+# ------------------------------------------------------------------------------------------ #
+
+def _run_hook_raw(hook_name, raw_bytes, tmp_path):
+    cli = os.path.join(REPO_ROOT, "hooks", hook_name)
+    return subprocess.run([sys.executable, cli], input=raw_bytes, capture_output=True,
+                          cwd=str(tmp_path), timeout=30)
+
+
+@pytest.mark.parametrize("hook_name", ["foundry-task-created.py", "foundry-task-completed.py"])
+def test_round2_wrong_shape_json_naming_an_atom_refuses(hook_name, tmp_path):
+    for raw in (b'["atom:r/x"]', b'"atom:r/x"', b'{"task_subject": ["atom:r/x"]}'):
+        p = _run_hook_raw(hook_name, raw, tmp_path)
+        assert p.returncode == 2, (raw, p.stderr)
+        assert b"REFUSED" in p.stderr
+    p = _run_hook_raw(hook_name, b'["not an atom"]', tmp_path)
+    assert p.returncode == 0, p.stderr
+
+
+@pytest.mark.parametrize("hook_name", ["foundry-task-created.py", "foundry-task-completed.py"])
+def test_round2_non_utf8_stdin_never_exits_1(hook_name, tmp_path):
+    p = _run_hook_raw(hook_name, b'{"task_subject": "caf\xe9 task"}', tmp_path)
+    assert p.returncode in (0, 2), p.stderr
+    p = _run_hook_raw(hook_name, b'{"task_subject": "atom:r/x\xff"}', tmp_path)
+    assert p.returncode == 2, p.stderr
+
+
+def test_round2_evidence_record_must_name_the_same_atom(tmp_path):
+    proj = tmp_path / "proj"
+    (proj / ".foundry" / "evidence").mkdir(parents=True)
+    rec = {"atom": "other-atom", "done_when": [], "recorded_by": "x", "at": "2026-09-19T00:00:00Z"}
+    (proj / ".foundry" / "evidence" / "my-atom.json").write_text(json.dumps(rec), encoding="utf-8")
+    with pytest.raises(ffh.FloorHookError, match="names atom"):
+        ffh.read_evidence_record("my-atom", str(proj))

@@ -41,6 +41,14 @@ import os
 import re
 import sys
 
+
+def _say(msg: str) -> None:
+    """stderr print that can never raise (review round 2): a closed stderr must not turn exit 2 into 1."""
+    try:
+        print(msg, file=sys.stderr)
+    except BaseException:
+        pass
+
 _HOOKS_DIR = os.path.dirname(os.path.abspath(__file__))
 _SCRIPTS_DIR = os.path.join(os.path.dirname(_HOOKS_DIR), "scripts")
 
@@ -123,10 +131,9 @@ def run(payload: dict, *, project_dir: "str | None" = None, tasks_dir: "str | No
                 f"{absent or '(none)'}; unmet locator(s): {unmet or '(none)'}"
             )
     except Exception as e:  # fail-closed: ANY internal error refuses (AC-FLH-2)
-        print(
-            f"foundry-task-completed: REFUSED task_subject={task_subject_repr!r} — {e}",
-            file=sys.stderr,
-        )
+        _say(
+            f"foundry-task-completed: REFUSED task_subject={task_subject_repr!r} — {e}"
+    )
         return 2
 
     return 0
@@ -135,24 +142,27 @@ def run(payload: dict, *, project_dir: "str | None" = None, tasks_dir: "str | No
 def _read_stdin_payload() -> "tuple[dict, int | None]":
     """See `foundry-task-created.py::_read_stdin_payload` — identical rule (review round 1, item
     1)."""
-    raw = sys.stdin.read()
+    raw = sys.stdin.buffer.read().decode("utf-8", "replace")  # review round 2: never a UnicodeDecodeError
     if not raw.strip():
         return {}, None
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as e:
         if _ATOM_MENTION_RE.search(raw):
-            print(
+            _say(
                 f"foundry-task-completed: REFUSED — stdin is not valid JSON and mentions "
-                f"'atom:': {e}",
-                file=sys.stderr,
-            )
+                f"'atom:': {e}"
+    )
             return {}, 2
-        print(
-            "foundry-task-completed: stdin is not valid JSON (no 'atom:' mention) — untouched",
-            file=sys.stderr,
-        )
+        _say(
+            "foundry-task-completed: stdin is not valid JSON (no 'atom:' mention) — untouched"
+    )
         return {}, 0
+    subj = payload.get("task_subject") if isinstance(payload, dict) else None
+    if (not isinstance(payload, dict) or (subj is not None and not isinstance(subj, str))) \
+            and _ATOM_MENTION_RE.search(raw):
+        _say(f"foundry-task-completed: REFUSED — payload is valid JSON of the wrong shape and mentions 'atom:'")
+        return {}, 2
     if not isinstance(payload, dict):
         payload = {}
     return payload, None
@@ -172,7 +182,7 @@ def main(argv=None) -> int:
             return early_exit
         return run(payload, tasks_dir=args.tasks_dir)
     except BaseException as e:  # review round 1, item 2: exit 1 must be unreachable
-        print(f"foundry-task-completed: REFUSED — internal error: {e}", file=sys.stderr)
+        _say(f"foundry-task-completed: REFUSED — internal error: {e}")
         return 2
 
 

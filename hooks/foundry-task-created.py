@@ -28,6 +28,14 @@ import os
 import re
 import sys
 
+
+def _say(msg: str) -> None:
+    """stderr print that can never raise (review round 2): a closed stderr must not turn exit 2 into 1."""
+    try:
+        print(msg, file=sys.stderr)
+    except BaseException:
+        pass
+
 _HOOKS_DIR = os.path.dirname(os.path.abspath(__file__))
 _SCRIPTS_DIR = os.path.join(os.path.dirname(_HOOKS_DIR), "scripts")
 
@@ -69,10 +77,9 @@ def run(payload: dict, *, project_dir: "str | None" = None) -> int:
         atom = ffh.resolve_atom(release_id, atom_id, pd)
         authorized = ffh.is_atom_authorized(atom, pd)
     except Exception as e:  # fail-closed: ANY internal error refuses (AC-FLH-1)
-        print(
-            f"foundry-task-created: REFUSED task_subject={task_subject_repr!r} — {e}",
-            file=sys.stderr,
-        )
+        _say(
+            f"foundry-task-created: REFUSED task_subject={task_subject_repr!r} — {e}"
+    )
         return 2
 
     if authorized:
@@ -81,10 +88,9 @@ def run(payload: dict, *, project_dir: "str | None" = None) -> int:
     remediation = (
         "commit the charter" if getattr(atom, "charter_ref", None) else "/foundry:authorize <spec>"
     )
-    print(
+    _say(
         f"foundry-task-created: REFUSED — atom:{release_id}/{atom_id} is not authorized "
-        f"({remediation})",
-        file=sys.stderr,
+        f"({remediation})"
     )
     return 2
 
@@ -97,23 +103,26 @@ def _read_stdin_payload() -> "tuple[dict, int | None]":
     `atom:` (any case) — it might have BEEN an atom-shaped payload, mangled in transit — and exits
     0 (untouched, with a one-line stderr note) otherwise, since a payload that never mentioned an
     atom at all cannot be one this hook needed to block."""
-    raw = sys.stdin.read()
+    raw = sys.stdin.buffer.read().decode("utf-8", "replace")  # review round 2: never a UnicodeDecodeError
     if not raw.strip():
         return {}, None
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as e:
         if _ATOM_MENTION_RE.search(raw):
-            print(
-                f"foundry-task-created: REFUSED — stdin is not valid JSON and mentions 'atom:': {e}",
-                file=sys.stderr,
-            )
+            _say(
+                f"foundry-task-created: REFUSED — stdin is not valid JSON and mentions 'atom:': {e}"
+    )
             return {}, 2
-        print(
-            "foundry-task-created: stdin is not valid JSON (no 'atom:' mention) — untouched",
-            file=sys.stderr,
-        )
+        _say(
+            "foundry-task-created: stdin is not valid JSON (no 'atom:' mention) — untouched"
+    )
         return {}, 0
+    subj = payload.get("task_subject") if isinstance(payload, dict) else None
+    if (not isinstance(payload, dict) or (subj is not None and not isinstance(subj, str))) \
+            and _ATOM_MENTION_RE.search(raw):
+        _say(f"foundry-task-created: REFUSED — payload is valid JSON of the wrong shape and mentions 'atom:'")
+        return {}, 2
     if not isinstance(payload, dict):
         payload = {}
     return payload, None
@@ -126,7 +135,7 @@ def main(argv=None) -> int:
             return early_exit
         return run(payload)
     except BaseException as e:  # review round 1, item 2: exit 1 must be unreachable
-        print(f"foundry-task-created: REFUSED — internal error: {e}", file=sys.stderr)
+        _say(f"foundry-task-created: REFUSED — internal error: {e}")
         return 2
 
 
