@@ -44,9 +44,9 @@ lane signal — Tier B advisory) plus `hooks/foundry-git-discipline.sh`'s determ
      AC-CPD-4 — replaces the R1 drift-only advisory, feat-foundry-authorization-standing-grants-
      as-policy AC-SGP-6) — runs `scripts/foundry-capability-preflight.py` over every atom of every
      ACTIVE release under `.foundry/releases/*/release.yaml`, printing `preflight ok (<n> atoms)`
-     or `preflight: <n> missing rule(s)`. Never RED: a stale-permission workspace must never wedge
-     a session. Drift between `.foundry/permissions.yaml` and `.claude/settings.json` is still
-     reported by `foundry-permissions-compile.py --check`, unchanged.
+     or `preflight: <n> missing rule(s)`, followed by the R1 drift state on the SAME line —
+     `; policy absent|in-sync|drift (<k>)`, the same derivation `foundry-permissions-compile.py
+     --check` runs. Never RED: a stale-permission workspace must never wedge a session.
 
    Each probe is individually crash-proof — an unexpected exception inside one check is reported
    as that check's own RED result (`probe crashed: <type>: <detail>`), never an uncaught

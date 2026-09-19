@@ -97,10 +97,10 @@ DISPATCHING
 - CAPABILITY PREFLIGHT FIRST, per atom about to be dispatched (feat-foundry-authorization-
   capability-preflight-at-dispatch, AC-CPD-3): `python3 ${CLAUDE_PLUGIN_ROOT}/scripts/foundry-
   capability-preflight.py --contract <atom's acceptance-contract.yaml>`. `missing` → the ONE
-  blocker for that atom is `why_operator: operator-approval` with `handoff.command` the exact
-  `/permissions` addition the verdict named — do NOT dispatch that atom this tick.
-  `preconditions_unverified` → verify each precondition by command before relying on the grant.
-  `ok` → dispatch.
+  blocker for that atom is `why_operator: operator-approval` with `handoff.command` carrying the
+  verdict's `rule_to_add` — a `/permissions` RULE-ADDITION LINE (the bare rule string), NEVER a
+  shell command to run — do NOT dispatch that atom this tick. `preconditions_unverified` → verify
+  each precondition by command before relying on the grant. `ok` → dispatch.
 - Every build dispatch carries the RED-BEFORE-GREEN burden explicitly: exercise the failing case,
   not only the passing one. A build reporting only passing results is incomplete and goes back.
 - Give reviewers MATERIALIZED TREES at an explicit commit and one focused question. Reviewers name

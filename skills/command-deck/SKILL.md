@@ -70,10 +70,11 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/foundry-capability-preflight.py --contract
 ```
 
 On `missing`, surface **ONE blocker** (`why_operator: operator-approval`) whose `handoff.command`
-is the exact `/permissions` addition (or `.foundry/permissions.yaml` grant) the verdict named,
-**instead of arming the watcher** — a tick that starts is a tick that will hit the same classifier
-wall every wake. On `preconditions_unverified`, verify each precondition by command before relying
-on the grant. On `ok`, arm as below.
+carries the verdict's `rule_to_add` — a **`/permissions` RULE-ADDITION LINE** (the bare rule
+string the operator pastes into `/permissions`, or the `.foundry/permissions.yaml` grant to add),
+**never a shell command to run** — **instead of arming the watcher** — a tick that starts is a tick
+that will hit the same classifier wall every wake. On `preconditions_unverified`, verify each
+precondition by command before relying on the grant. On `ok`, arm as below.
 
 ```
 ToolSearch("select:CronCreate,CronDelete,CronList")

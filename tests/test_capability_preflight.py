@@ -117,16 +117,27 @@ def _run_cli(root, home, *args):
 
 
 # --------------------------------------------------------------------------------------------- #
-# AC-CPD-2 — coverage: prefix, never substring; the floor's own covers() for Bash
+# AC-CPD-2 — coverage: the PLATFORM's own token-boundary prefix matching, never by substring, and
+# NEVER the permission floor's interpreter-word-as-blanket fold (auth_seq 2)
 # --------------------------------------------------------------------------------------------- #
 
 
 def test_coverage_uses_the_floor_covers_rule_never_substring():
     # Bash: a `git push:*` allow covers a longer command under the SAME reach prefix...
-    assert CPF.rule_covers("Bash(git push:*)", "Bash(git push origin main:*)", home="/home/t")
+    assert CPF.rule_covers("Bash(git push:*)", "Bash(git push origin main:*)")
     # ...but never merely because the capability's text CONTAINS the allow rule's reach elsewhere
     # (the reach must be a PREFIX, not a substring anywhere in the string).
-    assert not CPF.rule_covers("Bash(git push:*)", "Bash(echo git push:*)", home="/home/t")
+    assert not CPF.rule_covers("Bash(git push:*)", "Bash(echo git push:*)")
+
+    # THE DEFECT PR #176 SECURITY REVIEW CAUGHT: the permission floor's `canonicalize` drops a
+    # leading interpreter word (`python3`, `bash`, `sh`) as a "blanket reach" fold for its OWN
+    # doctor-floor comparison — routing Bash coverage through it here made `Bash(python3:*)` read
+    # as covering EVERY Bash capability. The platform's own matching does not fold interpreter
+    # words: `Bash(python3:*)`'s reach is the literal text `python3`, nothing more.
+    assert not CPF.rule_covers("Bash(python3:*)", "Bash(gh pr merge:*)")
+    assert not CPF.rule_covers("Bash(bash:*)", "Bash(rm -rf /:*)")
+    # sanity: it still covers a capability that genuinely starts with that literal prefix.
+    assert CPF.rule_covers("Bash(python3:*)", "Bash(python3 scripts/foo.py:*)")
 
     # non-Bash: same tool + glob-prefix pattern covers a capability whose pattern starts with the
     # literal prefix...
@@ -146,6 +157,10 @@ def test_coverage_uses_the_floor_covers_rule_never_substring():
     # tool mismatch never covers, regardless of pattern shape.
     assert not CPF.rule_covers("Bash(git push:*)", "Edit(git push)")
     assert not CPF.rule_covers("Edit(scripts/**)", "Bash(scripts/foo.py:*)")
+
+    # the four token-boundary marker forms AC-CPD-2 names explicitly.
+    assert CPF.rule_covers("Bash(npm run test *)", "Bash(npm run test unit:*)")
+    assert CPF.rule_covers("Edit(scripts/**)", "Edit(scripts/sub/foo.py)")
 
 
 # --------------------------------------------------------------------------------------------- #
@@ -217,7 +232,127 @@ def test_no_declared_capabilities_is_trivially_ok(tmp_path):
 
 
 # --------------------------------------------------------------------------------------------- #
-# AC-CPD-7 — ask never grants; deny subtracts an otherwise-covering allow (Bash + non-Bash)
+# AC-CPD-1 (auth_seq 2) — --contract/--charter confined under the project dir, a regular file,
+# at most _MAX_FILE_BYTES
+# --------------------------------------------------------------------------------------------- #
+
+
+def test_contract_path_escaping_the_project_dir_is_refused(tmp_path):
+    root = _workspace_root(tmp_path)
+    home = _home_root(tmp_path)
+    os.makedirs(root, exist_ok=True)
+    # a sibling of `root`, i.e. genuinely outside it -- written with a REAL absolute path (not a
+    # literal ".." token) so this exercises path resolution, not string matching.
+    outside = str(tmp_path / "outside-contract.yaml")
+    _write_contract(outside, ["Bash(git status:*)"])
+    r = _run_cli(root, home, "--contract", outside)
+    assert r.returncode == 2, r.stdout + r.stderr
+    err = json.loads(r.stdout)
+    assert "containment" in err["error"]
+
+    # the same escape, spelled with a literal `..` traversal relative to root.
+    _write_contract(os.path.join(root, "..", "sibling-contract.yaml"), ["Bash(git status:*)"])
+    r = _run_cli(root, home, "--contract", os.path.join(root, "..", "sibling-contract.yaml"))
+    assert r.returncode == 2, r.stdout + r.stderr
+    err = json.loads(r.stdout)
+    assert "containment" in err["error"]
+
+
+def test_contract_path_must_be_a_regular_file(tmp_path):
+    root = _workspace_root(tmp_path)
+    home = _home_root(tmp_path)
+    a_directory = os.path.join(root, "not-a-file")
+    os.makedirs(a_directory, exist_ok=True)
+    r = _run_cli(root, home, "--contract", a_directory)
+    assert r.returncode == 2, r.stdout + r.stderr
+    err = json.loads(r.stdout)
+    assert "regular file" in err["error"]
+
+
+def test_contract_path_over_size_cap_is_refused(tmp_path):
+    root = _workspace_root(tmp_path)
+    home = _home_root(tmp_path)
+    oversized = os.path.join(root, "huge-contract.yaml")
+    os.makedirs(root, exist_ok=True)
+    with open(oversized, "wb") as fh:
+        fh.write(b"#" + b"x" * (CPF._MAX_FILE_BYTES + 1))
+    r = _run_cli(root, home, "--contract", oversized)
+    assert r.returncode == 2, r.stdout + r.stderr
+    err = json.loads(r.stdout)
+    assert "1 MiB" in err["error"]
+
+
+def test_charter_path_is_confined_the_same_way(tmp_path):
+    root = _workspace_root(tmp_path)
+    home = _home_root(tmp_path)
+    os.makedirs(root, exist_ok=True)
+    outside = str(tmp_path / "outside-charter.md")
+    _write_charter(outside, capabilities=["Bash(git status:*)"])
+    r = _run_cli(root, home, "--charter", outside)
+    assert r.returncode == 2, r.stdout + r.stderr
+    err = json.loads(r.stdout)
+    assert "containment" in err["error"]
+
+
+# --------------------------------------------------------------------------------------------- #
+# AC-CPD-2 (auth_seq 2) — a control character, newline, backtick, `$(`, or `;` in a capability or
+# rule pattern is refused (exit 2), never compared or echoed
+# --------------------------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("hostile", [
+    "Bash(git status; rm -rf /:*)",
+    "Bash(git status && echo `whoami`:*)",
+    "Bash(git status $(whoami):*)",
+    "Bash(git sta\ntus:*)",
+])
+def test_forbidden_characters_in_a_declared_capability_are_refused(tmp_path, hostile):
+    root = _workspace_root(tmp_path)
+    home = _home_root(tmp_path)
+    contract_path = os.path.join(root, "contract.yaml")
+    _write_settings(root, allow=[])
+    _write_contract(contract_path, [hostile])
+    r = _run_cli(root, home, "--contract", contract_path)
+    assert r.returncode == 2, r.stdout + r.stderr
+    err = json.loads(r.stdout)
+    assert "refused" in err["error"]
+
+
+def test_sanitize_strips_a_control_character_from_the_refusal_message():
+    """The render floor (`foundry_permission_floor.sanitize`, AC-CPD-2's "every string echoed
+    passes _sanitize") strips a raw control character even from the error text this CLI builds
+    itself -- unit-level, not scraped from a subprocess's stdout."""
+    hostile = "Bash(git sta\x07tus:*)"  # BEL, a control character
+    assert "\x07" not in CPF._sanitize(hostile)
+
+
+def test_forbidden_characters_in_an_effective_allow_rule_are_refused(tmp_path):
+    root = _workspace_root(tmp_path)
+    home = _home_root(tmp_path)
+    contract_path = os.path.join(root, "contract.yaml")
+    _write_contract(contract_path, ["Bash(git status:*)"])
+    _write_settings(root, allow=["Bash(git status; rm -rf /:*)"])
+    r = _run_cli(root, home, "--contract", contract_path)
+    assert r.returncode == 2, r.stdout + r.stderr
+    err = json.loads(r.stdout)
+    assert "refused" in err["error"]
+
+
+def test_every_string_echoed_into_the_verdict_is_sanitized(tmp_path):
+    """A capability legitimately valid on its own (no forbidden character) still passes through
+    `foundry_permission_floor.sanitize` before landing in the verdict — defense in depth, not a
+    substitute for the refusal above."""
+    root = _workspace_root(tmp_path)
+    home = _home_root(tmp_path)
+    cap = "Bash(gh pr merge:*)"
+    verdict = CPF.preflight([cap], root, home=home)
+    assert verdict["missing"][0]["capability"] == CPF._sanitize(cap)
+    assert verdict["missing"][0]["rule_to_add"] == CPF._sanitize(cap)
+
+
+# --------------------------------------------------------------------------------------------- #
+# AC-CPD-7 — ask never grants; deny subtracts an otherwise-covering allow (Bash + non-Bash),
+# EITHER direction (deny covers the capability, OR the capability covers a narrower deny)
 # --------------------------------------------------------------------------------------------- #
 
 
@@ -231,10 +366,24 @@ def test_ask_does_not_grant_and_deny_subtracts(tmp_path):
     assert verdict["status"] == "missing"
     assert verdict["missing"][0]["capability"] == "Bash(gh pr merge:*)"
 
-    # Bash: an otherwise-covering allow is subtracted by a deny on the same rule.
+    # Bash: an otherwise-covering allow is subtracted by a deny on the same rule (deny covers the
+    # capability) — reported `where: "denied"`.
     _write_settings(root, allow=["Bash(gh pr merge:*)"], deny=["Bash(gh pr merge:*)"])
     verdict = CPF.preflight(["Bash(gh pr merge:*)"], root, home=home)
     assert verdict["status"] == "missing"
+    assert verdict["missing"][0]["where"] == "denied"
+
+    # Bash: a NARROWER deny that lies WITHIN a broader requested capability also subtracts (the
+    # operator carved a sub-case out on purpose) — the AC-CPD-2 auth_seq 3 amendment's own example.
+    _write_settings(root, allow=["Bash(git push:*)"], deny=["Bash(git push --force:*)"])
+    verdict = CPF.preflight(["Bash(git push:*)"], root, home=home)
+    assert verdict["status"] == "missing"
+    assert verdict["missing"][0]["where"] == "denied"
+
+    # sanity: a deny that is neither broader-nor-equal NOR narrower-nested does NOT subtract.
+    _write_settings(root, allow=["Bash(git push:*)"], deny=["Bash(git pull:*)"])
+    verdict = CPF.preflight(["Bash(git push:*)"], root, home=home)
+    assert verdict["status"] == "ok"
 
     # sanity: the same allow WITHOUT the deny is granted.
     _write_settings(root, allow=["Bash(gh pr merge:*)"])
@@ -246,10 +395,17 @@ def test_ask_does_not_grant_and_deny_subtracts(tmp_path):
     verdict = CPF.preflight(["Edit(scripts/foo.py)"], root, home=home)
     assert verdict["status"] == "missing"
 
-    # non-Bash: a deny subtracts an otherwise-covering allow.
+    # non-Bash: a deny subtracts an otherwise-covering allow (deny covers the capability).
     _write_settings(root, allow=["Edit(scripts/**)"], deny=["Edit(scripts/**)"])
     verdict = CPF.preflight(["Edit(scripts/foo.py)"], root, home=home)
     assert verdict["status"] == "missing"
+    assert verdict["missing"][0]["where"] == "denied"
+
+    # non-Bash: a narrower deny nested inside a broader requested capability also subtracts.
+    _write_settings(root, allow=["Edit(scripts/**)"], deny=["Edit(scripts/secrets.py)"])
+    verdict = CPF.preflight(["Edit(scripts/**)"], root, home=home)
+    assert verdict["status"] == "missing"
+    assert verdict["missing"][0]["where"] == "denied"
 
     # sanity: the same allow WITHOUT the deny is granted.
     _write_settings(root, allow=["Edit(scripts/**)"])
@@ -524,7 +680,9 @@ def test_doctor_permissions_policy_reports_ok_with_zero_atoms(tmp_path, monkeypa
     project_dir = str(tmp_path / "proj")
     ok, detail = doctor.check_permissions_policy(plugin_root=REPO_ROOT, project_dir=project_dir)
     assert ok is True
-    assert detail == "preflight ok (0 atoms)"
+    # AC-CPD-4: the R1 drift state rides the SAME line -- no .foundry/permissions.yaml here, so
+    # the policy half reads `absent`, exactly like the pre-existing R1 probe did on its own line.
+    assert detail == "preflight ok (0 atoms); policy absent"
 
 
 def test_doctor_permissions_policy_counts_missing_rules_from_an_active_release(tmp_path, monkeypatch):
@@ -548,4 +706,34 @@ def test_doctor_permissions_policy_counts_missing_rules_from_an_active_release(t
         )
     ok, detail = doctor.check_permissions_policy(plugin_root=REPO_ROOT, project_dir=project_dir)
     assert ok is doctor.ADVISORY
-    assert detail == "preflight: 1 missing rule(s)"
+    assert detail == "preflight: 1 missing rule(s); policy absent"
+
+
+def test_doctor_permissions_policy_keeps_the_r1_drift_state_on_the_same_line(tmp_path, monkeypatch):
+    """AC-CPD-4 (auth_seq 2): the R1 drift comparison (`foundry-permissions-compile.py --check`)
+    is NOT dropped -- it rides the same `permissions-policy` line the preflight status does."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    doctor = load_module("scripts/foundry-doctor.py", "foundry_doctor_capability_preflight_test4")
+    project_dir = str(tmp_path / "proj")
+    os.makedirs(project_dir, exist_ok=True)
+    _write_permissions_yaml(project_dir, (
+        "schema_version: 1\n"
+        "grants:\n"
+        "  - id: self-merge-on-green\n"
+        "    tool: Bash\n"
+        "    pattern: \"gh pr merge:*\"\n"
+        "    mode: automatic\n"
+    ))
+    # drift: the derived allow rule AND the two fixed AC-SGP-4 policy-file deny rules are not
+    # (yet) reflected in .claude/settings.json -- three findings.
+    ok, detail = doctor.check_permissions_policy(plugin_root=REPO_ROOT, project_dir=project_dir)
+    assert ok is doctor.ADVISORY
+    assert detail == "preflight ok (0 atoms); policy drift (3)"
+
+    # reconcile it, via the real compiler this time -- --check now reports in-sync.
+    pc = load_module("scripts/foundry-permissions-compile.py", "foundry_permissions_compile_for_doctor_test")
+    code, _msg = pc.run_write(project_dir)
+    assert code == 0
+    ok, detail = doctor.check_permissions_policy(plugin_root=REPO_ROOT, project_dir=project_dir)
+    assert ok is True
+    assert detail == "preflight ok (0 atoms); policy in-sync"

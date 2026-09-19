@@ -159,12 +159,14 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-capability-preflight.py" --charte
 ```
 
 - **`status: "missing"`** → surface **ONE blocker** (`why_operator: operator-approval`) whose
-  `handoff.command` is the exact fix the verdict named for the first missing rule — either the
-  `/permissions` addition for a missing `allow` rule in `.claude/settings.json`, or the
-  `.foundry/permissions.yaml` grant to add — **instead of starting the build**. Never retry, and
-  never edit `.claude/settings.json` or `.foundry/permissions.yaml` yourself to grant it —
-  self-granting is refused, correctly, and the preflight only ever reports; the operator (or a
-  later `foundry-permissions-compile.py --write`) is the one who acts.
+  `handoff.command` carries the verdict's `rule_to_add` for the first missing entry — a
+  **`/permissions` RULE-ADDITION LINE** (the bare rule string, e.g. `Bash(gh pr merge:*)`, or the
+  `.foundry/permissions.yaml` grant to add for a `where: "denied"` entry), **NEVER a shell command
+  to run**. It is text the operator pastes into `/permissions` (or the policy file), not something
+  to `Bash()` — **instead of starting the build**. Never retry, and never edit
+  `.claude/settings.json` or `.foundry/permissions.yaml` yourself to grant it — self-granting is
+  refused, correctly, and the preflight only ever reports; the operator (or a later
+  `foundry-permissions-compile.py --write`) is the one who acts.
 - **`preconditions_unverified` non-empty** → for each listed grant, **verify its preconditions by
   command** before relying on it to cover the capability — the same "verified by command" bar the
   standing-grants section above already holds every `automatic` grant to. An unverified
