@@ -15,6 +15,11 @@ __pycache__/
 !/.foundry/README.md
 !/.foundry/build-provenance.yaml
 !/.foundry/stack-profile.lock
+# The workspace's RECORD lives here too: programme manifests + charters + wave state, decision
+# records, and the operator's standing-grants policy (ER #169) -- committed, never runtime.
+!/.foundry/releases/
+!/.foundry/decisions/
+!/.foundry/permissions.yaml
 # FOUNDRY-RUNTIME-GITIGNORE-END (re-run the applier to converge; do not edit by hand)
 
 # Local deviation from the shipped default (AC-RGLS-7): build-provenance.yaml co-carry snapshots
