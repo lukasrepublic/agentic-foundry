@@ -269,6 +269,11 @@
       "rationale": "pinned ceremony (AC-PFM-3): documented no-op today, but the flag is the shape a future auto-heal would reuse"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-merge-when-green.py:*)",
+      "tier": "ask",
+      "rationale": "issues gh pr merge <pr> --squash once every check is green — a merge is a repo-state mutation, ask like foundry-authorize.py/foundry-amend.py, never a self-grant"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-project-sync.py:*)",
       "tier": "ask",
       "rationale": "re-tiered by spec review: non-dry-run path issues authenticated GraphQL write mutations against a remote"
