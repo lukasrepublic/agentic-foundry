@@ -1,19 +1,36 @@
 #!/usr/bin/env bash
-# foundry-compact-reinject — the SessionStart:compact pinned-context re-injection hook
-# (feat-foundry-compact-reinjection, AC-CRI-1..6).
+# foundry-compact-reinject — the SessionStart pinned-context re-injection hook
+# (feat-foundry-compact-reinjection, AC-CRI-1..6; programme-state summary section added by
+# feat programme-state-minimal, AC-PSM-3).
 #
-# Fires ONLY on a SessionStart event whose `source` is `compact` (scoped by the `hooks.json`
-# matcher; the `source` field is ALSO checked inline as defense-in-depth). Emits a <=2048-UTF-8-
-# byte pinned-context manifest to stdout — the active release id + its run-state `--summary`
-# digest, the session posture (`foundry_session_mode.resolve`), and the active atom's contract
-# path (from the `.agent/assignment.json` dispatch/work marker) — every field re-derived at FIRE
-# TIME (no cache, no prior-emission read). Advisory + fail-open: a broken/absent resolver never
-# blocks or delays a session; this hook ALWAYS exits 0, and prints NOTHING unless a component
-# genuinely resolves (posture-resolution failure or ANY unhandled error => print nothing).
+# The (a)/(b)/(c) pinned-context section below fires ONLY on a SessionStart event whose `source`
+# is `compact` (checked inline, defense-in-depth against the `hooks.json` matcher which now also
+# admits the other three SessionStart sources for the section below). Emits a <=2048-UTF-8-byte
+# pinned-context manifest to stdout — the active release id + its run-state `--summary` digest,
+# the session posture (`foundry_session_mode.resolve`), and the active atom's contract path (from
+# the `.agent/assignment.json` dispatch/work marker) — every field re-derived at FIRE TIME (no
+# cache, no prior-emission read). Advisory + fail-open: a broken/absent resolver never blocks or
+# delays a session; this hook ALWAYS exits 0, and prints NOTHING unless a component genuinely
+# resolves (posture-resolution failure or ANY unhandled error => print nothing).
 #
 # Sibling shape to hooks/foundry-session-learnings.sh: a thin bash dispatcher around an inline
 # python body (portable; no new plugin-shipped python module — the logic lives HERE, in the one
 # allowed_paths file).
+#
+# feat programme-state-minimal (AC-PSM-3) ADDS a second, independent section: on ANY of the four
+# standard SessionStart sources (startup/resume/clear/compact — not only `compact`), a <=12-
+# PHYSICAL-line summary of every ACTIVE-or-PLANNED release's `.foundry/releases/<id>/state.yaml`,
+# next_action first, so a fresh session opens with it too. This second section never touches the
+# (a)/(b)/(c) pinned-context re-injection above: it is computed independently, is itself absent
+# -> nothing (no state.yaml on any active/planned release, or the releases dir is missing/
+# unreadable), and the whole hook remains exit-0/fail-open no matter which section runs. The
+# `hooks.json` `SessionStart` matcher for THIS script was widened from `compact` to
+# `startup|resume|clear|compact` (PR #184 review round 1, finding 3; charter amendment moved
+# hooks/hooks.json from denied to allowed) so this second section actually fires on a fresh
+# session, not only post-compaction — the (a)/(b)/(c) section stays gated to `compact` by the
+# inline `source` check below regardless of the wider matcher. Every free-text value this second
+# section renders is routed through `foundry_command_deck.as_data()` (PR #184 review round 1,
+# finding 1) — see `_programme_state_summary`'s own docstring.
 set -uo pipefail   # fail-open: never abort/wedge the session
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo .)"
@@ -96,16 +113,105 @@ def _assemble(release_line, digest_text, posture_line, contract_line):
     return _render(release_line, None, posture_line, None)
 
 
+SESSION_START_SOURCES = ("startup", "resume", "clear", "compact")
+
+# AC-PSM-3: <=12 lines TOTAL, header included.
+PROGRAMME_STATE_LINE_CEILING = 12
+
+
+def _programme_state_summary(project_dir, scripts_dir):
+    """A <=12-PHYSICAL-line summary of every ACTIVE-or-PLANNED release's `state.yaml`,
+    next_action first per release (feat programme-state-minimal, AC-PSM-3). Returns None when
+    there is nothing to say — no active/planned release, none of them carries a `state.yaml`, the
+    releases dir is missing/unreadable, or a release manifest is malformed — so the caller can
+    tell "absent" from "empty string" and print nothing rather than a bare header. Never raises:
+    every filesystem/YAML/import step below is inside this function's own try/except, so one
+    broken release (or the whole `.foundry/releases` dir being unreadable) degrades to "nothing
+    from this summary", never a crash and never a non-zero exit (PR #184 review round 1,
+    finding 2).
+
+    `next_action` is routed through `cd.as_data()` -- the SAME manifest-free-text sanitizer
+    `scripts/foundry_command_deck.py` already uses for dispatch prompts, imported here rather
+    than re-implemented, so its exact behaviour (control-char/ANSI-escape stripping, zero-width
+    and bidi-override removal, a length cap) holds for this render path too (PR #184 review
+    round 1, finding 1). A value that could otherwise widen this block by a physical line (an
+    embedded newline) is neutralized before it is ever joined into `lines`."""
+    try:
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        import foundry_command_deck as cd
+
+        base = os.path.join(project_dir, ".foundry", "releases")
+        if not os.path.isdir(base):
+            return None
+        import yaml
+        candidate_ids = []
+        for name in sorted(os.listdir(base)):
+            p = os.path.join(base, name, "release.yaml")
+            if not os.path.isfile(p):
+                continue
+            try:
+                with open(p, encoding="utf-8") as fh:
+                    doc = yaml.safe_load(fh)
+            except Exception:
+                continue   # one malformed manifest never sinks the scan
+            if isinstance(doc, dict) and doc.get("id") == name and doc.get("state") in ("active", "planned"):
+                candidate_ids.append(name)
+        if not candidate_ids:
+            return None
+
+        lines = ["programme state (state.yaml, next_action first):"]
+        shown = 0
+        for rid in candidate_ids:
+            if len(lines) >= PROGRAMME_STATE_LINE_CEILING:
+                break
+            try:
+                state = cd.load_wave_state(rid, project_dir=project_dir)
+            except Exception:
+                continue   # one unreadable/malformed state.yaml never sinks the whole summary
+            if not state:
+                continue
+            next_action = state.get("next_action")
+            na_text = (
+                cd.as_data(next_action)
+                if isinstance(next_action, str) and next_action.strip()
+                else "(none recorded)"
+            )
+            lines.append(f"  {cd.as_data(rid)}: next_action: {na_text}")
+            shown += 1
+        if shown == 0:
+            return None
+        # Defense in depth, re-derived from the ASSEMBLED text: split on the physical newline and
+        # cap it, so a value this loop forgot to sanitize still cannot widen the block.
+        text = "\n".join(lines)
+        physical = text.split("\n")
+        if len(physical) > PROGRAMME_STATE_LINE_CEILING:
+            text = "\n".join(physical[:PROGRAMME_STATE_LINE_CEILING])
+        return text
+    except Exception:
+        return None
+
+
 def main():
     payload = _payload()
-    if payload.get("source") != "compact":
-        return   # defense-in-depth; the hooks.json matcher already scopes firing to `compact`
-
+    source = payload.get("source")
     project_dir = os.environ.get("_CRI_PROJECT_DIR") or os.getcwd()
     plugin_root = os.environ.get("_CRI_PLUGIN_ROOT") or project_dir
     scripts_dir = os.path.join(plugin_root, "scripts")
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
+
+    # AC-PSM-3: independent of the (a)/(b)/(c) compact-only re-injection below, ANY standard
+    # SessionStart source gets this short programme-state summary — absent -> nothing, never RED,
+    # never blocks (this whole function is wrapped by the outer try/except).
+    programme_summary = None
+    if source in SESSION_START_SOURCES:
+        programme_summary = _programme_state_summary(project_dir, scripts_dir)
+
+    if source != "compact":
+        if programme_summary:
+            sys.stdout.write(programme_summary + "\n")
+        return   # defense-in-depth; the hooks.json matcher already scopes (a)/(b)/(c) to `compact`
 
     session_id = payload.get("session_id") or None
 
@@ -172,12 +278,14 @@ def main():
         contract_line = None
 
     # ── AC-CRI-5: no active release AND default posture (`factory`) AND no active atom
-    # resolvable -> emit NOTHING (overrides (b)'s otherwise-unconditional inclusion; no noise on
-    # an unrelated session).
-    if release_line is None and posture == "factory" and contract_line is None:
+    # resolvable AND no programme-state summary -> emit NOTHING (overrides (b)'s otherwise-
+    # unconditional inclusion; no noise on an unrelated session).
+    if release_line is None and posture == "factory" and contract_line is None and not programme_summary:
         return
 
     manifest_text = _assemble(release_line, digest_text, "posture: " + posture, contract_line)
+    if programme_summary:
+        manifest_text = programme_summary + "\n\n" + manifest_text
 
     sys.stdout.write(manifest_text)
 

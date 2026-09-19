@@ -44,8 +44,12 @@ def test_schema_file_is_valid_json():
         schema = json.load(fh)
     assert schema["type"] == "object"
     assert schema["additionalProperties"] is False
-    assert set(schema["properties"]) == {"decisions", "artifacts", "open_risks", "amendments_needed"}
+    assert set(schema["properties"]) == {
+        "decisions", "artifacts", "open_risks", "amendments_needed", "next_action",
+    }
     assert set(schema["properties"]["artifacts"]["items"]["required"]) == {"path", "reuse_as"}
+    assert schema["properties"]["next_action"]["type"] == "string"
+    assert schema["properties"]["next_action"]["minLength"] == 1
     print("WVL-SCHEMA-FILE-OK")
 
 
@@ -81,12 +85,122 @@ def test_schema_non_list_fails():
 
 def test_schema_no_per_atom_status_key_admitted():
     """The charter's 'Out of scope': no per-atom status/tracker key is ever a valid top-level key,
-    whatever it is named."""
-    for bogus in ("status", "next_action", "atom_state", "progress"):
+    whatever it is named. `next_action` is EXCLUDED from this bogus set as of feat
+    programme-state-minimal (AC-PSM-1) -- it is a deliberately admitted scalar, not a status/
+    tracker key (per-atom status stays derived, never stored; `next_action` is one field, not a
+    per-atom map)."""
+    for bogus in ("status", "atom_state", "progress"):
         doc = {"decisions": [], "artifacts": [], "open_risks": [], "amendments_needed": [], bogus: []}
         errors = cd.validate_wave_state(doc)
         assert errors, f"{bogus!r} must not be an admitted top-level key"
     print("WVL-NO-PER-ATOM-STATUS-OK")
+
+
+# ─────────────────────────────────────────────── AC-PSM-1: next_action accept/refuse ==== #
+
+def test_next_action_accepted_as_optional_non_empty_string():
+    doc = {"decisions": [], "artifacts": [], "open_risks": [], "amendments_needed": [],
+           "next_action": "ship the R3 charter atoms"}
+    assert cd.validate_wave_state(doc) == []
+    print("PSM-NEXT-ACTION-ACCEPTED-OK")
+
+
+def test_next_action_absent_is_still_valid():
+    """next_action stays OPTIONAL -- a document with no next_action at all is still valid."""
+    doc = {"decisions": [], "artifacts": [], "open_risks": [], "amendments_needed": []}
+    assert cd.validate_wave_state(doc) == []
+    print("PSM-NEXT-ACTION-ABSENT-OK")
+
+
+def test_next_action_empty_string_refused():
+    doc = {"decisions": [], "artifacts": [], "open_risks": [], "amendments_needed": [],
+           "next_action": ""}
+    errors = cd.validate_wave_state(doc)
+    assert errors, "an empty next_action must be rejected"
+    assert any("next_action" in e for e in errors), errors
+    print("PSM-NEXT-ACTION-EMPTY-REJECTED-OK")
+
+
+def test_next_action_non_string_refused():
+    doc = {"decisions": [], "artifacts": [], "open_risks": [], "amendments_needed": [],
+           "next_action": 7}
+    errors = cd.validate_wave_state(doc)
+    assert errors, "a non-string next_action must be rejected"
+    assert any("next_action" in e for e in errors), errors
+    print("PSM-NEXT-ACTION-NON-STRING-REJECTED-OK")
+
+
+def test_next_action_whitespace_only_refused():
+    doc = {"decisions": [], "artifacts": [], "open_risks": [], "amendments_needed": [],
+           "next_action": "   "}
+    errors = cd.validate_wave_state(doc)
+    assert errors, "a whitespace-only next_action must be rejected"
+    print("PSM-NEXT-ACTION-WHITESPACE-REJECTED-OK")
+
+
+def test_next_action_accepted_by_jsonschema_too():
+    """The pinned `schema/wave-state.schema.json` (loaded via `_wave_jsonschema_check`, the same
+    optional-`jsonschema`-package posture `validate_wave_state`'s docstring names) admits
+    next_action too -- not just the hand-rolled validator."""
+    doc = {"decisions": [], "artifacts": [], "open_risks": [], "amendments_needed": [],
+           "next_action": "confirm the schema and validator agree"}
+    with open(SCHEMA_PATH, encoding="utf-8") as fh:
+        schema = json.load(fh)
+    try:
+        import jsonschema
+    except ImportError:
+        pytest.skip("jsonschema not installed -- hand-rolled validator already covered above")
+    jsonschema.validate(doc, schema)   # raises on rejection
+    print("PSM-NEXT-ACTION-JSONSCHEMA-OK")
+
+
+# ─────────────────────────────────────── AC-PSM-1: next_action merge/write semantics ==== #
+
+def test_merge_next_action_new_value_replaces_existing():
+    existing = {"decisions": [], "artifacts": [], "open_risks": [], "amendments_needed": [],
+                "next_action": "old next action"}
+    new = {"decisions": [], "artifacts": [], "open_risks": [], "amendments_needed": [],
+           "next_action": "new next action"}
+    merged = cd.merge_wave_state(existing, new)
+    assert merged["next_action"] == "new next action"
+    print("PSM-MERGE-NEXT-ACTION-REPLACES-OK")
+
+
+def test_merge_next_action_omitted_in_new_keeps_existing():
+    existing = {"decisions": [], "artifacts": [], "open_risks": [], "amendments_needed": [],
+                "next_action": "keep me"}
+    new = {"decisions": ["a new decision"], "artifacts": [], "open_risks": [], "amendments_needed": []}
+    merged = cd.merge_wave_state(existing, new)
+    assert merged["next_action"] == "keep me"
+    print("PSM-MERGE-NEXT-ACTION-KEPT-ON-OMISSION-OK")
+
+
+def test_merge_next_action_absent_everywhere_stays_absent():
+    existing = {"decisions": [], "artifacts": [], "open_risks": [], "amendments_needed": []}
+    new = {"decisions": [], "artifacts": [], "open_risks": [], "amendments_needed": []}
+    merged = cd.merge_wave_state(existing, new)
+    assert "next_action" not in merged
+    print("PSM-MERGE-NEXT-ACTION-ABSENT-STAYS-ABSENT-OK")
+
+
+def test_cli_write_state_accepts_next_action(tmp_path):
+    rid = "acme-cli-wave-next-action"
+    root = str(tmp_path)
+    _write_manifest(root, rid, [{"id": "a1", "spec_ref": "specs/fixture/feat-fixture.md",
+                                 "contract_ref": "specs/fixture/acceptance-contract.yaml",
+                                 "depends_on": []}])
+    entries = {"decisions": [], "artifacts": [], "open_risks": [], "amendments_needed": [],
+               "next_action": "run the CLI smoke test"}
+
+    r = subprocess.run(
+        [sys.executable, os.path.join(SCRIPTS, "foundry_command_deck.py"), "write-state", rid,
+         "--root", root, "--force", "--entries-json", json.dumps(entries)],
+        capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+
+    on_disk = cd.load_wave_state(rid, project_dir=root)
+    assert on_disk["next_action"] == "run the CLI smoke test"
+    print("PSM-CLI-WRITE-STATE-NEXT-ACTION-OK")
 
 
 # ───────────────────────────────────────────────────────────────── merge never drops an entry
@@ -322,6 +436,22 @@ def test_intake_skill_names_the_read_first_step():
     assert re_search_any(text, ["decisions", "artifacts", "open_risks", "amendments_needed"])
     assert "do **not** fabricate" in text or "do not fabricate" in text.lower()
     print("WVL-INTAKE-NAMES-READ-FIRST-OK")
+
+
+def test_intake_skill_names_next_action_as_surfaced_first():
+    """AC-PSM-1: intake names next_action as the FIRST thing surfaced from state.yaml, ahead of
+    the four lists -- not merely mentioned somewhere."""
+    skill_path = os.path.join(os.path.dirname(HERE), "skills", "intake", "SKILL.md")
+    with open(skill_path, encoding="utf-8") as fh:
+        text = fh.read()
+    assert "next_action" in text
+    assert "FIRST" in text
+    four_lists_idx = text.index("`decisions`, `artifacts`, `open_risks`, `amendments_needed`")
+    next_action_idx = text.index("next_action")
+    assert next_action_idx > four_lists_idx, (
+        "next_action must be named as surfacing FIRST, in the sentence that follows the four lists"
+    )
+    print("PSM-INTAKE-NEXT-ACTION-FIRST-OK")
 
 
 def re_search_any(text, needles):

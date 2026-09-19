@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/lukasrepublic/agentic-foundry/schema/wave-state.schema.json",
   "title": "Wave state (.foundry/releases/<id>/state.yaml)",
-  "description": "What one wave learned, for the next wave's /foundry:intake to read before it asks anything (feat wave-learn, AC-WVL-1/-2). Exactly four top-level keys, no per-atom status -- run-state is DERIVED (foundry_release.derive_run_state), never restated here. Written by the command deck at wave close (scripts/foundry_command_deck.py write_wave_state) and merged, never overwritten: a write must never drop an existing entry.",
+  "description": "What one wave learned, for the next wave's /foundry:intake to read before it asks anything (feat wave-learn, AC-WVL-1/-2). Four list top-level keys plus the optional scalar next_action (feat programme-state-minimal, AC-PSM-1), no per-atom status -- run-state is DERIVED (foundry_release.derive_run_state), never restated here. Written by the command deck at wave close (scripts/foundry_command_deck.py write_wave_state) and merged, never overwritten: a write must never drop an existing list entry; next_action REPLACES rather than accumulates.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -41,6 +41,11 @@
       "type": "array",
       "description": "Spec/contract amendments reality forced during the wave, recorded here so the next wave's authoring starts from what actually shipped.",
       "items": {"type": "string", "minLength": 1}
+    },
+    "next_action": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional. The single next thing to do, so a tick prompt or a fresh session opens with it instead of re-deriving it. Not a list -- a write with next_action set REPLACES it, never accumulates; a write that omits it leaves whatever is already on disk untouched (feat programme-state-minimal, AC-PSM-1)."
     }
   }
 }
