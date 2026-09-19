@@ -75,6 +75,13 @@ wrapper** — it never re-implements the freeze logic.
 - An `acceptance-contract.yaml` with a frozen `authorized:` block (operator-signed `spec_sha256` + `contract_sha256`, `auth_seq`, `merge_autonomy_mode`).
 - Security-audit trail entries (`authorize-intent` + `authorize-complete`) in `.foundry/security-audit.jsonl`.
 
+## See also
+
+- `skills/amend/SKILL.md` — for a change to an ALREADY-AUTHORIZED spec/contract during
+  implementation (the normal, living-document path), prefer `/foundry:amend` first: it re-freezes
+  a non-widening change with no operator step, and only routes back here when the change widens
+  a boundary or the contract is security-flagged.
+
 ## Anti-patterns
 
 - **Self-confirming.** The operator's explicit yes at step 4 is the authority; an agent must never supply `--yes` without it. Front-authorization is UNCONDITIONAL — there is NO skip phrase (unlike the deep spec audit).
