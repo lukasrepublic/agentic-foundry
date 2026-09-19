@@ -123,6 +123,9 @@ def parse_checks(raw_stdout: str) -> list[dict]:
     return rows
 
 
+_GH_CHECKS_VERDICT_EXITS = (0, 1, 8)
+
+
 def gh_pr_checks(pr: int) -> tuple[list[dict], int, str]:
     """Runs `gh pr checks <pr>` -- the SAME query `hooks/foundry-git-discipline.sh`'s `gh pr
     merge` clause already trusts (AC-MWG-4: no new exemption, no different query). Returns
@@ -206,7 +209,12 @@ def run(pr: int, *, timeout_min: float, poll_interval_sec: float, no_checks_grac
             doc = _result("blocked", pr, [], reason=f"gh pr checks could not run: {e}",
                           remediation="Fix gh's availability on PATH, then retry.")
             return doc, 3
-        if rc != 0:
+        # `gh pr checks` exits 0 only when EVERY check passed, 8 while any check is still pending
+        # and 1 when any check failed (gh's documented exit codes) -- all three are verdicts the
+        # rows already carry, not a failed query. Only another code, or a non-zero code with no
+        # parseable rows at all, means the query itself failed (ER #186: the first R3 merge was
+        # refused on its first poll because a pending check made gh exit 8).
+        if rc not in _GH_CHECKS_VERDICT_EXITS or (rc != 0 and not rows):
             doc = _result("blocked", pr, rows,
                           reason=f"gh pr checks exited {rc} (checks query failed): {raw.strip()}",
                           remediation="Retry once the checks query itself succeeds.")
