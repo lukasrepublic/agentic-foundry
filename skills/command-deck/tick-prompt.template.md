@@ -55,6 +55,12 @@ share, collapse detail into the `ids:` line and keep the bullet to one clause.
 - Blockers — ONLY what needs an OPERATOR ACTION I cannot take: a permission denial I must surface,
   an interactive credential step, atoms awaiting authorization, or a genuine no-consensus fork
   after research. If none, write "None." Do NOT pad with my own pending work.
+  BEFORE NAMING A PERMISSION DENIAL AS A BLOCKER, CONSULT `.foundry/permissions.yaml` FIRST
+  (feat-foundry-authorization-standing-grants-as-policy, AC-SGP-9 — the same rule
+  `skills/mode-autonomous/SKILL.md` and `skills/command-deck/SKILL.md` carry): an `automatic`
+  grant whose preconditions I have verified by command → proceed, name the grant `id` in the
+  report instead; `approval_required` → the ONE blocker line names the grant `id`; no matching
+  grant → surface the request as today.
   REPORT ONLY WHAT CHANGED OR IS STILL OPEN. A resolved blocker is not news. Before naming any
   blocker, CHECK YOUR OWN PRIOR ACTIONS: you may already have done the thing.
 

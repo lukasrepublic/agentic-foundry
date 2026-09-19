@@ -1533,7 +1533,7 @@ COVERED_CLAIMS = [
         "claim_id": "test-count-band",
         "doc": "README.md",
         "mutation_class": "remove-unit",
-        "tokens": frozenset({"1000"}),
+        "tokens": frozenset({"1900", "1000"}),
         "derive": _derive_test_count,
         "check": _check_test_count,
         "make_mutated": _mutate_test_count,

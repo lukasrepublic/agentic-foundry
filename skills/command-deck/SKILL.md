@@ -80,6 +80,15 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/foundry_command_deck_watch.py record <prog
 idle, the rest will be. If tick one manufactures work, §6 of the prompt is not strong enough yet —
 `restart` with it hardened.
 
+### Before surfacing ANY permission request
+
+**Consult `.foundry/permissions.yaml` first** (feat-foundry-authorization-standing-grants-as-policy,
+AC-SGP-8) — the same rule `skills/mode-autonomous/SKILL.md` carries for the implementation driver,
+cited here rather than restated so the two never drift apart. Before the deck surfaces a permission
+request (`CronCreate` below, or any other): an `automatic` grant whose preconditions you have
+verified by command → proceed, record the grant `id`; `approval_required` → one blocker line
+naming the grant `id`; no matching grant → the request as today.
+
 ### If `CronCreate` is denied
 
 Surface it as the single blocker and **stop**. Do not retry, and do not edit settings to grant it —
