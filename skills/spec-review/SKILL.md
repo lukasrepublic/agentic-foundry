@@ -225,13 +225,13 @@ or model aliases; `--verdict plateau-clean` is a real `V2_VERDICTS` member (a cl
 open Critical/High/Medium) — the correct verdict for a review that completed its one remediation
 round with nothing left open (a review that halted with a real blocker unresolved should NOT
 record `plateau-clean`; escalate to the operator instead, per the Anti-patterns below).
-**This row is exactly what `/foundry:authorize`'s existing audit-ledger precondition
-(`foundry_audit_ledger.find_audit`) reads** — `find_audit` matches on `spec_sha256` + `rounds >= 1`
-+ a non-`{fail,rejected,abandoned}` verdict, which a `plateau-clean` row satisfies with no code
-change and no special-casing. `/foundry:authorize` step 2 (`skills/authorize/SKILL.md`) finds this
-row the same way it always found a deep-spec-audit row; the `--skip-audit-reason` escape hatch is reserved
-for the genuine exception (an atom that skipped review outright, an operator override) — see that
-skill for when it actually applies.
+**This row is what `foundry_audit_ledger.find_audit` reads** — it matches on `spec_sha256` +
+`rounds >= 1` + a verdict in the explicit PASS allowlist (`converged`, `plateau-clean`,
+`plateau-security`, `plateau`; audit-ledger-allowlist), which a `plateau-clean` row satisfies with no
+special-casing. Since v1.11.0 the row is **informational** to `/foundry:authorize`
+(authorize-drops-audit-precondition): authorize prints `§8 audit: recorded (verdict=…) —
+informational` when a row exists and proceeds either way; `--skip-audit-reason` is a deprecated no-op.
+Record the row regardless — it is the audit's own evidence trail.
 
 **Then the operator merge.** The operator reviews the consolidated findings + the revised spec
 diff, and **merging the spec to the workspace `main` IS the front-authorization** (CONSTITUTION.md

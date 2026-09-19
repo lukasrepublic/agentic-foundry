@@ -934,6 +934,26 @@ def _allowed_path_exists(entry: str, repo_root: str) -> bool:
     return os.path.exists(os.path.join(repo_root, entry))
 
 
+def _declared_new_under(entry: str, checkpoint_paths: set) -> bool:
+    """ER #160: AC-APG-3's tolerance was exact string equality, so an atom that CREATES a new module
+    (`allowed_paths: ["src/notes/**"]`, checkpoint `file:src/notes/tags.py`) could not be authorized
+    without enumerating literal file paths — which then fail the merge gate the moment the build adds a
+    second file. A glob entry is admitted when some declared-new surface path matches it under the
+    gate's own glob semantics (`_scope_glob_to_re`, byte-for-byte the diff-scope rule); a directory
+    literal when a surface path lies beneath it. Same soundness posture as the exact-match tolerance:
+    infer-from-checkpoint, not a guarantee. Absolute/traversal entries never match (the surface set
+    already excludes them, and a literal entry of that shape is never admitted upstream)."""
+    if not checkpoint_paths:
+        return False
+    if entry.startswith("/") or ".." in entry.split("/"):
+        return False
+    if _GLOB_META_RE.search(entry):
+        rx = _scope_glob_to_re(entry)
+        return any(rx.match(p) for p in checkpoint_paths)
+    prefix = entry.rstrip("/") + "/"
+    return any(p.startswith(prefix) for p in checkpoint_paths)
+
+
 def allowed_paths_grounding_errors(data: dict, repo_root: "str | None") -> list[str]:
     """AC-APG-1..3 (#179): reality-ground every `scope.allowed_paths` entry against repo_root. Pure,
     read-only, executes nothing. Returns [] when repo_root is None (AC-APG-4 — the CALLER degrades
@@ -962,6 +982,8 @@ def allowed_paths_grounding_errors(data: dict, repo_root: "str | None") -> list[
             continue  # AC-APG-1
         if entry in checkpoint_paths:
             continue  # AC-APG-3: checkpoint-named declared-new tolerance
+        if _declared_new_under(entry, checkpoint_paths):
+            continue  # AC-APG-3 (ER #160): a declared-new surface path lies UNDER this glob/dir entry
         if entry in retired:
             continue  # AC-RGR-6: this contract declares this exact path retired
         errors.append(

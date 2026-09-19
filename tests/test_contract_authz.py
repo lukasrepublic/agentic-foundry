@@ -163,6 +163,43 @@ class TestAllowedPathsGroundingErrors:
         errors = contract.allowed_paths_grounding_errors(doc, str(tmp_path))
         assert errors == []
 
+    def test_declared_new_glob_admitted_when_surface_lies_under_it(self, tmp_path):
+        # ER #160: a NEW-module glob is grounded by a declared-new file: surface beneath it — the
+        # adopter no longer has to enumerate literal file paths for a module the build creates.
+        doc = _golden()
+        doc["scope"]["allowed_paths"] = ["apps/brand-new/**"]
+        doc["checkpoints"].append({
+            "ac_id": "AC-NEW-3", "surface": "file:apps/brand-new/thing.ts",
+            "locator": "exists", "expect": {"op": "count_gte", "value": 1, "baseline": "none"}})
+        assert contract.allowed_paths_grounding_errors(doc, str(tmp_path)) == []
+
+    def test_declared_new_dir_literal_admitted_when_surface_lies_under_it(self, tmp_path):
+        doc = _golden()
+        doc["scope"]["allowed_paths"] = ["apps/brand-new"]
+        doc["checkpoints"].append({
+            "ac_id": "AC-NEW-3", "surface": "test:apps/brand-new/sub/thing.test.ts",
+            "locator": "exists", "expect": {"op": "count_gte", "value": 1, "baseline": "none"}})
+        assert contract.allowed_paths_grounding_errors(doc, str(tmp_path)) == []
+
+    def test_declared_new_glob_still_refused_when_no_surface_lies_under_it(self, tmp_path):
+        # the tolerance is containment, never a blanket pass: a surface OUTSIDE the glob grounds nothing.
+        doc = _golden()
+        doc["scope"]["allowed_paths"] = ["apps/brand-new/**"]
+        doc["checkpoints"].append({
+            "ac_id": "AC-NEW-3", "surface": "file:apps/elsewhere/thing.ts",
+            "locator": "exists", "expect": {"op": "count_gte", "value": 1, "baseline": "none"}})
+        errors = contract.allowed_paths_grounding_errors(doc, str(tmp_path))
+        assert len(errors) == 1 and "apps/brand-new/**" in errors[0]
+
+    def test_declared_new_tolerance_never_admits_traversal_or_absolute_entries(self, tmp_path):
+        doc = _golden()
+        doc["scope"]["allowed_paths"] = ["../outside/**", "/abs/**"]
+        doc["checkpoints"].append({
+            "ac_id": "AC-NEW-3", "surface": "file:apps/brand-new/thing.ts",
+            "locator": "exists", "expect": {"op": "count_gte", "value": 1, "baseline": "none"}})
+        errors = contract.allowed_paths_grounding_errors(doc, str(tmp_path))
+        assert len(errors) == 2
+
 
 # ================================================== system-grounding-floor (Atom C, #121) ==== #
 
