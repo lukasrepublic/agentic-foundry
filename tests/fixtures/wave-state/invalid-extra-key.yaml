@@ -1,0 +1,6 @@
+# Fixture: an extra top-level key ("status") the schema's additionalProperties:false must reject.
+decisions: []
+artifacts: []
+open_risks: []
+amendments_needed: []
+status: "in-progress"
