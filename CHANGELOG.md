@@ -8,6 +8,71 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.12.0 — 2026-09-19
+
+### Stop stopping (autonomy-continuation R1)
+
+The first release built under the living-spec process: four charters and one authorized spec, written to
+wave-1 depth from R0's `state.yaml`, amended during the build where reality required it. It attacks the
+measured #1 failure — the silent yield after a chunk, with no criterion met and no fork hit — by putting
+the stop criterion and the escalation set IN the task contract, giving a blocker a shape it must earn, and
+turning the operator's standing grants into a file the platform enforces.
+
+- **The release loader speaks the programme's vocabulary** (#162, `scripts/foundry_release.py`,
+  `scripts/foundry_command_deck.py`). `load_release` accepts the programme manifest fields (`program`,
+  `version`, `target_repo`, `target_version`, `depends_on_release`, `value`, `subtraction`, `lane`,
+  `exit`, …) and charter-lane atoms (`charter_ref` instead of `spec_ref` + `contract_ref` — the two shapes
+  are exclusive); a charter atom is authorized iff its charter file exists and is committed;
+  `state: proposed` reads as `planned`. Both real programme manifests load unchanged — the command deck can
+  now drive a release built on the charter lane. Unknown fields are still refused by name.
+- **`done_when` / `escalate_when` / `requires_capabilities` in the contract** (#163,
+  `schema/acceptance-contract.schema.json`, `scripts/foundry_contract.py`, both templates,
+  `scripts/foundry_command_deck_watch.py`). Three optional, hash-covered contract fields: machine-checkable
+  stop criteria (`test:` / `cli:` / `file:` / `checkpoint:` locators), a closed escalation set
+  (`external-provisioning`, `credential-step`, `no-consensus-after-research`, `security-widening`,
+  `irreversible-action`), and the capabilities the build needs. The charter template carries the same three
+  sections. The deck tick renders them per ready atom with the standing rule — **yield ONLY on `done_when`
+  met | `escalate_when` hit | a fork the fork policy parks; anything else is a Next Task and the tick
+  continues** — and `/foundry:mode-autonomous` sets the native `/goal` to the atom's `done_when` in an
+  interactive session. The two prose "escalation is a closed set" passages now point at the field.
+- **A blocker must earn the name** (#164, `schema/blocker.schema.json`, `scripts/foundry_blocker_check.py`).
+  A blocker is `{claim, evidence[], attempted[], why_operator}` with `why_operator` drawn from the same
+  closed set; `foundry_blocker_check.py --in <json|->` partitions candidates into `blockers` and
+  `next_tasks` (each demotion carries its reason) and the tick prompt reports only the first partition
+  under Blockers. A non-object candidate is demoted, never fatal; malformed input exits 2.
+- **Anything the operator must run is `{cwd, command, why, expect}`** (#166, `schema/blocker.schema.json`
+  `handoff`, `scripts/foundry_blocker_check.py`): one bare command (chaining, newlines and top-level
+  `set -e`/`trap`/`exec` refused by name), an absolute or `~`-relative directory, why, and what success
+  looks like; a `credential-step` or `external-provisioning` blocker must carry one. The executive report is
+  capped at twelve bullet lines; ids live in fields, names in prose; a native `PushNotification` fires only
+  when the Blockers partition is non-empty.
+- **Standing grants as policy** (#165, security-flagged, `schema/permissions.schema.json`,
+  `scripts/foundry-permissions-compile.py`, `scripts/foundry-doctor.py`). One `.foundry/permissions.yaml`
+  per workspace, operator-edited: each grant is `automatic` or `approval_required`, with optional
+  preconditions from a closed set. `--check` derives the native `allow`/`ask` rules and reports drift (exit
+  3) against `.claude/settings.json` and the compiled sidecar; `--write` adds exactly the derived rules and
+  removes only what it previously recorded, idempotently. The permission floor denies `Edit`/`Write` on the
+  policy file and asks on `--write`; the drivers consult the file before surfacing a permission request;
+  `/foundry:doctor` prints one advisory `permissions-policy` line. Review hardening: blanket wildcard
+  patterns are refused, an unreadable sidecar fails closed, an operator's own `deny` rule is never removed,
+  and the sidecar records only rules the compiler itself added.
+
+**Also in this release.** `allowed_paths` grounding admits a new-module glob when a declared-new `file:`/`test:`
+surface lies under it (#161, closes ER #160 — found on the v1.11.0 fresh-workspace test pass); two skill docs
+stopped describing the retired audit precondition. The programme manifests under `.foundry/releases/` are valid YAML again and R0's
+atoms carry their `spec_ref`/`charter_ref` (found by the loader atom's builder); `README` states the test
+count honestly (more than nineteen hundred).
+
+**Permission floor.** `cli/permission-floor.json` and `docs/permission-floor.json` gain `allow` rows for
+`foundry_blocker_check.py` and `foundry-permissions-compile.py --check` and an `ask` row for `--write` (the
+`Edit`/`Write` deny rules on the policy file are emitted by the compiler into `settings.json`, since the floor
+map is `Bash`-only by construction) — the reason `create-agentic-workspace` (cli/) and
+`update-agentic-workspace` (cli-update/) move with this release.
+
+(Security review: **security-flagged** — `standing-grants-as-policy` compiles policy into the platform's
+permission rules. Security lens on its PR; the other four atoms are loader/schema/prompt/lint changes on
+the charter lane with a fresh-context pr-reviewer pass each.)
+
 ## v1.11.0 — 2026-09-19
 
 ### The spec becomes a living document (autonomy-continuation R0)
