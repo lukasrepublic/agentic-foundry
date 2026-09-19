@@ -129,8 +129,10 @@ agent never does. Before handing a command to the operator or asking for approva
   ad hoc ask).
 - **No matching grant** → fall through to the request-as-today flow below.
 A grant never widens what the floor already denies — `.foundry/permissions.yaml` itself cannot be
-edited by the agent (a `cli/permission-floor.json` deny rule), and an `automatic` grant whose
-preconditions you have NOT actually verified by command is not a grant at all.
+edited by the agent (`foundry-permissions-compile.py --write` places native `Edit`/`Write` deny
+rules on the policy file in `.claude/settings.json` `permissions.deny`, AC-SGP-4), and an
+`automatic` grant whose preconditions you have NOT actually verified by command is not a grant at
+all.
 
 Any command that may be refused is issued **alone**. Preconditions run as separate, independently
 verified steps. Hand over **exactly one self-contained command**, only after verifying every

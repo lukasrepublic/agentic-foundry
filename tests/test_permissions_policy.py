@@ -35,10 +35,10 @@ def _write_yaml(root, text):
         fh.write(text)
 
 
-def _write_settings(root, allow=None, ask=None, extra_top=None):
+def _write_settings(root, allow=None, ask=None, deny=None, extra_top=None):
     d = os.path.join(root, ".claude")
     os.makedirs(d, exist_ok=True)
-    doc = {"permissions": {"allow": allow or [], "ask": ask or []}}
+    doc = {"permissions": {"allow": allow or [], "ask": ask or [], "deny": deny or []}}
     if extra_top:
         doc.update(extra_top)
     with open(os.path.join(d, "settings.json"), "w", encoding="utf-8") as fh:
@@ -150,7 +150,13 @@ def test_derive_rules_maps_automatic_to_allow_and_approval_required_to_ask():
         {"id": "b", "tool": "Bash", "pattern": "tofu apply:*", "mode": "approval_required"},
     ]
     derived = PC.derive_rules(grants)
-    assert derived == {"allow": ["Bash(gh pr merge:*)"], "ask": ["Bash(tofu apply:*)"]}
+    assert derived["allow"] == ["Bash(gh pr merge:*)"]
+    assert derived["ask"] == ["Bash(tofu apply:*)"]
+    # AC-SGP-4 (v2): the two fixed policy-file deny rules ride every derivation, grant-independent.
+    assert derived["deny"] == [
+        "Edit(.foundry/permissions.yaml)",
+        "Write(.foundry/permissions.yaml)",
+    ]
 
 
 # --------------------------------------------------------------------------------------------- #
@@ -254,9 +260,17 @@ def test_write_adds_exactly_the_derived_rules(tmp_path):
     settings = _read_settings(root)
     assert settings["permissions"]["allow"] == ["Bash(gh pr merge:*)"]
     assert settings["permissions"]["ask"] == ["Bash(tofu apply:*)"]
+    assert settings["permissions"]["deny"] == [
+        "Edit(.foundry/permissions.yaml)",
+        "Write(.foundry/permissions.yaml)",
+    ]
     sidecar = _read_sidecar(root)
     assert sidecar["rules"]["allow"] == ["Bash(gh pr merge:*)"]
     assert sidecar["rules"]["ask"] == ["Bash(tofu apply:*)"]
+    assert sidecar["rules"]["deny"] == [
+        "Edit(.foundry/permissions.yaml)",
+        "Write(.foundry/permissions.yaml)",
+    ]
     assert sidecar["yaml_sha256"] == PC._policy_sha256(root)
 
 
@@ -272,6 +286,8 @@ def test_write_leaves_every_other_operator_rule_untouched(tmp_path):
     assert "Bash(git push:*)" in settings["permissions"]["ask"]
     assert "Bash(gh pr merge:*)" in settings["permissions"]["allow"]
     assert "Bash(tofu apply:*)" in settings["permissions"]["ask"]
+    assert "Edit(.foundry/permissions.yaml)" in settings["permissions"]["deny"]
+    assert "Write(.foundry/permissions.yaml)" in settings["permissions"]["deny"]
     assert settings["enabledPlugins"] == {"foundry": True}
 
 
@@ -340,6 +356,81 @@ def test_write_refuses_a_malformed_settings_json_without_clobbering_it(tmp_path)
     code, msg = PC.run_write(root)
     assert code == 2
     assert open(settings_path, encoding="utf-8").read() == "not valid json {{{"
+
+
+# --------------------------------------------------------------------------------------------- #
+# AC-SGP-4 (v2, auth_seq 2) — --write places the policy-file deny rules; --check counts their
+# absence as drift. The agent never edits the policy.
+# --------------------------------------------------------------------------------------------- #
+
+
+def test_write_emits_policy_file_deny_rules_and_check_counts_their_absence(tmp_path):
+    """The named checkpoint test for AC-SGP-4: --write places BOTH fixed native deny rules on
+    `.foundry/permissions.yaml` into `.claude/settings.json` `permissions.deny` (recorded in the
+    sidecar exactly like every allow/ask rule this compiler owns, idempotently, leaving any
+    operator-authored deny rule untouched); --check on a workspace missing either one reports
+    drift and exits 3."""
+    root = str(tmp_path)
+    _write_yaml(root, _ONE_GRANT_YAML)
+
+    # --check before any --write: the deny rules are absent, alongside the allow/ask rules.
+    code, msg = PC.run_check(root)
+    assert code == PC.EXIT_DRIFT == 3
+    assert "missing deny rule: 'Edit(.foundry/permissions.yaml)'" in msg
+    assert "missing deny rule: 'Write(.foundry/permissions.yaml)'" in msg
+
+    # An operator's own, unrelated deny rule must never be touched by --write.
+    _write_settings(root, deny=["Bash(rm -rf /:*)"])
+
+    code, _ = PC.run_write(root)
+    assert code == 0
+    settings = _read_settings(root)
+    assert "Edit(.foundry/permissions.yaml)" in settings["permissions"]["deny"]
+    assert "Write(.foundry/permissions.yaml)" in settings["permissions"]["deny"]
+    assert "Bash(rm -rf /:*)" in settings["permissions"]["deny"], \
+        "an operator-authored deny rule must never be removed by --write"
+    sidecar = _read_sidecar(root)
+    assert set(sidecar["rules"]["deny"]) == {
+        "Edit(.foundry/permissions.yaml)", "Write(.foundry/permissions.yaml)",
+    }
+
+    # Now --check reports in-sync (deny rules present, recorded, agreeing).
+    code, msg = PC.run_check(root)
+    assert code == PC.EXIT_OK == 0, msg
+
+    # An operator (or a stray edit) removing ONE of the two deny rules is drift, not silence.
+    settings["permissions"]["deny"].remove("Edit(.foundry/permissions.yaml)")
+    with open(os.path.join(root, ".claude", "settings.json"), "w", encoding="utf-8") as fh:
+        json.dump(settings, fh, indent=2)
+        fh.write("\n")
+    code, msg = PC.run_check(root)
+    assert code == PC.EXIT_DRIFT == 3
+    assert "missing deny rule: 'Edit(.foundry/permissions.yaml)'" in msg
+    assert "missing deny rule: 'Write(.foundry/permissions.yaml)'" not in msg, \
+        "the still-present Write deny rule must not be reported missing"
+
+    # --write heals it back deterministically, idempotently.
+    code, _ = PC.run_write(root)
+    assert code == 0
+    settings = _read_settings(root)
+    assert "Edit(.foundry/permissions.yaml)" in settings["permissions"]["deny"]
+    assert "Bash(rm -rf /:*)" in settings["permissions"]["deny"]
+    code, msg = PC.run_check(root)
+    assert code == 0, msg
+
+
+def test_write_deny_rules_are_idempotent_across_repeated_writes(tmp_path):
+    root = str(tmp_path)
+    _write_yaml(root, _ONE_GRANT_YAML)
+    PC.run_write(root)
+    settings_path = os.path.join(root, ".claude", "settings.json")
+    before = open(settings_path, "rb").read()
+    PC.run_write(root)
+    after = open(settings_path, "rb").read()
+    assert before == after
+    settings = _read_settings(root)
+    assert settings["permissions"]["deny"].count("Edit(.foundry/permissions.yaml)") == 1
+    assert settings["permissions"]["deny"].count("Write(.foundry/permissions.yaml)") == 1
 
 
 # --------------------------------------------------------------------------------------------- #

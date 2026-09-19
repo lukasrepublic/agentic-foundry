@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """foundry-permissions-compile — compiles `.foundry/permissions.yaml` into the native
 `Tool(pattern)` permission rules Claude Code already enforces
-(feat-foundry-authorization-standing-grants-as-policy, AC-SGP-1..3/7).
+(feat-foundry-authorization-standing-grants-as-policy, AC-SGP-1..4/7).
 
 The operator's standing grants ("proceed on green CI", "drive this forward", ...) live today in
 transcripts and memory files, so every session re-asks. This atom gives them ONE file the operator
-edits and the agent never does (`.foundry/permissions.yaml`, denied to Edit/Write by
-`cli/permission-floor.json`): each grant is `automatic` (compiles to one `permissions.allow` rule)
-or `approval_required` (compiles to one `permissions.ask` rule). The compiler writes NO policy
-engine of our own — it derives the native rule set and reconciles it into
+edits and the agent never does (`.foundry/permissions.yaml`): each grant is `automatic` (compiles
+to one `permissions.allow` rule) or `approval_required` (compiles to one `permissions.ask` rule).
+`--write` ALSO places two fixed, grant-independent `permissions.deny` rules on the policy file
+itself, `Edit(.foundry/permissions.yaml)` and `Write(.foundry/permissions.yaml)` (AC-SGP-4 v2,
+auth_seq 2 — retargeted from the Bash-only `cli/permission-floor.json` script-invocation floor to
+the platform's own `.claude/settings.json` `permissions.deny`, since that floor's shape is
+`Bash(...)`-only by construction and this is a path deny, not a script tier). The compiler writes
+NO policy engine of our own — it derives the native rule set and reconciles it into
 `.claude/settings.json`, recording exactly what it added in a sidecar
 (`.claude/foundry-permissions.compiled.json`) so a later `--write` can remove exactly what it
 previously added and nothing the operator wrote by hand (AC-SGP-3).
@@ -198,10 +202,24 @@ def load_policy(project_dir):
 # --------------------------------------------------------------------------------------------- #
 
 
+# AC-SGP-4 (v2, auth_seq 2): the agent never edits the policy. Fixed, grant-independent —
+# `--write` places these two native deny rules in `.claude/settings.json` `permissions.deny`
+# every run, `--check` counts either one's absence as drift, exactly like every other rule this
+# compiler owns (recorded in the sidecar, removed only if this compiler itself no longer derives
+# it). Retargeted here (not the Bash-only `cli/permission-floor.json` script-invocation floor,
+# which `tests/test_permission_floor_map.py` asserts is `Bash(...)`-shaped only) per the spec's
+# 2026-09-19 amendment — see that spec's `## Amendments` table.
+POLICY_SELF_DENY_RULES = (
+    "Edit(.foundry/permissions.yaml)",
+    "Write(.foundry/permissions.yaml)",
+)
+
+
 def derive_rules(grants):
     """Every `automatic` grant -> one allow rule; every `approval_required` grant -> one ask
-    rule. Sorted so the derived set (and everything downstream of it) is deterministic
-    regardless of grant-declaration order -- required for --write's idempotency (AC-SGP-3)."""
+    rule; plus the two fixed AC-SGP-4 deny rules on the policy file itself. Sorted so the derived
+    set (and everything downstream of it) is deterministic regardless of grant-declaration order
+    -- required for --write's idempotency (AC-SGP-3)."""
     allow, ask = [], []
     for g in grants:
         rule = f"{g['tool']}({g['pattern']})"
@@ -209,7 +227,11 @@ def derive_rules(grants):
             allow.append(rule)
         else:
             ask.append(rule)
-    return {"allow": sorted(set(allow)), "ask": sorted(set(ask))}
+    return {
+        "allow": sorted(set(allow)),
+        "ask": sorted(set(ask)),
+        "deny": sorted(POLICY_SELF_DENY_RULES),
+    }
 
 
 # --------------------------------------------------------------------------------------------- #
@@ -240,14 +262,18 @@ def _read_settings_doc(path):
 
 
 def _effective_settings_rules(project_dir):
-    """{"allow": set(...), "ask": set(...)} from `.claude/settings.json` ONLY (not
-    settings.local.json -- AC-SGP-2 names settings.json specifically; the doctor's own
+    """{"allow": set(...), "ask": set(...), "deny": set(...)} from `.claude/settings.json` ONLY
+    (not settings.local.json -- AC-SGP-2 names settings.json specifically; the doctor's own
     permission-floor probe is the one that additionally watches the local-persist path)."""
     result = _pf.load_settings_file(os.path.join(project_dir, SETTINGS_REL))
     if result["status"] != "ok":
-        return {"allow": set(), "ask": set()}
+        return {"allow": set(), "ask": set(), "deny": set()}
     rules = result["rules"]
-    return {"allow": set(rules.get("allow", [])), "ask": set(rules.get("ask", []))}
+    return {
+        "allow": set(rules.get("allow", [])),
+        "ask": set(rules.get("ask", [])),
+        "deny": set(rules.get("deny", [])),
+    }
 
 
 def _read_sidecar(project_dir):
@@ -262,6 +288,7 @@ def _read_sidecar(project_dir):
             "yaml_sha256": doc.get("yaml_sha256"),
             "allow": list(rules.get("allow", [])),
             "ask": list(rules.get("ask", [])),
+            "deny": list(rules.get("deny", [])),
         }
     except Exception:
         return None
@@ -278,26 +305,37 @@ def _policy_sha256(project_dir):
 # --------------------------------------------------------------------------------------------- #
 
 
+_ASK_ALLOW_TIERS = ("allow", "ask")
+_ALL_TIERS = ("allow", "ask", "deny")
+
+
 def compute_drift(derived, settings_rules, sidecar):
     """Returns a list of human-readable drift findings; [] means agreement. Three classes:
       - missing <tier> rule R           : derived, not present in settings.json under <tier>
-      - moved rule R: expected <tier>, found <other> : derived, present under the WRONG tier
+      - moved rule R: expected <tier>, found <other> : an allow/ask rule, present under the
+                                            WRONG one of the other two ask/allow tiers (AC-SGP-4's
+                                            deny rules have no allow/ask counterpart to move
+                                            between, so `deny` is checked for presence only)
       - extra <tier> rule R (...)        : previously compiled by us (sidecar), no longer
                                             derived, but still sitting in settings.json
     """
     findings = []
-    for tier in ("allow", "ask"):
-        other = "ask" if tier == "allow" else "allow"
+    for tier in _ALL_TIERS:
         for rule in derived[tier]:
             if rule in settings_rules[tier]:
                 continue
-            if rule in settings_rules[other]:
-                findings.append(f"moved rule: {rule!r} expected {tier} but found {other}")
+            moved_to = None
+            if tier in _ASK_ALLOW_TIERS:
+                other = "ask" if tier == "allow" else "allow"
+                if rule in settings_rules[other]:
+                    moved_to = other
+            if moved_to:
+                findings.append(f"moved rule: {rule!r} expected {tier} but found {moved_to}")
             else:
                 findings.append(f"missing {tier} rule: {rule!r}")
     if sidecar is not None:
-        derived_all = set(derived["allow"]) | set(derived["ask"])
-        for tier in ("allow", "ask"):
+        derived_all = set(derived["allow"]) | set(derived["ask"]) | set(derived["deny"])
+        for tier in _ALL_TIERS:
             for rule in sidecar.get(tier, []):
                 if rule in derived_all:
                     continue
@@ -344,14 +382,14 @@ def run_write(project_dir):
 
     prev_sidecar = _read_sidecar(project_dir)
     owned_before = {
-        "allow": set(prev_sidecar["allow"]) if prev_sidecar else set(),
-        "ask": set(prev_sidecar["ask"]) if prev_sidecar else set(),
+        tier: set(prev_sidecar[tier]) if prev_sidecar else set()
+        for tier in _ALL_TIERS
     }
 
     perms = doc.get("permissions")
     if not isinstance(perms, dict):
         perms = {}
-    for tier in ("allow", "ask"):
+    for tier in _ALL_TIERS:
         existing = perms.get(tier, [])
         if not isinstance(existing, list):
             existing = []
@@ -366,15 +404,15 @@ def run_write(project_dir):
 
     sidecar_doc = {
         "yaml_sha256": _policy_sha256(project_dir),
-        "rules": {"allow": derived["allow"], "ask": derived["ask"]},
+        "rules": {tier: derived[tier] for tier in _ALL_TIERS},
     }
     sidecar_path = os.path.join(project_dir, SIDECAR_REL)
     os.makedirs(os.path.dirname(sidecar_path), exist_ok=True)
     _atomic_write_json(sidecar_path, sidecar_doc)
 
     return EXIT_OK, (
-        f"wrote {len(derived['allow'])} allow rule(s), {len(derived['ask'])} ask rule(s) "
-        f"to {SETTINGS_REL}; sidecar recorded at {SIDECAR_REL}"
+        f"wrote {len(derived['allow'])} allow rule(s), {len(derived['ask'])} ask rule(s), "
+        f"{len(derived['deny'])} deny rule(s) to {SETTINGS_REL}; sidecar recorded at {SIDECAR_REL}"
     )
 
 
