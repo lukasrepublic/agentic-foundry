@@ -1,0 +1,74 @@
+id: ac-r1-stop-stopping
+program: autonomy-continuation
+version: 1.12.0
+description: >
+  R1 of autonomy-continuation — the FIRST release built under the living-spec process. Attacks the
+  measured #1 failure (silent yield after a chunk — adopter A 81% of handoffs, adopter B 52% of stops answered
+  "merge it"/"go") and gives the deck a manifest it can actually load. No experimental flags, no
+  guard-parser work. Plan + value: docs/programs/autonomy-continuation/PROGRAM.md §4. Intake read
+  ac-r0-living-spec-process/state.yaml first (2026-09-19): the loader gap is the first atom; the
+  ER #179 declared-new convention and the three-registration-files convention are baked into every
+  charter's scope below.
+state: active
+target_repo: agentic-foundry
+target_version: 1.12.0
+depends_on_release: [ac-r0-living-spec-process]
+value: ["V1 operator hours returned", "V2 floor #1 holds"]
+lane: "charter by default; factory for the security: true atom (standing-grants-as-policy)"
+subtraction:
+  - the prose "escalation is a closed set" paragraphs in skills/command-deck/SKILL.md and
+    skills/mode-autonomous/SKILL.md once the escalate_when field exists (contract-done-when-escalate-when)
+  - foundry_release.py's closed top-level field set (release-loader-vocabulary)
+
+atoms:
+  # audit-ledger-allowlist → SHIPPED in ac-r0-living-spec-process (v1.11.0, PR #150)
+  # silent-yield-instrument → SHIPPED in ac-r0 as yield-and-silent-yield-instrument (v1.11.0, PR #152)
+  - id: release-loader-vocabulary
+    kind: NS
+    lane: charter
+    charter_ref: .foundry/releases/ac-r1-stop-stopping/charters/release-loader-vocabulary.md
+    depends_on: []
+    # R0 state.yaml open_risk #7: foundry_release.py load_release rejects every programme manifest
+    # (program, version, target_repo, …, and charter-lane atoms without spec_ref/contract_ref), so the
+    # deck could not have driven R0 and cannot drive R1. FIRST atom; the manifest you are reading IS
+    # the vocabulary fixture.
+  - id: contract-done-when-escalate-when
+    kind: NS
+    lane: charter
+    charter_ref: .foundry/releases/ac-r1-stop-stopping/charters/contract-done-when-escalate-when.md
+    depends_on: []
+    # F1 302/374, F6 ~15/49. Zero hits for escalate|abort|attempt|max_ in acceptance-contract.schema.json.
+    # done_when (machine-checkable), escalate_when (closed set), requires_capabilities on both the charter
+    # template and the acceptance contract (hashed); the deck tick + mode-autonomous yield ONLY on
+    # done_when met | escalate_when hit | no-consensus fork. Supersedes adl-operator-out-of-loop/
+    # loop-self-continuation.
+  - id: standing-grants-as-policy
+    kind: NS
+    lane: factory
+    security: true
+    spec_ref: specs/features/foundry/authorization/standing-grants-as-policy/feat-foundry-authorization-standing-grants-as-policy.md
+    contract_ref: specs/features/foundry/authorization/standing-grants-as-policy/acceptance-contract.yaml
+    depends_on: [contract-done-when-escalate-when]
+    # F2 "You have a standing authorization to self merge… Drive this fucking project forward"; 22 literal
+    # rubber-stamps. Decision 5: one .foundry/permissions.yaml per workspace, automatic|approval_required
+    # + preconditions, compiled to native Tool(pattern) rules; consulted BEFORE asking; the operator edits
+    # it, the agent never does.
+  - id: blocker-requires-evidence
+    kind: NS
+    lane: charter
+    charter_ref: .foundry/releases/ac-r1-stop-stopping/charters/blocker-requires-evidence.md
+    depends_on: [contract-done-when-escalate-when]
+    # F6 "STOP INVENTING BLOCKERS THAT ARE NOT THERE" ×8. Blocker = {claim, evidence[], attempted[],
+    # why_operator ∈ escalate_when}. No evidence → rendered as a Next Task; the tick continues.
+  - id: operator-handoff-schema
+    kind: NS
+    lane: charter
+    charter_ref: .foundry/releases/ac-r1-stop-stopping/charters/operator-handoff-schema.md
+    depends_on: [blocker-requires-evidence]
+    # F8 "Directory to execute from???? How many times do I need to ask?" ×5; prose volume ×9.
+    # Anything the operator must run = {cwd, command, why, expect}; deck report capped; ids in fields,
+    # human names in prose; PushNotification only for the one evidence-bearing blocker.
+
+exit:
+  - foundry_release.py loads this manifest and R0's unchanged (the deck can drive the programme)
+  - the instrument reports over ≥7 days of real sessions after R1 ships (the MEASURE window)

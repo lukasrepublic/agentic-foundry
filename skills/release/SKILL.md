@@ -26,6 +26,17 @@ prevents an honest "I think it's done" mistake from closing a release that isn't
 ## Verbs
 
 The manifest lives at `$CLAUDE_PROJECT_DIR/.foundry/releases/<id>/release.yaml` (per-project operator state).
+**Manifest shape** (release-loader-vocabulary): top-level requires `id`/`description`/`state`/`atoms`;
+optional free-text programme fields `program`, `version`, `target_repo`, `target_version`,
+`depends_on_release`, `value`, `subtraction`, `lane`, `gate_before_authorize`, `supersedes_atoms`,
+`exit` are accepted and never read by the state machine — an unknown top-level field outside this set
+is still refused by name. Each atom is EITHER **factory-lane** (`spec_ref` + `contract_ref`, the
+frozen spec+contract pair) OR **charter-lane** (`charter_ref` — a committed charter file, no frozen
+contract; authorized iff the file exists under the project dir AND is committed, `git log -1 --
+<charter_ref>` non-empty); an atom carrying neither shape is refused by name. Optional atom fields
+`kind` (free text), `lane` (`charter`|`factory`), `security` (bool), `paths`, `journeys` are accepted
+on either shape. `state: proposed` reads as a synonym of `planned` (written manifests are never
+rewritten; the forward-only transition table is unchanged).
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_release.py" ...   # (driven via the loader API)
