@@ -24,11 +24,6 @@
       "rationale": "writes one schema-validated evidence row to .foundry/audit-ledger.jsonl at the end of /foundry:audit"
     },
     {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-autonomy-instrument.py:*)",
-      "tier": "allow",
-      "rationale": "report-only six-ratio autonomy instrument (feat-yield-and-silent-yield-instrument); reads transcripts + the authorization corpus, gates nothing, writes only to a caller-specified --out path"
-    },
-    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-build-citation-graph.py:*)",
       "tier": "allow",
       "rationale": "builds the derived citation-graph cache from plain-text source-of-truth files"
@@ -336,6 +331,10 @@
     {
       "script": "foundry_audit_preconditions.py",
       "rationale": "the shipped __main__ is a manual-invocation debug CLI for a human/operator; never instructed by any skill/hook"
+    },
+    {
+      "script": "foundry-autonomy-instrument.py",
+      "rationale": "deferred, not tiered: a standing Bash allow-rule is coordinator work (round-2 review remediation, PR #152) — the operator runs this report-only CLI manually and grants it per-invocation or via their own settings, never via a plugin-shipped allow row"
     },
     {
       "script": "foundry_authz.py",

@@ -188,21 +188,26 @@ def _import_map_suite():
 # path shape, `.foundry/watchers/<programme>.json`, whose only variable is re-checked against a
 # [a-z0-9-]+ fullmatch before any path join. The record is inert data no derivation reads.
 #
-# UPDATED for feat-yield-and-silent-yield-instrument (AC-INS-6 subtraction, PR TBD). The map's own
-# closed-world coverage check (test_permission_floor_map.py::test_every_script_is_tiered_exactly_once)
-# demands this edit for any script the atom adds or removes — it is mechanical bookkeeping, not a
-# self-granted capability: this diff neither widens nor narrows what any EXISTING script may do.
+# UPDATED for feat-yield-and-silent-yield-instrument (AC-INS-6 subtraction, PR #152), then RE-PINNED
+# again in the SAME PR's round-2 review remediation. The map's own closed-world coverage check
+# (test_permission_floor_map.py::test_every_script_is_tiered_exactly_once) demands an edit here for
+# any script the atom adds or removes; round 2 additionally found the round-1 edit was itself a
+# self-granted permission (a plugin-shipped `allow` row for a script the implementing atom itself
+# added, with no coordinator sign-off) and reverted it to a deferral:
 #
-#   + Bash(.../foundry-autonomy-instrument.py:*)   tier `allow`  (new report-only CLI; reads
-#     transcripts + the authorization corpus, gates nothing, writes only to a caller-given --out path)
 #   - Bash(.../foundry_run_metrics.py:*)           tier `allow`  (the script it tiered no longer
 #     exists — AC-INS-6 retires scripts/foundry_run_metrics.py, hooks/foundry-run-metrics.sh, and the
 #     hooks.json PostToolUse entry that invoked it)
 #
-# Net: 64 -> 64 entries (one added, one removed, net zero count change — only the digest changes,
-# since the removed and added rules are not byte-identical). Enumerated entry-by-entry against
-# origin/main before this digest was re-pinned, same shape as PR #62's reconciliation above.
-MERGE_BASE_ENTRIES_DIGEST = "7077fa50952e5f28ea951f3c5b6ac0bd7462879258c9854ba10ef4e259dfd59f"
+# `scripts/foundry-autonomy-instrument.py` (the new report-only CLI this atom adds) is NOT an
+# `entries` row at all: it is `not_invoked` (deferred — a standing Bash allow-rule for a
+# newly-added script is coordinator work, not something the implementing atom grants itself; the
+# operator runs it manually and prompts/grants per-invocation until a coordinator decides otherwise).
+#
+# Net: 64 -> 63 entries (one row removed, net; the instrument's row was added then removed within
+# the same PR and never landed in `entries`). Enumerated entry-by-entry against origin/main before
+# this digest was re-pinned, same shape as PR #62's reconciliation above.
+MERGE_BASE_ENTRIES_DIGEST = "9706c02260989c194dfdadb4a323a4d9dec2141c0efd971504f554d9608f0b5f"
 
 
 # ================================================================================================ #

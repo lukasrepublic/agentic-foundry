@@ -1,0 +1,3 @@
+spec_ref: specs/features/foo/bar/feat-foo-bar.md
+spec_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"
+target_repo: sample-product
