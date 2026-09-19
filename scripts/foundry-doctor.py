@@ -26,11 +26,17 @@ What this probe checks, every run, cheaply:
      option writes into `.claude/settings.local.json` with no second trust dialog, and this is the
      one probe that watches that file. See `scripts/foundry_permission_floor.py`'s module
      docstring. RED only on a malformed `docs/permission-floor.json`.
-  8. `permissions-policy` (feat-foundry-authorization-standing-grants-as-policy, AC-SGP-6): one
-     ADVISORY line -- `absent` when `.foundry/permissions.yaml` does not exist, `in-sync` or
-     `drift (<n> rule(s))` from the SAME derivation `scripts/foundry-permissions-compile.py
-     --check` runs. NEVER RED, by design (AC-SGP-6): a stale-policy workspace must never wedge a
-     session; the operator's own `--check`/`--write` run is the real enforcement surface.
+  8. `permissions-policy` (feat-foundry-authorization-capability-preflight-at-dispatch, AC-CPD-4;
+     replaces the R1 `permissions-policy` drift-only advisory, feat-foundry-authorization-standing-
+     grants-as-policy AC-SGP-6, but KEEPS the R1 drift state on the same line rather than dropping
+     it): one ADVISORY line -- runs `scripts/foundry-capability-preflight.py` over every atom
+     (contract_ref or charter_ref) of every ACTIVE release under `.foundry/releases/*/release.yaml`,
+     printing `preflight ok (<n> atoms)` or `preflight: <n> missing rule(s)`, followed by
+     `; policy absent|in-sync|drift (<k>)` -- the SAME derivation `scripts/foundry-permissions-
+     compile.py --check` runs. NEVER RED, by design (AC-CPD-4, unchanged from AC-SGP-6): a stale-
+     permission workspace must never wedge a session; `/foundry:mode-autonomous`'s own preflight-
+     before-dispatch (AC-CPD-3) and the operator's own settings review are the real enforcement
+     surface.
 
 Fails CLOSED for the operator-invoked check (exit non-zero on any hard failure). The
 --session-start cadence is ADVISORY (exits 0 so it never wedges a session) — the real merge-side
@@ -326,8 +332,24 @@ def check_permission_floor(plugin_root=None, project_dir=None, session_start=Fal
 
 
 # --------------------------------------------------------------------------------------- #
-# 8. permissions-policy advisory (feat-foundry-authorization-standing-grants-as-policy, AC-SGP-6)
+# 8. permissions-policy advisory -- capability preflight over every active-release atom
+#    (feat-foundry-authorization-capability-preflight-at-dispatch, AC-CPD-4; replaces the R1
+#    permissions-policy drift-only advisory, feat-foundry-authorization-standing-grants-as-policy
+#    AC-SGP-6)
 # --------------------------------------------------------------------------------------- #
+def _load_capability_preflight_module(plugin_root):
+    path = os.path.join(plugin_root, "scripts", "foundry-capability-preflight.py")
+    if not os.path.isfile(path):
+        return None
+    scripts_dir = os.path.dirname(path)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    spec = importlib.util.spec_from_file_location("foundry_capability_preflight_doctor", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _load_permissions_compile_module(plugin_root):
     path = os.path.join(plugin_root, "scripts", "foundry-permissions-compile.py")
     if not os.path.isfile(path):
@@ -341,29 +363,100 @@ def _load_permissions_compile_module(plugin_root):
     return mod
 
 
+def _active_release_atoms(project_dir):
+    """Every (release_id, atom) pair from every release under `.foundry/releases/*/release.yaml`
+    whose `state` is `active`, for atoms carrying a `contract_ref` or `charter_ref` (AC-CPD-4). A
+    release that fails to load (malformed manifest, unknown id, etc.) is SKIPPED, not raised --
+    this probe stays advisory even when an unrelated release.yaml elsewhere is broken."""
+    releases_dir = os.path.join(project_dir, ".foundry", "releases")
+    if not os.path.isdir(releases_dir):
+        return []
+    scripts_dir = os.path.join(PLUGIN_ROOT, "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import foundry_release as _fr  # lazy import, mirrors check_operator_registry above
+
+    out = []
+    try:
+        names = sorted(os.listdir(releases_dir))
+    except OSError:
+        return []
+    for name in names:
+        if not os.path.isfile(os.path.join(releases_dir, name, "release.yaml")):
+            continue
+        try:
+            release = _fr.load_release(name, project_dir=project_dir)
+        except _fr.ReleaseError:
+            continue
+        if release.state != "active":
+            continue
+        for atom in release.atoms:
+            if atom.contract_ref or atom.charter_ref:
+                out.append((release.id, atom))
+    return out
+
+
+def _policy_drift_state(pc, pdir):
+    """AC-CPD-4: the R1 drift state -- `absent` | `in-sync` | `drift (<k>)` -- kept on the SAME
+    doctor line the preflight status rides, not dropped. Unchanged derivation from
+    `foundry-permissions-compile.py --check` (feat-foundry-authorization-standing-grants-as-policy,
+    AC-SGP-6)."""
+    policy_path = os.path.join(pdir, pc.POLICY_REL)
+    if not os.path.isfile(policy_path):
+        return "absent", True
+    code, detail = pc.run_check(pdir)
+    if code == pc.EXIT_OK:
+        return "in-sync", True
+    if code == pc.EXIT_DRIFT:
+        findings = [ln for ln in detail.splitlines() if ln.strip().startswith(("missing", "moved", "extra"))]
+        return f"drift ({len(findings)})", False
+    # a schema-invalid/unreadable permissions.yaml is itself advisory here (AC-CPD-4 "never RED")
+    # -- the compiler's own --check is the fail-closed surface for that.
+    return _sanitize_detail(f"invalid ({detail})"), False
+
+
 def check_permissions_policy(plugin_root=None, project_dir=None):
-    """ADVISORY, never RED (AC-SGP-6) — wrapped entirely in its own try/except so that a probe
-    crash never reaches `_run`'s generic (RED-producing) exception handler; the "never RED"
-    guarantee has to hold even when the compiler module itself is broken."""
+    """ADVISORY, never RED (AC-CPD-4, unchanged posture from AC-SGP-6) — wrapped entirely in its
+    own try/except so that a probe crash never reaches `_run`'s generic (RED-producing) exception
+    handler; the "never RED" guarantee has to hold even when the preflight module itself is
+    broken."""
     root = plugin_root or PLUGIN_ROOT
     pdir = project_dir or _project_dir()
     try:
+        cpf = _load_capability_preflight_module(root)
         pc = _load_permissions_compile_module(root)
-        if pc is None:
-            return None, "compiler module absent (not applicable)"
-        policy_path = os.path.join(pdir, pc.POLICY_REL)
-        if not os.path.isfile(policy_path):
-            return True, "absent"
-        code, _detail = pc.run_check(pdir)
-        if code == pc.EXIT_OK:
-            return True, "in-sync"
-        if code == pc.EXIT_DRIFT:
-            findings = [ln for ln in _detail.splitlines() if ln.strip().startswith(("missing", "moved", "extra"))]
-            return ADVISORY, f"drift ({len(findings)} rule(s))"
-        # a schema-invalid/unreadable permissions.yaml is itself advisory here (AC-SGP-6 "never
-        # RED") — the compiler's own --check is the fail-closed surface for that.
-        return ADVISORY, _sanitize_detail(f"invalid ({_detail})")
-    except Exception as e:  # noqa: BLE001 — deliberate: AC-SGP-6 must never redden the run
+        if cpf is None or pc is None:
+            return None, "capability-preflight/compiler module absent (not applicable)"
+
+        atoms = _active_release_atoms(pdir)
+        missing_total = 0
+        for _release_id, atom in atoms:
+            try:
+                # AC-CPD-1 (auth_seq 2): the same path-confinement floor the CLI's own --contract/
+                # --charter enforces applies here too — a `..`-escaping or oversized atom ref is
+                # refused by the loader itself, never joined/opened directly by this probe.
+                if atom.contract_ref:
+                    capabilities = cpf.load_contract_capabilities(atom.contract_ref, pdir)
+                else:
+                    capabilities = cpf.load_charter_capabilities(atom.charter_ref, pdir)
+                verdict = cpf.preflight(capabilities, pdir)
+            except cpf.PreflightInputError:
+                # an unreadable/out-of-bounds atom-level source is itself advisory here (AC-CPD-4
+                # "never RED") -- the preflight's own --contract/--charter run is the fail-closed
+                # surface for that.
+                continue
+            missing_total += len(verdict.get("missing", []))
+
+        preflight_part = (
+            f"preflight ok ({len(atoms)} atoms)" if missing_total == 0
+            else f"preflight: {missing_total} missing rule(s)"
+        )
+        drift_state, drift_ok = _policy_drift_state(pc, pdir)
+        detail = f"{preflight_part}; policy {drift_state}"
+        if missing_total == 0 and drift_ok:
+            return True, detail
+        return ADVISORY, detail
+    except Exception as e:  # noqa: BLE001 — deliberate: AC-CPD-4 must never redden the run
         return ADVISORY, _sanitize_detail(f"probe error ({type(e).__name__}: {e})")
 
 

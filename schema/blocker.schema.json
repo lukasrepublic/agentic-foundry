@@ -27,7 +27,7 @@
     "why_operator": {
       "type": "string",
       "description": "Member of the closed `escalate_when` set (schema/acceptance-contract.schema.json's `escalate_when` enum, feat-foundry-contract-done-when-escalate-when AC-DWE-1) -- the SAME five members, not redefined here. Anything outside this closed set is not a legitimate operator escalation.",
-      "enum": ["external-provisioning", "credential-step", "no-consensus-after-research", "security-widening", "irreversible-action"]
+      "enum": ["external-provisioning", "credential-step", "no-consensus-after-research", "security-widening", "irreversible-action", "operator-approval"]
     },
     "handoff": {
       "type": "object",

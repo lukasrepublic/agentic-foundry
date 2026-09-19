@@ -407,7 +407,7 @@
       "description": "OPTIONAL top-level task-contract slot (feat-foundry-contract-done-when-escalate-when, AC-DWE-1): the CLOSED set of forks this atom's driver escalates to the operator on, subtracted from 'anything else is a Next Task'. Top-level (sibling of `scope`/`checkpoints`). Lives in the contract-proper region -> hash-covered into contract_sha256 (widening/narrowing is a re-authorization). This schema fixes only the SHAPE; enforcement is the driver's read of this field (out of scope here). Omitted ⇒ no declared escalate-when (back-compat, unchanged) — the driver falls back to the charter's `## Escalate when` section when the atom has a `charter_ref` instead of a `contract_ref`.",
       "items": {
         "type": "string",
-        "enum": ["external-provisioning", "credential-step", "no-consensus-after-research", "security-widening", "irreversible-action"]
+        "enum": ["external-provisioning", "credential-step", "no-consensus-after-research", "security-widening", "irreversible-action", "operator-approval"]
       }
     },
     "requires_capabilities": {
