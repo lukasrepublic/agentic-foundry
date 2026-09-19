@@ -154,6 +154,14 @@ and **irreversible-action** are the two-way-door fork policy's PARK members inst
 escalates. Everything else — including CI waits, review rounds and the deck's own unfinished
 work — is *Next Tasks*, never a blocker.
 
+**A blocker without evidence is itself a Next Task.** Before the tick writes its Blockers section
+(§5c of the tick prompt), it shapes each candidate as `schema/blocker.schema.json` — `claim`,
+`evidence[]`, `attempted[]`, and `why_operator` drawn from the same closed set above — and runs
+`scripts/foundry_blocker_check.py --in <candidates.json>`, which partitions them into `blockers`
+(reported) and `next_tasks` (demoted, with why). This is a lint the tick runs on itself, not a new
+authority: it cannot promote a Next Task into a blocker, only catch a blocker asserted without the
+shape to back it.
+
 ## Related
 
 - `/foundry:mode-autonomous` — the implementation driver for one authorized release's atoms, and

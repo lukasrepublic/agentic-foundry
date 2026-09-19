@@ -120,6 +120,17 @@ Task) — read from the atom's contract or charter (absent ⇒ "(not declared)",
 finding, not permission to stop):
 {{DONE_ESCALATE}}
 
+§5c A BLOCKER WITHOUT EVIDENCE IS A NEXT TASK. Before you write §2's Blockers section, write every
+candidate blocker as JSON matching `schema/blocker.schema.json` — `claim`, `evidence` (≥1: a
+command's captured output, a file path, a URL, or verbatim error text — not a restatement of the
+claim), `attempted` (≥1: what you actually tried before escalating), `why_operator` (the SAME closed
+`escalate_when` set §5b already named — no other value). Run:
+  python3 ${CLAUDE_PLUGIN_ROOT}/scripts/foundry_blocker_check.py --in <path to the candidate JSON>
+  Feed it the candidate list; it prints `{blockers: […], next_tasks: […]}` on exit 0, or REFUSES
+  (exit 2) on malformed input — an instrument failure, not permission to skip the lint. Report
+  ONLY the `blockers` partition under §2's Blockers section; fold every `next_tasks` entry (with
+  its reason) into Next Tasks instead. Do not hand-report a blocker the check has not seen.
+
 §6 QUIET TICKS ARE CORRECT when work is genuinely in flight and moving. A tick that reports
 progress while the census shows zero workers is NOT quiet, it is stalled. Do NOT manufacture work to
 look busy, and do NOT re-report a resolved item to fill a section.
