@@ -142,6 +142,10 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_blocker_check.py:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_ceremony_tier.py:*)",
             "origin": "settings.json"
           },
@@ -410,6 +414,10 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry_blocker_check.py:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry_ceremony_tier.py:*)",
             "origin": "settings.json"
           },
@@ -671,6 +679,10 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-wt:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_blocker_check.py:*)",
             "origin": "settings.json"
           },
           {
@@ -966,6 +978,10 @@
             "origin": "settings.local.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_blocker_check.py:*)",
+            "origin": "settings.local.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_ceremony_tier.py:*)",
             "origin": "settings.local.json"
           },
@@ -1237,6 +1253,10 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-wt:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_blocker_check.py:*)",
             "origin": "settings.json"
           },
           {

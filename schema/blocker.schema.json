@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.dev/schema/blocker.schema.json",
+  "title": "Foundry blocker (deck-tick candidate)",
+  "description": "feat-foundry-blocker-requires-evidence, AC-BRE-1: a blocker without evidence is a Next Task. A deck tick's Blockers section used to be free prose, so anything could be called a blocker and the operator became the inbox. This schema gives a candidate blocker a shape a script can check BEFORE it is reported: a claim, the evidence for it, what was already tried, and a why_operator drawn from the SAME closed `escalate_when` set the contract schema already fixes (schema/acceptance-contract.schema.json, feat-foundry-contract-done-when-escalate-when AC-DWE-1) -- not redefined here in prose. `scripts/foundry_blocker_check.py` reads a list of these and partitions valid from invalid; the invalid ones are Next Tasks, not blockers.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["claim", "evidence", "attempted", "why_operator"],
+  "properties": {
+    "claim": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The one-line assertion of what is blocked and why, as it would read under the tick's Blockers section."
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "description": "At least one concrete artifact backing the claim -- a command's captured output, a repo-relative file path, a URL, or verbatim error text. Not a restatement of the claim.",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "attempted": {
+      "type": "array",
+      "minItems": 1,
+      "description": "At least one thing the agent actually tried before escalating -- what it ran, read, or checked. A blocker with nothing attempted is a Next Task the agent has not yet worked.",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "why_operator": {
+      "type": "string",
+      "description": "Member of the closed `escalate_when` set (schema/acceptance-contract.schema.json's `escalate_when` enum, feat-foundry-contract-done-when-escalate-when AC-DWE-1) -- the SAME five members, not redefined here. Anything outside this closed set is not a legitimate operator escalation.",
+      "enum": ["external-provisioning", "credential-step", "no-consensus-after-research", "security-widening", "irreversible-action"]
+    },
+    "handoff": {
+      "type": "object",
+      "description": "OPTIONAL, deliberately UNCONSTRAINED here (no nested schema) -- the operator-handoff-schema atom (out of scope for this one, see the blocker-requires-evidence charter's Out of scope) constrains this shape next. A blocker MAY carry one today; this schema does not yet check its contents."
+    }
+  }
+}
