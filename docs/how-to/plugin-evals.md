@@ -11,6 +11,12 @@ model call billed against your plan or API key. `.github/workflows/` gains nothi
 page is the recipe for the operator to enable it, on their own machine or in their own CI, when
 they choose to.
 
+**What actually loads.** Each run starts a fresh, isolated session with this plugin's own
+**skills AND hooks** loaded and running exactly as they would in a real session — only *your*
+personal and project-level settings, hooks, and `CLAUDE.md` are excluded (the primary doc, "How
+runs are isolated"). This plugin's own `SessionStart`/`PreToolUse` hooks fire in every run; a
+case is never testing skills in a vacuum with the hooks silently absent.
+
 ## Requirements
 
 - Claude Code v2.1.269 or later (`claude --version`, `claude update` if older).

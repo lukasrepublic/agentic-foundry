@@ -1,6 +1,8 @@
 ---
 max_turns: 30
 timeout_seconds: 600
+# `allowed_tools` alone cannot grant Bash -- Bash is outside the read-only default set, so this
+# case is refused ("not granted") unless the CLI invocation also passes --allow-tools Bash.
 allowed_tools: [Read, Bash]
 ---
 

@@ -1,6 +1,6 @@
 ---
 type: regex
 target: last_message
-pattern: (/foundry:authorize|\bauthoriz\w*)
+pattern: (doctor probe|pytest suite)
 flags: i
 ---
