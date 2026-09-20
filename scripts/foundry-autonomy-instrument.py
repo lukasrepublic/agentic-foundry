@@ -9,11 +9,32 @@ regardless of the computed ratios, and writes no ledger and no `.foundry/` file 
 given. A malformed/unsafe `--out` argument is a distinct CLI-usage refusal (non-zero exit, clear
 stderr message), not a "gated ratio" — see `validate_out_path()`.
 
+PRE-EXISTING BUG, FOUND BY THIS ATOM'S OWN round-2 review (certify-by-remeasure, AC-CBR-1): every
+prior run of this instrument AND its two workspace-extractor ancestors
+(`mine_failures.py`/`spec_signals.py`, `mine-autonomy-2026-07-16.md`/`mine-autonomy-2026-09-18.md`)
+evaluated extended thinking's multi-fragment assistant turns per RAW record instead of per
+LOGICAL turn (see `_group_logical_assistant_turns()`). A thinking-only fragment misread as a
+tool-free "stop" inflated BOTH `other-harness` (its next record is usually the sibling tool_use's
+tool_result) and `silent_yield` (a phantom SILENT stop preceding every extended-thinking turn that
+happened to end in a real question, since the thinking fragment alone never carries the
+question). The July 2026-07-16 and September 2026-09-18 mining numbers this instrument was built
+to reproduce (the "0.81" fixture, the R3-boundary 0.80 read) are TAINTED by this same bug and
+should be treated as upper bounds, not as the corrected ground truth — this fix changes the
+computed ratios going forward but does not retroactively correct those two prior write-ups.
+
 The six ratios:
-  1. silent-yield        — of the agent's real "stops" (an assistant turn with no tool call,
-                            immediately followed by a genuine operator turn), the share with no
-                            trailing question either. The corrected instrument from §0's blind
-                            spot: `ended_with_open_question` cannot see a silent stop.
+  1. silent-yield        — of the agent's real "stops" (a tool-free assistant turn end) that are
+                            `human-resumed` (see the three-way classification below), the share
+                            with no trailing question either. The corrected instrument from §0's
+                            blind spot: `ended_with_open_question` cannot see a silent stop. AC-
+                            CBR-1 (certify-by-remeasure): a tool-free turn end followed by a
+                            harness envelope — the agent kept working on its own, no human was
+                            needed — is `harness-resumed`, never counted in this ratio's
+                            denominator; one that ends the transcript is `session-end`. All three
+                            counts are reported in `corpus.turn_ends` alongside the ratio, plus a
+                            `harness_resumed_by_kind` sub-kind breakdown (round-2 review:
+                            `classify_envelope_kind()` is now actually consulted per turn end,
+                            not dead code next to the binary `classify_turn_end()`).
   2. directive-reply      — of those same stops, the share answered by an operator reply of
                             <=45 characters (`merge it`, `go`, `push to main`).
   3. granted-verb-denial  — of every classifier/hook denial found in a tool_result, the share
@@ -36,6 +57,33 @@ The six ratios:
   6. rounds-per-shipped   — total `rounds` summed across every `.foundry/audit-ledger.jsonl` row
                             found under `--repo`, divided by the count of distinct built spec_refs.
 
+certify-by-remeasure (AC-CBR-1): a turn-end's THREE-WAY classification, matched on STRUCTURAL
+envelope markers only — never on the wrapped text's prose:
+  - `human-resumed`   — the next user-role record is a genuine operator turn
+                        (`is_operator_turn()` below returns True — `origin.kind == "human"`, or
+                        the legacy `promptSource` fallback).
+  - `harness-resumed` — the next user-role record is a system notification. `mine_file()` also
+                        attributes it a sub-kind, via `classify_envelope_kind()`, one of THREE
+                        documented shapes (quoted here from real ~/.claude/projects transcripts,
+                        never regex-matched against their prose) plus "other-harness" for any
+                        non-human shape none of the three match (never silently dropped):
+                          * "task-notification": the literal tag `<task-notification>` in the
+                            message text; structurally `origin == {"kind": "task-notification"}`.
+                          * "cross-session-message": the literal tag
+                            `<cross-session-message from="...">`; structurally
+                            `origin.get("kind") == "peer"` (carries `from`/`name`/`body`).
+                          * "wakeup-or-hook" — THREE sub-shapes sharing one structure (`origin`
+                            None, `isMeta` true), round-2 review having added the third: a
+                            scheduled wakeup (a Routine's tick — see
+                            `scripts/foundry_message_kind.py`'s `TICK <programme> <UTC-stamp>`
+                            convention, `promptSource == "system"`); a hook/system notification
+                            (same); and a Stop hook's own feedback (real transcripts carry a
+                            "Stop hook feedback: ..." body with `promptSource` ABSENT entirely,
+                            not merely a different value — `.get("promptSource")` reads `None`
+                            either way, so the branch matches "system" OR absent). These three are
+                            structurally indistinguishable from each other under "wakeup-or-hook"
+                            (and are not distinguished further), only from a real human turn.
+  - `session-end`     — no further user-role record exists in the file.
 Three extractor lies documented in the method doc, and what this instrument does instead:
   - `\\bBLOCK\\b` (case-insensitive) matches "Processing block 454393353" on a blockchain
     product. This instrument's DENY regex has NO bare-word "block" alternative — every member
@@ -53,7 +101,7 @@ Three extractor lies documented in the method doc, and what this instrument does
 usage:
   foundry-autonomy-instrument.py --since YYYY-MM-DD --projects-dir DIR [--projects-dir DIR ...]
                                   [--repo DIR] [--json] [--out PATH] [--sample-size N]
-                                  [--with-excerpts]
+                                  [--with-excerpts] [--certify]
 """
 from __future__ import annotations
 
@@ -84,6 +132,69 @@ def is_operator_turn(r):
     o, ps = r.get("origin"), r.get("promptSource")
     if isinstance(o, dict): return o.get("kind") == "human"
     return o is None and ps in ("typed", "queued", "suggestion_accepted")
+
+
+# --------------------------------------------------------------------------------------------- #
+# certify-by-remeasure (AC-CBR-1): the three-way turn-end classifier, matched on STRUCTURAL
+# envelope markers only (never on the wrapped text's prose) — see the module docstring for the
+# exact markers quoted from real transcripts.
+# --------------------------------------------------------------------------------------------- #
+
+
+# The four sub-kinds `corpus.turn_ends.harness_resumed_by_kind` breaks down into — the three
+# `classify_envelope_kind()` names, plus "other-harness" for a non-human turn end whose shape it
+# does not recognize (never silently dropped; see `classify_turn_end()`).
+HARNESS_KINDS = ("task-notification", "cross-session-message", "wakeup-or-hook", "other-harness")
+
+
+def classify_envelope_kind(r):
+    """Classifies a non-operator, user-role record's harness envelope kind, structurally.
+    Returns one of "task-notification", "cross-session-message", "wakeup-or-hook", or None (a
+    real human turn, or a dict-shaped `origin` not matching any documented kind — see
+    `classify_turn_end()`'s "other-harness" fallback for how mine_file() still counts an
+    unrecognized non-human shape, rather than silently dropping it).
+
+    NOT exhaustive over every non-human shape by construction — only over the ones this atom
+    documented from real transcripts (module docstring). "wakeup-or-hook" covers THREE observed
+    sub-shapes, all sharing the same `origin is None, isMeta true` structure and differing only
+    in whether `promptSource` is present: a Routine's tick (`promptSource == "system"`), a
+    hook/system notification (same), and a Stop-hook's own feedback (`type: "user"`, `isMeta:
+    true`, NO `promptSource` key at all — round-2 review finding, real transcripts carry a
+    "Stop hook feedback: ..." body with this exact shape). `promptSource` therefore matches
+    "system" OR absent, never any other value, for this branch."""
+    if r.get("type") != "user":
+        return None
+    o = r.get("origin")
+    if isinstance(o, dict):
+        kind = o.get("kind")
+        if kind == "task-notification":
+            return "task-notification"
+        if kind == "peer":
+            return "cross-session-message"
+        return None  # "human", or an unrecognized dict-shaped origin — never a harness envelope
+    if o is None and r.get("isMeta") and r.get("promptSource") in (None, "system"):
+        return "wakeup-or-hook"
+    return None
+
+
+def classify_turn_end(next_record):
+    """AC-CBR-1: classifies a tool-free assistant turn's end by what follows it — `next_record`
+    is the next user-role record in the file, or None when none remains.
+      - None                                -> "session-end"
+      - is_operator_turn(next_record)        -> "human-resumed"
+      - anything else                        -> "harness-resumed"
+    A non-human next record is demonstrably NOT the operator saying "continue"
+    (`is_operator_turn` is the validated, P/R 1.000 discriminator for that), so counting it
+    toward silent-yield would reintroduce the exact inflation this atom exists to remove — that
+    holds regardless of which envelope shape it is. `mine_file()` calls `classify_envelope_kind()`
+    SEPARATELY on every "harness-resumed" turn end to attribute a sub-kind (round-2 review: this
+    function alone left `classify_envelope_kind` dead code; a shape it does not recognize is
+    still counted, as "other-harness", never silently dropped)."""
+    if next_record is None:
+        return "session-end"
+    if is_operator_turn(next_record):
+        return "human-resumed"
+    return "harness-resumed"
 
 
 # --------------------------------------------------------------------------------------------- #
@@ -207,13 +318,88 @@ def read_jsonl(path):
 # --------------------------------------------------------------------------------------------- #
 
 
+def _message_id(r):
+    return (r.get("message") or {}).get("id")
+
+
+def _stop_reason(r):
+    return (r.get("message") or {}).get("stop_reason")
+
+
+def _group_logical_assistant_turns(filtered):
+    """AC-CBR-1 round-2 review (extended-thinking phantom stop): Claude Code writes one logical
+    assistant turn with extended thinking as MULTIPLE consecutive `type: "assistant"` JSONL
+    records sharing one `message.id` — a thinking-only fragment (content=[thinking],
+    `stop_reason: "tool_use"`) followed by a tool_use fragment (content=[tool_use], the SAME
+    `message.id`). Evaluating each raw record as its own turn-end candidate (the pre-fix design)
+    let the thinking-only fragment pass `tool_uses(r)` as empty and read as a tool-free "stop"
+    whose immediately-following record is the tool_result — misclassified as harness-resumed
+    (`other-harness`) at best, or as a phantom SILENT human-resumed stop when the REAL turn
+    happened to end in a question (the thinking fragment carries no question, so `is_q` reads
+    False) — inflating BOTH `other-harness` and `silent_yield` on every extended-thinking turn.
+
+    Yields `(fragments, last_j)` for each logical assistant turn: `fragments` is the list of
+    raw records to merge (tool_uses/text/stop_reason unioned across all of them — see
+    `_evaluate_logical_turn()`); `last_j` is the LAST fragment's position in `filtered` (the
+    forward scan for `next_record` resumes from `last_j + 1`, never from the thinking-only
+    fragment's own position). Consecutive `type: "assistant"` records are merged into ONE group
+    ONLY when they share the same NON-None `message.id`; a record with no `message.id` (older
+    transcripts, and every pre-existing fixture in this suite) is always its own singleton group
+    — this keeps every fixture predating this fix byte-for-byte unaffected."""
+    fragments = []
+    current_mid = None
+    last_j = None
+    for j, (_i, r) in enumerate(filtered):
+        if r.get("type") != "assistant":
+            if fragments:
+                yield fragments, last_j
+                fragments = []
+                current_mid = None
+            continue
+        mid = _message_id(r)
+        if fragments and mid is not None and mid == current_mid:
+            fragments.append(r)
+            last_j = j
+        else:
+            if fragments:
+                yield fragments, last_j
+            fragments = [r]
+            current_mid = mid
+            last_j = j
+    if fragments:
+        yield fragments, last_j
+
+
+def _logical_turn_has_tool_use(fragments):
+    """True iff ANY fragment of a logical assistant turn carries a tool_use content block OR a
+    `stop_reason: "tool_use"` (the latter consulted per round-2 review as a redundant signal — a
+    real transcript's thinking-only fragment already carries `stop_reason: "tool_use"` even
+    before its sibling tool_use fragment arrives, so this alone is enough to exclude it without
+    needing the merge to have completed)."""
+    for r in fragments:
+        if tool_uses(r):
+            return True
+        if _stop_reason(r) == "tool_use":
+            return True
+    return False
+
+
 def mine_file(path):
-    """Returns {"stops": [{"silent": bool, "reply_len": int}], "denials": [{"file",
-    "record_index", "text", "tool_name", "verb", "command"}]}. A "stop" is a real handoff: the
-    nearest preceding assistant record (skipping non-human tool_result echoes) carries NO
-    tool_use, and is immediately followed by a genuine operator (human) turn. An assistant turn
-    that DOES carry a tool_use is never evaluated as a stop — it is a rhetorical aside or
-    in-flight work, not a handoff (avoids the "self-answered question" lie).
+    """Returns {"stops": [{"silent": bool, "reply_len": int}], "denials": [...],
+    "harness_resumed_count": int, "harness_resumed_by_kind": {kind: int, ...}, "session_end_count":
+    int}. A "stop" (silent-yield/directive-reply input) is a tool-free LOGICAL assistant turn end
+    (see `_group_logical_assistant_turns()` — extended-thinking's multi-fragment turns are merged
+    first) classified `human-resumed` by `classify_turn_end()` (AC-CBR-1) — the immediately
+    following user-role record is a genuine operator turn. A tool-free turn end classified
+    `harness-resumed` or `session-end` is counted but never added to `stops` — it never was a real
+    handoff to a human, so it must not inflate silent-yield's denominator (the R3-boundary blind
+    spot this atom removes). Every `harness-resumed` turn end is ALSO attributed a sub-kind via
+    `classify_envelope_kind()` (round-2 review: `classify_turn_end()` alone left that function
+    dead code) — one of `HARNESS_KINDS`, "other-harness" covering a non-human shape it does not
+    recognize, never silently dropped. A logical turn that DOES carry a tool_use (in any fragment)
+    is never evaluated as a turn end at all — it is a rhetorical aside or in-flight work, not a
+    handoff (avoids the "self-answered question" lie AND, per this round of review, the
+    extended-thinking phantom-stop lie).
 
     Each denial's "text" is the RAW (2000-char-capped) tool_result body — NOT yet redacted or
     excerpt-truncated. Redaction + `ex()` truncation happen at report-assembly time, gated by
@@ -222,43 +408,76 @@ def mine_file(path):
     `record_index` is the 0-based offset of the tool_result record within this file — a
     content-free "turn reference" a human can use to open the raw transcript themselves."""
     recs = read_jsonl(path)
+    filtered = [(i, r) for i, r in enumerate(recs) if not r.get("isSidechain")]
+    n = len(filtered)
     tool_use_by_id = {}
-    pending_assistant = None
     stops = []
     denials = []
+    harness_resumed_count = 0
+    harness_resumed_by_kind = {k: 0 for k in HARNESS_KINDS}
+    session_end_count = 0
     fname = os.path.basename(path)
-    for i, r in enumerate(recs):
-        if r.get("isSidechain"):
+
+    # Pass 1: register every tool_use block's id -> (tool_name, input), across ALL assistant
+    # fragments, regardless of grouping — a later tool_result always names the id of whichever
+    # fragment actually emitted it, so this must see every fragment, not just group heads.
+    for _j, (_i, r) in enumerate(filtered):
+        if r.get("type") != "assistant":
             continue
-        rtype = r.get("type")
-        if rtype == "assistant":
-            for tu in tool_uses(r):
-                tid = tu.get("id") or tu.get("tool_use_id")
-                if tid:
-                    tool_use_by_id[tid] = (tu.get("name", ""), tu.get("input") or {})
-            pending_assistant = r
-        elif rtype == "user":
-            for tid, _is_err, txt in tool_results(r):
-                if DENY.search(txt):
-                    name, inp = tool_use_by_id.get(tid, ("", {}))
-                    cmd = (inp or {}).get("command") if name == "Bash" else None
-                    denials.append({
-                        "file": fname,
-                        "record_index": i,
-                        "text": txt,
-                        "tool_name": name,
-                        "verb": verb_of(name, inp) if name else None,
-                        "command": cmd,
-                    })
-            if is_operator_turn(r) and pending_assistant is not None:
-                has_tool = bool(tool_uses(pending_assistant))
-                if not has_tool:
-                    tail = text_of(pending_assistant)[-400:]
-                    is_q = bool(Q_TAIL.search(tail)) or bool(Q_PHRASE.search(tail))
-                    reply_len = len(text_of(r).strip())
-                    stops.append({"silent": not is_q, "reply_len": reply_len})
-                pending_assistant = None
-    return {"stops": stops, "denials": denials}
+        for tu in tool_uses(r):
+            tid = tu.get("id") or tu.get("tool_use_id")
+            if tid:
+                tool_use_by_id[tid] = (tu.get("name", ""), tu.get("input") or {})
+
+    # Pass 2: denials (independent of assistant-turn grouping — every "user" record's tool_result
+    # blocks are mined exactly as before).
+    for i, r in enumerate(recs):
+        if r.get("isSidechain") or r.get("type") != "user":
+            continue
+        for tid, _is_err, txt in tool_results(r):
+            if DENY.search(txt):
+                name, inp = tool_use_by_id.get(tid, ("", {}))
+                cmd = (inp or {}).get("command") if name == "Bash" else None
+                denials.append({
+                    "file": fname,
+                    "record_index": i,
+                    "text": txt,
+                    "tool_name": name,
+                    "verb": verb_of(name, inp) if name else None,
+                    "command": cmd,
+                })
+
+    # Pass 3: logical-turn-end classification (AC-CBR-1 + the extended-thinking merge above).
+    for fragments, last_j in _group_logical_assistant_turns(filtered):
+        if _logical_turn_has_tool_use(fragments):
+            continue  # a turn WITH a tool call (in any fragment) is never a turn end
+        next_record = None
+        for k in range(last_j + 1, n):
+            _, rk = filtered[k]
+            if rk.get("type") == "user":
+                next_record = rk
+                break
+        verdict = classify_turn_end(next_record)
+        if verdict == "human-resumed":
+            merged_text = " ".join(t for t in (text_of(frag) for frag in fragments) if t)
+            tail = merged_text[-400:]
+            is_q = bool(Q_TAIL.search(tail)) or bool(Q_PHRASE.search(tail))
+            reply_len = len(text_of(next_record).strip())
+            stops.append({"silent": not is_q, "reply_len": reply_len})
+        elif verdict == "harness-resumed":
+            harness_resumed_count += 1
+            subkind = classify_envelope_kind(next_record) or "other-harness"
+            harness_resumed_by_kind[subkind] = harness_resumed_by_kind.get(subkind, 0) + 1
+        else:
+            session_end_count += 1
+
+    return {
+        "stops": stops,
+        "denials": denials,
+        "harness_resumed_count": harness_resumed_count,
+        "harness_resumed_by_kind": harness_resumed_by_kind,
+        "session_end_count": session_end_count,
+    }
 
 
 def iter_jsonl_files(root, since_ts):
@@ -533,13 +752,24 @@ def build_report(since_str, projects_dirs, repo, sample_size=40, with_excerpts=F
     all_stops = []
     all_denials = []
     files_scanned = 0
+    harness_resumed_count = 0
+    harness_resumed_by_kind = {k: 0 for k in HARNESS_KINDS}
+    session_end_count = 0
     for pd in projects_dirs:
         for path in iter_jsonl_files(pd, since_ts):
             files_scanned += 1
             result = mine_file(path)
             all_stops.extend(result["stops"])
             all_denials.extend(result["denials"])
+            harness_resumed_count += result["harness_resumed_count"]
+            for k, v in result["harness_resumed_by_kind"].items():
+                harness_resumed_by_kind[k] = harness_resumed_by_kind.get(k, 0) + v
+            session_end_count += result["session_end_count"]
 
+    # AC-CBR-1: silent_yield (and directive_reply) are computed over `all_stops` only, which by
+    # construction (mine_file) already holds `human-resumed` turn ends exclusively — a
+    # `harness-resumed` or `session-end` turn end is counted (below, in `corpus.turn_ends`) but
+    # never added to `all_stops`, so it never reaches these ratios' denominators.
     silent_yield = _ratio(sum(1 for s in all_stops if s["silent"]), len(all_stops))
     directive_reply = _ratio(sum(1 for s in all_stops if s["reply_len"] <= 45), len(all_stops))
 
@@ -590,6 +820,16 @@ def build_report(since_str, projects_dirs, repo, sample_size=40, with_excerpts=F
             "files_scanned": files_scanned,
             "stops_found": len(all_stops),
             "denials_found": len(all_denials),
+            # AC-CBR-1: the three-way turn-end classification counts, alongside silent_yield's
+            # ratio (whose denominator is "human_resumed" exactly — see build_report() above).
+            "turn_ends": {
+                "human_resumed": len(all_stops),
+                "harness_resumed": harness_resumed_count,
+                # round-2 review: the sub-kind breakdown from classify_envelope_kind() — proves
+                # that function is actually consulted, not dead code (see mine_file()).
+                "harness_resumed_by_kind": harness_resumed_by_kind,
+                "session_end": session_end_count,
+            },
         },
         "ratios": {
             "silent_yield": silent_yield,
@@ -607,6 +847,15 @@ def render_text(report):
     c = report["corpus"]
     lines.append(f"corpus: since={c['since']} until={c['until']} files_scanned={c['files_scanned']}")
     lines.append(f"        projects_dirs={c['projects_dirs']} repo={c['repo']}")
+    te = c.get("turn_ends") or {}
+    lines.append(
+        f"        turn_ends: human_resumed={te.get('human_resumed')} "
+        f"harness_resumed={te.get('harness_resumed')} session_end={te.get('session_end')}"
+    )
+    by_kind = te.get("harness_resumed_by_kind") or {}
+    if by_kind:
+        breakdown = " ".join(f"{k}={v}" for k, v in by_kind.items())
+        lines.append(f"        harness_resumed_by_kind: {breakdown}")
     for name, r in report["ratios"].items():
         if name == "guard_false_positive_sample":
             lines.append(
@@ -620,6 +869,187 @@ def render_text(report):
 
 
 # --------------------------------------------------------------------------------------------- #
+# certify-by-remeasure (AC-CBR-2): --certify compares the computed ratios against the programme's
+# thresholds and prints a verdict line. REPORT ONLY, same as every other ratio here: the verdict
+# is a printed line, never a gate — main() always returns 0 regardless of PASS/OPEN.
+# --------------------------------------------------------------------------------------------- #
+
+_SHIPPED_THRESHOLDS_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "context", "autonomy-thresholds.yaml"
+)
+# The workspace copy, resolved under $CLAUDE_PROJECT_DIR (falling back to cwd), OVERRIDES the
+# shipped default when present — same "workspace corpus via CLAUDE_PROJECT_DIR, plugin's own
+# files via the plugin root" split every other Foundry script reads through.
+_WORKSPACE_THRESHOLDS_RELPATH = os.path.join("docs", "programs", "autonomy-continuation", "thresholds.yaml")
+
+
+def thresholds_path(workspace_dir=None):
+    """Resolves which thresholds file `--certify` reads: the workspace copy at
+    `docs/programs/autonomy-continuation/thresholds.yaml` under `workspace_dir` (default
+    `$CLAUDE_PROJECT_DIR`, else cwd) when it exists, else the plugin's shipped
+    `context/autonomy-thresholds.yaml` (AC-CBR-2)."""
+    base = workspace_dir or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    override = os.path.join(base, _WORKSPACE_THRESHOLDS_RELPATH)
+    if os.path.isfile(override):
+        return override
+    return _SHIPPED_THRESHOLDS_PATH
+
+
+_THRESHOLD_MAX_RE = re.compile(r'^([A-Za-z0-9_]+):\s*$')
+_THRESHOLD_FIELD_RE = re.compile(r'^\s+(max|sampled):\s*(\S+)\s*$')
+
+
+def _load_thresholds_fallback(path):
+    """Hand-rolled fallback for the simple two-level `<name>:\\n  max: <float>` /
+    `<name>:\\n  sampled: true` shape, used only when pyyaml is unavailable (mirrors the
+    module's existing scalar-fallback style for acceptance-contract.yaml)."""
+    out = {}
+    current = None
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                m = _THRESHOLD_MAX_RE.match(line.rstrip("\n"))
+                if m:
+                    current = m.group(1)
+                    out[current] = {}
+                    continue
+                m = _THRESHOLD_FIELD_RE.match(line.rstrip("\n"))
+                if m and current:
+                    key, val = m.group(1), m.group(2)
+                    if key == "max":
+                        try:
+                            out[current]["max"] = float(val)
+                        except ValueError:
+                            pass
+                    elif key == "sampled":
+                        out[current]["sampled"] = val.strip().lower() == "true"
+    except OSError:
+        pass
+    return out
+
+
+# The four ratios PROGRAM.md §7 actually names as the programme's exit criteria. `certify()`
+# treats an ABSENT entry for one of these as a misconfiguration (round-2 review: a thresholds
+# file silently missing one of these must never read as an automatic pass) — distinct from a
+# ratio with no programme exit criterion at all (authorized_to_built, rounds_per_shipped_atom),
+# which stays uncompared when absent, exactly as before.
+PROGRAMME_RATIOS = ("silent_yield", "directive_reply", "granted_verb_denial", "guard_false_positive_sample")
+
+
+class ThresholdsError(Exception):
+    """Raised by `load_thresholds_strict()` when the resolved thresholds file EXISTS but cannot
+    be parsed as the expected shape (round-2 review: `load_thresholds()`'s silent `{}` fallback
+    let a malformed file print a bare CERTIFY-PASS — see `load_thresholds_strict()`'s
+    docstring)."""
+
+
+def load_thresholds(path=None):
+    """Returns {ratio_name: {"max": float}} or {ratio_name: {"sampled": True}}. A ratio absent
+    from the thresholds file is never compared by `certify()` UNLESS it is one of
+    `PROGRAMME_RATIOS` (round-2 review: those four are never silently skipped — see `certify()`).
+    Missing/malformed input degrades to `{}` here (the LENIENT loader — direct callers that
+    already have a trusted dict, and every pre-existing test, keep this exact shape); the CLI's
+    `--certify` path uses `load_thresholds_strict()` instead, which raises `ThresholdsError`
+    distinguishably on a malformed file rather than degrading silently."""
+    path = path or thresholds_path()
+    if not os.path.isfile(path):
+        return {}
+    if yaml is not None:
+        try:
+            data = yaml.safe_load(open(path, encoding="utf-8")) or {}
+            return data.get("thresholds") or {}
+        except Exception:
+            return {}
+    return _load_thresholds_fallback(path)
+
+
+def load_thresholds_strict(path=None):
+    """Like `load_thresholds()`, but RAISES `ThresholdsError` (naming the exact path + reason)
+    instead of silently degrading to `{}` when the resolved file EXISTS but is malformed —
+    invalid YAML syntax, a non-mapping top level, or a `thresholds:` value that is not itself a
+    mapping. A file that does not exist at all is NOT an error (returns `{}`): `thresholds_path()`
+    already resolves to the shipped default whenever no workspace override exists, so a missing
+    file at the resolved path is a normal, expected state, never a parse failure. Used by the CLI
+    `--certify` path (AC-CBR-2 round-2 review) so a malformed thresholds file is reported as
+    `CERTIFY-OPEN: thresholds unreadable — ...` rather than a misleadingly bare CERTIFY-PASS."""
+    path = path or thresholds_path()
+    if not os.path.isfile(path):
+        return {}
+    if yaml is None:
+        return _load_thresholds_fallback(path)  # best-effort; this shape tolerates malformed lines
+    try:
+        data = yaml.safe_load(open(path, encoding="utf-8"))
+    except Exception as e:
+        raise ThresholdsError(f"{path}: {e}") from e
+    data = data or {}
+    if not isinstance(data, dict):
+        raise ThresholdsError(f"{path}: expected a mapping at the top level, got {type(data).__name__}")
+    thresholds = data.get("thresholds")
+    if thresholds is None:
+        return {}
+    if not isinstance(thresholds, dict):
+        raise ThresholdsError(f"{path}: 'thresholds' must be a mapping, got {type(thresholds).__name__}")
+    return thresholds
+
+
+def certify(report, thresholds):
+    """Compares `report["ratios"]` against `thresholds` (as returned by `load_thresholds()` /
+    `load_thresholds_strict()`). Returns a list of miss strings — empty means CERTIFY-PASS:
+      - `"<ratio> <value> vs <threshold>"` — a `max:` ceiling was exceeded.
+      - `"<ratio> N denials sampled, unclassified (...) vs 0"` — a `sampled: true` entry with a
+        nonzero `denials_total` (guard_false_positive_sample).
+      - `"<ratio> no threshold configured"` — one of `PROGRAMME_RATIOS` has NO entry in
+        `thresholds` at all (round-2 review: a thresholds file silently missing one of the
+        programme's four named exit criteria must show up as an open item, never an automatic
+        pass by omission).
+
+    A ratio with `ratio: None` (nothing was measured — an empty corpus, or --repo omitted) is
+    treated as trivially within threshold: an unmeasured ratio cannot MISS a "stay under X"
+    ceiling, and is never reported as "no threshold configured" either (that miss is about the
+    THRESHOLDS FILE being incomplete, not about the corpus). `guard_false_positive_sample` is
+    SAMPLED, never auto-classified (see the module docstring) — its `ratio` field is always None
+    regardless of corpus size, so it is compared on `denials_total` instead: zero denials
+    trivially certifies (nothing to have been a false positive); any nonzero count stays a miss
+    (the operator's own classification of the sample is the only way to close it — never
+    auto-PASS on an unclassified sample)."""
+    thresholds = thresholds or {}
+    misses = []
+    names = list(PROGRAMME_RATIOS) + [n for n in thresholds if n not in PROGRAMME_RATIOS]
+    for name in names:
+        r = (report.get("ratios") or {}).get(name)
+        if r is None:
+            continue  # this ratio was never computed in this report at all — nothing to certify
+        spec = thresholds.get(name)
+        if spec is None:
+            misses.append(f"{name} no threshold configured")
+            continue
+        if spec.get("sampled"):
+            denials_total = r.get("denials_total") or 0
+            if denials_total:
+                misses.append(
+                    f"{name} {denials_total} denials sampled, unclassified (needs the operator's "
+                    f"manual review of the sample) vs 0"
+                )
+            continue
+        max_allowed = spec.get("max")
+        if max_allowed is None:
+            misses.append(f"{name} no threshold configured")  # spec present but has neither key
+            continue
+        ratio = r.get("ratio")
+        if ratio is None:
+            continue
+        if ratio > max_allowed:
+            misses.append(f"{name} {ratio} vs {max_allowed}")
+    return misses
+
+
+def render_certify_verdict(misses):
+    if not misses:
+        return "CERTIFY-PASS"
+    return "CERTIFY-OPEN: " + ", ".join(misses)
+
+
+# --------------------------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------------------------- #
 
@@ -630,7 +1060,8 @@ def parse_args(argv=None):
         description=(
             "Report-only autonomy instrument: six ratios (silent-yield, directive-reply, "
             "granted-verb-denial, guard-false-positive-sample, authorized->built conversion, "
-            "rounds-per-shipped-atom) over Claude Code transcripts + the authorization corpus. "
+            "rounds-per-shipped-atom) over Claude Code transcripts + the authorization corpus, "
+            "plus an optional --certify verdict against the programme's thresholds. "
             "Gates nothing; always exits 0 (a refused --out path is the one usage-error exception)."
         ),
     )
@@ -669,6 +1100,13 @@ def parse_args(argv=None):
         help="include a redacted text excerpt per sampled denial (default off: counts + file/turn "
         "references only, since excerpts can carry secrets)",
     )
+    p.add_argument(
+        "--certify",
+        action="store_true",
+        help="compare the computed ratios against the programme thresholds (context/"
+        "autonomy-thresholds.yaml, overridden by the workspace copy when present) and print "
+        "CERTIFY-PASS / CERTIFY-OPEN; report-only, always exits 0 either way",
+    )
     return p.parse_args(argv)
 
 
@@ -690,6 +1128,16 @@ def main(argv=None):
         print(json.dumps(report, indent=2, sort_keys=False))
     else:
         print(render_text(report))
+
+    if args.certify:
+        try:
+            thresholds = load_thresholds_strict()
+        except ThresholdsError as e:
+            # round-2 review: a malformed thresholds file must never print a bare CERTIFY-PASS.
+            print(f"CERTIFY-OPEN: thresholds unreadable — {e}")
+        else:
+            misses = certify(report, thresholds)
+            print(render_certify_verdict(misses))  # AC-CBR-2: a printed line, never a gate
 
     if args.out:
         try:

@@ -127,3 +127,34 @@ never a re-judged verdict on top of it.
   independently computed verdict.
 - **Booting more than once / leaving the boot process running.** One deploy, one run, always
   torn down — matching the charter's "deploy the release once locally" framing exactly.
+
+## Certify by re-measure
+
+A second, self-contained certify path (`certify-by-remeasure`, autonomy-continuation R4) for the
+programme's OWN exit criteria — not a release's journey suite, and not run by this skill's
+driver above, and not something this or any other skill invokes automatically: per the
+permission floor map, `foundry-autonomy-instrument.py` ships with NO standing allow-row
+precisely because the operator runs this report-only CLI manually, granting it per-invocation
+themselves — it is intentionally absent from every fenced command block in this tree.
+
+The operator runs it directly (never pasted into a fenced block here, on purpose): the script is
+`scripts/foundry-autonomy-instrument.py` under the plugin root, invoked with `--since
+<release-date> --projects-dir ~/.claude/projects --certify` against their own
+`~/.claude/projects` (or wherever their transcripts live), with `--since` set to the release date
+being re-measured against (e.g. the tag date of the release that shipped the change being
+certified). The instrument prints its usual report — the six
+ratios plus the three turn-end counts (`human_resumed`/`harness_resumed`/`session_end`) — and,
+because `--certify` was given, one more line: `CERTIFY-PASS`, or `CERTIFY-OPEN: <ratio> <value>
+vs <threshold>, ...` naming every ratio that misses the programme's thresholds
+(`context/autonomy-thresholds.yaml`, overridden by a workspace copy at
+`docs/programs/autonomy-continuation/thresholds.yaml` when one exists). This CLI is report-only
+and always exits 0 whether the verdict is PASS or OPEN — it gates nothing, exactly like the rest
+of the instrument.
+
+A `CERTIFY-OPEN` names what stays open; it is not a failure to fix inside this skill, it is a
+finding to carry back to the programme's own state — see
+`docs/programs/autonomy-continuation/PROGRAM.md` for what each named ratio means and what closes
+it. As with certify-local above, this verdict is machine-derived evidence, never the delivery
+sign-off itself: per CLAUDE.md's "Delivery sign-off — operator-held, the terminal step," the
+operator's own test pass over the real 30-day window remains the terminal judgement that closes
+the programme, whichever way this verdict reads.

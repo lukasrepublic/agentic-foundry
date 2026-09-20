@@ -1,0 +1,9 @@
+thresholds:
+  silent_yield:
+    max: 0.5
+  directive_reply:
+    max: 1.0
+  granted_verb_denial:
+    max: 1.0
+  guard_false_positive_sample:
+    sampled: true
