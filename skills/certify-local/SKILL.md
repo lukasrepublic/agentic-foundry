@@ -80,6 +80,39 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/certify-local/certify_local.py" <release-i
   suite ran, or the suite itself timed out/failed to launch) — the booted process is always torn
   down before either raises.
 
+## Native plugin eval
+
+`certify-local` (above) certifies the **product repo** journeys. The plugin itself — this repo,
+`agentic-foundry` — has its own native certify path (autonomy-continuation R4
+`plugin-eval-suite`), independent of `certify-local` and never a substitute for the pytest suite:
+
+```bash
+claude plugin eval . --trust-plugin --json results.json --threshold 0.8 --max-cost-usd 20
+```
+
+Run from the plugin root (this repo). `.` targets "every case under its eval directory, with
+that plugin loaded" (the primary doc, "Test plugins with evals"). Every eval run and every `llm`/
+`baseline` grader is a REAL model call billed against the operator's own plan or API key — never
+run this unattended in CI without the operator enabling it (see
+`docs/how-to/plugin-evals.md`).
+
+**Exit codes** (the primary doc's own table, quoted):
+
+| Exit code | Meaning |
+| :-------- | :------ |
+| 0 | Every case scored at or above `--threshold` and every case file loaded |
+| 1 | A case scored below the threshold, a case file failed to load, no cases were found, a run couldn't be started, the plugin directory isn't trusted and `--trust-plugin` wasn't passed, or an option was invalid |
+| 2 | Partial run: the `--max-cost-usd` ceiling was hit, or the credential was rejected before or at the first run. `results.json` still carries `partial: true` and the reason |
+| 130 | Interrupted. Partial results are written |
+| 143 | Terminated, such as by a CI timeout |
+
+**Subtraction candidates.** Each case's report carries an Ablation Δ — the with-plugin score
+minus the no-plugin baseline score. **A case whose Ablation Δ is ≤ 0 across two consecutive runs
+is a subtraction candidate for the next wave**: the plugin isn't what made that case pass, so the
+skill or hook it exercises is not pulling its weight. The report (`report.html` /
+`aggregate-result.json`'s `cases[].aggregates.delta`) is the evidence a follow-up atom cites —
+never a re-judged verdict on top of it.
+
 ## Anti-patterns
 
 - **Treating a certify-local PASS as the delivery sign-off.** It is the machine-derived evidence

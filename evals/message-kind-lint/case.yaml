@@ -1,0 +1,12 @@
+schema_version: "1.1"
+name: message-kind-lint
+description: >
+  autonomy-continuation R3 "native swarm substrate" (v1.14.0) fixture — the fleet is a view over
+  the native `ListAgents`, which carries no constraint on the text an outgoing cross-session
+  message contains. `scripts/foundry_message_kind.py` fixes a closed vocabulary
+  (FINDING | NEEDS-INTERFACE | CHALLENGE | HANDOFF | TICK) onto the first line. This case asks
+  Claude to draft and validate an outgoing message and checks that it runs the lint via Bash
+  rather than shipping unvalidated prose.
+tags: [v1.14.0, message-kind, autonomy-continuation-r3]
+context:
+  add_dirs: [resources]
