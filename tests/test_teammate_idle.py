@@ -306,6 +306,85 @@ def test_cap_reached_record_only_no_message(tmp_path, fake_socket, monkeypatch):
 
 
 # ================================================================================================ #
+# AC-RES-2 — the idle-nudges ledger rotates at 2000 lines
+# ================================================================================================ #
+
+
+def test_ledger_rotates_at_2000_lines(tmp_path):
+    nudges_file = str(tmp_path / "idle-nudges.jsonl")
+    rotated_file = str(tmp_path / "idle-nudges.1.jsonl")
+
+    with open(nudges_file, "w", encoding="utf-8") as fh:
+        for i in range(tic.ROTATION_MAX_LINES):
+            fh.write(json.dumps({"type": "idle-error", "reason": f"seed-{i}"}) + "\n")
+
+    tic._append_record(nudges_file, {"type": "idle-error", "reason": "trigger"})
+
+    # the pre-existing 2000 lines moved to the rotation sibling, untouched.
+    with open(rotated_file, encoding="utf-8") as fh:
+        rotated_lines = [json.loads(line) for line in fh if line.strip()]
+    assert len(rotated_lines) == tic.ROTATION_MAX_LINES
+    assert rotated_lines[0]["reason"] == "seed-0"
+    assert rotated_lines[-1]["reason"] == "seed-1999"
+
+    # the live file starts fresh with only the record that triggered rotation.
+    live_records = _read_records(nudges_file)
+    assert len(live_records) == 1
+    assert live_records[0]["reason"] == "trigger"
+
+
+def test_ledger_rotation_replaces_an_older_rotation(tmp_path):
+    nudges_file = str(tmp_path / "idle-nudges.jsonl")
+    rotated_file = str(tmp_path / "idle-nudges.1.jsonl")
+
+    with open(rotated_file, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"type": "idle-error", "reason": "stale-generation"}) + "\n")
+    with open(nudges_file, "w", encoding="utf-8") as fh:
+        for i in range(tic.ROTATION_MAX_LINES):
+            fh.write(json.dumps({"type": "idle-error", "reason": f"seed-{i}"}) + "\n")
+
+    tic._append_record(nudges_file, {"type": "idle-error", "reason": "trigger"})
+
+    with open(rotated_file, encoding="utf-8") as fh:
+        rotated_lines = [json.loads(line) for line in fh if line.strip()]
+    assert len(rotated_lines) == tic.ROTATION_MAX_LINES, (
+        "the OLDER rotation must be replaced, not appended to"
+    )
+    assert all(r["reason"] != "stale-generation" for r in rotated_lines)
+
+
+def test_nudge_cap_counts_rows_across_live_and_rotated_files(tmp_path, fake_socket, monkeypatch):
+    project_dir = _setup_atom(tmp_path, "r-cap-rot", "c-atom", ["test:tests/test_x.py"])
+    nudges_file = str(tmp_path / "idle-nudges.jsonl")
+    rotated_file = str(tmp_path / "idle-nudges.1.jsonl")
+    monkeypatch.setenv("CLAUDE_CODE_MESSAGING_SOCKET", fake_socket.socket_path)
+
+    def _idle_unmet_row():
+        return json.dumps({
+            "type": "idle-unmet", "release_id": "r-cap-rot", "atom_id": "c-atom",
+            "teammate_name": "worker-a", "unmet": ["test:tests/test_x.py"],
+            "message_sent": True, "at": _soon(),
+        }) + "\n"
+
+    # two prior nudges already rotated out, one still live -> the cap (3) is already reached,
+    # even though the LIVE file alone only shows one.
+    with open(rotated_file, "w", encoding="utf-8") as fh:
+        fh.write(_idle_unmet_row())
+        fh.write(_idle_unmet_row())
+    with open(nudges_file, "w", encoding="utf-8") as fh:
+        fh.write(_idle_unmet_row())
+
+    payload = _load_fixture("payload-base.json")
+    payload["task_subject"] = "atom:r-cap-rot/c-atom"
+    assert tic.run(payload, project_dir=project_dir, nudges_path=nudges_file) == 0
+
+    time.sleep(0.2)
+    assert fake_socket.received == b"", "a rotation must never reset the nudge cap"
+    live_records = _read_records(nudges_file)
+    assert live_records[-1]["type"] == "idle-cap-reached"
+
+
+# ================================================================================================ #
 # AC-TIC-2 — no socket -> record only
 # ================================================================================================ #
 

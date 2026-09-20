@@ -642,6 +642,64 @@ def test_task_created_at_falls_back_without_st_birthtime(tmp_path, monkeypatch):
     assert isinstance(dt, datetime)
     # falls back to st_mtime, still a sane recent UTC time (not epoch-zero, not raising).
     assert dt > datetime(2020, 1, 1, tzinfo=timezone.utc)
+    # AC-RES-1: the returned value names which signal it came from.
+    assert dt.source == "mtime"
+
+
+def test_task_created_at_source_is_birthtime_when_platform_exposes_it(tmp_path):
+    tasks_dir = str(tmp_path / "tasks")
+    _write_task(tasks_dir, "1")
+    dt = ffh.task_created_at("1", tasks_dir=tasks_dir)
+    # This suite runs on whatever platform CI/the operator use — assert only that a platform
+    # WITH `st_birthtime` (this repo's own dev/CI hosts, macOS + most modern Linux CI images with
+    # a real filesystem, both expose it) reports "birthtime", never silently mislabeling it.
+    if hasattr(os.stat(os.path.join(tasks_dir, "1.json")), "st_birthtime"):
+        assert dt.source == "birthtime"
+
+
+def test_completed_hook_names_freshness_caveat_on_mtime_fallback(tmp_path, monkeypatch, capsys):
+    """AC-RES-1: on the fallback path (no `st_birthtime`), a refusal for a stale evidence record
+    names the caveat text verbatim so a builder debugging a refusal on Linux is not left guessing
+    why "creation time" moved."""
+    project_dir = str(tmp_path / "project")
+    _init_repo(project_dir)
+    charter_rel = ".foundry/releases/r-caveat/charters/c-atom.md"
+    _write_charter(project_dir, charter_rel, done_when=["test:tests/test_x.py"])
+    _commit(project_dir, charter_rel)
+    _write_release(project_dir, "r-caveat", [
+        {"id": "c-atom", "charter_ref": charter_rel, "depends_on": []},
+    ])
+    tasks_dir = str(tmp_path / "tasks")
+    path = _write_task(tasks_dir, "1", subject="atom:r-caveat/c-atom")
+
+    real_stat = os.stat
+
+    class _NoBirthtimeStat:
+        def __init__(self, real):
+            self._real = real
+
+        def __getattr__(self, name):
+            if name == "st_birthtime":
+                raise AttributeError(name)
+            return getattr(self._real, name)
+
+    def _stat(p, *a, **k):
+        r = real_stat(p, *a, **k)
+        if os.path.abspath(str(p)) == os.path.abspath(path):
+            return _NoBirthtimeStat(r)
+        return r
+
+    monkeypatch.setattr(ffh.os, "stat", _stat)
+
+    # a record older than the task's (fallback, mtime-baselined) creation time.
+    _write_evidence(project_dir, "c-atom", [
+        _met_row("test:tests/test_x.py", at="2000-01-01T00:00:00Z"),
+    ], at="2000-01-01T00:00:00Z")
+
+    payload = {"task_subject": "atom:r-caveat/c-atom", "task_id": "1"}
+    assert completed_hook.run(payload, project_dir=project_dir, tasks_dir=tasks_dir) == 2
+    err = capsys.readouterr().err
+    assert "freshness baseline is mtime on this platform" in err, err
 
 
 # ================================================================================================ #
