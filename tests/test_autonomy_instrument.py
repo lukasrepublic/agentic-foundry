@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 
@@ -440,7 +441,7 @@ def test_cli_accepts_out_path_inside_cwd(tmp_path):
 ENVELOPE_FIXTURE = os.path.join(FIXTURES, "envelope-classification")
 
 
-def test_classify_envelope_kind_matches_the_three_documented_shapes():
+def test_classify_envelope_kind_matches_the_four_documented_shapes():
     task_notification = {"type": "user", "origin": {"kind": "task-notification"}, "promptSource": "system"}
     cross_session = {"type": "user", "origin": {"kind": "peer", "from": "x"}, "isMeta": True, "promptSource": "system"}
     wakeup = {"type": "user", "origin": None, "isMeta": True, "promptSource": "system"}
@@ -451,6 +452,23 @@ def test_classify_envelope_kind_matches_the_three_documented_shapes():
     assert frm.classify_envelope_kind(human) is None
 
 
+def test_classify_envelope_kind_matches_stop_hook_feedback_promptsource_absent():
+    # round-2 review finding: a real Stop-hook feedback record carries NO promptSource key at
+    # all (not merely a different value) — the same "wakeup-or-hook" bucket as a scheduled
+    # wakeup / hook notification, distinguished from a real human turn only by isMeta+origin.
+    stop_hook_feedback = {
+        "type": "user", "origin": None, "isMeta": True,
+        "message": {"content": [{"type": "text", "text": "Stop hook feedback: keep going"}]},
+    }
+    assert "promptSource" not in stop_hook_feedback
+    assert frm.classify_envelope_kind(stop_hook_feedback) == "wakeup-or-hook"
+
+
+def test_classify_envelope_kind_returns_none_for_an_unrecognized_dict_shaped_origin():
+    unrecognized = {"type": "user", "origin": {"kind": "some-future-shape"}}
+    assert frm.classify_envelope_kind(unrecognized) is None
+
+
 def test_classify_turn_end_three_way():
     human = {"type": "user", "origin": {"kind": "human"}, "promptSource": "typed"}
     notification = {"type": "user", "origin": {"kind": "task-notification"}, "promptSource": "system"}
@@ -459,30 +477,65 @@ def test_classify_turn_end_three_way():
     assert frm.classify_turn_end(notification) == "harness-resumed"
 
 
-def test_mine_file_classifies_five_turn_ends_one_human_three_harness_one_session_end():
+def test_mine_file_classifies_six_turn_ends_one_human_four_harness_one_session_end():
     path = os.path.join(ENVELOPE_FIXTURE, "session.jsonl")
     result = frm.mine_file(path)
     # exactly one human-resumed stop (the first turn, "continue" from a genuine human) ...
     assert len(result["stops"]) == 1
     assert result["stops"][0]["silent"] is True
-    # ... three harness-resumed turn ends (task-notification, cross-session-message, wakeup) ...
-    assert result["harness_resumed_count"] == 3
+    # ... four harness-resumed turn ends (task-notification, cross-session-message, a scheduled
+    # wakeup, and a Stop-hook feedback — the latter two both "wakeup-or-hook") ...
+    assert result["harness_resumed_count"] == 4
     # ... and one session-end (the file's final assistant turn, nothing follows it).
     assert result["session_end_count"] == 1
 
 
-def test_silent_yield_denominator_is_human_resumed_only_not_all_five_turn_ends():
+def test_mine_file_harness_resumed_by_kind_breakdown():
+    path = os.path.join(ENVELOPE_FIXTURE, "session.jsonl")
+    result = frm.mine_file(path)
+    assert result["harness_resumed_by_kind"] == {
+        "task-notification": 1,
+        "cross-session-message": 1,
+        "wakeup-or-hook": 2,  # the scheduled wakeup AND the Stop-hook feedback record
+        "other-harness": 0,
+    }
+
+
+def test_harness_resumed_by_kind_uses_classify_envelope_kind_not_dead_code(monkeypatch):
+    # RISK regression (round-2 review): classify_envelope_kind() must actually be consulted per
+    # harness-resumed turn end — if mine_file() stopped calling it, every one of these four would
+    # collapse into "other-harness" instead of its real sub-kind.
+    path = os.path.join(ENVELOPE_FIXTURE, "session.jsonl")
+    baseline = frm.mine_file(path)
+    assert baseline["harness_resumed_by_kind"]["other-harness"] == 0
+    monkeypatch.setattr(frm, "classify_envelope_kind", lambda r: None)
+    patched = frm.mine_file(path)
+    assert patched["harness_resumed_by_kind"]["other-harness"] == 4
+    assert patched["harness_resumed_by_kind"]["task-notification"] == 0
+    assert patched["harness_resumed_by_kind"]["cross-session-message"] == 0
+    assert patched["harness_resumed_by_kind"]["wakeup-or-hook"] == 0
+
+
+def test_silent_yield_denominator_is_human_resumed_only_not_all_six_turn_ends():
     report = frm.build_report(FAR_PAST, [ENVELOPE_FIXTURE], repo=None)
     ratio = report["ratios"]["silent_yield"]
     # RISK regression (the R3-boundary blind spot this atom removes): if harness-resumed turn
-    # ends leaked into the denominator, this would read 4/5 instead of 1/1.
+    # ends leaked into the denominator, this would read 5/6 instead of 1/1.
     assert ratio == {"numerator": 1, "denominator": 1, "ratio": 1.0}
 
 
-def test_corpus_reports_the_three_turn_end_counts_alongside_silent_yield():
+def test_corpus_reports_the_three_turn_end_counts_and_the_harness_by_kind_breakdown():
     report = frm.build_report(FAR_PAST, [ENVELOPE_FIXTURE], repo=None)
     te = report["corpus"]["turn_ends"]
-    assert te == {"human_resumed": 1, "harness_resumed": 3, "session_end": 1}
+    assert te["human_resumed"] == 1
+    assert te["harness_resumed"] == 4
+    assert te["session_end"] == 1
+    assert te["harness_resumed_by_kind"] == {
+        "task-notification": 1,
+        "cross-session-message": 1,
+        "wakeup-or-hook": 2,
+        "other-harness": 0,
+    }
 
 
 def test_known_081_fixture_has_no_harness_resumed_or_session_end_turn_ends():
@@ -540,7 +593,15 @@ def test_certify_treats_an_unmeasured_ratio_as_trivially_within_threshold():
 
 
 def test_certify_guard_false_positive_sample_passes_on_zero_denials_stays_open_on_nonzero():
-    thresholds = {"guard_false_positive_sample": {"sampled": True}}
+    # a COMPLETE thresholds dict (all four PROGRAMME_RATIOS) so this test isolates the sampled-
+    # ratio behavior alone, without also tripping the "no threshold configured" completeness
+    # check below on the other three.
+    thresholds = {
+        "silent_yield": {"max": 1.0},
+        "directive_reply": {"max": 1.0},
+        "granted_verb_denial": {"max": 1.0},
+        "guard_false_positive_sample": {"sampled": True},
+    }
     zero_denials_report = frm.build_report(FAR_PAST, [os.path.join(FIXTURES, "known-081")], repo=None)
     assert frm.certify(zero_denials_report, thresholds) == []
     nonzero_report = frm.build_report(FAR_PAST, [os.path.join(FIXTURES, "granted-verb-denial")], repo=None)
@@ -548,6 +609,67 @@ def test_certify_guard_false_positive_sample_passes_on_zero_denials_stays_open_o
     assert len(misses) == 1
     assert "guard_false_positive_sample" in misses[0]
     assert "manual review" in misses[0]
+
+
+# --------------------------------------------------------------------------------------------- #
+# AC-CBR-2 round-2 review — a thresholds file missing one of PROGRAMME_RATIOS certifies OPEN
+# naming it "no threshold configured", never a silent pass by omission; a malformed thresholds
+# file is reported as "thresholds unreadable", never a bare CERTIFY-PASS.
+# --------------------------------------------------------------------------------------------- #
+
+
+def test_certify_open_on_a_thresholds_file_missing_a_core_ratio_key():
+    report = frm.build_report(FAR_PAST, [os.path.join(FIXTURES, "known-081")], repo=None)
+    thresholds = frm.load_thresholds(os.path.join(FIXTURES, "thresholds-missing-ratio.yaml"))
+    assert "directive_reply" not in thresholds
+    misses = frm.certify(report, thresholds)
+    assert misses == ["directive_reply no threshold configured"]
+    verdict = frm.render_certify_verdict(misses)
+    assert verdict == "CERTIFY-OPEN: directive_reply no threshold configured"
+
+
+def test_load_thresholds_strict_raises_thresholds_error_on_malformed_yaml():
+    path = os.path.join(FIXTURES, "thresholds-malformed.yaml")
+    with pytest.raises(frm.ThresholdsError) as excinfo:
+        frm.load_thresholds_strict(path)
+    assert path in str(excinfo.value)
+
+
+def test_load_thresholds_lenient_degrades_silently_on_malformed_yaml_by_design():
+    # the LENIENT loader (used by direct callers/tests with an already-trusted dict) keeps its
+    # pre-existing silent-degrade contract; only load_thresholds_strict() (the CLI --certify
+    # path) distinguishes a malformed file from "nothing configured".
+    path = os.path.join(FIXTURES, "thresholds-malformed.yaml")
+    assert frm.load_thresholds(path) == {}
+
+
+def test_load_thresholds_strict_missing_file_is_not_an_error(tmp_path):
+    # a file that does not exist at all is a normal state (thresholds_path() already resolved
+    # the shipped default), never a parse failure.
+    assert frm.load_thresholds_strict(str(tmp_path / "does-not-exist.yaml")) == {}
+
+
+def test_cli_certify_reports_thresholds_unreadable_for_a_malformed_workspace_override(tmp_path):
+    workspace = tmp_path / "workspace"
+    override_dir = workspace / "docs" / "programs" / "autonomy-continuation"
+    override_dir.mkdir(parents=True)
+    shutil.copy(
+        os.path.join(FIXTURES, "thresholds-malformed.yaml"), override_dir / "thresholds.yaml",
+    )
+    proc = subprocess.run(
+        [
+            sys.executable, SCRIPT,
+            "--since", FAR_PAST,
+            "--projects-dir", os.path.join(FIXTURES, "known-081"),
+            "--certify",
+        ],
+        capture_output=True, text=True,
+        env={**os.environ, "CLAUDE_PROJECT_DIR": str(workspace)},
+    )
+    assert proc.returncode == 0  # report-only: unreadable thresholds is a printed line, not a gate
+    assert "CERTIFY-OPEN: thresholds unreadable" in proc.stdout
+    assert "thresholds.yaml" in proc.stdout
+    assert "CERTIFY-PASS" not in proc.stdout
 
 
 def test_cli_certify_prints_verdict_line_and_exits_zero_pass():
