@@ -29,9 +29,10 @@
 //     rather than its letter.
 // One mechanism answers all three: confinement join + LINK-LEVEL stat + temp-in-.claude + rename.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { confinedJoin, RefusalError } from './util.mjs';
-import { buildSettings } from './permissionFloor.mjs';
+import { buildSettings, classifyDrift } from './permissionFloor.mjs';
 
 /** The drift classes whose findings name a rule this module may ADD. Everything else the
  * classifier can emit is report-only: blanket-allow, ask-shadowed, ask-shadowed-ceremony and
@@ -212,6 +213,13 @@ export function parseFloorRootShape(rule, pluginRootGlob) {
   return { name: m[1], sub: m[2] ?? null };
 }
 
+/** A collision-free key for the `(name, sub)` pair — `JSON.stringify` of a 2-tuple rather than a
+ * string concatenation with a hand-picked separator, which a `sub` containing that exact separator
+ * (an unlikely but not-impossible flag value) could otherwise fold into a DIFFERENT pair's key. */
+function rootNameKey(parsed) {
+  return JSON.stringify([parsed.name, parsed.sub]);
+}
+
 /** The (name, sub) pairs the SHIPPED map itself declares, each parsed through the exact same shape
  * matcher used to recognize a target row — never a second, hand-written enumeration of script
  * names, which is precisely how the two could drift apart. A map entry of another shape (there is
@@ -220,7 +228,7 @@ function shippedRootNames(map) {
   const set = new Set();
   for (const e of map.entries) {
     const parsed = parseFloorRootShape(e.rule, map.plugin_root_glob);
-    if (parsed) set.add(`${parsed.name} ${parsed.sub ?? ''}`);
+    if (parsed) set.add(rootNameKey(parsed));
   }
   return set;
 }
@@ -239,8 +247,7 @@ export function planRetirements({ settingsObj, map }) {
     for (const rule of perms[tier] || []) {
       const parsed = parseFloorRootShape(rule, map.plugin_root_glob);
       if (!parsed) continue; // not the floor's own shape at all -> never touched (AC-FRR-2)
-      const key = `${parsed.name} ${parsed.sub ?? ''}`;
-      if (!shipped.has(key)) retirements[tier].push(rule);
+      if (!shipped.has(rootNameKey(parsed))) retirements[tier].push(rule);
     }
   }
   const total = retirements.allow.length + retirements.ask.length;
@@ -293,6 +300,39 @@ export function applyAdditions(settingsObj, plan, { map, pins }) {
     };
   }
   return next;
+}
+
+// ── AC-FRR-1 review round 1: additions MUST be planned against the POST-retirement rule set ────
+//
+// Computing `planAdditions` over the raw (pre-retirement) tracked rules is a real, one-cycle
+// defect, not a hypothetical: the addition side's `covers()` is a PREFIX fold — a `:*`-suffixed
+// effective rule covers every narrower reach beneath it — so a bare `Bash(<glob>/scripts/foo:*)`
+// row a workspace still carries covers BOTH `Bash(<glob>/scripts/foo --a:*)` and
+// `Bash(<glob>/scripts/foo --b:*)` map entries a map restructure might split it into. Planned in
+// that order, a SINGLE reconcile pass would retire the bare row (its exact `(foo, null)` pair is
+// no longer in the shipped map) while adding NEITHER split row (the pre-retirement classification
+// still sees the bare row "covering" them) — the grant for that script is gone until a SECOND run
+// notices the split rows are now genuinely absent. `planReconcile` closes the gap by re-deriving
+// the tracked rules from the ALREADY-RETIRED settings object before classifying what to add, so
+// the two sides compose into one correct delta in one pass. This is the ONLY entry point either
+// call site (run.mjs's `--existing` path, update.mjs's Phase 4) should use from here on — never
+// `planAdditions`/`planRetirements` called separately against the same raw settingsObj.
+
+/** Compute both plans, correctly composed: retirement first, additions against the resulting
+ * (post-retirement) rule set. Returns `{ additionsPlan, retirementPlan }`; `additionsPlan.settingsObj`
+ * is the POST-retirement object — the one `applyAdditions` must be called against, so the caller
+ * never needs to call `applyRetirements` a second time on top of it. */
+export function planReconcile({
+  settingsObj, map, pins, pluginRootExpansion = [], unreadableOrigins = [], home = os.homedir(),
+}) {
+  const retirementPlan = planRetirements({ settingsObj, map });
+  const postRetirementSettingsObj = applyRetirements(settingsObj, retirementPlan);
+  const findings = classifyDrift(map, readTrackedRules(postRetirementSettingsObj), {
+    pluginRootExpansion, unreadableOrigins, home,
+  });
+  const additionsPlan = planAdditions({ findings, map, settingsObj: postRetirementSettingsObj, pins });
+  additionsPlan.settingsObj = postRetirementSettingsObj;
+  return { additionsPlan, retirementPlan };
 }
 
 /** Resolve the target settings path, refusing anything that is not a regular file inside the root.

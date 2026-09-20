@@ -15,8 +15,7 @@ import { planManagedFiles, applyPlan, exitCodeForPlan } from './reconcile.mjs';
 import { renderPreview, TRUST_HANDOFF_TEXT } from './preview.mjs';
 import { validateSlug, resolveIdentity, wireIdentity, plannedMachineScopeWrites } from './identity.mjs';
 import {
-  resolveTarget, readTarget, readTrackedRules, planAdditions, applyAdditions,
-  planRetirements, applyRetirements, writeTargetAtomically, renderPlan,
+  resolveTarget, readTarget, applyAdditions, planReconcile, writeTargetAtomically, renderPlan,
 } from './floorReconcile.mjs';
 import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from './gitignoreReconcile.mjs';
 
@@ -204,15 +203,15 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
       floorTarget = resolveTarget(physicalRoot);
       if (floorTarget.present) {
         const settingsObj = readTarget(floorTarget.path);
-        const trackedFindings = classifyDrift(map, readTrackedRules(settingsObj), {
-          pluginRootExpansion, unreadableOrigins: [], home: homeDir,
+        // AC-FRR-1 (ER #199, review round 1): retirement first, additions planned against the
+        // POST-retirement rule set — never against the raw settingsObj directly. See
+        // floorReconcile.mjs's own comment on planReconcile for why the other order loses a grant
+        // for one cycle across a map restructure.
+        const { additionsPlan, retirementPlan } = planReconcile({
+          settingsObj, map, pins, pluginRootExpansion, unreadableOrigins: [], home: homeDir,
         });
-        floorPlan = planAdditions({ findings: trackedFindings, map, settingsObj, pins });
-        floorPlan.settingsObj = settingsObj;
-        // AC-FRR-1 (ER #199): a row shaped exactly like the floor's own root-glob rows, whose
-        // name(+sub) the shipped map no longer declares, is retired from allow/ask — computed
-        // over the SAME tracked settingsObj the additions plan just read, before anything writes.
-        floorRetirementPlan = planRetirements({ settingsObj, map });
+        floorPlan = additionsPlan;
+        floorRetirementPlan = retirementPlan;
         print('');
         for (const line of renderPlan(floorPlan, {
           applied: false, retirementPlan: floorRetirementPlan, mapEntryCount: map.entries.length,
@@ -262,9 +261,10 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
     applyGitignorePlan(gitignorePlan);
 
     if (floorHasWork) {
-      const added = applyAdditions(floorPlan.settingsObj, floorPlan, { map, pins });
-      const retired = applyRetirements(added, floorRetirementPlan);
-      writeTargetAtomically(floorTarget.path, retired);
+      // floorPlan.settingsObj is ALREADY post-retirement (planReconcile derived it that way) —
+      // applyAdditions composes onto it directly; a second applyRetirements call here would be
+      // retiring an object that was never given the rows back in the first place.
+      writeTargetAtomically(floorTarget.path, applyAdditions(floorPlan.settingsObj, floorPlan, { map, pins }));
       print('');
       for (const line of renderPlan(floorPlan, {
         applied: true, retirementPlan: floorRetirementPlan, mapEntryCount: map.entries.length,

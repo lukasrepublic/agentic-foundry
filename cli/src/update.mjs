@@ -8,12 +8,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { RefusalError, physicalResolve } from './util.mjs';
-import { loadMap, buildSettings, classifyDrift } from './permissionFloor.mjs';
+import { loadMap, buildSettings } from './permissionFloor.mjs';
 import { buildManagedFiles } from './scaffold.mjs';
 import { planManagedFiles, applyPlan } from './reconcile.mjs';
 import {
-  resolveTarget, readTarget, readTrackedRules, planAdditions, applyAdditions,
-  planRetirements, applyRetirements, writeTargetAtomically, renderPlan,
+  resolveTarget, readTarget, applyAdditions, planReconcile, writeTargetAtomically, renderPlan,
 } from './floorReconcile.mjs';
 import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from './gitignoreReconcile.mjs';
 import {
@@ -154,19 +153,18 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     // captured plan verbatim in Phase 4 would silently clobber whatever Phase 1 just wrote —
     // Phase 4 therefore re-reads and recomputes the floor plan fresh, right before it writes.
     const floorTarget = resolveTarget(physicalRoot);
-    const previewFloorPlan = floorTarget.present
-      ? planAdditions({
-        findings: classifyDrift(map, readTrackedRules(readTarget(floorTarget.path)), {
-          pluginRootExpansion: [], unreadableOrigins: [], home: homeDir,
-        }),
-        map, settingsObj: readTarget(floorTarget.path), pins,
+    // AC-FRR-1 (ER #199, review round 1): retirement first, additions planned against the
+    // POST-retirement rule set — planReconcile is the ONLY entry point either the preview here or
+    // Phase 4 below should use; see its own comment in floorReconcile.mjs. PREVIEW-ONLY: Phase 4
+    // re-reads and recomputes fresh right before it writes, for the migration-clobber reason above.
+    const previewReconcile = floorTarget.present
+      ? planReconcile({
+        settingsObj: readTarget(floorTarget.path), map, pins,
+        pluginRootExpansion: [], unreadableOrigins: [], home: homeDir,
       })
       : null;
-    // AC-FRR-1 (ER #199): preview-only, same recompute-fresh caveat as previewFloorPlan itself —
-    // Phase 4 below re-reads and recomputes both plans right before it writes.
-    const previewRetirementPlan = floorTarget.present
-      ? planRetirements({ settingsObj: readTarget(floorTarget.path), map })
-      : null;
+    const previewFloorPlan = previewReconcile ? previewReconcile.additionsPlan : null;
+    const previewRetirementPlan = previewReconcile ? previewReconcile.retirementPlan : null;
 
     // gitignore-block-reconcile (ER #177, AC-GBR-1): PREVIEW-ONLY, same caveat as previewFloorPlan
     // above — `.gitignore` is not a migration target, but Phase 4 recomputes fresh from disk anyway,
@@ -265,18 +263,17 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     const freshFloorTarget = resolveTarget(physicalRoot);
     if (freshFloorTarget.present) {
       const settingsObj = readTarget(freshFloorTarget.path);
-      const findings = classifyDrift(map, readTrackedRules(settingsObj), {
-        pluginRootExpansion: [], unreadableOrigins: [], home: homeDir,
+      // AC-FRR-1 (ER #199, review round 1): the upgrader's own reconcile path — retirement first,
+      // additions planned against the POST-retirement rule set (planReconcile; see its comment in
+      // floorReconcile.mjs). `floorPlan.settingsObj` comes back already post-retirement, so the
+      // write below composes onto it directly — never a second `applyRetirements` call.
+      const { additionsPlan, retirementPlan } = planReconcile({
+        settingsObj, map, pins, pluginRootExpansion: [], unreadableOrigins: [], home: homeDir,
       });
-      floorPlan = planAdditions({ findings, map, settingsObj, pins });
-      floorPlan.settingsObj = settingsObj;
-      // AC-FRR-1 (ER #199): the upgrader's own reconcile path — computed over the SAME fresh
-      // settingsObj the additions plan just read, before anything writes.
-      floorRetirementPlan = planRetirements({ settingsObj, map });
+      floorPlan = additionsPlan;
+      floorRetirementPlan = retirementPlan;
       if (floorPlan.total > 0 || floorRetirementPlan.total > 0) {
-        const added = applyAdditions(settingsObj, floorPlan, { map, pins });
-        const retired = applyRetirements(added, floorRetirementPlan);
-        writeTargetAtomically(freshFloorTarget.path, retired);
+        writeTargetAtomically(freshFloorTarget.path, applyAdditions(floorPlan.settingsObj, floorPlan, { map, pins }));
         for (const line of renderPlan(floorPlan, {
           applied: true, retirementPlan: floorRetirementPlan, mapEntryCount: map.entries.length,
         })) print(line);

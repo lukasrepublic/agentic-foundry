@@ -34,12 +34,15 @@ it does invoke `claude` (bounded by a closed allowlist — see its own README).
 - Re-running is a **reconcile with a drift report** — an edited managed file is reported
   `drifted` and left byte-identical, never overwritten. Never-clobber is unconditional.
 - The permission-floor reconcile is additive with ONE narrow exception: a row shaped exactly like
-  the floor's own root-glob rows (`Bash(<plugin-root-glob>/scripts/<name>[ <sub>]:*)`), whose script
-  the shipped floor no longer declares, is retired from `allow`/`ask` and printed `[retired] <row>`
-  — a script deleted from a later release does not leave a standing grant behind for a
-  future script with the same name to inherit unreviewed. Any row of another shape (an
-  adopter-authored rule naming a plugin script through a different prefix, or a `deny` row) is
-  never touched. The summary line reports all three outcomes together:
+  the floor's own root-glob rows (`Bash(<plugin-root-glob>/scripts/<name>[ <sub>]:*)`), whose
+  `(name, sub)` PAIR — not the script name alone — the shipped floor no longer declares, is retired
+  from `allow`/`ask` and printed `[retired] <row>`. The pair, not just the name, matters: retiring
+  one subcommand of a script that still ships other subcommands (say `<name> --a:*` is dropped
+  while `<name> --b:*` remains) removes only the stale `(name, sub)` row, never the whole family —
+  and a script deleted outright does not leave a standing grant behind for a future script with the
+  same name to inherit unreviewed. Any row of another shape (an adopter-authored rule naming a
+  plugin script through a different prefix, or a `deny` row) is never touched. The summary line
+  reports all three outcomes together:
   `permission-floor reconcile: … — N added, M retired, K unchanged`.
 - `.gitignore` gets its own narrower reconcile on top of that: the file also carries a
   `FOUNDRY-RUNTIME-GITIGNORE-BEGIN`/`-END` managed block, converged independently of the

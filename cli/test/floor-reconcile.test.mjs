@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { loadMap, classifyDrift } from '../src/permissionFloor.mjs';
 import {
   resolveTarget, readTarget, readTrackedRules, planAdditions, applyAdditions,
-  planRetirements, applyRetirements, parseFloorRootShape,
+  planRetirements, applyRetirements, parseFloorRootShape, planReconcile,
   writeTargetAtomically, renderPlan, classifyPin, ADDITIVE_CLASSES,
 } from '../src/floorReconcile.mjs';
 import { RefusalError } from '../src/util.mjs';
@@ -542,12 +542,10 @@ test('reconcile_pipeline_reports_retired_rows_and_the_composite_summary_line', (
     extraKnownMarketplaces: PINNED,
   });
   const settingsObj = readTarget(resolveTarget(root).path);
-  const retirementPlan = planRetirements({ settingsObj, map: MAP });
-  const additionsPlan = planAdditions({
-    findings: classifyDrift(MAP, readTrackedRules(settingsObj), {
-      pluginRootExpansion: ['x'], unreadableOrigins: [], home: HOME,
-    }),
-    map: MAP, settingsObj, pins: PINS,
+  // planReconcile — the single entry point either call site uses (review round 1): never
+  // planAdditions/planRetirements invoked separately against the same raw settingsObj from here on.
+  const { additionsPlan, retirementPlan } = planReconcile({
+    settingsObj, map: MAP, pins: PINS, pluginRootExpansion: ['x'], unreadableOrigins: [], home: HOME,
   });
   const lines = renderPlan(additionsPlan, {
     applied: true, retirementPlan, mapEntryCount: MAP.entries.length,
@@ -557,4 +555,91 @@ test('reconcile_pipeline_reports_retired_rows_and_the_composite_summary_line', (
     lines.some((l) => l.includes(`0 added, ${retirementPlan.total} retired, ${MAP.entries.length} unchanged`)),
     `summary line missing the composite counts: ${lines.join('\n')}`,
   );
+});
+
+// ── review round 1 (PR #201): additions MUST be planned against the POST-retirement rule set ────
+
+test('a_bare_row_split_into_two_subs_by_a_map_restructure_retires_and_adds_in_ONE_pass', () => {
+  // The defect the pre-fix ordering had: covers() is a PREFIX fold, so a bare `<name>:*` row a
+  // workspace still carries reads as ALREADY COVERING both split entries a map restructure might
+  // introduce — planning additions against the PRE-retirement settings would therefore queue
+  // NEITHER split row in the SAME pass that retires the bare one, losing the grant for one cycle.
+  const glob = MAP.plugin_root_glob;
+  const bareRow = `Bash(${glob}/scripts/foo.py:*)`;
+  const splitA = `Bash(${glob}/scripts/foo.py --a:*)`;
+  const splitB = `Bash(${glob}/scripts/foo.py --b:*)`;
+  // A minimal, self-contained map (never the real 71-entry one) so the ONLY thing this fixture
+  // exercises is the bare-to-split restructure, not any other entry's absence/presence.
+  const restructuredMap = {
+    schema_version: 1,
+    plugin_root_glob: glob,
+    entries: [
+      { rule: splitA, tier: 'allow', rationale: 'split a' },
+      { rule: splitB, tier: 'allow', rationale: 'split b' },
+    ],
+  };
+  const root = target({
+    permissions: { allow: [bareRow], ask: [], deny: [] },
+    extraKnownMarketplaces: PINNED,
+  });
+  const settingsObj = readTarget(resolveTarget(root).path);
+
+  // (a) the OLD, unsafe order — additions planned against the RAW (pre-retirement) settingsObj —
+  // reproduces the loss: neither split row is queued, because the bare row still "covers" both.
+  const unsafeRetirement = planRetirements({ settingsObj, map: restructuredMap });
+  const unsafeFindings = classifyDrift(restructuredMap, readTrackedRules(settingsObj), {
+    pluginRootExpansion: ['x'], unreadableOrigins: [], home: HOME,
+  });
+  const unsafeAdditions = planAdditions({
+    findings: unsafeFindings, map: restructuredMap, settingsObj, pins: PINS,
+  });
+  assert.deepEqual(unsafeRetirement.retirements.allow, [bareRow]);
+  assert.equal(unsafeAdditions.total, 0,
+    'sanity check: the OLD ordering must reproduce the one-cycle loss, or this test proves nothing');
+
+  // (b) planReconcile — the FIX — retires the bare row AND adds both split rows in the SAME pass.
+  const { additionsPlan, retirementPlan } = planReconcile({
+    settingsObj, map: restructuredMap, pins: PINS,
+    pluginRootExpansion: ['x'], unreadableOrigins: [], home: HOME,
+  });
+  assert.deepEqual(retirementPlan.retirements.allow, [bareRow]);
+  assert.deepEqual(additionsPlan.additions.allow.slice().sort(), [splitA, splitB].sort());
+
+  const written = applyAdditions(additionsPlan.settingsObj, additionsPlan, { map: restructuredMap, pins: PINS });
+  assert.ok(!written.permissions.allow.includes(bareRow), 'the bare row survived');
+  assert.ok(written.permissions.allow.includes(splitA), 'split row a was never added');
+  assert.ok(written.permissions.allow.includes(splitB), 'split row b was never added');
+});
+
+test('full_pipeline_idempotence_through_the_real_entry_point_second_run_is_silent', () => {
+  // Additions AND retirements composed through planReconcile, driven twice over the SAME on-disk
+  // target the way run.mjs actually drives it (plan -> commit -> re-plan): the second pass must
+  // report zero of each and must not touch the file at all.
+  const root = target({
+    permissions: { allow: [RETIRED_ROW, ...byTier('allow')], ask: byTier('ask'), deny: byTier('deny') },
+    extraKnownMarketplaces: PINNED,
+  });
+  const t = resolveTarget(root);
+
+  const first = planReconcile({
+    settingsObj: readTarget(t.path), map: MAP, pins: PINS,
+    pluginRootExpansion: ['x'], unreadableOrigins: [], home: HOME,
+  });
+  assert.equal(first.retirementPlan.total, 1, 'the fixture did not actually seed a retirement candidate');
+  writeTargetAtomically(t.path, applyAdditions(first.additionsPlan.settingsObj, first.additionsPlan, { map: MAP, pins: PINS }));
+
+  const bytesAfterFirst = fs.readFileSync(t.path);
+  const inoAfterFirst = fs.statSync(t.path).ino;
+
+  const second = planReconcile({
+    settingsObj: readTarget(t.path), map: MAP, pins: PINS,
+    pluginRootExpansion: ['x'], unreadableOrigins: [], home: HOME,
+  });
+  assert.equal(second.additionsPlan.total, 0, 'a second run over its own output queued an addition');
+  assert.equal(second.retirementPlan.total, 0, 'a second run over its own output queued a retirement');
+
+  // never actually written — the second plan is inert, but assert the FILE too, not only the plan,
+  // exactly as the pre-existing additive-only idempotence test does
+  assert.deepEqual(fs.readFileSync(t.path), bytesAfterFirst, 'a no-op second plan changed the bytes');
+  assert.equal(fs.statSync(t.path).ino, inoAfterFirst, 'a no-op second plan rewrote the file');
 });
