@@ -1,0 +1,32 @@
+# context/autonomy-thresholds.yaml — the shipped default for `scripts/foundry-autonomy-
+# instrument.py --certify` (AC-CBR-2, certify-by-remeasure).
+#
+# The programme's own exit thresholds (docs/programs/autonomy-continuation/PROGRAM.md §7,
+# "Release R4 — ac-r4-certify-and-shed"): silent-yield <20%, directive-reply <15%, granted-verb
+# denials 0, guard false-positives 0. A WORKSPACE copy at
+# `docs/programs/autonomy-continuation/thresholds.yaml` (resolved under $CLAUDE_PROJECT_DIR, or
+# cwd when that is unset) OVERRIDES this shipped default whenever it exists — this file is the
+# adopter-facing fallback for a workspace that has not authored its own.
+#
+# Shape: `<ratio-name>:` keys are ratio names from build_report()["ratios"]; each carries either
+# `max: <float>` (the ratio must be <= this value, or unmeasured/None, to certify) or
+# `sampled: true` (never auto-classified — see below). A ratio named here with neither key is
+# ignored. A ratio NOT named here at all carries no programme exit criterion and is never
+# compared (authorized_to_built and rounds_per_shipped_atom below: informational only).
+version: 1
+thresholds:
+  silent_yield:
+    max: 0.20
+  directive_reply:
+    max: 0.15
+  granted_verb_denial:
+    max: 0.0
+  # guard_false_positive_sample is SAMPLED, never auto-classified (its `ratio` field is always
+  # None — see the instrument's module docstring, ratio #4). `sampled: true` tells certify() to
+  # compare `denials_total` instead of `ratio`: zero denials trivially certifies; any nonzero
+  # count stays CERTIFY-OPEN until the operator has manually classified the sample themselves.
+  guard_false_positive_sample:
+    sampled: true
+  # authorized_to_built and rounds_per_shipped_atom carry no programme exit threshold (they are
+  # informational-only ratios in this release — PROGRAM.md §7 names only the four above) and are
+  # deliberately absent from this file so certify() never compares them.

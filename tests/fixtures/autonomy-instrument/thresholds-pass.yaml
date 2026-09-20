@@ -1,0 +1,3 @@
+thresholds:
+  silent_yield:
+    max: 1.0

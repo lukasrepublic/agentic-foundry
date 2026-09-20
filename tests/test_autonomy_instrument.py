@@ -430,6 +430,157 @@ def test_cli_accepts_out_path_inside_cwd(tmp_path):
     assert out_path.is_file()
 
 
+# --------------------------------------------------------------------------------------------- #
+# AC-CBR-1 — the three-way turn-end classification (certify-by-remeasure): human-resumed /
+# harness-resumed (task-notification, cross-session-message, wakeup-or-hook) / session-end.
+# silent_yield is computed over human-resumed turn ends only; the three counts are reported
+# alongside in corpus.turn_ends.
+# --------------------------------------------------------------------------------------------- #
+
+ENVELOPE_FIXTURE = os.path.join(FIXTURES, "envelope-classification")
+
+
+def test_classify_envelope_kind_matches_the_three_documented_shapes():
+    task_notification = {"type": "user", "origin": {"kind": "task-notification"}, "promptSource": "system"}
+    cross_session = {"type": "user", "origin": {"kind": "peer", "from": "x"}, "isMeta": True, "promptSource": "system"}
+    wakeup = {"type": "user", "origin": None, "isMeta": True, "promptSource": "system"}
+    human = {"type": "user", "origin": {"kind": "human"}, "promptSource": "typed"}
+    assert frm.classify_envelope_kind(task_notification) == "task-notification"
+    assert frm.classify_envelope_kind(cross_session) == "cross-session-message"
+    assert frm.classify_envelope_kind(wakeup) == "wakeup-or-hook"
+    assert frm.classify_envelope_kind(human) is None
+
+
+def test_classify_turn_end_three_way():
+    human = {"type": "user", "origin": {"kind": "human"}, "promptSource": "typed"}
+    notification = {"type": "user", "origin": {"kind": "task-notification"}, "promptSource": "system"}
+    assert frm.classify_turn_end(None) == "session-end"
+    assert frm.classify_turn_end(human) == "human-resumed"
+    assert frm.classify_turn_end(notification) == "harness-resumed"
+
+
+def test_mine_file_classifies_five_turn_ends_one_human_three_harness_one_session_end():
+    path = os.path.join(ENVELOPE_FIXTURE, "session.jsonl")
+    result = frm.mine_file(path)
+    # exactly one human-resumed stop (the first turn, "continue" from a genuine human) ...
+    assert len(result["stops"]) == 1
+    assert result["stops"][0]["silent"] is True
+    # ... three harness-resumed turn ends (task-notification, cross-session-message, wakeup) ...
+    assert result["harness_resumed_count"] == 3
+    # ... and one session-end (the file's final assistant turn, nothing follows it).
+    assert result["session_end_count"] == 1
+
+
+def test_silent_yield_denominator_is_human_resumed_only_not_all_five_turn_ends():
+    report = frm.build_report(FAR_PAST, [ENVELOPE_FIXTURE], repo=None)
+    ratio = report["ratios"]["silent_yield"]
+    # RISK regression (the R3-boundary blind spot this atom removes): if harness-resumed turn
+    # ends leaked into the denominator, this would read 4/5 instead of 1/1.
+    assert ratio == {"numerator": 1, "denominator": 1, "ratio": 1.0}
+
+
+def test_corpus_reports_the_three_turn_end_counts_alongside_silent_yield():
+    report = frm.build_report(FAR_PAST, [ENVELOPE_FIXTURE], repo=None)
+    te = report["corpus"]["turn_ends"]
+    assert te == {"human_resumed": 1, "harness_resumed": 3, "session_end": 1}
+
+
+def test_known_081_fixture_has_no_harness_resumed_or_session_end_turn_ends():
+    # the pre-existing known-081/silent-4-of-5 fixtures predate this atom and use ONLY genuine
+    # human turns — confirms their exact numerator/denominator (AC-INS-4) is unaffected by the
+    # new classification (every one of their turn ends is already human-resumed).
+    report = frm.build_report(FAR_PAST, [os.path.join(FIXTURES, "known-081")], repo=None)
+    te = report["corpus"]["turn_ends"]
+    assert te["harness_resumed"] == 0
+    assert te["session_end"] == 0
+    assert te["human_resumed"] == 100
+
+
+# --------------------------------------------------------------------------------------------- #
+# AC-CBR-2 — --certify compares the six ratios against the programme thresholds and prints
+# CERTIFY-PASS / CERTIFY-OPEN, exit 0 either way.
+# --------------------------------------------------------------------------------------------- #
+
+
+def test_shipped_thresholds_file_loads_the_four_programme_ratios():
+    thresholds = frm.load_thresholds(frm._SHIPPED_THRESHOLDS_PATH)
+    assert thresholds["silent_yield"]["max"] == 0.20
+    assert thresholds["directive_reply"]["max"] == 0.15
+    assert thresholds["granted_verb_denial"]["max"] == 0.0
+    assert thresholds["guard_false_positive_sample"]["sampled"] is True
+    # informational-only ratios carry no programme exit threshold
+    assert "authorized_to_built" not in thresholds
+    assert "rounds_per_shipped_atom" not in thresholds
+
+
+def test_certify_pass_on_a_lenient_fixture_thresholds_file():
+    report = frm.build_report(FAR_PAST, [os.path.join(FIXTURES, "known-081")], repo=None)
+    thresholds = frm.load_thresholds(os.path.join(FIXTURES, "thresholds-pass.yaml"))
+    misses = frm.certify(report, thresholds)
+    assert misses == []
+    assert frm.render_certify_verdict(misses) == "CERTIFY-PASS"
+
+
+def test_certify_open_on_a_strict_fixture_thresholds_file_names_the_missing_ratio():
+    report = frm.build_report(FAR_PAST, [os.path.join(FIXTURES, "known-081")], repo=None)
+    thresholds = frm.load_thresholds(os.path.join(FIXTURES, "thresholds-open.yaml"))
+    misses = frm.certify(report, thresholds)
+    assert misses == ["silent_yield 0.81 vs 0.5"]
+    verdict = frm.render_certify_verdict(misses)
+    assert verdict.startswith("CERTIFY-OPEN:")
+    assert "silent_yield" in verdict
+
+
+def test_certify_treats_an_unmeasured_ratio_as_trivially_within_threshold():
+    # FAR_FUTURE excludes every fixture file by mtime -> zero files scanned -> ratio None.
+    report = frm.build_report(FAR_FUTURE, [os.path.join(FIXTURES, "known-081")], repo=None)
+    assert report["ratios"]["silent_yield"]["ratio"] is None
+    misses = frm.certify(report, frm.load_thresholds(os.path.join(FIXTURES, "thresholds-open.yaml")))
+    assert misses == []
+
+
+def test_certify_guard_false_positive_sample_passes_on_zero_denials_stays_open_on_nonzero():
+    thresholds = {"guard_false_positive_sample": {"sampled": True}}
+    zero_denials_report = frm.build_report(FAR_PAST, [os.path.join(FIXTURES, "known-081")], repo=None)
+    assert frm.certify(zero_denials_report, thresholds) == []
+    nonzero_report = frm.build_report(FAR_PAST, [os.path.join(FIXTURES, "granted-verb-denial")], repo=None)
+    misses = frm.certify(nonzero_report, thresholds)
+    assert len(misses) == 1
+    assert "guard_false_positive_sample" in misses[0]
+    assert "manual review" in misses[0]
+
+
+def test_cli_certify_prints_verdict_line_and_exits_zero_pass():
+    proc = subprocess.run(
+        [
+            sys.executable, SCRIPT,
+            "--since", FAR_PAST,
+            "--projects-dir", os.path.join(FIXTURES, "known-081"),
+            "--certify",
+        ],
+        capture_output=True, text=True,
+        env={**os.environ, "CLAUDE_PROJECT_DIR": FIXTURES},  # no workspace override in FIXTURES
+    )
+    assert proc.returncode == 0
+    assert "CERTIFY-PASS" in proc.stdout or "CERTIFY-OPEN" in proc.stdout
+
+
+def test_workspace_thresholds_override_shipped_default_when_present(tmp_path):
+    workspace = tmp_path / "workspace"
+    override_dir = workspace / "docs" / "programs" / "autonomy-continuation"
+    override_dir.mkdir(parents=True)
+    (override_dir / "thresholds.yaml").write_text("thresholds:\n  silent_yield:\n    max: 0.9\n")
+    path = frm.thresholds_path(str(workspace))
+    assert path == str(override_dir / "thresholds.yaml")
+    thresholds = frm.load_thresholds(path)
+    assert thresholds["silent_yield"]["max"] == 0.9
+
+
+def test_thresholds_path_falls_back_to_shipped_default_when_no_workspace_override(tmp_path):
+    path = frm.thresholds_path(str(tmp_path))
+    assert path == frm._SHIPPED_THRESHOLDS_PATH
+
+
 def test_write_out_report_refuses_to_follow_a_symlink_at_the_final_write_step(tmp_path):
     real_target = tmp_path / "real.json"
     real_target.write_text("{}")
