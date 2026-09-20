@@ -192,7 +192,7 @@ def integration_branch_base_refusal(pr: int, release_id: str, *, project_dir=Non
     if not release_id:
         return None
     try:
-        import foundry_release  # sibling module, same scripts/ directory
+        foundry_release = _import_foundry_release()
         release = foundry_release.load_release(release_id, project_dir=project_dir)
     except Exception:
         return None
@@ -211,6 +211,16 @@ def integration_branch_base_refusal(pr: int, release_id: str, *, project_dir=Non
     )
 
 
+def _import_foundry_release():
+    """Sibling import that survives PYTHONSAFEPATH (the cut-release preflight runs the suite with it set,
+    so the script's own directory is NOT on sys.path[0]) — the same explicit insert the other scripts use."""
+    import importlib
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    return importlib.import_module("foundry_release")
+
+
 def derive_active_release_id(project_dir=None) -> tuple[str | None, str | None]:
     """Round-2 review finding 4: `--release` never fires from the autonomous callers (the
     mode-autonomous/tick-prompt LANDING guidance call this CLI with no `--release` at all), so the
@@ -226,7 +236,7 @@ def derive_active_release_id(project_dir=None) -> tuple[str | None, str | None]:
     if not os.path.isdir(releases_dir):
         return None, f"no {releases_dir} directory"
     try:
-        import foundry_release
+        foundry_release = _import_foundry_release()
     except Exception as e:
         return None, f"foundry_release unavailable: {type(e).__name__}: {e}"
     candidates = []
