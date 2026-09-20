@@ -301,7 +301,7 @@ def _import_map_suite():
 #
 # tests/fixtures/floor-drift-corpus.json's `full-floor-verbatim` and `full-floor-home-expanded`
 # cases each gained the matching effective-allow row in the same diff.
-MERGE_BASE_ENTRIES_DIGEST = "832739a269755223bb92dff8fb131961b5864d3d68c0e475592381c26dec5803"
+MERGE_BASE_ENTRIES_DIGEST = "cfb818afa9a09e097e41c3c245ae6cfbda936b0ec8cfcc144c7ee1046f75be5e"
 
 
 # ================================================================================================ #

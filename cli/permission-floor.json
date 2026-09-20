@@ -69,26 +69,6 @@
       "rationale": "status/reap over machine-scoped worker sandbox envs; confined to isolated per-worker state"
     },
     {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-fleet-doctor.py:*)",
-      "tier": "allow",
-      "rationale": "read-only health sweep across all adopter handbooks wiring the plugin on one machine"
-    },
-    {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-fleet-roster.py:*)",
-      "tier": "allow",
-      "rationale": "read-only live roster render, one row per native session, via the session-registry"
-    },
-    {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-fleet-session-machinery.py:*)",
-      "tier": "allow",
-      "rationale": "derives a typed process-machinery overlay for the fleet surface; read-only"
-    },
-    {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-fleet-session-registry.py:*)",
-      "tier": "allow",
-      "rationale": "thin read-only overlay of foundry work-context onto the native session list"
-    },
-    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-graph-mcp.py:*)",
       "tier": "allow",
       "rationale": "advisory citation-graph staleness surface / MCP server; run in CONTRIBUTING dev loop + CI"

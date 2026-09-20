@@ -285,4 +285,3 @@ runbook is in **[troubleshooting.md](troubleshooting.md)**, symptom-first.
 | Operator registry / project config | `.claude/foundry-operators.json` / `.claude/foundry-project.json` |
 | Review + release records | `.foundry/` (gitignored evidence) + your git history (the ledger) |
 | Stack profiles | `packs/stack-profiles/` (node-web, aws-eks-karpenter, python-uv-lib, python-uv-service) |
-| `foundry-fleet-doctor`'s adopter-registry lookup root | default `~/.claude/plugins` (holds `installed_plugins.json`); override with `FOUNDRY_PLUGINS_DIR` |
