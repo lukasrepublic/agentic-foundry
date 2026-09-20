@@ -1,0 +1,4 @@
+# Written by every `claude plugin eval` run (the primary doc: "add results/ to .gitignore").
+# Never committed -- the report and aggregate-result.json are per-run local evidence, not
+# suite source.
+results/
