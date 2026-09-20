@@ -166,9 +166,9 @@ def _validate_case_yaml(path):
     if context is not None:
         if not isinstance(context, dict):
             raise EvalSuiteShapeError(f"{path}: context: must be a mapping")
-        unknown_ctx = set(context) - CASE_YAML_CONTEXT_FIELDS
-        if unknown_ctx:
-            raise EvalSuiteShapeError(f"{path}: unknown case.yaml context key(s) {sorted(unknown_ctx)}")
+        unknown_context_keys = set(context) - CASE_YAML_CONTEXT_FIELDS
+        if unknown_context_keys:
+            raise EvalSuiteShapeError(f"{path}: unknown case.yaml context key(s) {sorted(unknown_context_keys)}")
 
 
 def _validate_grader(path):
