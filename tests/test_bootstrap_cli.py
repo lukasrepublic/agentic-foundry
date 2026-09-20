@@ -373,6 +373,8 @@ def test_the_update_package_manifest_has_no_lifecycle_scripts():
                             # own version move together.
         "0.14.0": "0.1.7",  # v1.14.0 -- the bundled floor gains the R3 rows (three allow rows, one library);
                             # pin and own version move together.
+        "0.15.0": "0.1.8",  # v1.15.0 -- the bundled floor gains the R4 rows and RETIRES the fleet roster rows;
+                            # pin and own version move together.
     }
     pin = deps["create-agentic-workspace"]
     expected_update_version = CLI_UPDATE_VERSION_BY_PIN.get(pin)
@@ -512,6 +514,9 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         # v1.14.0: the bundled floor gains the R3 rows (manifest-to-tasklist, routine-wake-prompt,
         # message_kind allow; floor_hooks library) — a minor bump for cli/.
         "1.14.0": "0.14.0",
+        # v1.15.0: the bundled floor gains the R4 rows (done-when-backfill, governance-budget) and drops
+        # the retired fleet roster rows — a minor bump for cli/.
+        "1.15.0": "0.15.0",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (
