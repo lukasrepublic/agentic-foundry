@@ -172,6 +172,17 @@ claim), `attempted` (≥1: what you actually tried before escalating), `why_oper
   `handoff` (`cwd`, `command`, `why`, `expect`) — the runnable action as data, not prose the
   operator has to reconstruct.
 
+§5b-IDLE AN IDLE TEAMMATE'S `IDLE-UNMET` MESSAGE (the `teammate-idle-continue` charter,
+autonomy-continuation R3, AC-TIC-3). `TeammateIdle`'s exit two is not honored by the platform, so
+`hooks/foundry-teammate-idle.py` never blocks an idle teammate — it only posts one own-child
+message, `IDLE-UNMET <teammate> atom:<id> — unmet: <locators>`, when that teammate's claimed atom
+still has an unmet `done_when` locator. On receiving one: `SendMessage` the named teammate `keep
+working: <unmet locators>` once — a message from the lead is what wakes an idle in-process
+teammate, not this tick reading the hook's ledger. On the THIRD `IDLE-UNMET` for the SAME atom
+(the hook's own `.foundry/idle-nudges.jsonl` caps at three), do not send a fourth nudge — surface
+one blocker instead (`why_operator: no-consensus-after-research` unless the evidence names a
+different closed-set reason), through the same §5c candidate-blocker lint.
+
 §5d NOTIFY ONLY WHEN THERE IS SOMETHING TO ACT ON. After §5c's `blockers` partition is final: if it
 is non-empty, send exactly ONE native `PushNotification` this tick, naming the blocker's `claim`
 verbatim (if more than one blocker, join their claims into that single notification — never one
