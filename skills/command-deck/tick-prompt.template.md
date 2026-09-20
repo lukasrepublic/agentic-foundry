@@ -91,6 +91,11 @@ VERIFYING
   merge-state.
 
 LANDING
+- BRANCH AND WORKTREE DISCIPLINE: see `context/branch-discipline.md` (cited, never copied) for the
+  full block — one worktree+branch per atom cut from the release's integration branch, one push
+  after local-green, the atom PR targets `release/<version>` (not `main`) when the manifest names
+  one, ONE PR to `main` per release, delete-after-merge-never-before, and the codified
+  `scripts/foundry-worktree-gc.py` sweep.
 - Land a worker's output ONLY from its completion notification. A "completed" status plus a file on
   disk is not a finished deliverable.
 - WAIT FOR A PR'S CHECKS VIA `/foundry:merge-when-green <pr> --watch`, NEVER A HAND-ROLLED

@@ -55,6 +55,20 @@ single release, plus one permanent deadlock where no check ever reported at all.
 
 - `<pr>` — a **literal** PR number, never a shell variable or the current branch's PR (mirrors
   the discipline hook's own refusal of an ambient PR selector).
+- `--release <id>` (branch-and-worktree-discipline, AC-BWD-5, v1.16.0; optional) — enforces the
+  release manifest's `integration_branch` (`context/branch-discipline.md`, rule 3): if release
+  `<id>`'s manifest names one AND this PR's real base (`gh pr view <pr> --json baseRefName`) is
+  literally `main` instead of it, refuses BEFORE polling — `blocked` (exit 3), `remediation: "gh pr
+  edit <pr> --base <integration_branch>"`. Omitting `--release` is byte-identical to the prior
+  behavior (no such check runs at all). Never refuses a hotfix PR (any base other than `main`), and
+  never refuses when the named release carries no `integration_branch`. **Retargeting re-pins the
+  `btb-gates` security-review label** (recorded here, not a new AC): `security-reviewed:<head12>-
+  <base8>`'s `base8` is derived from the base ref name itself
+  (`.github/workflows/btb-gates-base.yml`), so a PR moved from `main` onto `release/<version>`
+  needs its label re-applied against the release branch's own hash — see
+  `docs/how-to/branching-and-cleanup.md` for the mechanism and the branch-protection-tier
+  trade-off (an unprotected release branch reads merge floor tier B/advisory; checks still gate
+  this CLI's own merge either way).
 - `--timeout-min` (default 60) — the whole run's wall-clock budget; on expiry without a terminal
   state, exits `blocked` with `reason: "timed out..."`.
 - `--poll-interval-sec` (default, and production floor, 20) — how often the two live queries run.

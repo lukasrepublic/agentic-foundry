@@ -101,6 +101,14 @@ programme's atoms unattended.
    with nothing to do invents work to look busy, and a fabricated task in a governance programme is
    worse than an idle tick.
 
+### Branch and worktree discipline
+
+Every dispatched atom's worktree/branch shape, PR target, and delete-after-merge timing are one
+self-contained block, authored once at `context/branch-discipline.md` — cited here, never copied.
+Read it before landing an atom's PR: it is what decides whether the target is `main` or the
+release's `release/<version>` integration branch (`/foundry:merge-when-green` refuses the wrong
+one), and when the worktree/branches are safe to delete.
+
 ### Landing, and what counts as evidence
 
 Land on the **forge's own affirmative success conclusion for the head commit** and on nothing else —

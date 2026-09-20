@@ -12,7 +12,15 @@ all -- rather than handing an agent a bare `gh pr merge` to retry by hand, sleep
 guess each time.
 
     foundry-merge-when-green.py <pr> [--timeout-min N] [--squash] [--poll-interval-sec N]
-                                      [--no-checks-grace-min N] [--watch]
+                                      [--no-checks-grace-min N] [--watch] [--release <id>]
+
+`--release <id>` (branch-and-worktree-discipline, AC-BWD-5, v1.16.0; optional -- omitting it is
+byte-identical to every prior release's behavior): before polling, refuses (exit 3, `blocked`) when
+release `<id>`'s manifest names an `integration_branch` and this PR's real base (`gh pr view <pr>
+--json baseRefName`) is literally `main` instead of it -- the atom-PR-targets-the-release-branch
+rule (`context/branch-discipline.md`, rule 3). `remediation` is `gh pr edit <pr> --base
+<integration_branch>`. A hotfix PR (base anything other than `main`) is never refused here; nor is
+a release with no `integration_branch` at all.
 
 Exit codes: 0 merged, 3 blocked (a failing check, a `skipped`/`neutral`/`cancelled` check
 conclusion -- each TERMINAL, never treated as "still waiting" since none becomes `pass` on its
@@ -150,6 +158,47 @@ def gh_pr_merge(pr: int) -> subprocess.CompletedProcess:
     plain shape `hooks/foundry-git-discipline.sh`'s clause already admits on a checks-green
     query (AC-MWG-4)."""
     return _run_gh(["pr", "merge", str(pr), "--squash"])
+
+
+def gh_pr_base_ref(pr: int) -> str | None:
+    """`gh pr view <pr> --json baseRefName` -- the PR's REAL base branch (branch-and-worktree-
+    discipline, AC-BWD-5). Returns None (never raises) when the query fails/is unreadable, same
+    discipline as `gh_pr_view` above."""
+    view = gh_pr_view(pr, "baseRefName")
+    val = view.get("baseRefName")
+    return val if isinstance(val, str) else None
+
+
+def integration_branch_base_refusal(pr: int, release_id: str, *, project_dir=None) -> dict | None:
+    """AC-BWD-5: refuses (returns a `blocked` result dict) when the release manifest named by
+    `release_id` carries an `integration_branch` AND the PR's real base is `main` instead of it --
+    the structured `blocked` shape, reusing `_result` so the caller's own printing/exit-code
+    plumbing is unchanged. Returns None (no refusal -- proceed to the normal poll loop) when
+    `release_id` is falsy, the manifest carries no `integration_branch`, or the PR's base is
+    already that integration branch (or anything other than literal `main` -- a `hotfix/<id>` ->
+    `main` PR, the ONE stated exception in `context/branch-discipline.md`, is never refused here).
+    Any release-loader error (a malformed/missing manifest) is swallowed -- this is an ADDITIVE
+    guard, never a new way for merge-when-green to hard-fail on an unrelated release problem."""
+    if not release_id:
+        return None
+    try:
+        import foundry_release  # sibling module, same scripts/ directory
+        release = foundry_release.load_release(release_id, project_dir=project_dir)
+    except Exception:
+        return None
+    integration_branch = getattr(release, "integration_branch", None)
+    if not integration_branch:
+        return None
+    base_ref = gh_pr_base_ref(pr)
+    if base_ref != "main":
+        return None
+    return _result(
+        "blocked", pr, [],
+        reason=(f"PR #{pr}'s base is 'main' but release {release_id!r} names "
+                f"integration_branch {integration_branch!r} -- atom PRs target the release "
+                "branch, not main (context/branch-discipline.md, rule 3)"),
+        remediation=f"gh pr edit {pr} --base {integration_branch}",
+    )
 
 
 def gh_workflows() -> list | None:
@@ -331,7 +380,17 @@ def main(argv=None) -> int:
     ap.add_argument("--no-checks-grace-min", type=float, default=_DEFAULT_NO_CHECKS_GRACE_MIN)
     ap.add_argument("--watch", action="store_true",
                     help="print one line per observed state change; arm a native Monitor on it")
+    ap.add_argument("--release", default=None,
+                    help="(AC-BWD-5) a release id whose manifest's optional `integration_branch` "
+                         "is enforced: refuses BEFORE polling if this PR's base is `main` instead "
+                         "of it. Omit to skip the check entirely (unchanged prior behavior).")
     args = ap.parse_args(argv)
+
+    if args.release:
+        refusal = integration_branch_base_refusal(args.pr, args.release)
+        if refusal is not None:
+            _emit(refusal)
+            return 3
 
     doc, exit_code = run(
         args.pr, timeout_min=args.timeout_min, poll_interval_sec=args.poll_interval_sec,
