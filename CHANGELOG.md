@@ -61,6 +61,9 @@ met, not that a teammate said so. Nothing here relaxes a gate; two of them gain 
   failed; the R2 primitive treated both as a failed query and refused on its first poll. Found by the first R3
   merge; the E2E stub had exited 0 while pending.
 
+Packages: `create-agentic-workspace@0.14.0` and `update-agentic-workspace@0.1.7` ship the R3 floor rows (the
+upgrader reconciles an existing workspace's floor; the scaffold writes it).
+
 Security disposition: `floor-hooks` carried a mandatory security review (Block + seven Risks in round 1, all
 closed at auth_seq 2); every other atom is charter-lane with a fresh-context code review and one re-verify round.
 
