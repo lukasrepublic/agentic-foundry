@@ -8,6 +8,25 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.15.1 — 2026-09-20
+
+### The upgrader retires what the floor retired (ER #199, #200)
+
+Found by the v1.15.0 fresh-install pass, not by the self-host suite. `create-agentic-workspace` and
+`update-agentic-workspace` carry the fix.
+
+- **The floor reconcile removes rows the shipped floor no longer carries** (ER #199; `cli/src/floorReconcile.mjs`).
+  A row is the floor's own only when it has exactly the shape the floor writes for a plugin script; such a row
+  whose script the floor no longer names is removed from `allow`/`ask` and reported as `[retired]`. A row of
+  any other shape, and every `deny` row, is never touched. The four fleet scripts deleted in v1.15.0 no longer
+  keep grants in an upgraded workspace.
+- **The done_when backfill scans every product** (ER #200; `scripts/foundry-done-when-backfill.py`) —
+  `specs/features/**`, not only the self-host product.
+
+Packages: `create-agentic-workspace@0.15.1` and `update-agentic-workspace@0.1.9`.
+
+Security disposition: charter-lane, fresh-context code review; the retirement rule narrows grants, never widens.
+
 ## v1.15.0 — 2026-09-20
 
 ### Certify and shed (autonomy-continuation R4 — the programme's close)
