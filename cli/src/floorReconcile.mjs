@@ -7,9 +7,15 @@
 // handbooks are missing the entire floor as a result.
 //
 // This module converges the target's `permissions` block by ADDING the rules the classifier named.
-// Nothing is removed, nothing is reordered. The desired state is the shipped constant, the current
-// state is what the classifier reads, and the write is the delta — recomputed every run, which is
-// why no ledger is needed and why a second run is silent.
+// Nothing is reordered. The desired state is the shipped constant, the current state is what the
+// classifier reads, and the write is the delta — recomputed every run, which is why no ledger is
+// needed and why a second run is silent.
+//
+// AC-FRR-1 (ER #199, floor-retires-rows) adds the ONE narrow exception: a row shaped exactly like
+// the floor's own root-glob rows, whose script name(+sub) the shipped map no longer declares, is
+// removed from `allow`/`ask` — see `planRetirements`/`applyRetirements` below. Nothing else about
+// the additive design above changes: an adopter-authored row of any other shape still survives
+// forever, and `deny` is never touched by either side.
 //
 // THE WRITE IS THIS CLI'S FIRST TO A PATH THAT ALREADY EXISTS, and every anti-clobber control in
 // the codebase is structurally unavailable to it. `applyPlan` opens O_EXCL, create-only, refusing
@@ -23,9 +29,10 @@
 //     rather than its letter.
 // One mechanism answers all three: confinement join + LINK-LEVEL stat + temp-in-.claude + rename.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { confinedJoin, RefusalError } from './util.mjs';
-import { buildSettings } from './permissionFloor.mjs';
+import { buildSettings, classifyDrift } from './permissionFloor.mjs';
 
 /** The drift classes whose findings name a rule this module may ADD. Everything else the
  * classifier can emit is report-only: blanket-allow, ask-shadowed, ask-shadowed-ceremony and
@@ -157,6 +164,115 @@ export function planAdditions({ findings, map, settingsObj, pins }) {
   return { additions, total, pin, withheldAllow, blanket, pinsVersion: pins.plugin_version };
 }
 
+// ── AC-FRR-1/-2 (floor-retires-rows, ER #199). ───────────────────────────────────────────────────
+//
+// The reconcile above only ever ADDS: every pre-existing rule survives forever, even the ones the
+// shipped floor itself no longer declares. Concretely: v1.15.0 deleted four fleet scripts (#196)
+// and dropped their four `allow` rows from cli/permission-floor.json, and every workspace scaffolded
+// or reconciled at an earlier version keeps those four `allow` rules with nothing to remove them —
+// a script with the same name landing later would silently inherit a grant nobody re-authorized.
+//
+// Retirement is deliberately NARROWER than the addition side's classifyDrift/covers() fold: it
+// compares a row's LITERAL text against the floor's OWN `plugin_root_glob` text (never resolved
+// against a real filesystem path, never folded across `~`/`$HOME`/an interpreter word), because the
+// question here is "did the FLOOR ITSELF write this exact shape", not "does some broader rule cover
+// the reach this map entry names". A row of any other shape — a different prefix, a hand-authored
+// rule naming the same script through a bare path, a `deny` row — is never a retirement candidate
+// (AC-FRR-2): only a row shaped exactly like the ones `buildSettings`/the reconcile itself would
+// write is the floor's own to take back.
+
+const ROOT_SHAPE_NAME_RE = '[A-Za-z0-9_.-]+';
+
+/** Escape every regex metacharacter in `glob`, INCLUDING `*` — the floor's own glob text is matched
+ * LITERALLY here (an actual `*` character in the permission rule's text), never expanded against a
+ * filesystem. Sibling of foldRegexFromGlob in permissionFloor.mjs, which instead treats `*` as a
+ * wildcard for the addition-side coverage fold; the two escape functions look alike and answer two
+ * different questions on purpose. */
+function escapeLiteral(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Build the regex that recognizes the floor's own row shape over ITS OWN `plugin_root_glob`:
+ * `Bash(<plugin_root_glob>/scripts/<name>[ <sub>]:*)`. Derived from the map's own glob text, never
+ * a second hardcoded copy of it — the same one-source-of-truth reasoning foldRegexFromGlob already
+ * documents for the addition side. */
+function floorRootShapeRe(pluginRootGlob) {
+  return new RegExp(`^Bash\\(${escapeLiteral(pluginRootGlob)}/scripts/(${ROOT_SHAPE_NAME_RE})(?: (.+))?:\\*\\)$`);
+}
+
+/** Parse `rule` against the floor's own root-glob shape (the same shape `buildSettings` writes).
+ * Returns `{ name, sub }` (`sub` is `null` for a bare `<name>:*` row) when `rule` is of exactly this
+ * shape, `null` for any other shape at all — including the map's own bare, non-`:*` exception
+ * (`foundry-doctor.py)` with no trailing marker) and every adopter-authored rule that merely NAMES a
+ * plugin script through a different prefix or with no plugin-root glob (AC-FRR-2). Exported for the
+ * differential/fixture tests that need to assert the shape gate directly. */
+export function parseFloorRootShape(rule, pluginRootGlob) {
+  if (typeof pluginRootGlob !== 'string' || pluginRootGlob === '') return null;
+  const m = floorRootShapeRe(pluginRootGlob).exec(rule);
+  if (!m) return null;
+  return { name: m[1], sub: m[2] ?? null };
+}
+
+/** A collision-free key for the `(name, sub)` pair — `JSON.stringify` of a 2-tuple rather than a
+ * string concatenation with a hand-picked separator, which a `sub` containing that exact separator
+ * (an unlikely but not-impossible flag value) could otherwise fold into a DIFFERENT pair's key. */
+function rootNameKey(parsed) {
+  return JSON.stringify([parsed.name, parsed.sub]);
+}
+
+/** The (name, sub) pairs the SHIPPED map itself declares, each parsed through the exact same shape
+ * matcher used to recognize a target row — never a second, hand-written enumeration of script
+ * names, which is precisely how the two could drift apart. A map entry of another shape (there is
+ * none today, but the parser must not silently assume one) contributes nothing here. */
+function shippedRootNames(map) {
+  const set = new Set();
+  for (const e of map.entries) {
+    const parsed = parseFloorRootShape(e.rule, map.plugin_root_glob);
+    if (parsed) set.add(rootNameKey(parsed));
+  }
+  return set;
+}
+
+/** Compute the rows the reconcile SHALL remove (AC-FRR-1), WITHOUT touching the filesystem. Every
+ * `allow`/`ask` row shaped exactly like the floor's own root-glob rows, whose `(name, sub)` pair the
+ * shipped map no longer declares, is queued for removal. `deny` is never a candidate (AC-FRR-2) —
+ * retirement only narrows a grant or a prompt, and a deny row read back as "extra" is, if anything,
+ * a reason to leave it exactly where the operator (or an earlier release) put it. Returns
+ * `{ retirements: { allow: [...], ask: [...] }, total }`. */
+export function planRetirements({ settingsObj, map }) {
+  const shipped = shippedRootNames(map);
+  const retirements = { allow: [], ask: [] };
+  const perms = (settingsObj && settingsObj.permissions) || {};
+  for (const tier of ['allow', 'ask']) {
+    for (const rule of perms[tier] || []) {
+      const parsed = parseFloorRootShape(rule, map.plugin_root_glob);
+      if (!parsed) continue; // not the floor's own shape at all -> never touched (AC-FRR-2)
+      if (!shipped.has(rootNameKey(parsed))) retirements[tier].push(rule);
+    }
+  }
+  const total = retirements.allow.length + retirements.ask.length;
+  return { retirements, total };
+}
+
+/** Apply a retirement plan to a parsed settings object, returning a NEW object. Pure — no I/O.
+ * Removes exactly the named rows from `allow`/`ask`, preserving every surviving rule's text and
+ * relative order; `deny` and every other top-level key pass through untouched. Composed with
+ * `applyAdditions` at the call site — the two touch disjoint rule sets by construction (a row
+ * cannot simultaneously be absent-from-target-and-in-the-map, which is what `applyAdditions` adds,
+ * and present-in-target-and-absent-from-the-map, which is what this removes). */
+export function applyRetirements(settingsObj, retirementPlan) {
+  const next = { ...settingsObj };
+  const perms = { ...(settingsObj.permissions || {}) };
+  for (const tier of ['allow', 'ask']) {
+    const toRemove = new Set(retirementPlan.retirements[tier]);
+    if (toRemove.size === 0) continue;
+    const existing = Array.isArray(perms[tier]) ? perms[tier] : [];
+    perms[tier] = existing.filter((rule) => !toRemove.has(rule));
+  }
+  next.permissions = perms;
+  return next;
+}
+
 /** Apply a plan to a parsed settings object, returning a NEW object. Pure — no I/O.
  *
  * Additive by construction: every pre-existing rule keeps its text, its tier and its position
@@ -184,6 +300,39 @@ export function applyAdditions(settingsObj, plan, { map, pins }) {
     };
   }
   return next;
+}
+
+// ── AC-FRR-1 review round 1: additions MUST be planned against the POST-retirement rule set ────
+//
+// Computing `planAdditions` over the raw (pre-retirement) tracked rules is a real, one-cycle
+// defect, not a hypothetical: the addition side's `covers()` is a PREFIX fold — a `:*`-suffixed
+// effective rule covers every narrower reach beneath it — so a bare `Bash(<glob>/scripts/foo:*)`
+// row a workspace still carries covers BOTH `Bash(<glob>/scripts/foo --a:*)` and
+// `Bash(<glob>/scripts/foo --b:*)` map entries a map restructure might split it into. Planned in
+// that order, a SINGLE reconcile pass would retire the bare row (its exact `(foo, null)` pair is
+// no longer in the shipped map) while adding NEITHER split row (the pre-retirement classification
+// still sees the bare row "covering" them) — the grant for that script is gone until a SECOND run
+// notices the split rows are now genuinely absent. `planReconcile` closes the gap by re-deriving
+// the tracked rules from the ALREADY-RETIRED settings object before classifying what to add, so
+// the two sides compose into one correct delta in one pass. This is the ONLY entry point either
+// call site (run.mjs's `--existing` path, update.mjs's Phase 4) should use from here on — never
+// `planAdditions`/`planRetirements` called separately against the same raw settingsObj.
+
+/** Compute both plans, correctly composed: retirement first, additions against the resulting
+ * (post-retirement) rule set. Returns `{ additionsPlan, retirementPlan }`; `additionsPlan.settingsObj`
+ * is the POST-retirement object — the one `applyAdditions` must be called against, so the caller
+ * never needs to call `applyRetirements` a second time on top of it. */
+export function planReconcile({
+  settingsObj, map, pins, pluginRootExpansion = [], unreadableOrigins = [], home = os.homedir(),
+}) {
+  const retirementPlan = planRetirements({ settingsObj, map });
+  const postRetirementSettingsObj = applyRetirements(settingsObj, retirementPlan);
+  const findings = classifyDrift(map, readTrackedRules(postRetirementSettingsObj), {
+    pluginRootExpansion, unreadableOrigins, home,
+  });
+  const additionsPlan = planAdditions({ findings, map, settingsObj: postRetirementSettingsObj, pins });
+  additionsPlan.settingsObj = postRetirementSettingsObj;
+  return { additionsPlan, retirementPlan };
 }
 
 /** Resolve the target settings path, refusing anything that is not a regular file inside the root.
@@ -246,17 +395,32 @@ export function writeTargetAtomically(targetPath, obj) {
 
 /** Render the plan for the operator: every rule that would be added, with its tier, plus the
  * per-tier counts and any qualifier. Used for both the dry-run report and the post-write one, so
- * the two cannot describe the same plan differently. */
-export function renderPlan(plan, { applied }) {
+ * the two cannot describe the same plan differently.
+ *
+ * AC-FRR-1: when `retirementPlan` is supplied (both call sites in this codebase always supply
+ * one), every row it names prints as `[retired] <row>` — same tag whether this is a dry-run
+ * preview or a just-applied report, because the row itself does not become "more retired" for
+ * having actually been removed — and the summary line gains `N added, M retired, K unchanged` in
+ * the SAME line as the existing per-tier addition counts, never a second, separately-findable
+ * report. `K unchanged` is the shipped floor's own row count minus what this run added — the rows
+ * that needed no action at all, additions and retirements both being actions. */
+export function renderPlan(plan, { applied, retirementPlan = null, mapEntryCount = null }) {
   const lines = [];
   const verb = applied ? 'added' : 'would add';
   for (const tier of ['allow', 'ask', 'deny']) {
     for (const rule of plan.additions[tier]) lines.push(`  [${tier}] ${rule}`);
   }
-  lines.push(
-    `permission-floor reconcile: ${verb} ` +
-      ['allow', 'ask', 'deny'].map((t) => `${t}=${plan.additions[t].length}`).join(', '),
-  );
+  if (retirementPlan) {
+    for (const tier of ['allow', 'ask']) {
+      for (const rule of retirementPlan.retirements[tier]) lines.push(`  [retired] ${rule}`);
+    }
+  }
+  let summary = `permission-floor reconcile: ${verb} ` +
+      ['allow', 'ask', 'deny'].map((t) => `${t}=${plan.additions[t].length}`).join(', ');
+  if (retirementPlan && typeof mapEntryCount === 'number') {
+    summary += ` — ${plan.total} added, ${retirementPlan.total} retired, ${mapEntryCount - plan.total} unchanged`;
+  }
+  lines.push(summary);
   if (plan.pin.state === 'absent') {
     lines.push(`  + marketplace pin added — the bundled allow rules are wildcarded across the plugin cache and are bounded only by it`);
   } else if (plan.pin.state === 'pinned') {

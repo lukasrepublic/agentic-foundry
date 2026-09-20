@@ -259,14 +259,43 @@ def test_cli_dry_run_lists_every_skipped_no_test_surface_contract_by_name(tmp_pa
     assert rel in r.stdout
 
 
-def test_cli_dry_run_never_touches_a_contract_outside_specs_features_foundry(tmp_path):
-    outside = os.path.join(tmp_path, "specs", "features", "handbook", "z")
-    os.makedirs(outside, exist_ok=True)
-    with open(os.path.join(outside, "acceptance-contract.yaml"), "w", encoding="utf-8") as fh:
+def test_cli_dry_run_scans_a_second_products_contracts_too(tmp_path):
+    """AC-FRR-3 (ER #200): the scan is `specs/features/**`, every product — not `foundry` alone.
+    Before this atom, `specs/features/foundry/**/acceptance-contract.yaml` reported
+    `0 contract(s) scanned` for a workspace whose contracts lived under `specs/features/handbook/**`,
+    which this asserts is no longer true."""
+    second_product = os.path.join(tmp_path, "specs", "features", "handbook", "z")
+    os.makedirs(second_product, exist_ok=True)
+    with open(os.path.join(second_product, "acceptance-contract.yaml"), "w", encoding="utf-8") as fh:
         fh.write(CONTRACT_NO_DONE_WHEN)
     ws = _fixture_workspace(tmp_path)
     r = _run_cli("--dry-run", str(ws))
-    assert "handbook" not in r.stdout
+    assert r.returncode == 0, r.stderr
+    rel = os.path.join("specs", "features", "handbook", "z", "acceptance-contract.yaml")
+    assert rel in r.stdout, f"the second product's contract was never scanned:\n{r.stdout}"
+    assert f"BACKFILL {rel}" in r.stdout
+    # 3 from _fixture_workspace (foundry) + 1 from the second product (handbook)
+    assert "4 contract(s) scanned: 2 to backfill, 1 already declared, 1 skipped" in r.stdout
+
+
+def test_cli_apply_writes_a_second_products_backfill_contract(tmp_path):
+    """AC-FRR-4: --apply's write path is exercised over the second product too, not only --dry-run's
+    report path."""
+    second_product_dir = os.path.join(tmp_path, "specs", "features", "handbook", "z")
+    os.makedirs(second_product_dir, exist_ok=True)
+    second_product_path = os.path.join(second_product_dir, "acceptance-contract.yaml")
+    with open(second_product_path, "w", encoding="utf-8") as fh:
+        fh.write(CONTRACT_NO_DONE_WHEN)
+    ws = _fixture_workspace(tmp_path)
+
+    r = _run_cli("--apply", str(ws))
+    assert r.returncode == 0, r.stderr
+
+    with open(second_product_path, encoding="utf-8") as fh:
+        text = fh.read()
+    assert "done_when:" in text
+    doc = yaml.safe_load(text)
+    assert doc["done_when"] == ["test:tests/test_bar.py", "test:tests/test_foo.py"]
 
 
 def test_cli_requires_exactly_one_of_dry_run_or_apply():
