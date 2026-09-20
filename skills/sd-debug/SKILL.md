@@ -123,14 +123,11 @@ outcome**, not a failure of the skill.
   itself** (the test is right and the code cannot satisfy it as specified). The correct move
   is back to `/foundry:intake` / re-authorize — **not** editing the code to game the test.
 
-**Structured escalation hand-off** — present to the operator, at minimum:
-
-- the **repro** — the exact failing command + observed output;
-- the **hypotheses tried + their outcomes** — what you changed each iteration and what happened;
-- the **current best diagnosis** — your best root-cause assessment;
-- the **blocking reason** — which escalation trigger fired.
-
-On escalation the agent **STOPS editing** and hands off; the trusted operator takes over.
+**Structured escalation hand-off** — present it as a blocker per the shared blocker schema
+(`schema/blocker.schema.json`, feat-foundry-blocker-requires-evidence, AC-BRE-1/-2): `claim` (your
+best root-cause diagnosis), `evidence[]` (the repro + observed output), `attempted[]` (the
+hypotheses tried and their outcomes), `why_operator` (which escalation trigger fired, from the
+closed set). The agent **STOPS editing** and hands off; the trusted operator takes over.
 
 ## Honesty floor — this skill DECLARES a process; it does not verify debugging happened
 

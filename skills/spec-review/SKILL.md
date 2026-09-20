@@ -259,7 +259,9 @@ the mechanical freeze (spec + contract hash binding), now finding the row record
   retired engine's `requirement-quality` phase.
 - **Recording `--verdict plateau-clean` over a genuinely unresolved Block/Risk finding.** The
   ledger row is evidence the review actually happened AND concluded clean — a review that halts
-  with a real blocker needs the operator's judgment (escalate, don't launder the row).
+  with a real blocker needs the operator's judgment: escalate it per the shared blocker schema
+  (`schema/blocker.schema.json`, feat-foundry-blocker-requires-evidence — `claim`, `evidence[]`,
+  `attempted[]`, `why_operator`), don't launder the row.
 - **Reaching for `--skip-audit-reason` as the routine path.** That flag is the operator-only
   exception (an atom that skipped review outright); the normal path is the evidence row this
   Phase records, which `find_audit` reads exactly like a deep-spec-audit row always satisfied it.
