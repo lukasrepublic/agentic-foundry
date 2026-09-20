@@ -1,5 +1,5 @@
 {
-  "//": "Foundry hook wiring. Hooks are ADDITIVE with the consuming repo's .claude/hooks (both fire; dedup by command string). All commands resolve sibling scripts via ${CLAUDE_PLUGIN_ROOT}. There is no merge-gate PreToolUse hook and no PR-create provenance-marker hook; the merge-gate/provenance-chain stack they wired to does not ship. TaskCreated/TaskCompleted are direct-invoked (exec-bit + shebang), matching every OTHER command entry here (review round 1 item 3 considered an explicit python3 prefix; rejected — scripts/foundry-doctor.py's check_hooks/_hook_command_scripts resolves a command's SCRIPT as its first whitespace token, with no interpreter-prefix awareness, and the doctor is a frozen probe outside this atom's contract scope, so a python3 prefix would make the doctor itself report the two hooks as a missing script). tests/test_floor_hooks.py::test_hooks_json_commands_resolve_to_executable_scripts asserts both scripts stay X_OK so a lost exec bit is caught by CI rather than silently exiting 126/127 (neither of which is exit 2 — non-blocking).",
+  "//": "TeammateIdle (an observer, exit 0 always) is wired the same direct-invoked way. Foundry hook wiring. Hooks are ADDITIVE with the consuming repo's .claude/hooks (both fire; dedup by command string). All commands resolve sibling scripts via ${CLAUDE_PLUGIN_ROOT}. There is no merge-gate PreToolUse hook and no PR-create provenance-marker hook; the merge-gate/provenance-chain stack they wired to does not ship. TaskCreated/TaskCompleted are direct-invoked (exec-bit + shebang), matching every OTHER command entry here (review round 1 item 3 considered an explicit python3 prefix; rejected — scripts/foundry-doctor.py's check_hooks/_hook_command_scripts resolves a command's SCRIPT as its first whitespace token, with no interpreter-prefix awareness, and the doctor is a frozen probe outside this atom's contract scope, so a python3 prefix would make the doctor itself report the two hooks as a missing script). tests/test_floor_hooks.py::test_hooks_json_commands_resolve_to_executable_scripts asserts both scripts stay X_OK so a lost exec bit is caught by CI rather than silently exiting 126/127 (neither of which is exit 2 — non-blocking).",
   "hooks": {
     "PreToolUse": [
       {
@@ -133,6 +133,16 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/foundry-task-completed.py"
+          }
+        ]
+      }
+    ],
+    "TeammateIdle": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/foundry-teammate-idle.py"
           }
         ]
       }

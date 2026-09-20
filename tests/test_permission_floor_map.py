@@ -197,14 +197,18 @@ def commanded_basenames(tree_root):
                     found |= _command_position_basenames(block)
     hooks_dir = os.path.join(tree_root, "hooks")
     if os.path.isdir(hooks_dir):
-        for dirpath, _dirnames, filenames in os.walk(hooks_dir):
+        for dirpath, dirnames, filenames in os.walk(hooks_dir):
+            # A test that imports a hook as a module leaves hooks/__pycache__/*.pyc behind; bytecode
+            # is not prose and is not UTF-8 (teammate-idle-continue, PR #191: the walker crashed on
+            # byte 0xf3). Skip cache dirs and tolerate any undecodable file the same way as unreadable.
+            dirnames[:] = [d for d in dirnames if d != "__pycache__"]
             for fn in filenames:
                 path = os.path.join(dirpath, fn)
-                if not os.path.isfile(path):
+                if not os.path.isfile(path) or fn.endswith((".pyc", ".pyo")):
                     continue
                 try:
                     text = open(path, encoding="utf-8").read()
-                except OSError:
+                except (OSError, UnicodeDecodeError):
                     continue
                 found |= _command_position_basenames(text)
     return found
