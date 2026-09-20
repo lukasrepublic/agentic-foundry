@@ -8,6 +8,44 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.15.0 — 2026-09-20
+
+### Certify and shed (autonomy-continuation R4 — the programme's close)
+
+Three atoms. The programme that started at v1.11.0 is certified by measurement rather than by claims, the
+native eval harness becomes the plugin's own certify path, and every mechanism an earlier wave replaced is
+deleted with the replacement named. Nothing here relaxes a gate.
+
+- **Certify by re-measure** (#194; `scripts/foundry-autonomy-instrument.py`, `context/autonomy-thresholds.yaml`).
+  The instrument classifies every assistant turn end as human-resumed, harness-resumed (task-notification,
+  cross-session message, wakeup or hook) or session-end, and computes silent-yield over human-resumed ends
+  only; `--certify` compares the programme's ratios against shipped thresholds (a workspace copy overrides)
+  and prints `CERTIFY-PASS` or `CERTIFY-OPEN` naming every miss, exit 0 either way. Fixing this exposed a
+  bug in the instrument itself: an extended-thinking turn is written as several transcript records sharing
+  one message id, and the old per-record check made every thinking-only fragment a phantom stop. Every
+  earlier mining number was an upper bound; the corrected pre-window baseline is recorded with the release.
+- **Plugin eval suite** (#195; `evals/`, `docs/how-to/plugin-evals.md`). Six `claude plugin eval` cases, one
+  per measured failure — keep going, blocker with evidence, merge with the primitive and never sleep, refuse
+  the un-authorized claim, lint the outgoing message, read the programme state first — with deterministic
+  graders (content regex, tool use, tool order) and a no-plugin baseline arm. A shape test validates every
+  frontmatter key and grader type against the primary doc without running the eval; the eval itself bills
+  and is the operator's run. The regex engine is JavaScript: flags are letters, never inline groups.
+- **Deletions, each citing its replacement** (#196; one commit per deletion). The four fleet-session scripts and
+  their test are gone (the fleet is a view over `ListAgents` since R3); the doctor's drift-only permission-floor
+  probe is gone (the preflight line since R2; six probes now); the dispatch skill's retired run-metrics notice
+  is gone (the instrument since R1); four skills' escalation prose collapses to one sentence pointing at the
+  blocker schema (R1); the ready set renders under an advisory header in a team session (the task list is the
+  queue since R3). Two new read-only reporters: `foundry-done-when-backfill.py` derives a contract's `done_when`
+  from its `test:` checkpoints (`--dry-run` allow, `--apply` ask; the trailer is never touched) and
+  `foundry-governance-budget.py` counts skill prose, scripts, floor rows, hook commands and tests — the
+  before/after table ships in `docs/GOVERNANCE-BUDGET.md`.
+
+Packages: `create-agentic-workspace@0.15.0` and `update-agentic-workspace@0.1.8` carry the new floor rows and
+retire the fleet roster rows (the upgrader's reconcile removes them from an existing workspace).
+
+Security disposition: no security-flagged atom this wave; every atom is charter-lane with a fresh-context code
+review and re-verify rounds (certify-by-remeasure took three).
+
 ## v1.14.0 — 2026-09-19
 
 ### Native swarm substrate (autonomy-continuation R3)
