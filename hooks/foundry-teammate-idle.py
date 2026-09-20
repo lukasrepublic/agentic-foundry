@@ -139,8 +139,9 @@ def post_idle_message(text: str, *, socket_path=None, token=None, timeout: float
     if not sock_path:
         return False, "CLAUDE_CODE_MESSAGING_SOCKET is not set"
     tok = token if token is not None else os.environ.get("CLAUDE_CODE_MESSAGING_TOKEN")
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock = None
     try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)  # inside the try: never raises (review)
         sock.settimeout(timeout)
         sock.connect(sock_path)
         if tok:
@@ -152,7 +153,8 @@ def post_idle_message(text: str, *, socket_path=None, token=None, timeout: float
         return False, f"socket unwritable: {e}"
     finally:
         try:
-            sock.close()
+            if sock is not None:
+                sock.close()
         except OSError:
             pass
     return True, None
