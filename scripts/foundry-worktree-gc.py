@@ -19,13 +19,17 @@ Classification is a PURE function of three git-plumbing primitives, each invoked
     base)? The primary, offline signal.
   * `git worktree list --porcelain` -- every linked worktree + the branch it has checked out.
 
-`gh pr list --head <branch> --state merged|open --json number` is a SECONDARY, best-effort signal
-(AC-BWD-2's own text: "...or whose PR is MERGED per `gh pr list --state merged --head`") for the
-case a squash/rebase merge left the branch tip NOT a literal ancestor of `origin/main` even though
-its content landed -- and for telling `open-pr` apart from `unmerged-no-pr` when ancestry alone
-says "not merged". `gh` unavailable/erroring never raises; it only means these two finer classes
-degrade toward the conservative `unmerged-no-pr` (never toward `merged` -- a missing `gh` can never
-manufacture a false-positive deletion candidate).
+`gh pr list --head <branch> --state merged|open --json number,headRefOid` is a SECONDARY,
+best-effort signal (AC-BWD-2's own text: "...or whose PR is MERGED per `gh pr list --state merged
+--head`") for the case a squash/rebase merge left the branch tip NOT a literal ancestor of
+`origin/main` even though its content landed -- and for telling `open-pr` apart from
+`unmerged-no-pr` when ancestry alone says "not merged". A row only counts when its `headRefOid`
+equals the branch's OWN current tip (round-2 review finding 1): a branch NAME is not unique over a
+repo's history (this repo reuses `release/*-repin`, `fix/*`, `docs/*`), so a stale `merged` PR
+record for a REUSED name must never make a later, genuinely-unmerged push at that same name look
+merged. `gh` unavailable/erroring/tip-mismatched never raises; it only means these two finer
+classes degrade toward the conservative `unmerged-no-pr` (never toward `merged` -- a missing or
+stale `gh` signal can never manufacture a false-positive deletion candidate).
 
 Four classes, every candidate branch gets exactly one:
   * `protected`       -- the repo's default branch (`main`, by convention) or any name passed via
@@ -38,9 +42,11 @@ Four classes, every candidate branch gets exactly one:
 
 `--dry-run` (the default -- passing neither flag, or `--dry-run` explicitly, behaves identically)
 NEVER deletes anything; it only classifies and prints the JSON summary. `--apply` deletes ONLY the
-`merged` class: the linked worktree (`git worktree remove`), the local branch (`git branch -D`),
-and the remote branch (`git push origin --delete <branch>`) -- each a separate argv-list
-subprocess call, each independently best-effort (one failure does not abort the others).
+`merged` class: the linked worktree (`git worktree remove`), the local branch (`git branch -d`
+FIRST -- git's own fast-forward/merged check, falling back to `-D` ONLY on that refusal, narrated
+in the `force_deleted` field of the JSON summary -- see `apply_deletions`' own docstring), and the
+remote branch (`git push origin --delete <branch>`) -- each a separate argv-list subprocess call,
+each independently best-effort (one failure does not abort the others).
 
 Refusals (both modes, fail-closed before any classification runs):
   * `--repo` resolves outside the operator's home directory (`os.path.expanduser("~")`) -- this is
@@ -49,9 +55,12 @@ Refusals (both modes, fail-closed before any classification runs):
   * the repo's working tree is dirty (`git status --porcelain` reports anything) -- a worktree
     mid-edit is never GC'd out from under an operator.
 
-Usage:
-    foundry-worktree-gc.py --repo <dir> --dry-run     # default-safe; prints the classification
-    foundry-worktree-gc.py --repo <dir> --apply       # deletes the `merged` class only
+Usage (round-2 review finding 3: `--dry-run`/`--apply` FIRST, always -- the permission-floor rows
+that tier this script are argv PREFIX rules, `...foundry-worktree-gc.py --dry-run:*` /
+`...--apply:*`, which only match when the mode flag is the first argument; `--repo` trailing is
+what every rule, doc example, and test in this repo now uses):
+    foundry-worktree-gc.py --dry-run --repo <dir>     # default-safe; prints the classification
+    foundry-worktree-gc.py --apply --repo <dir>       # deletes the `merged` class only
 
 Exit codes: 0 on a completed run (dry-run OR apply, regardless of how many branches classify into
 each bucket -- an empty `merged` set is not a failure). 1 on a refusal (bad `--repo`, dirty tree).
@@ -203,23 +212,34 @@ def is_ancestor(repo, sha, base):
 # ----------------------------------------------------------------------------------------------- #
 
 
-def gh_pr_state(branch):
-    """Returns "merged" | "open" | None. Two separate literal calls -- `gh pr list --head
-    <branch> --state merged --json number` then (only if that found nothing) `--state open` --
-    mirroring AC-BWD-2's own literal text so a test can assert on the exact argv shape. `gh`
-    missing/erroring/timing out on EITHER call degrades to None (never raises, never guesses
-    `merged`)."""
+def gh_pr_info(branch, tip_sha):
+    """Returns {"state": "merged"|"open", "number": <int|None>} or None. Two separate literal
+    calls -- `gh pr list --head <branch> --state merged --json number,headRefOid` then (only if
+    that found no TIP-MATCHING row) `--state open` -- mirroring AC-BWD-2's own literal text so a
+    test can assert on the exact argv shape.
+
+    Round-2 review finding 1: a branch NAME is not unique over a repo's history (this repo reuses
+    `release/*-repin`, `fix/*`, `docs/*`) -- a `merged` PR record for a name that was later reused
+    for new, unmerged commits would otherwise make THIS run's unmerged tip look merged and hand
+    `--apply` a false-positive deletion candidate. So a row only counts when its `headRefOid`
+    equals `tip_sha`, the branch's OWN current tip -- a stale merged-PR record for a reused name
+    is filtered out and the loop falls through to the next state/None, never to a false `merged`.
+    `gh` missing/erroring/timing out on EITHER call, or every row's `headRefOid` mismatching,
+    degrades to None (never raises, never guesses)."""
     for state in ("merged", "open"):
-        p = _run(["gh", "pr", "list", "--head", branch, "--state", state, "--json", "number"],
-                  timeout=_GH_TIMEOUT_SEC)
+        p = _run(["gh", "pr", "list", "--head", branch, "--state", state,
+                  "--json", "number,headRefOid"], timeout=_GH_TIMEOUT_SEC)
         if p.returncode != 0 or not (p.stdout or "").strip():
             continue
         try:
             rows = json.loads(p.stdout)
         except json.JSONDecodeError:
             continue
-        if isinstance(rows, list) and rows:
-            return state
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if isinstance(row, dict) and row.get("headRefOid") == tip_sha:
+                return {"state": state, "number": row.get("number")}
     return None
 
 
@@ -267,9 +287,10 @@ def classify_repo(repo, *, protected_names=None, use_gh=True, base=None):
         l, r = local.get(name), remote.get(name)
         primary = l or r
         ancestor_merged = is_ancestor(repo, primary["sha"], base)
-        pr_state = None
+        pr_info = None
         if use_gh and name not in protected and not ancestor_merged:
-            pr_state = gh_pr_state(name)
+            pr_info = gh_pr_info(name, primary["sha"])
+        pr_state = pr_info["state"] if pr_info else None
         cls = classify_branch(name, protected_names=protected, ancestor_merged=ancestor_merged,
                               pr_state=pr_state)
         rows.append({
@@ -280,6 +301,9 @@ def classify_repo(repo, *, protected_names=None, use_gh=True, base=None):
             "worktree": wt_by_branch.get(name),
             "committerdate": primary["committerdate"],
             "age_days": _age_days(primary["committerdate"]),
+            # set only when `cls == "merged"` was decided via the gh/headRefOid fallback (never
+            # via ancestry) -- apply_deletions' -d->-D fallback narrates this PR number.
+            "pr_number": pr_info["number"] if (pr_info and pr_info["state"] == "merged") else None,
         })
     return rows, worktrees
 
@@ -315,8 +339,19 @@ def apply_deletions(repo, rows):
     """Deletes ONLY rows classified `merged`: the linked worktree (if any), the local branch (if
     any), the remote branch (if any) -- three independent best-effort argv-list subprocess calls
     per row; one failing never aborts the others or the loop. NEVER called under --dry-run (the
-    caller only invokes this when args.apply is set)."""
-    removed_worktrees, deleted_local, deleted_remote = [], [], []
+    caller only invokes this when args.apply is set).
+
+    Round-2 review finding 2: the local branch delete is `git branch -d` FIRST -- git's own
+    fast-forward/merged check, a second line of defense this script's own classification does not
+    get to skip. A `-d` refusal is expected and SAFE for a squash/rebase-merged branch (its tip is
+    genuinely not an ancestor even though its content landed, which is exactly why `classify_branch`
+    accepted the gh/headRefOid-verified `merged` class for it in the first place) -- ONLY THEN does
+    this fall back to `-D` (force), and the record narrates why: `force_deleted` carries one
+    {"name", "reason"} entry naming the verified PR number when the row's own `pr_number` is set
+    (the gh/headRefOid path), or "ancestry-verified" otherwise (defensive; `-d` should never
+    actually refuse an ancestor-merged branch, but the fallback is unconditional so a git edge case
+    is still narrated rather than silently forced)."""
+    removed_worktrees, deleted_local, deleted_remote, force_deleted = [], [], [], []
     for row in rows:
         if row["class"] != "merged":
             continue
@@ -326,14 +361,21 @@ def apply_deletions(repo, rows):
             if p.returncode == 0:
                 removed_worktrees.append(wt)
         if row["local"]:
-            p = _git(repo, "branch", "-D", row["name"])
+            p = _git(repo, "branch", "-d", row["name"])
             if p.returncode == 0:
                 deleted_local.append(row["name"])
+            else:
+                p2 = _git(repo, "branch", "-D", row["name"])
+                if p2.returncode == 0:
+                    deleted_local.append(row["name"])
+                    reason = (f"squash-merged, PR #{row['pr_number']} verified by headRefOid"
+                              if row.get("pr_number") else "squash-merged, ancestry-verified")
+                    force_deleted.append({"name": row["name"], "reason": reason})
         if row["remote"]:
             p = _git(repo, "push", "origin", "--delete", row["name"])
             if p.returncode == 0:
                 deleted_remote.append(row["name"])
-    return removed_worktrees, deleted_local, deleted_remote
+    return removed_worktrees, deleted_local, deleted_remote, force_deleted
 
 
 # ----------------------------------------------------------------------------------------------- #
@@ -367,9 +409,9 @@ def main(argv=None):
 
     rows, _worktrees = classify_repo(repo, protected_names=args.protected, use_gh=not args.no_gh)
 
-    removed_worktrees, deleted_local, deleted_remote = [], [], []
+    removed_worktrees, deleted_local, deleted_remote, force_deleted = [], [], [], []
     if args.apply:
-        removed_worktrees, deleted_local, deleted_remote = apply_deletions(repo, rows)
+        removed_worktrees, deleted_local, deleted_remote, force_deleted = apply_deletions(repo, rows)
 
     counts = Counter(r["class"] for r in rows)
     doc = {
@@ -381,6 +423,7 @@ def main(argv=None):
         "removed_worktrees": removed_worktrees,
         "deleted_local_branches": deleted_local,
         "deleted_remote_branches": deleted_remote,
+        "force_deleted": force_deleted,
     }
     print(json.dumps(doc, indent=2))
     return 0

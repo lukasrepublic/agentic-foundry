@@ -26,8 +26,10 @@ single release, plus one permanent deadlock where no check ever reported at all.
 1. **Run the CLI directly for a short wait**, or **arm a native `Monitor` in `--watch` mode** for
    anything that might outlast a single turn:
    ```bash
-   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-merge-when-green.py" <pr> --watch
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-merge-when-green.py" <pr> --release <id> --watch
    ```
+   `--release <id>` is auto-derived (the single active release's own manifest) when omitted, but
+   name it explicitly when you already know it.
    `--watch` prints one JSON line per observed state change (`status: "waiting"` for every
    non-terminal poll) and exits on the terminal line (`merged`/`blocked`/`escalate`) — arm a
    `Monitor` on the running process rather than sleeping and re-invoking it; each stdout line is
@@ -59,9 +61,14 @@ single release, plus one permanent deadlock where no check ever reported at all.
   release manifest's `integration_branch` (`context/branch-discipline.md`, rule 3): if release
   `<id>`'s manifest names one AND this PR's real base (`gh pr view <pr> --json baseRefName`) is
   literally `main` instead of it, refuses BEFORE polling — `blocked` (exit 3), `remediation: "gh pr
-  edit <pr> --base <integration_branch>"`. Omitting `--release` is byte-identical to the prior
-  behavior (no such check runs at all). Never refuses a hotfix PR (any base other than `main`), and
-  never refuses when the named release carries no `integration_branch`. **Retargeting re-pins the
+  edit <pr> --base <integration_branch>"`. **Auto-derived when omitted** (round-2 review finding
+  4): the SINGLE `.foundry/releases/*/release.yaml` manifest whose `state == "active"` AND whose
+  `integration_branch` is set — so the autonomous callers above, which never pass `--release`
+  explicitly in their own LANDING guidance, still get the refusal. Zero or more than one active
+  candidate is not a refusal, just a derivation miss (one line to stderr saying why, never onto
+  the one-JSON-line-on-stdout contract). Pass `--release` explicitly to override the derivation or
+  resolve an ambiguity. Never refuses a hotfix PR (any base other than `main`), and never refuses
+  when the named/derived release carries no `integration_branch`. **Retargeting re-pins the
   `btb-gates` security-review label** (recorded here, not a new AC): `security-reviewed:<head12>-
   <base8>`'s `base8` is derived from the base ref name itself
   (`.github/workflows/btb-gates-base.yml`), so a PR moved from `main` onto `release/<version>`

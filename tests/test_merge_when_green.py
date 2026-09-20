@@ -307,11 +307,11 @@ def test_other_exit_or_no_rows_is_still_a_query_failure(tmp_path):
 # names an `integration_branch`.
 
 
-def _write_release_manifest(project_dir, rel_id, *, integration_branch=None):
+def _write_release_manifest(project_dir, rel_id, *, integration_branch=None, state="backlog"):
     rel_dir = os.path.join(project_dir, ".foundry", "releases", rel_id)
     os.makedirs(rel_dir, exist_ok=True)
     doc = {
-        "id": rel_id, "description": "d", "state": "backlog",
+        "id": rel_id, "description": "d", "state": state,
         "atoms": [{"id": "a1", "spec_ref": "specs/a1.md", "contract_ref": "specs/a1.yaml",
                   "depends_on": []}],
     }
@@ -380,9 +380,11 @@ def test_hotfix_base_is_never_refused_even_with_an_integration_branch(tmp_path):
     assert _last_json_line(p.stdout)["status"] == "merged"
 
 
-def test_no_release_flag_is_byte_identical_to_prior_behavior(tmp_path):
-    # the historical, pre-AC-BWD-5 shape -- no --release at all -- must be entirely unaffected,
-    # even against a project dir carrying a release with an integration_branch and a main-based PR.
+def test_no_release_flag_and_no_active_release_candidate_never_refuses(tmp_path):
+    # a NON-active (backlog) release carrying an integration_branch is not a derivation candidate
+    # (round-2 review finding 4's own scoping: `state == "active"` only) -- omitting --release here
+    # still merges normally, though the derivation code path DOES run (see the auto-derivation
+    # tests below for the case where it actually fires).
     _write_release_manifest(str(tmp_path), "r-bwd5", integration_branch="release/1.16.0")
     p = _run_mwg(
         tmp_path, 59, "--timeout-min", "1",
@@ -401,6 +403,78 @@ def test_unresolvable_release_id_degrades_to_no_refusal_never_a_new_hard_failure
         tmp_path, 60, "--release", "does-not-exist-xyz", "--timeout-min", "1",
         GH_STUB_VIEW_JSON=json.dumps({
             "baseRefName": "main", "mergeStateStatus": "CLEAN", "mergeCommit": {"oid": "v"},
+        }),
+        GH_STUB_CHECKS_OUTPUT="check-a\tpass\t1s\turl",
+        CLAUDE_PROJECT_DIR=str(tmp_path),
+    )
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert _last_json_line(p.stdout)["status"] == "merged"
+
+
+# -------------------------------------------------------------------------------------- finding 4
+# round-2 review: --release auto-derived when omitted, from the SINGLE active release manifest
+# carrying an integration_branch -- so the autonomous callers (no --release in their examples)
+# still get the AC-BWD-5 refusal.
+
+
+def test_release_flag_omitted_auto_derives_the_single_active_release_and_refuses(tmp_path):
+    _write_release_manifest(str(tmp_path), "r-active", integration_branch="release/1.16.0",
+                            state="active")
+    p = _run_mwg(
+        tmp_path, 61, "--timeout-min", "1",
+        GH_STUB_VIEW_JSON=json.dumps({"baseRefName": "main"}),
+        CLAUDE_PROJECT_DIR=str(tmp_path),
+    )
+    assert p.returncode == 3, p.stdout + p.stderr
+    doc = _last_json_line(p.stdout)
+    assert doc["status"] == "blocked"
+    assert "r-active" in doc["reason"]
+    assert doc["remediation"] == "gh pr edit 61 --base release/1.16.0"
+
+
+def test_ambiguous_active_releases_skip_derivation_no_refusal(tmp_path):
+    _write_release_manifest(str(tmp_path), "r-active-a", integration_branch="release/1.16.0",
+                            state="active")
+    _write_release_manifest(str(tmp_path), "r-active-b", integration_branch="release/2.0.0",
+                            state="active")
+    p = _run_mwg(
+        tmp_path, 62, "--timeout-min", "1",
+        GH_STUB_VIEW_JSON=json.dumps({
+            "baseRefName": "main", "mergeStateStatus": "CLEAN", "mergeCommit": {"oid": "amb"},
+        }),
+        GH_STUB_CHECKS_OUTPUT="check-a\tpass\t1s\turl",
+        CLAUDE_PROJECT_DIR=str(tmp_path),
+    )
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert _last_json_line(p.stdout)["status"] == "merged"
+    assert "ambiguous" in p.stderr
+
+
+def test_explicit_release_flag_overrides_the_derivation(tmp_path):
+    # two active releases would be ambiguous for derivation, but an EXPLICIT --release always wins
+    # and is never subject to the ambiguity check.
+    _write_release_manifest(str(tmp_path), "r-active-a", integration_branch="release/1.16.0",
+                            state="active")
+    _write_release_manifest(str(tmp_path), "r-active-b", integration_branch="release/2.0.0",
+                            state="active")
+    p = _run_mwg(
+        tmp_path, 63, "--release", "r-active-a", "--timeout-min", "1",
+        GH_STUB_VIEW_JSON=json.dumps({"baseRefName": "main"}),
+        CLAUDE_PROJECT_DIR=str(tmp_path),
+    )
+    assert p.returncode == 3, p.stdout + p.stderr
+    doc = _last_json_line(p.stdout)
+    assert doc["status"] == "blocked"
+    assert doc["remediation"] == "gh pr edit 63 --base release/1.16.0"
+
+
+def test_auto_derived_release_never_refuses_a_hotfix_pr(tmp_path):
+    _write_release_manifest(str(tmp_path), "r-active", integration_branch="release/1.16.0",
+                            state="active")
+    p = _run_mwg(
+        tmp_path, 64, "--timeout-min", "1",
+        GH_STUB_VIEW_JSON=json.dumps({
+            "baseRefName": "hotfix/urgent", "mergeStateStatus": "CLEAN", "mergeCommit": {"oid": "h"},
         }),
         GH_STUB_CHECKS_OUTPUT="check-a\tpass\t1s\turl",
         CLAUDE_PROJECT_DIR=str(tmp_path),

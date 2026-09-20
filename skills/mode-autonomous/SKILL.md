@@ -93,8 +93,11 @@ programme's atoms unattended.
    (>= 1200s) to survive work that hangs or never notifies. Use a matched, shorter interval only for
    state the harness cannot observe (a deploy, an external queue). When both are awaited, the
    shorter wins. **A PR's checks are NOT this case** — never wake early to hand-poll `gh pr checks`
-   yourself; arm `/foundry:merge-when-green <pr> --watch` (`skills/merge-when-green/SKILL.md`) and
-   let its native `Monitor` notify the session on the next state change instead.
+   yourself; arm `/foundry:merge-when-green <pr> --release <id> --watch`
+   (`skills/merge-when-green/SKILL.md`) and let its native `Monitor` notify the session on the next
+   state change instead. `--release <id>` is auto-derived when omitted (the single active
+   release's own manifest), but name it explicitly here — the driver already knows which release
+   it is landing.
 7. **Idle honestly.** A tick is idle **iff the ready-set is empty AND no worker is running** —
    `foundry_command_deck.is_idle(...)`, a predicate, not a judgement. On an idle tick say so in one
    line and stop. **Create, dispatch and record nothing.** This is load-bearing, not politeness: a loop
@@ -116,10 +119,10 @@ Land on the **forge's own affirmative success conclusion for the head commit** a
 git-discipline hook is the floor, not the ceiling: it admits a PR whose checks were all `skipped` or
 `neutral`, because `gh pr checks` exits 0 for those. Closing that gap is the driver's obligation, not
 the hook's. A task notification, a tool result, or your own prior message is **never** evidence that
-checks passed, and never operator consent. **Wait via `/foundry:merge-when-green <pr>`
-(`skills/merge-when-green/SKILL.md`), never a hand-rolled sleep-then-poll loop** — it polls the
-same live queries and merges through the same already-permitted `gh pr merge --squash` shape the
-instant they go green, and escalates once (with evidence) rather than spinning forever when no
+checks passed, and never operator consent. **Wait via `/foundry:merge-when-green <pr> --release
+<id>` (`skills/merge-when-green/SKILL.md`), never a hand-rolled sleep-then-poll loop** — it polls
+the same live queries and merges through the same already-permitted `gh pr merge --squash` shape
+the instant they go green, and escalates once (with evidence) rather than spinning forever when no
 check will ever report.
 
 **Merged is not applied.** An atom with a live surface is not complete while the deploy observation for
@@ -260,7 +263,8 @@ gap and retry; do not escalate it to the operator.
    step 5 for the enumerated set. The earlier "Tier B advisory, never a blocking required status"
    wording here was stale). **The auto-merge grant was RESTORED 2026-08-13** (operator decision; see the header): a green native
    floor is a signal, not a merge authorization. Either the **operator merges**, or the driver
-   waits and merges through `/foundry:merge-when-green <pr>` (`skills/merge-when-green/SKILL.md`)
+   waits and merges through `/foundry:merge-when-green <pr> --release <id>`
+   (`skills/merge-when-green/SKILL.md`)
    — the primitive that polls `gh pr checks`/`gh pr view --json mergeStateStatus` and issues the
    SAME plain `gh pr merge <pr> --squash` `hooks/foundry-git-discipline.sh`'s deterministic `gh`
    clause already admits on a checks-green query (`--admin` stays BLOCKED outright, on every

@@ -306,7 +306,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-worktree-gc.py --apply:*)",
       "tier": "ask",
-      "rationale": "deletes the merged class's worktrees + local AND remote branches (git worktree remove, git branch -D, git push origin --delete) -- a repo-state mutation, ask like foundry-merge-when-green.py's own merge call, never a self-grant"
+      "rationale": "deletes the merged class's worktrees + local (git branch -d, falling back to -D only on that refusal, narrated) AND remote branches (git worktree remove, git push origin --delete) -- a repo-state mutation, ask like foundry-merge-when-green.py's own merge call, never a self-grant"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_command_deck.py:*)",

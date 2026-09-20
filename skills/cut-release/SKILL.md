@@ -369,8 +369,9 @@ lands in the cut-release playbook specifically — for the plugin's own repo AND
   observed failure).
 - **After the tag exists** on the resulting `main` commit, the release branch itself is deleted —
   the same "delete after `origin` contains the merge, never before" rule as any atom branch. Run
-  `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-worktree-gc.py" --repo <dir> --dry-run` first,
-  then `--apply` to sweep every already-merged atom/release branch and its worktree in one pass
+  `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-worktree-gc.py" --dry-run --repo <dir>` first
+  (mode flag BEFORE `--repo` — the permission-floor row is an argv prefix rule), then `--apply
+  --repo <dir>` to sweep every already-merged atom/release branch and its worktree in one pass
   (see `context/branch-discipline.md`'s own recipe).
 - A **hotfix** never uses a release branch at all: `hotfix/<id>` → `main` directly, stated in the
   hotfix PR's own body.

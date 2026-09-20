@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -190,6 +191,10 @@ def _run_gc(work_dir, home, *extra_args, **stub_vars):
     return subprocess.run(args, capture_output=True, text=True, timeout=60, env=env)
 
 
+def _tip_sha(work, branch):
+    return _run_git(work, "rev-parse", branch).stdout.strip()
+
+
 @pytest.fixture()
 def fixture_repo(tmp_path):
     home = tmp_path / "home"
@@ -200,7 +205,8 @@ def fixture_repo(tmp_path):
 
 def test_dry_run_classifies_all_four_fixture_classes(fixture_repo):
     work, home = fixture_repo
-    by_branch = json.dumps({"atom/open-one": {"open": [{"number": 7}]}})
+    open_tip = _tip_sha(work, "atom/open-one")
+    by_branch = json.dumps({"atom/open-one": {"open": [{"number": 7, "headRefOid": open_tip}]}})
     p = _run_gc(work, home, "--dry-run", GH_STUB_PR_LIST_BY_BRANCH=by_branch)
     assert p.returncode == 0, p.stdout + p.stderr
     doc = json.loads(p.stdout)
@@ -242,7 +248,8 @@ def test_dry_run_never_deletes_anything(fixture_repo):
 
 def test_apply_deletes_only_the_merged_class(fixture_repo):
     work, home = fixture_repo
-    by_branch = json.dumps({"atom/open-one": {"open": [{"number": 7}]}})
+    open_tip = _tip_sha(work, "atom/open-one")
+    by_branch = json.dumps({"atom/open-one": {"open": [{"number": 7, "headRefOid": open_tip}]}})
     p = _run_gc(work, home, "--apply", GH_STUB_PR_LIST_BY_BRANCH=by_branch)
     assert p.returncode == 0, p.stdout + p.stderr
     doc = json.loads(p.stdout)
@@ -250,6 +257,9 @@ def test_apply_deletes_only_the_merged_class(fixture_repo):
     assert doc["deleted_local_branches"] == ["atom/merged-one"]
     assert doc["deleted_remote_branches"] == ["atom/merged-one"]
     assert any("wt-merged" in w for w in doc["removed_worktrees"])
+    # atom/merged-one is a real --no-ff git-ancestor merge -- `git branch -d` succeeds outright,
+    # never needing the -D force fallback (round-2 review finding 2's non-squash control).
+    assert doc["force_deleted"] == []
 
     branches = _run_git(work, "branch", "-a").stdout
     assert "atom/merged-one" not in branches
@@ -344,3 +354,169 @@ def test_doctor_row_renders_outside_the_run_call_registrations(tmp_path):
         text = f.read()
     assert '_run("branches"' not in text
     assert '_render_row("branches"' in text
+
+
+# ================================================================================================ #
+# Round-2 review fixes (PR #205 review round 1)
+# ================================================================================================ #
+# 1. [Block] a stale merged-PR record for a REUSED branch name must never make a later, genuinely
+#    unmerged push at that same name look merged -- gh_pr_info only accepts a row whose headRefOid
+#    equals the branch's OWN current tip.
+# 2. [Risk] `git branch -d` first (git's own merged/ff check, second line of defense); `-D` is a
+#    narrated fallback, ONLY on that refusal.
+# 3. [Risk] the permission-floor rows are argv PREFIX rules -- every documented invocation must put
+#    the mode flag (`--dry-run`/`--apply`) FIRST, or the rule never matches.
+
+
+def _make_squash_fixture_repo(home):
+    """A SEPARATE, minimal fixture (not `_make_fixture_repo`'s four-class repo, so the broad
+    dry-run/counts tests above stay unaffected): `main` plus ONE branch, `atom/squash-one`, whose
+    tip is deliberately NOT an ancestor of `main` (an independent commit lands on `main` instead,
+    simulating a real squash-merge's new, unrelated commit) even though gh will report it as
+    merged via a headRefOid-matched PR. Exercises the `-d` refusal -> `-D` fallback path (finding
+    2) together with the tip-matched gh signal (finding 1)."""
+    home = str(home)
+    bare = os.path.join(home, "squash-origin.git")
+    work = os.path.join(home, "squash-work")
+    env = dict(os.environ)
+    env["HOME"] = home
+    env["GIT_AUTHOR_NAME"] = env["GIT_COMMITTER_NAME"] = "Test"
+    env["GIT_AUTHOR_EMAIL"] = env["GIT_COMMITTER_EMAIL"] = "test@example.com"
+
+    _run_git(home, "init", "--bare", "-q", bare, env=env)
+    _run_git(home, "clone", "-q", bare, work, env=env)
+    _run_git(work, "checkout", "-q", "-b", "main", env=env)
+    with open(os.path.join(work, "README.md"), "w", encoding="utf-8") as f:
+        f.write("init\n")
+    _run_git(work, "add", "README.md", env=env)
+    _run_git(work, "commit", "-q", "-m", "initial", env=env)
+    _run_git(work, "push", "-q", "-u", "origin", "main", env=env)
+    _run_git(work, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main", env=env)
+
+    _run_git(work, "checkout", "-q", "-b", "atom/squash-one", env=env)
+    with open(os.path.join(work, "squash.txt"), "w", encoding="utf-8") as f:
+        f.write("squash\n")
+    _run_git(work, "add", "squash.txt", env=env)
+    _run_git(work, "commit", "-q", "-m", "squash change", env=env)
+    # Deliberately pushed WITHOUT `-u` -- no local upstream tracking. `git branch -d`'s own safety
+    # check accepts "merged into either HEAD or the branch's configured upstream"; WITH upstream
+    # tracking the branch's tip trivially satisfies that against its own remote-tracking ref even
+    # though it is genuinely unmerged into HEAD, and `-d` would silently succeed -- defeating this
+    # fixture's whole point. No upstream tracking makes HEAD (`main`) the only reference point, so
+    # `-d` refuses for real (verified against a live `git` invocation, not asserted from memory).
+    _run_git(work, "push", "-q", "origin", "atom/squash-one", env=env)
+
+    # main advances with an UNRELATED commit -- atom/squash-one's tip is never an ancestor of it,
+    # exactly like a real squash-merge (GitHub writes a brand-new commit onto main).
+    _run_git(work, "checkout", "-q", "main", env=env)
+    with open(os.path.join(work, "unrelated.txt"), "w", encoding="utf-8") as f:
+        f.write("simulated squash-merge landing\n")
+    _run_git(work, "add", "unrelated.txt", env=env)
+    _run_git(work, "commit", "-q", "-m", "squash-merge atom/squash-one (simulated)", env=env)
+    _run_git(work, "push", "-q", "origin", "main", env=env)
+
+    return work
+
+
+@pytest.fixture()
+def squash_fixture_repo(tmp_path):
+    home = tmp_path / "home"
+    home.mkdir()
+    work = _make_squash_fixture_repo(home)
+    return work, home
+
+
+def test_stale_merged_pr_for_a_reused_branch_name_never_counts_as_merged(fixture_repo):
+    # finding 1: a MERGED PR row exists for the branch name, but its headRefOid does NOT match
+    # the branch's current tip (a stale record left behind by an earlier push at the same reused
+    # name) -- must classify unmerged-no-pr, never merged.
+    work, home = fixture_repo
+    by_branch = json.dumps({
+        "atom/open-one": {"merged": [{"number": 41, "headRefOid": "0" * 40}]},
+    })
+    p = _run_gc(work, home, "--dry-run", GH_STUB_PR_LIST_BY_BRANCH=by_branch)
+    assert p.returncode == 0, p.stdout + p.stderr
+    doc = json.loads(p.stdout)
+    rows = {r["name"]: r for r in doc["branches"]}
+    assert rows["atom/open-one"]["class"] == "unmerged-no-pr"
+    assert rows["atom/open-one"]["pr_number"] is None
+
+
+def test_tip_matched_merged_pr_counts_as_merged_even_without_ancestry(squash_fixture_repo):
+    work, home = squash_fixture_repo
+    tip = _tip_sha(work, "atom/squash-one")
+    by_branch = json.dumps({"atom/squash-one": {"merged": [{"number": 99, "headRefOid": tip}]}})
+    p = _run_gc(work, home, "--dry-run", GH_STUB_PR_LIST_BY_BRANCH=by_branch)
+    assert p.returncode == 0, p.stdout + p.stderr
+    doc = json.loads(p.stdout)
+    rows = {r["name"]: r for r in doc["branches"]}
+    assert rows["atom/squash-one"]["class"] == "merged"
+    assert rows["atom/squash-one"]["pr_number"] == 99
+
+
+def test_squash_merged_branch_falls_back_to_force_delete_and_narrates_the_pr(squash_fixture_repo):
+    # finding 2: `git branch -d` refuses (not an ancestor) -> falls back to `-D`, and the record
+    # narrates why, naming the gh/headRefOid-verified PR number.
+    work, home = squash_fixture_repo
+    tip = _tip_sha(work, "atom/squash-one")
+    by_branch = json.dumps({"atom/squash-one": {"merged": [{"number": 99, "headRefOid": tip}]}})
+    # sanity: -d alone really would refuse on this fixture (not an ancestor of main).
+    d_probe = _run_git(work, "branch", "-d", "atom/squash-one", check=False)
+    assert d_probe.returncode != 0, "fixture is not exercising the -d refusal path"
+
+    p = _run_gc(work, home, "--apply", GH_STUB_PR_LIST_BY_BRANCH=by_branch)
+    assert p.returncode == 0, p.stdout + p.stderr
+    doc = json.loads(p.stdout)
+    assert doc["deleted_local_branches"] == ["atom/squash-one"]
+    assert doc["deleted_remote_branches"] == ["atom/squash-one"]
+    assert doc["force_deleted"] == [
+        {"name": "atom/squash-one", "reason": "squash-merged, PR #99 verified by headRefOid"}
+    ]
+    branches = _run_git(work, "branch", "-a").stdout
+    assert "atom/squash-one" not in branches
+
+
+# ------------------------------------------------------------------------------------------------ #
+# finding 3 -- every documented invocation puts the mode flag FIRST, matching the floor rule prefix
+# ------------------------------------------------------------------------------------------------ #
+
+_INVOCATION_RE = re.compile(r'foundry-worktree-gc\.py"?\s+(--[\w-]+)')
+
+_DOCUMENTED_SOURCES = [
+    os.path.join(REPO_ROOT, "scripts", "foundry-worktree-gc.py"),
+    os.path.join(REPO_ROOT, "context", "branch-discipline.md"),
+    os.path.join(REPO_ROOT, "docs", "how-to", "branching-and-cleanup.md"),
+    os.path.join(REPO_ROOT, "skills", "cut-release", "SKILL.md"),
+]
+
+
+def _floor_rule_prefixes():
+    """The two `scripts/foundry-worktree-gc.py` rule bodies from the shipped floor map, each
+    reduced to the argument token right after the script name (e.g. "--dry-run")."""
+    with open(os.path.join(REPO_ROOT, "docs", "permission-floor.json"), encoding="utf-8") as f:
+        doc = json.load(f)
+    tokens = set()
+    for entry in doc["entries"]:
+        m = re.search(r"foundry-worktree-gc\.py (--\S+?):\*\)$", entry["rule"])
+        if m:
+            tokens.add(m.group(1))
+    return tokens
+
+
+def test_documented_invocations_match_the_floor_rules_argv_prefix():
+    floor_tokens = _floor_rule_prefixes()
+    assert floor_tokens == {"--dry-run", "--apply"}, floor_tokens  # sanity: both rows present
+
+    found_any = False
+    for path in _DOCUMENTED_SOURCES:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        for m in _INVOCATION_RE.finditer(text):
+            found_any = True
+            token = m.group(1)
+            assert token in floor_tokens, (
+                f"{path}: documented invocation's first argument is {token!r}, not one of "
+                f"{sorted(floor_tokens)} -- the floor rule is an argv PREFIX and will never match "
+                f"an invocation that puts --repo (or anything else) first"
+            )
+    assert found_any, "no documented foundry-worktree-gc.py invocation found at all -- test is vacuous"

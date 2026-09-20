@@ -60,17 +60,24 @@ accumulation this charter opens with. That script's manual cleanup recipe is now
 worker's worktree+branch inline, mid-session, the instant its PR merges) by the sweep this script
 runs over the whole repo at once:
 
+`--dry-run`/`--apply` come FIRST, always — the permission-floor rows that tier this script are
+argv prefix rules and only match with the mode flag as the first argument:
+
 ```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-worktree-gc.py" --repo <dir> --dry-run   # default-safe
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-worktree-gc.py" --repo <dir> --apply     # deletes the merged class only
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-worktree-gc.py" --dry-run --repo <dir>   # default-safe
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-worktree-gc.py" --apply --repo <dir>     # deletes the merged class only
 ```
 
 It lists every linked worktree and every local/remote branch matching `atom/*`, `release/*`,
 `hotfix/*`, `fix/*`, `feat/*`, `docs/*`, classifies each by real git ancestry against
 `origin/<default-branch>` (`git merge-base --is-ancestor`, falling back to `gh pr list --state
-merged --head <branch>` for a squash/rebase merge whose tip is not a literal ancestor) into
+merged --head <branch>` for a squash/rebase merge whose tip is not a literal ancestor — accepted
+ONLY when the PR's own `headRefOid` equals the branch's current tip, so a stale merged-PR record
+left over from a REUSED branch name can never mark today's unmerged commits as merged) into
 `merged` / `open-pr` / `unmerged-no-pr` / `protected`, and — **only under `--apply`, and only for
-the `merged` class** — removes the worktree and deletes both the local and remote branch.
+the `merged` class** — removes the worktree and deletes both the local branch (`git branch -d`
+first — git's own merged/fast-forward check as a second line of defense; falls back to `-D` ONLY
+on that refusal, narrating why in the run's `force_deleted` field) and the remote branch.
 `unmerged-no-pr` is always listed with its age and NEVER deleted, regardless of how old. `--repo`
 outside the operator's home, or a dirty working tree, is refused outright. Run `--dry-run` first,
 always; `--apply` is `ask`-tiered in the permission floor, same ceremony class as

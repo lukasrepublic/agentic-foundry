@@ -75,23 +75,28 @@ release PR, which is the one merge that actually needs it.
 
 ## The cleanup recipe: `scripts/foundry-worktree-gc.py`
 
+`--dry-run`/`--apply` come FIRST, always — the permission-floor rows that tier this script are
+argv prefix rules and only match with the mode flag as the first argument:
+
 ```bash
 # Always dry-run first -- read-only, prints the classification.
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-worktree-gc.py" --repo /path/to/repo --dry-run
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-worktree-gc.py" --dry-run --repo /path/to/repo
 
 # Only after reviewing the dry-run output: delete the merged class.
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-worktree-gc.py" --repo /path/to/repo --apply
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-worktree-gc.py" --apply --repo /path/to/repo
 ```
 
 It classifies every linked worktree and every local/remote branch matching `atom/*`, `release/*`,
 `hotfix/*`, `fix/*`, `feat/*`, `docs/*` by real git ancestry against `origin/<default-branch>`
 (falling back to `gh pr list --state merged --head <branch>` for a squash/rebase merge whose tip is
-not a literal ancestor) into four classes:
+not a literal ancestor — accepted ONLY when the PR's own `headRefOid` equals the branch's current
+tip, so a stale merged-PR record left over from an earlier, different push at a REUSED branch name
+can never mark today's unmerged commits as merged) into four classes:
 
 | class | meaning | `--apply` deletes it? |
 |---|---|---|
 | `protected` | the default branch (`main`), or a name passed via `--protected` | never |
-| `merged` | contained in the base, or a merged PR reported by `gh` | **yes** — worktree + local + remote branch |
+| `merged` | contained in the base, or a tip-matched merged PR reported by `gh` | **yes** — worktree + local (`-d`, falling back to `-D` only on that refusal) + remote branch |
 | `open-pr` | not merged, but `gh` reports an open PR | never |
 | `unmerged-no-pr` | neither — listed with its age | never, regardless of age |
 
