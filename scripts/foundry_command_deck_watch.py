@@ -224,11 +224,8 @@ def agent_teams_advisory_on(project_dir=None) -> bool:
     # Fallback: the doctor module could not be loaded -- read the SAME shared helper directly.
     try:
         pf = _import_permission_floor()
-        paths = [
-            os.path.join(os.path.expanduser("~"), ".claude", "settings.json"),
-            os.path.join(root, ".claude", "settings.json"),
-            os.path.join(root, ".claude", "settings.local.json"),
-        ]
+        paths = [os.path.join(os.path.expanduser("~"), ".claude", "settings.json")]
+        paths += [os.path.join(root, rel) for rel in pf.SETTINGS_RELATIVE_PATHS]  # one source (review)
         env = pf.load_settings_env(paths)
         return env.get(_AGENT_TEAMS_ENV_KEY) == "1"
     except Exception:

@@ -114,7 +114,10 @@ def _line_count(path: str) -> int:
 
 
 def _rotate_if_needed(path: str, max_lines: int = ROTATION_MAX_LINES) -> None:
-    """AC-RES-2: once `path` has reached `max_lines`, rename it to `_rotated_path(path)`
+    """Accepted race (PR #204 review): two idle events that both observe the live file at the cap can
+    both `os.replace` it — the second rotation clobbers the first's `.1.jsonl` and a few rotated rows
+    are lost. The ledger is advisory nudge bookkeeping, never a gate, and every write here is best
+    effort; a lock is not worth its failure modes in a hook that must always exit 0. AC-RES-2: once `path` has reached `max_lines`, rename it to `_rotated_path(path)`
     (`os.replace` — atomic, and REPLACES an existing older rotation rather than erroring on
     one) so the next append starts a fresh file. This is the hook's only OTHER write besides
     the append itself. Best-effort like `_append_record`: any `OSError` here is swallowed,
