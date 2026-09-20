@@ -41,7 +41,11 @@ socket named by `$CLAUDE_CODE_MESSAGING_SOCKET`. The entire transport lives in O
 Read-only against the corpus except the ONE write this hook makes: an append to
 `.foundry/idle-nudges.jsonl` (never a locator execution, never any other file write, no
 subprocess at all — mirrors feat-foundry-authorization-floor-hooks' security posture,
-adapted for a hook that is a notifier rather than a gate).
+adapted for a hook that is a notifier rather than a gate). AC-RES-2: that ledger rotates at
+`ROTATION_MAX_LINES` (2000) lines — the live file is renamed to `.foundry/idle-nudges.1.jsonl`
+(replacing an older rotation, `os.replace`) and a fresh file starts; the nudge cap counts rows
+across BOTH files, so a rotation never resets a teammate's cap. Rotation is the hook's only
+OTHER write besides the append itself.
 
     echo '{"teammate_name": "worker-a", "task_subject": "atom:<release>/<atom>", \
 "cwd": "/path"}' | foundry-teammate-idle.py
@@ -68,6 +72,10 @@ _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 NUDGE_CAP = 3
 _MESSAGE_TO = "lead"  # see the WIRE-FORMAT ASSUMPTION above — a placeholder recipient tag.
 
+# AC-RES-2: the ledger rotates at this many lines rather than growing unbounded for the lifetime
+# of a long-running workspace. `_rotated_path` names the one-generation-deep backup.
+ROTATION_MAX_LINES = 2000
+
 
 def _import_ffh():
     """Deferred, guarded import — see `hooks/foundry-task-created.py`'s own docstring for
@@ -87,12 +95,49 @@ def default_nudges_path(project_dir: str) -> str:
     return os.path.join(project_dir, ".foundry", "idle-nudges.jsonl")
 
 
+def _rotated_path(path: str) -> str:
+    """The one-generation-deep rotation sibling: `.foundry/idle-nudges.jsonl` ->
+    `.foundry/idle-nudges.1.jsonl` (AC-RES-2)."""
+    base, ext = os.path.splitext(path)
+    return f"{base}.1{ext}"
+
+
+def _line_count(path: str) -> int:
+    """Tolerant of a missing/unreadable file — a soft count, never a gate."""
+    if not os.path.isfile(path):
+        return 0
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return sum(1 for _ in fh)
+    except OSError:
+        return 0
+
+
+def _rotate_if_needed(path: str, max_lines: int = ROTATION_MAX_LINES) -> None:
+    """Accepted race (PR #204 review): two idle events that both observe the live file at the cap can
+    both `os.replace` it — the second rotation clobbers the first's `.1.jsonl` and a few rotated rows
+    are lost. The ledger is advisory nudge bookkeeping, never a gate, and every write here is best
+    effort; a lock is not worth its failure modes in a hook that must always exit 0. AC-RES-2: once `path` has reached `max_lines`, rename it to `_rotated_path(path)`
+    (`os.replace` — atomic, and REPLACES an existing older rotation rather than erroring on
+    one) so the next append starts a fresh file. This is the hook's only OTHER write besides
+    the append itself. Best-effort like `_append_record`: any `OSError` here is swallowed,
+    never surfaced (the hook's contract is ALWAYS exit 0)."""
+    if _line_count(path) < max_lines:
+        return
+    try:
+        os.replace(path, _rotated_path(path))
+    except OSError:
+        pass
+
+
 def _append_record(path: str, record: dict) -> None:
-    """Best-effort append of one JSON line. Swallows any `OSError` (an unwritable ledger
-    directory, a full disk, …) — this hook's contract is ALWAYS exit 0, and a failed
-    RECORD of a failure must never itself become a second, louder failure."""
+    """Best-effort append of one JSON line, rotating first when the ledger has reached its cap
+    (AC-RES-2). Swallows any `OSError` (an unwritable ledger directory, a full disk, …) — this
+    hook's contract is ALWAYS exit 0, and a failed RECORD of a failure must never itself become
+    a second, louder failure."""
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
+        _rotate_if_needed(path)
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, sort_keys=True) + "\n")
     except OSError:
@@ -100,31 +145,33 @@ def _append_record(path: str, record: dict) -> None:
 
 
 def _count_prior_nudges(path: str, release_id: str, atom_id: str) -> int:
-    """How many `idle-unmet` nudges this atom has already had, tolerant of a missing file
-    and of any malformed line in it (skip, never raise — this is a soft read for a cap
-    check, not a gate)."""
-    if not os.path.isfile(path):
-        return 0
+    """How many `idle-unmet` nudges this atom has already had, counted across BOTH the live
+    ledger and its most recent rotation (`_rotated_path`, AC-RES-2 — a rotation must not reset
+    the cap), tolerant of a missing file and of any malformed line in either (skip, never raise
+    — this is a soft read for a cap check, not a gate)."""
     count = 0
-    try:
-        with open(path, encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if (
-                    isinstance(row, dict)
-                    and row.get("type") == "idle-unmet"
-                    and row.get("release_id") == release_id
-                    and row.get("atom_id") == atom_id
-                ):
-                    count += 1
-    except OSError:
-        return count
+    for p in (_rotated_path(path), path):
+        if not os.path.isfile(p):
+            continue
+        try:
+            with open(p, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if (
+                        isinstance(row, dict)
+                        and row.get("type") == "idle-unmet"
+                        and row.get("release_id") == release_id
+                        and row.get("atom_id") == atom_id
+                    ):
+                        count += 1
+        except OSError:
+            continue
     return count
 
 

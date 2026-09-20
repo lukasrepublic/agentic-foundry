@@ -37,6 +37,12 @@ What this probe checks, every run, cheaply:
      ASCENDING-precedence (last-one-present-wins) order, mirroring the platform's own
      user/project/local override resolution. Never RED: flipping the flag is an adopter opt-in,
      never a doctor-enforced default (see `docs/how-to/agent-teams.md`).
+  9. `branches` (branch-and-worktree-discipline, AC-BWD-3): one advisory line, `branches: <n>
+     merged-not-deleted, <m> stale worktrees`, computed by IMPORTING
+     `scripts/foundry-worktree-gc.py`'s own classifier (ancestry-only, `use_gh=False` -- this
+     stays a cheap offline probe, never a live `gh` call) over the session's own project dir.
+     Never RED: reads `n/a (not a git checkout)` when the project dir is not a git repository
+     (see `docs/how-to/branching-and-cleanup.md`).
 
 Fails CLOSED for the operator-invoked check (exit non-zero on any hard failure). The
 --session-start cadence is ADVISORY (exits 0 so it never wedges a session) — the real merge-side
@@ -56,7 +62,6 @@ import importlib.util
 import json
 import os
 import re
-import stat
 import sys
 
 import yaml
@@ -444,9 +449,10 @@ def check_permissions_policy(plugin_root=None, project_dir=None):
 #    AC-ATE-4)
 # --------------------------------------------------------------------------------------- #
 _AGENT_TEAMS_ENV_KEY = "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"
-# Mirrors `foundry_permission_floor._MAX_FILE_BYTES` -- kept as a local literal (not imported)
-# because this probe must still degrade gracefully when that module is absent (see
-# `_settings_candidate_paths` below), and a bare 1 MiB cap needs no cross-module coupling to state.
+# Mirrors `foundry_permission_floor._MAX_FILE_BYTES` -- the actual bounded read (AC-RES-3) is now
+# `foundry_permission_floor.load_settings_env`, so this local literal no longer gates a read of
+# its own; kept as the same 1 MiB value this probe's own tests fixture against, so a test can
+# construct an oversized settings file without importing the shared module's private constant.
 _SETTINGS_MAX_BYTES = 1024 * 1024
 
 
@@ -469,28 +475,42 @@ def _settings_candidate_paths(project_dir, plugin_root):
     return paths
 
 
-def _read_env_block(path):
-    """Bounded, exception-tolerant read of one settings file's top-level `env` object.
+def _load_worktree_gc_module(plugin_root):
+    """Mirrors `_load_capability_preflight_module` above -- a hyphenated filename, loaded by
+    explicit path (never a bare `import`)."""
+    path = os.path.join(plugin_root, "scripts", "foundry-worktree-gc.py")
+    if not os.path.isfile(path):
+        return None
+    spec = importlib.util.spec_from_file_location("foundry_worktree_gc_doctor", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
-    `foundry_permission_floor.load_settings_file` already does this exact stat/size-cap/JSON-parse
-    read for the SAME settings files, but only ever returns the `permissions` block -- `env` is a
-    sibling top-level key that module does not expose, and it is out of this atom's scope to widen
-    (`scripts/foundry_permission_floor.py` is not in `agent-teams-enablement`'s allowed_paths). This
-    mirrors that function's discipline (regular file, <= 1 MiB, UTF-8 JSON, any exception -> empty
-    result) rather than re-parsing permissions itself. NEVER raises."""
+
+def check_branches_advisory(plugin_root=None, project_dir=None):
+    """AC-BWD-3: one advisory line, `branches: <n> merged-not-deleted, <m> stale worktrees`,
+    NEVER RED -- computed by IMPORTING `scripts/foundry-worktree-gc.py`'s own `classify_repo`
+    (never a re-implementation of the git plumbing here). Runs `use_gh=False` deliberately: this
+    is a cheap, offline, every-run probe (the module docstring's own "thin probe" discipline), not
+    a live `gh` query -- an unmerged branch that gh WOULD tell apart as `open-pr` is still counted
+    here as neither `merged-not-deleted` nor a false positive, since ancestry-only classification
+    can only ever UNDER-report `merged` relative to the live gc run, never over-report it.
+
+    `project_dir` defaults to this session's own project dir (mirrors every other probe here);
+    when it is not a git checkout at all (an adopter running doctor from a non-repo directory, or
+    the plugin's own installed cache tree, which is never a checkout), this reads
+    `"n/a (not a git checkout)"` rather than attempting a git call that would only fail."""
+    pdir = project_dir or _project_dir()
     try:
-        st = os.stat(path)
-        if not stat.S_ISREG(st.st_mode) or st.st_size > _SETTINGS_MAX_BYTES:
-            return {}
-        with open(path, "rb") as f:
-            raw = f.read()
-        doc = json.loads(raw.decode("utf-8"))
-        if not isinstance(doc, dict):
-            return {}
-        env = doc.get("env")
-        return env if isinstance(env, dict) else {}
-    except Exception:
-        return {}
+        gc = _load_worktree_gc_module(plugin_root or PLUGIN_ROOT)
+        if gc is None or not gc.is_git_repo(pdir):
+            return True, "n/a (not a git checkout)"
+        rows, _worktrees = gc.classify_repo(pdir, use_gh=False)
+        merged = [r for r in rows if r["class"] == "merged"]
+        stale_worktrees = [r for r in merged if r.get("worktree")]
+        return True, f"{len(merged)} merged-not-deleted, {len(stale_worktrees)} stale worktrees"
+    except Exception as e:  # noqa: BLE001 -- deliberate: AC-BWD-3 must never redden or crash the run
+        return ADVISORY, _sanitize_detail(f"unknown (probe error: {type(e).__name__}: {e})")
 
 
 def check_agent_teams_flag(plugin_root=None, project_dir=None):
@@ -503,16 +523,22 @@ def check_agent_teams_flag(plugin_root=None, project_dir=None):
     `import foundry_permission_floor`, and this probe is called directly from `main()` -- NOT
     through the crash-proof `_run("<name>", ...)` wrapper the `checks` list uses -- so without this
     try/except a broken `foundry_permission_floor.py` would traceback straight out of `main()`,
-    BEFORE the `--session-start` fail-open branch even runs, wedging every session start."""
+    BEFORE the `--session-start` fail-open branch even runs, wedging every session start.
+
+    AC-RES-3: the bounded `env`-block read across the candidate settings files is now
+    `foundry_permission_floor.load_settings_env` (shared with `foundry_command_deck_watch`'s
+    advisory-header gate) rather than a local copy -- when that module is unavailable,
+    `_settings_candidate_paths` already falls back to the two literal project-scoped paths, and
+    an absent `pf` module here simply means the shared reader is never reached; `on` stays `False`
+    (the safe default), matching this function's own NEVER-RED contract."""
     root = plugin_root or PLUGIN_ROOT
     pdir = project_dir or _project_dir()
     try:
-        on = False
-        for path in _settings_candidate_paths(pdir, root):
-            env = _read_env_block(path)
-            val = env.get(_AGENT_TEAMS_ENV_KEY)
-            if val is not None:
-                on = (val == "1")  # last-one-present wins (ascending precedence order above)
+        pf = _load_permission_floor_module(root)
+        if pf is None:
+            return True, "off"
+        env = pf.load_settings_env(_settings_candidate_paths(pdir, root))
+        on = env.get(_AGENT_TEAMS_ENV_KEY) == "1"
         return True, "on (settings env)" if on else "off"
     except Exception as e:  # noqa: BLE001 -- deliberate: AC-ATE-4 must never redden or crash the run
         return ADVISORY, _sanitize_detail(f"unknown (probe error: {type(e).__name__}: {e})")
@@ -603,6 +629,13 @@ def main():
     # RED") without touching docs/QUICKSTART.md, which is outside this atom's allowed_paths.
     at_ok, at_detail = check_agent_teams_flag(project_dir=project_dir)
     _render_row("agent-teams", at_ok, at_detail)
+
+    # `branches` (AC-BWD-3) is rendered the SAME way, for the SAME reason (the agent-teams
+    # precedent this atom follows verbatim): deliberately not a `_run("<name>", ...)` call-site
+    # literal, so it stays outside tests/test_doc_claims.py's doctor-probe-claims bijection
+    # (docs/QUICKSTART.md is outside this atom's allowed_paths).
+    br_ok, br_detail = check_branches_advisory(project_dir=project_dir)
+    _render_row("branches", br_ok, br_detail)
 
     header = "foundry doctor" + (" (session-start advisory)" if args.session_start else "")
     body = header + "\n" + "\n".join(out_lines)

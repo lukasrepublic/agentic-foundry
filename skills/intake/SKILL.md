@@ -69,6 +69,14 @@ downstream pipeline.
    `/foundry:spec-review` (the default single-pass review — see `skills/spec-review/SKILL.md`)
    → contract-author → `/foundry:authorize`. Intake never authorizes, reviews, or implements;
    it produces the charter or the spec.
+7. **Create the release's integration branch — the LAST step, and ONLY when this intake is
+   opening a brand-new release** (branch-and-worktree-discipline, AC-BWD-4, v1.16.0; a no-op for
+   an atom intake into an already-`planned`/`active` release, which already has one). From `main`:
+   `git checkout main && git pull && git checkout -b release/<version> && git push -u origin
+   release/<version>`, then record it in `.foundry/releases/<id>/release.yaml` as
+   `integration_branch: release/<version>` (`scripts/foundry_release.py`'s optional field — see
+   `context/branch-discipline.md`). Every atom this release dispatches then PRs into THIS branch,
+   never `main` (`/foundry:merge-when-green --release <id>` enforces it).
 
 ## Lane routing (the game test)
 

@@ -377,6 +377,8 @@ def test_the_update_package_manifest_has_no_lifecycle_scripts():
                             # pin and own version move together.
         "0.15.1": "0.1.9",  # v1.15.1 -- the reconcile RETIRES rows the floor no longer carries (ER #199); pin and
                             # own version move together.
+        "0.16.0": "0.1.10", # v1.16.0 -- the bundled floor gains the worktree-gc rows; pin and own version move
+                            # together.
     }
     pin = deps["create-agentic-workspace"]
     expected_update_version = CLI_UPDATE_VERSION_BY_PIN.get(pin)
@@ -522,6 +524,8 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         # v1.15.1: the floor reconcile changed (retires rows the shipped floor no longer carries,
         # ER #199) — a patch bump for cli/.
         "1.15.1": "0.15.1",
+        # v1.16.0: the bundled floor gains the worktree-gc rows (dry-run allow, apply ask) — a minor bump.
+        "1.16.0": "0.16.0",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (

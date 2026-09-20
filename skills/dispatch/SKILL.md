@@ -73,7 +73,10 @@ multi-atom fan-out).
      > code-repo evidence artifact you produce (walk-evidence, test/build logs) resolves
      > relative to your OWN worktree root — never `$CLAUDE_PROJECT_DIR`. Do NOT weaken any
      > frozen acceptance-contract checkpoint. Run the live-seam walk (real boot + Chrome
-     > MCP / real seam) against each frozen checkpoint's locator. Cut the PR via
+     > MCP / real seam) against each frozen checkpoint's locator. Follow
+     > `context/branch-discipline.md` — build on `atom/<id>` cut from the release's integration
+     > branch, one push only after your local suite (and doctor) is green, and target the PR at
+     > `release/<version>` (never `main`) whenever the release manifest names one. Cut the PR via
      > `gh pr create`; the merge floor (branch protection / required CI checks, plus
      > `hooks/foundry-git-discipline.sh` within sessions) decides the merge. Return the structured result per the
      > worker return contract below (pointers only), INCLUDING your learning records

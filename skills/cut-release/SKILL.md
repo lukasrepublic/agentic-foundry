@@ -352,6 +352,30 @@ and emits their closes.
   such referenced-but-not-closed ER from the plan before executing; close only the ones the release
   actually shipped. The advisory's OPEN list is your review surface, not an auto-close order.
 
+## Release-branch flow (branch-and-worktree-discipline, AC-BWD-4, v1.16.0)
+
+`context/branch-discipline.md` is the full discipline (cited, never copied); this is where it
+lands in the cut-release playbook specifically — for the plugin's own repo AND for an adopter's.
+
+- `skills/intake/SKILL.md` creates `release/<version>` from `main` as its LAST step and records it
+  in the release manifest as `integration_branch` (`scripts/foundry_release.py`'s optional field).
+- Every atom's own PR targets `release/<version>`, not `main` — `/foundry:merge-when-green`
+  refuses the wrong base when `--release <id>` is passed (`skills/merge-when-green/SKILL.md`).
+- The R / R2 cut-release commits described above land ON `release/<version>`, exactly as before —
+  this playbook's own procedure is unchanged; only the branch they land on moves.
+- **The ONE PR to `main`** is `release/<version>` → `main`, opened once every atom in the release
+  has landed on the release branch and this playbook's `READY` plan is in hand. It is what makes a
+  per-merge deploy trigger fire once per release instead of once per atom (the charter's own
+  observed failure).
+- **After the tag exists** on the resulting `main` commit, the release branch itself is deleted —
+  the same "delete after `origin` contains the merge, never before" rule as any atom branch. Run
+  `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-worktree-gc.py" --dry-run --repo <dir>` first
+  (mode flag BEFORE `--repo` — the permission-floor row is an argv prefix rule), then `--apply
+  --repo <dir>` to sweep every already-merged atom/release branch and its worktree in one pass
+  (see `context/branch-discipline.md`'s own recipe).
+- A **hotfix** never uses a release branch at all: `hotfix/<id>` → `main` directly, stated in the
+  hotfix PR's own body.
+
 ## What it does NOT do
 
 - **It never tags, pushes, or closes issues.** It emits the plan — including the ER-reconciliation

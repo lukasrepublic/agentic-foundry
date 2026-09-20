@@ -12,7 +12,24 @@ all -- rather than handing an agent a bare `gh pr merge` to retry by hand, sleep
 guess each time.
 
     foundry-merge-when-green.py <pr> [--timeout-min N] [--squash] [--poll-interval-sec N]
-                                      [--no-checks-grace-min N] [--watch]
+                                      [--no-checks-grace-min N] [--watch] [--release <id>]
+
+`--release <id>` (branch-and-worktree-discipline, AC-BWD-5, v1.16.0): before polling, refuses (exit
+3, `blocked`) when release `<id>`'s manifest names an `integration_branch` and this PR's real base
+(`gh pr view <pr> --json baseRefName`) is literally `main` instead of it -- the atom-PR-targets-
+the-release-branch rule (`context/branch-discipline.md`, rule 3). `remediation` is `gh pr edit <pr>
+--base <integration_branch>`. A hotfix PR (base anything other than `main`) is never refused here;
+nor is a release with no `integration_branch` at all.
+
+**`--release` is derived automatically when omitted** (round-2 PR-#205 review finding 4: the
+autonomous callers -- `skills/mode-autonomous/SKILL.md`, `skills/command-deck/tick-prompt.template.
+md` -- invoke this CLI with no `--release` at all, which would otherwise make AC-BWD-5 dead code
+for exactly the drivers it exists to cover): `derive_active_release_id` finds the SINGLE
+`.foundry/releases/*/release.yaml` manifest whose `state == "active"` AND whose
+`integration_branch` is set. Zero or more than one candidate is NOT a refusal -- it just means no
+`--release` was derived, and the reason is printed to STDERR only (this CLI's one-JSON-object-on-
+stdout contract is never touched by the derivation itself). Pass `--release <id>` explicitly to
+override the derivation or to disambiguate.
 
 Exit codes: 0 merged, 3 blocked (a failing check, a `skipped`/`neutral`/`cancelled` check
 conclusion -- each TERMINAL, never treated as "still waiting" since none becomes `pass` on its
@@ -55,6 +72,7 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 import time
 from datetime import datetime, timezone
 
@@ -150,6 +168,94 @@ def gh_pr_merge(pr: int) -> subprocess.CompletedProcess:
     plain shape `hooks/foundry-git-discipline.sh`'s clause already admits on a checks-green
     query (AC-MWG-4)."""
     return _run_gh(["pr", "merge", str(pr), "--squash"])
+
+
+def gh_pr_base_ref(pr: int) -> str | None:
+    """`gh pr view <pr> --json baseRefName` -- the PR's REAL base branch (branch-and-worktree-
+    discipline, AC-BWD-5). Returns None (never raises) when the query fails/is unreadable, same
+    discipline as `gh_pr_view` above."""
+    view = gh_pr_view(pr, "baseRefName")
+    val = view.get("baseRefName")
+    return val if isinstance(val, str) else None
+
+
+def integration_branch_base_refusal(pr: int, release_id: str, *, project_dir=None) -> dict | None:
+    """AC-BWD-5: refuses (returns a `blocked` result dict) when the release manifest named by
+    `release_id` carries an `integration_branch` AND the PR's real base is `main` instead of it --
+    the structured `blocked` shape, reusing `_result` so the caller's own printing/exit-code
+    plumbing is unchanged. Returns None (no refusal -- proceed to the normal poll loop) when
+    `release_id` is falsy, the manifest carries no `integration_branch`, or the PR's base is
+    already that integration branch (or anything other than literal `main` -- a `hotfix/<id>` ->
+    `main` PR, the ONE stated exception in `context/branch-discipline.md`, is never refused here).
+    Any release-loader error (a malformed/missing manifest) is swallowed -- this is an ADDITIVE
+    guard, never a new way for merge-when-green to hard-fail on an unrelated release problem."""
+    if not release_id:
+        return None
+    try:
+        foundry_release = _import_foundry_release()
+        release = foundry_release.load_release(release_id, project_dir=project_dir)
+    except Exception:
+        return None
+    integration_branch = getattr(release, "integration_branch", None)
+    if not integration_branch:
+        return None
+    base_ref = gh_pr_base_ref(pr)
+    if base_ref != "main":
+        return None
+    return _result(
+        "blocked", pr, [],
+        reason=(f"PR #{pr}'s base is 'main' but release {release_id!r} names "
+                f"integration_branch {integration_branch!r} -- atom PRs target the release "
+                "branch, not main (context/branch-discipline.md, rule 3)"),
+        remediation=f"gh pr edit {pr} --base {integration_branch}",
+    )
+
+
+def _import_foundry_release():
+    """Sibling import that survives PYTHONSAFEPATH (the cut-release preflight runs the suite with it set,
+    so the script's own directory is NOT on sys.path[0]) — the same explicit insert the other scripts use."""
+    import importlib
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    return importlib.import_module("foundry_release")
+
+
+def derive_active_release_id(project_dir=None) -> tuple[str | None, str | None]:
+    """Round-2 review finding 4: `--release` never fires from the autonomous callers (the
+    mode-autonomous/tick-prompt LANDING guidance call this CLI with no `--release` at all), so the
+    base-branch refusal (AC-BWD-5) silently never runs for them. Derives the release id ITSELF
+    when `--release` is omitted: the SINGLE `.foundry/releases/*/release.yaml` manifest whose
+    `state == "active"` AND whose `integration_branch` is set. Returns `(release_id, None)` on
+    exactly one candidate; `(None, reason)` on zero or more than one -- ambiguity is NOT a refusal,
+    it just means no `--release` could be derived, and `reason` says why (printed to stderr only,
+    never onto the one-JSON-line-on-stdout contract). Any per-manifest load error is skipped, not
+    raised -- a malformed sibling release must never break this derivation for a healthy one."""
+    pd = project_dir or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    releases_dir = os.path.join(pd, ".foundry", "releases")
+    if not os.path.isdir(releases_dir):
+        return None, f"no {releases_dir} directory"
+    try:
+        foundry_release = _import_foundry_release()
+    except Exception as e:
+        return None, f"foundry_release unavailable: {type(e).__name__}: {e}"
+    candidates = []
+    for name in sorted(os.listdir(releases_dir)):
+        manifest = os.path.join(releases_dir, name, "release.yaml")
+        if not os.path.isfile(manifest):
+            continue
+        try:
+            release = foundry_release.load_release(name, project_dir=pd)
+        except Exception:
+            continue  # a malformed sibling manifest is skipped, never raised
+        if release.state == "active" and getattr(release, "integration_branch", None):
+            candidates.append(release.id)
+    if len(candidates) == 1:
+        return candidates[0], None
+    if not candidates:
+        return None, "no active release manifest carries an integration_branch"
+    return None, (f"ambiguous: {len(candidates)} active releases carry an integration_branch "
+                  f"({', '.join(candidates)})")
 
 
 def gh_workflows() -> list | None:
@@ -331,7 +437,28 @@ def main(argv=None) -> int:
     ap.add_argument("--no-checks-grace-min", type=float, default=_DEFAULT_NO_CHECKS_GRACE_MIN)
     ap.add_argument("--watch", action="store_true",
                     help="print one line per observed state change; arm a native Monitor on it")
+    ap.add_argument("--release", default=None,
+                    help="(AC-BWD-5) a release id whose manifest's optional `integration_branch` "
+                         "is enforced: refuses BEFORE polling if this PR's base is `main` instead "
+                         "of it. Omitted by default: the SINGLE active release manifest carrying "
+                         "an integration_branch is derived automatically (round-2 review finding "
+                         "4) -- pass this explicitly only to override that derivation or when "
+                         "more than one active release makes it ambiguous.")
     args = ap.parse_args(argv)
+
+    release_id = args.release
+    if not release_id:
+        release_id, derivation_note = derive_active_release_id()
+        if not release_id and derivation_note:
+            # Never onto stdout -- exactly one JSON object per invocation is this CLI's own
+            # contract, and a derivation miss is not a failure, just an explanation.
+            print(f"merge-when-green: --release not given, no base-branch refusal derived "
+                  f"({derivation_note})", file=sys.stderr)
+    if release_id:
+        refusal = integration_branch_base_refusal(args.pr, release_id)
+        if refusal is not None:
+            _emit(refusal)
+            return 3
 
     doc, exit_code = run(
         args.pr, timeout_min=args.timeout_min, poll_interval_sec=args.poll_interval_sec,
