@@ -371,6 +371,8 @@ def test_the_update_package_manifest_has_no_lifecycle_scripts():
         "0.12.1": "0.1.5",  # v1.12.1 -- template patch; pin and own version move together.
         "0.13.0": "0.1.6",  # v1.13.0 -- the upgrader's Phase 4 gains the gitignore-block convergence; pin and
                             # own version move together.
+        "0.14.0": "0.1.7",  # v1.14.0 -- the bundled floor gains the R3 rows (three allow rows, one library);
+                            # pin and own version move together.
     }
     pin = deps["create-agentic-workspace"]
     expected_update_version = CLI_UPDATE_VERSION_BY_PIN.get(pin)
@@ -507,6 +509,9 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         # v1.13.0: the CLI itself changed (the --existing reconcile converges the managed .gitignore
         # block, ER #177) and the bundled floor gains the R2 rows — a minor bump for cli/.
         "1.13.0": "0.13.0",
+        # v1.14.0: the bundled floor gains the R3 rows (manifest-to-tasklist, routine-wake-prompt,
+        # message_kind allow; floor_hooks library) — a minor bump for cli/.
+        "1.14.0": "0.14.0",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (

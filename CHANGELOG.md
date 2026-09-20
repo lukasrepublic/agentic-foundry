@@ -8,6 +8,62 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.14.0 — 2026-09-19
+
+### Native swarm substrate (autonomy-continuation R3)
+
+Seven atoms plus one fix, one of them security-flagged. The deck stops re-implementing what the platform now
+ships — agent teams, the shared task list, cross-session messages, Routines — and the floor moves inside the
+loop: an atom that is not authorized cannot even be claimed, and "done" means the contract's stop criteria were
+met, not that a teammate said so. Nothing here relaxes a gate; two of them gain an earlier enforcement point.
+
+- **Agent teams are enabled, not assumed** (#185; `docs/how-to/agent-teams.md`, `scripts/foundry-doctor.py`).
+  The doctor renders an advisory `agent-teams: on|off` line from the effective settings' `env` block (user →
+  project → local, bounded reads, never RED, crash-proof — a broken floor module reports `unknown` instead of
+  wedging a session start). The release-wave workflow is proven never to pass `name:` to an `agent(...)` call
+  (a named subagent becomes a teammate), by a structural scan, not a grep. The deck's spawn convention: teams
+  only by explicit request, at least two disjoint-scope atoms, `builder-<atom>` / `reviewer-<atom>`.
+- **The programme state is read first** (#184; `schema/wave-state.schema.json`, `hooks/foundry-compact-reinject.sh`).
+  `state.yaml` gains `next_action`; the tick prompt opens with it; every SessionStart source (not only
+  `compact`) injects a twelve-line-capped summary of each active release's state. Every value is sanitised
+  (`as_data`) and the cap counts physical lines after sanitising, so a manifest cannot render deceptively.
+- **A release manifest projects into the native task list** (#188; `scripts/foundry-manifest-to-tasklist.py`).
+  One `TaskCreate` per atom — subject `atom:<release>/<id>`, `blockedBy` from `depends_on`, manifest order —
+  as a JSON plan that executes nothing; idempotent against a persisted tasks dir; an unauthorized atom is still
+  planned but flagged so the deck reports it under Blockers. In a team session the ready set is advisory.
+- **The fleet is a view over `ListAgents`** (#183; `skills/fleet/SKILL.md`, `scripts/foundry_message_kind.py`).
+  The roster skill shrinks to sixteen lines; the four fleet scripts are marked retiring (R4). Cross-session
+  messages carry a kind on the first line — `FINDING | NEEDS-INTERFACE | CHALLENGE | HANDOFF` (+ `TICK`) —
+  and a lint refuses a FINDING without evidence or a HANDOFF whose JSON block is not the blocker schema's
+  handoff shape. A message is never consent; commands never run.
+- **A Routine wakes the deck; it never is the deck** (#189; `scripts/foundry-routine-wake-prompt.py`,
+  `docs/how-to/routine-wake.md`). The rendered prompt lists agents, finds the deck session by name, sends
+  exactly one `TICK <programme> <UTC-stamp>` with `SendMessage`, and stops; the deck treats an incoming TICK as
+  the tick trigger. The honest limits are stated: a Routine is `-p`-style, cannot spawn teammates, and reaches a
+  local session only while that session is on Remote Control.
+- **The floor moves inside the loop** (#190, security-flagged; `hooks/foundry-task-created.py`,
+  `hooks/foundry-task-completed.py`, `scripts/foundry_floor_hooks.py`). `TaskCreated` (exit 2 blocks) refuses a task whose subject is `atom:<release>/<id>` unless the atom is
+  authorized — a factory contract that re-derives AUTHORIZED or a charter that is committed — and `TaskCompleted`
+  refuses completion unless every declared `done_when` locator has a `met` row in `.foundry/evidence/<atom>.json`
+  newer than the task and not from the future. Both read only, run exactly one bounded `git log` and nothing else,
+  and fail closed on every internal error: exit 1 is unreachable for an atom subject, unparseable or wrong-shaped
+  stdin that names an atom refuses, an `atom:`-prefixed subject that is not the exact form refuses, `session_id`
+  and `cwd` are validated before any path use, and the tasks dir is resolved from both the full session id and
+  the `session-<8>` form the reference documents. The evidence record is a trust-the-builder-but-record-it
+  control; the CI contexts stay the unforgeable half.
+- **An idle teammate is nudged, not stopped** (#191; `hooks/foundry-teammate-idle.py`). `TeammateIdle`'s exit 2 is not honored
+  by the platform, so the hook observes: it resolves the idle teammate's claimed task from the payload, diffs the
+  atom's `done_when` against the evidence record and, when something is unmet and fewer than three nudges were
+  recorded for that atom, appends an `idle-unmet` row to `.foundry/idle-nudges.jsonl` and posts one
+  `IDLE-UNMET <teammate> atom:<id> — unmet: …` line into the session's own inbox socket; the lead sends the one
+  `keep working` message that wakes the teammate, and surfaces a blocker on the third idle. It always exits 0.
+- **merge-when-green trusts gh's exit codes** (#187, ER #186). `gh pr checks` exits 8 while pending and 1 when
+  failed; the R2 primitive treated both as a failed query and refused on its first poll. Found by the first R3
+  merge; the E2E stub had exited 0 while pending.
+
+Security disposition: `floor-hooks` carried a mandatory security review (Block + seven Risks in round 1, all
+closed at auth_seq 2); every other atom is charter-lane with a fresh-context code review and one re-verify round.
+
 ## v1.13.0 — 2026-09-19
 
 ### Gates stop lying (autonomy-continuation R2)
