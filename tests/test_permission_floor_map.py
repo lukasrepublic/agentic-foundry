@@ -11,6 +11,7 @@ trees for the negative controls, which prove the checks are not vacuous.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -562,3 +563,28 @@ def test_doctor_green_regression(tmp_path):
         env=env,
     )
     assert "DOCTOR-GREEN" in result.stdout, f"doctor did not report GREEN:\n{result.stdout}\n{result.stderr}"
+
+
+# --------------------------------------------------------------------------------------------- #
+# R8 -- the merge-base entries digest. RELOCATED here by subtraction-wave (AC-SUB-1c, autonomy-
+# continuation R4) from tests/test_permission_floor_check.py, deleted along with the doctor probe
+# (feat-foundry-doctor-permission-floor-check) that file's own docstring named as its whole
+# subject; this map-entries invariant is orthogonal to that probe and belongs with the map's own
+# test file. tests/test_message_kind.py and tests/test_routine_wake.py each independently re-derive
+# the SAME digest and regex-search THIS file (not the deleted one) for MERGE_BASE_ENTRIES_DIGEST --
+# see their own R8 comments; a re-pin here must land in the same diff as any of the three.
+# --------------------------------------------------------------------------------------------- #
+MERGE_BASE_ENTRIES_DIGEST = "76d07810da18291c7129466f45824f2da84fba3109569e435a7d7c02bcc3555b"
+
+
+def _entries_digest(entries):
+    canon = json.dumps(entries, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(canon.encode("utf-8")).hexdigest()
+
+
+def test_the_map_entries_array_is_unchanged():
+    doc = load_map()
+    assert _entries_digest(doc["entries"]) == MERGE_BASE_ENTRIES_DIGEST, (
+        "docs/permission-floor.json `entries` changed — if this is a legitimate map edit, update "
+        "MERGE_BASE_ENTRIES_DIGEST in the SAME reviewed diff (R8)"
+    )

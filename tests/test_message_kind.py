@@ -252,8 +252,10 @@ def test_drift_corpus_full_floor_cases_carry_the_new_allow_row(case_name):
 
 
 def test_merge_base_entries_digest_matches_docs_permission_floor():
-    """R8's own rule, restated as a test: the digest pinned in test_permission_floor_check.py
-    must match the map this atom shipped, in the SAME diff."""
+    """R8's own rule, restated as a test: the digest pinned in test_permission_floor_map.py
+    must match the map this atom shipped, in the SAME diff. (RELOCATED from the deleted
+    tests/test_permission_floor_check.py by subtraction-wave, AC-SUB-1c, autonomy-continuation
+    R4 — the doctor probe that file tested is gone; the map-entries digest invariant is not.)"""
     import hashlib
 
     perm = load_module("scripts/foundry_permission_floor.py", "foundry_permission_floor")
@@ -264,12 +266,12 @@ def test_merge_base_entries_digest_matches_docs_permission_floor():
     canon = json.dumps(doc["entries"], sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     digest = hashlib.sha256(canon.encode("utf-8")).hexdigest()
 
-    check_src = os.path.join(REPO_ROOT, "tests", "test_permission_floor_check.py")
+    check_src = os.path.join(REPO_ROOT, "tests", "test_permission_floor_map.py")
     with open(check_src, encoding="utf-8") as fh:
         text = fh.read()
     import re as _re
     m = _re.search(r'MERGE_BASE_ENTRIES_DIGEST = "([0-9a-f]+)"', text)
-    assert m, "MERGE_BASE_ENTRIES_DIGEST not found in tests/test_permission_floor_check.py"
+    assert m, "MERGE_BASE_ENTRIES_DIGEST not found in tests/test_permission_floor_map.py"
     assert digest == m.group(1), (
         "docs/permission-floor.json `entries` digest does not match the pinned "
         "MERGE_BASE_ENTRIES_DIGEST — re-pin it in the same diff (R8)"

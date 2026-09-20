@@ -57,9 +57,15 @@ surface_set:
   - 'agents/*.md'
 
 # absent_paths — the AC-SUB-1 set (32 paths, unchanged, not renumbered) PLUS
-# scripts/foundry-branch-protection.sh (Block 2, AC-SCW-6). Every entry SHALL NOT exist in the
-# candidate tree.
+# scripts/foundry-branch-protection.sh (Block 2, AC-SCW-6), PLUS the four fleet-session scripts +
+# their test retired by autonomy-continuation R4's subtraction-wave (AC-SUB-1b, →
+# fleet-is-listagents, R3). Every entry SHALL NOT exist in the candidate tree.
 absent_paths:
+  - scripts/foundry-fleet-roster.py
+  - scripts/foundry-fleet-session-registry.py
+  - scripts/foundry-fleet-session-machinery.py
+  - scripts/foundry-fleet-doctor.py
+  - tests/test_fleet_session_machinery.py
   - scripts/foundry_merge_gate.py
   - scripts/foundry-merge-gate.py
   - scripts/foundry-ci-gate.py

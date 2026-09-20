@@ -25,6 +25,11 @@ deleted system with no independently recorded ground truth in the live tree, or 
 industry citation — neither is "a claim about the shipped tree" (this atom's own displaced
 condition). Every currently-checkable fact those two files repeat (e.g. the 14-AC/8,000-word
 spec-size ceiling) is independently covered via its sibling occurrence in a non-excluded doc.
+docs/GOVERNANCE-BUDGET.md (subtraction-wave, AC-SUB-4) joins them for the SAME reason: its
+"before" column is a point-in-time figure pinned to a specific past commit, never re-derivable
+from the live tree, and its "after" column is exactly as historical the moment the NEXT atom
+merges — a before/after table is definitionally a record of a past measurement, not a standing
+claim about "the tree as it stands right now."
 """
 from __future__ import annotations
 
@@ -88,6 +93,7 @@ EXCLUDED_DOCS = {
     "docs/archive/**": "archived",
     "docs/DESIGN.md": "historical-record",
     "docs/glossary.md": "historical-record",
+    "docs/GOVERNANCE-BUDGET.md": "historical-record",
 }
 
 # Pinned literal expected copy of EXCLUDED_DOCS, hand-synchronized (not derived from it) — a
@@ -96,6 +102,7 @@ EXPECTED_EXCLUSIONS = {
     "docs/archive/**": "archived",
     "docs/DESIGN.md": "historical-record",
     "docs/glossary.md": "historical-record",
+    "docs/GOVERNANCE-BUDGET.md": "historical-record",
 }
 
 CORE_LOOP_VERBS = frozenset(

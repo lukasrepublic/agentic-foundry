@@ -16,7 +16,7 @@ matter on day one, see the `## Start here` table in [README.md](../README.md).
 | Verb | What it produces |
 |---|---|
 | `/foundry:init` | Seeds the operator registry and project config for this repo |
-| `/foundry:doctor` | Runs five structural checks on the wiring — plugin manifest, hooks, skill frontmatter, stack-profile lock, operator registry. Not a merge gate, and green here is not proof the merge floor is sound |
+| `/foundry:doctor` | Runs six structural checks on the wiring — plugin manifest, hooks, skill frontmatter, stack-profile lock, operator registry, control-plane. Not a merge gate, and green here is not proof the merge floor is sound |
 | `/foundry:mode` | Shows which session posture and merge-autonomy mode are active |
 | `/foundry:mode-interactive` | Switches to the zero-ceremony lane: plain Claude Code, no pipeline |
 | `/foundry:mode-autonomous` | Switches to the noninteractive posture for unattended runs |

@@ -414,7 +414,7 @@ def test_untouched_steps_are_byte_identical_to_the_merge_base():
         #
         # The digest turns a DECAYING merge-base comparison into a STANDING one: the same coverage,
         # anchored to a literal instead of to history. Same shape as
-        # tests/test_permission_floor_check.py's MERGE_BASE_ENTRIES_DIGEST, and the same rule — a
+        # tests/test_permission_floor_map.py's MERGE_BASE_ENTRIES_DIGEST, and the same rule — a
         # legitimate edit to any of the nine steps MUST update this literal in the SAME reviewed
         # diff, which is exactly the review moment the check exists to force.
         current_slices = _step_slices(_skill_text())

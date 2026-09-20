@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import json
 import os
+import shutil
 import sys
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -43,6 +45,37 @@ def load_module(relpath, modname=None):
     sys.modules[name] = mod
     spec.loader.exec_module(mod)
     return mod
+
+
+def _functional_plugin_root(base, floor_doc=None, malformed_floor=False):
+    """A LIGHT (not full-repo-copy) plugin tree with everything the doctor's probes need to pass
+    trivially, plus the real scripts/ tree (so foundry_authz / foundry_control_plane /
+    foundry_permission_floor all import), for tests that must drive the doctor CLI end-to-end.
+
+    RELOCATED here (from the deleted tests/test_permission_floor_check.py) by subtraction-wave
+    (AC-SUB-1c, autonomy-continuation R4) so tests/test_agent_teams_enablement.py's cross-import
+    keeps a stable home rather than reaching into a sibling test module."""
+    base = str(base)
+    os.makedirs(os.path.join(base, ".claude-plugin"), exist_ok=True)
+    with open(os.path.join(base, ".claude-plugin", "plugin.json"), "w", encoding="utf-8") as f:
+        json.dump({"name": "foundry", "version": "0.0.0-test"}, f)
+    os.makedirs(os.path.join(base, "hooks"), exist_ok=True)
+    with open(os.path.join(base, "hooks", "hooks.json"), "w", encoding="utf-8") as f:
+        json.dump({}, f)
+    shutil.copytree(os.path.join(REPO_ROOT, "scripts"), os.path.join(base, "scripts"))
+    os.makedirs(os.path.join(base, "docs"), exist_ok=True)
+    if malformed_floor:
+        with open(os.path.join(base, "docs", "permission-floor.json"), "w", encoding="utf-8") as f:
+            f.write("{ not valid json at all")
+    elif floor_doc is not None:
+        with open(os.path.join(base, "docs", "permission-floor.json"), "w", encoding="utf-8") as f:
+            json.dump(floor_doc, f)
+    else:
+        shutil.copyfile(
+            os.path.join(REPO_ROOT, "docs", "permission-floor.json"),
+            os.path.join(base, "docs", "permission-floor.json"),
+        )
+    return base
 
 
 @pytest.fixture()
