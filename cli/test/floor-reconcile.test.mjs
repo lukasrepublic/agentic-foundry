@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { loadMap, classifyDrift } from '../src/permissionFloor.mjs';
 import {
   resolveTarget, readTarget, readTrackedRules, planAdditions, applyAdditions,
+  planRetirements, applyRetirements, parseFloorRootShape,
   writeTargetAtomically, renderPlan, classifyPin, ADDITIVE_CLASSES,
 } from '../src/floorReconcile.mjs';
 import { RefusalError } from '../src/util.mjs';
@@ -446,4 +447,114 @@ test('an_empty_pin_block_repo_cannot_match_an_empty_entry_repo', () => {
   const entry = { source: { source: 'github', repo: '' } };
   const pin = classifyPin({ extraKnownMarketplaces: { [PINS.marketplace_name]: entry } }, brokenPins);
   assert.equal(pin.state, 'unpinned', 'a broken pin block must fail closed, never match by degeneracy');
+});
+
+// ── floor-retires-rows (AC-FRR-1/-2/-4, ER #199) ─────────────────────────────────────────────────
+// The reconcile above only ever ADDED: the four fleet scripts v1.15.0 deleted (#196) kept `allow`
+// rules in every upgraded workspace forever, and nothing reported it. These drive the retirement
+// side directly (parseFloorRootShape/planRetirements/applyRetirements), the same pipeline shape
+// `plan()`/`commit()` above drive for additions.
+
+const RETIRED_ROW = `Bash(${MAP.plugin_root_glob}/scripts/foundry-fleet-doctor.py:*)`;
+const RETIRED_ROW_WITH_SUB = `Bash(${MAP.plugin_root_glob}/scripts/foundry-fleet-roster.py list:*)`;
+
+test('parse_floor_root_shape_extracts_name_and_sub_or_returns_null', () => {
+  assert.deepEqual(parseFloorRootShape(RETIRED_ROW, MAP.plugin_root_glob),
+    { name: 'foundry-fleet-doctor.py', sub: null });
+  assert.deepEqual(parseFloorRootShape(RETIRED_ROW_WITH_SUB, MAP.plugin_root_glob),
+    { name: 'foundry-fleet-roster.py', sub: 'list' });
+  // a real shipped row with a subcommand parses the same way the shape it was written in demands
+  const shippedWithSub = byTier('allow').find((r) => r.includes('foundry_repo_fleet.py status'));
+  assert.deepEqual(parseFloorRootShape(shippedWithSub, MAP.plugin_root_glob),
+    { name: 'foundry_repo_fleet.py', sub: 'status' });
+  // AC-FRR-2: any OTHER shape — no plugin-root glob, a different prefix, the map's own bare
+  // (non-`:*`) doctor exception — is never a retirement candidate
+  assert.equal(parseFloorRootShape('Bash(scripts/foundry-fleet-doctor.py:*)', MAP.plugin_root_glob), null);
+  assert.equal(parseFloorRootShape('Bash(make build:*)', MAP.plugin_root_glob), null);
+  const bareDoctor = byTier('allow').find((r) => r.includes('foundry-doctor.py)'));
+  assert.equal(parseFloorRootShape(bareDoctor, MAP.plugin_root_glob), null);
+});
+
+test('retirement_removes_a_row_the_shipped_map_no_longer_declares', () => {
+  const root = target({
+    permissions: { allow: [RETIRED_ROW, ...byTier('allow')], ask: byTier('ask'), deny: byTier('deny') },
+    extraKnownMarketplaces: PINNED,
+  });
+  const settingsObj = readTarget(resolveTarget(root).path);
+  const r = planRetirements({ settingsObj, map: MAP });
+  assert.deepEqual(r.retirements.allow, [RETIRED_ROW]);
+  assert.deepEqual(r.retirements.ask, []);
+  assert.equal(r.total, 1);
+
+  const after = applyRetirements(settingsObj, r);
+  assert.ok(!after.permissions.allow.includes(RETIRED_ROW), 'the retired row survived');
+  // every rule the map still declares survives, untouched
+  for (const rule of byTier('allow')) assert.ok(after.permissions.allow.includes(rule));
+  assert.deepEqual(after.permissions.ask, settingsObj.permissions.ask);
+  assert.deepEqual(after.permissions.deny, settingsObj.permissions.deny);
+});
+
+test('retirement_leaves_an_adopter_row_of_another_shape_alone', () => {
+  const adopterRow = 'Bash(scripts/foundry-fleet-doctor.py:*)'; // names the same script, no plugin-root glob
+  const root = target({
+    permissions: { allow: [adopterRow, ...byTier('allow')], ask: byTier('ask'), deny: byTier('deny') },
+    extraKnownMarketplaces: PINNED,
+  });
+  const settingsObj = readTarget(resolveTarget(root).path);
+  const r = planRetirements({ settingsObj, map: MAP });
+  assert.equal(r.total, 0, 'an adopter-authored row of another shape was queued for retirement');
+  const after = applyRetirements(settingsObj, r);
+  assert.ok(after.permissions.allow.includes(adopterRow), 'the adopter row was removed');
+});
+
+test('retirement_never_touches_deny', () => {
+  const retiredDenyShaped = `Bash(${MAP.plugin_root_glob}/scripts/foundry-fleet-doctor.py:*)`;
+  const root = target({
+    permissions: { allow: byTier('allow'), ask: byTier('ask'), deny: [retiredDenyShaped, ...byTier('deny')] },
+    extraKnownMarketplaces: PINNED,
+  });
+  const settingsObj = readTarget(resolveTarget(root).path);
+  const r = planRetirements({ settingsObj, map: MAP });
+  assert.equal(r.total, 0, 'a deny-tier row of the retired shape was queued for removal');
+  const after = applyRetirements(settingsObj, r);
+  assert.deepEqual(after.permissions.deny, settingsObj.permissions.deny);
+});
+
+test('a_present_map_name_with_a_different_sub_still_retires_the_stale_sub', () => {
+  // AC-FRR-1: the check is on the (name, sub) PAIR, not the name alone — retiring `status` must not
+  // depend on whether `validate` (a different sub of the SAME script) is still declared.
+  const stillDeclaredName = byTier('allow').find((r) => r.includes('foundry_repo_fleet.py status'));
+  const staleSub = stillDeclaredName.replace(' status:*', ' no-longer-shipped-sub:*');
+  const root = target({
+    permissions: { allow: [staleSub, ...byTier('allow')], ask: byTier('ask'), deny: byTier('deny') },
+    extraKnownMarketplaces: PINNED,
+  });
+  const settingsObj = readTarget(resolveTarget(root).path);
+  const r = planRetirements({ settingsObj, map: MAP });
+  assert.deepEqual(r.retirements.allow, [staleSub]);
+  const after = applyRetirements(settingsObj, r);
+  assert.ok(after.permissions.allow.includes(stillDeclaredName), 'the still-shipped sub was removed too');
+});
+
+test('reconcile_pipeline_reports_retired_rows_and_the_composite_summary_line', () => {
+  const root = target({
+    permissions: { allow: [RETIRED_ROW, ...byTier('allow')], ask: byTier('ask'), deny: byTier('deny') },
+    extraKnownMarketplaces: PINNED,
+  });
+  const settingsObj = readTarget(resolveTarget(root).path);
+  const retirementPlan = planRetirements({ settingsObj, map: MAP });
+  const additionsPlan = planAdditions({
+    findings: classifyDrift(MAP, readTrackedRules(settingsObj), {
+      pluginRootExpansion: ['x'], unreadableOrigins: [], home: HOME,
+    }),
+    map: MAP, settingsObj, pins: PINS,
+  });
+  const lines = renderPlan(additionsPlan, {
+    applied: true, retirementPlan, mapEntryCount: MAP.entries.length,
+  });
+  assert.ok(lines.some((l) => l === `  [retired] ${RETIRED_ROW}`), 'the retired row was not printed');
+  assert.ok(
+    lines.some((l) => l.includes(`0 added, ${retirementPlan.total} retired, ${MAP.entries.length} unchanged`)),
+    `summary line missing the composite counts: ${lines.join('\n')}`,
+  );
 });

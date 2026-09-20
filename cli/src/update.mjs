@@ -12,7 +12,8 @@ import { loadMap, buildSettings, classifyDrift } from './permissionFloor.mjs';
 import { buildManagedFiles } from './scaffold.mjs';
 import { planManagedFiles, applyPlan } from './reconcile.mjs';
 import {
-  resolveTarget, readTarget, readTrackedRules, planAdditions, applyAdditions, writeTargetAtomically,
+  resolveTarget, readTarget, readTrackedRules, planAdditions, applyAdditions,
+  planRetirements, applyRetirements, writeTargetAtomically, renderPlan,
 } from './floorReconcile.mjs';
 import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from './gitignoreReconcile.mjs';
 import {
@@ -161,6 +162,11 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
         map, settingsObj: readTarget(floorTarget.path), pins,
       })
       : null;
+    // AC-FRR-1 (ER #199): preview-only, same recompute-fresh caveat as previewFloorPlan itself —
+    // Phase 4 below re-reads and recomputes both plans right before it writes.
+    const previewRetirementPlan = floorTarget.present
+      ? planRetirements({ settingsObj: readTarget(floorTarget.path), map })
+      : null;
 
     // gitignore-block-reconcile (ER #177, AC-GBR-1): PREVIEW-ONLY, same caveat as previewFloorPlan
     // above — `.gitignore` is not a migration target, but Phase 4 recomputes fresh from disk anyway,
@@ -195,6 +201,9 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     for (const f of filePlan) previewLines.push(`  [${f.action}] ${f.relPath}`);
     if (previewFloorPlan) {
       previewLines.push(`  [permission-floor] would add allow=${previewFloorPlan.additions.allow.length}, ask=${previewFloorPlan.additions.ask.length}, deny=${previewFloorPlan.additions.deny.length}`);
+      if (previewRetirementPlan && previewRetirementPlan.total > 0) {
+        previewLines.push(`  [permission-floor] would retire allow=${previewRetirementPlan.retirements.allow.length}, ask=${previewRetirementPlan.retirements.ask.length}`);
+      }
     } else {
       previewLines.push('  [permission-floor] .claude/settings.json absent — left to the create path');
     }
@@ -252,6 +261,7 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     // migration may have just rewritten this exact file (project scope's settings.json IS the
     // floor-reconcile target). Applying a stale pre-migration plan here would silently clobber it.
     let floorPlan = null;
+    let floorRetirementPlan = null;
     const freshFloorTarget = resolveTarget(physicalRoot);
     if (freshFloorTarget.present) {
       const settingsObj = readTarget(freshFloorTarget.path);
@@ -260,8 +270,16 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
       });
       floorPlan = planAdditions({ findings, map, settingsObj, pins });
       floorPlan.settingsObj = settingsObj;
-      if (floorPlan.total > 0) {
-        writeTargetAtomically(freshFloorTarget.path, applyAdditions(settingsObj, floorPlan, { map, pins }));
+      // AC-FRR-1 (ER #199): the upgrader's own reconcile path — computed over the SAME fresh
+      // settingsObj the additions plan just read, before anything writes.
+      floorRetirementPlan = planRetirements({ settingsObj, map });
+      if (floorPlan.total > 0 || floorRetirementPlan.total > 0) {
+        const added = applyAdditions(settingsObj, floorPlan, { map, pins });
+        const retired = applyRetirements(added, floorRetirementPlan);
+        writeTargetAtomically(freshFloorTarget.path, retired);
+        for (const line of renderPlan(floorPlan, {
+          applied: true, retirementPlan: floorRetirementPlan, mapEntryCount: map.entries.length,
+        })) print(line);
       }
     }
     // Recomputed FRESH from disk, same reasoning as floorPlan just above: never apply a plan
@@ -280,7 +298,8 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     }
 
     const anyCreated = filePlan.some((f) => f.action === 'create');
-    const anyFloorAdded = Boolean(floorPlan && floorPlan.total > 0);
+    const anyFloorAdded = Boolean(floorPlan && floorPlan.total > 0)
+      || Boolean(floorRetirementPlan && floorRetirementPlan.total > 0);
     const anyGitignoreChanged = Boolean(
       freshGitignorePlan && (freshGitignorePlan.action === 'converged' || freshGitignorePlan.action === 'appended'),
     );

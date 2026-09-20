@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """foundry-done-when-backfill — derive a top-level `done_when` for every acceptance-contract.yaml
-that lacks one (subtraction-wave, AC-SUB-3, autonomy-continuation R4).
+that lacks one (subtraction-wave, AC-SUB-3, autonomy-continuation R4; widened to every product by
+AC-FRR-3, ER #200).
 
-For every `specs/features/foundry/**/acceptance-contract.yaml` under a WORKSPACE root (the
-consumer's own spec corpus — this is a standalone CLI, never scoped to this plugin repo's own
-`specs/`) that has no top-level `done_when` key, derives one `test:<file>` locator per DISTINCT
-test file named by that contract's `checkpoints[].surface: "test:..."` entries (a checkpoint
-surface may carry `::test_name` granularity; this backfill derives at FILE granularity only, one
-locator per distinct file, sorted for determinism).
+For every `specs/features/**/acceptance-contract.yaml` under a WORKSPACE root (the consumer's own
+spec corpus, EVERY product's — this is a standalone CLI, never scoped to this plugin repo's own
+`specs/`, and never scoped to only one adopter product either: `specs/features/foundry/**` alone
+reported `0 contract(s) scanned` for a workspace whose contracts lived under
+`specs/features/<their-product>/**`) that has no top-level `done_when` key, derives one
+`test:<file>` locator per DISTINCT test file named by that contract's
+`checkpoints[].surface: "test:..."` entries (a checkpoint surface may carry `::test_name`
+granularity; this backfill derives at FILE granularity only, one locator per distinct file, sorted
+for determinism).
 
 A contract whose checkpoints name no `test:` surface at all is SKIPPED and reported by name — it
 is not given an empty/absent-derivation `done_when` (the schema requires `minItems: 1` anyway).
@@ -39,7 +43,7 @@ Usage:
 --apply: writes the derived `done_when:` block into every contract this would BACKFILL. Exits 0
     on success; exits 1 if any write failed (a per-file report still prints for every file).
 
-Neither mode ever touches a contract outside `specs/features/foundry/**` under the given root.
+Neither mode ever touches a contract outside `specs/features/**` under the given root.
 """
 from __future__ import annotations
 
@@ -55,12 +59,12 @@ import yaml
 # it carries no import-time coupling to a sibling plugin module.
 SENTINEL = "# === FOUNDRY-AUTHORIZED-TRAILER (excluded from contract_sha256) ==="
 
-CONTRACT_GLOB = os.path.join("specs", "features", "foundry", "**", "acceptance-contract.yaml")
+CONTRACT_GLOB = os.path.join("specs", "features", "**", "acceptance-contract.yaml")
 
 
 def find_contracts(workspace_root: str) -> list:
-    """Every `specs/features/foundry/**/acceptance-contract.yaml` under `workspace_root`, sorted
-    for a deterministic report order."""
+    """Every `specs/features/**/acceptance-contract.yaml` under `workspace_root` (every product,
+    AC-FRR-3 — never scoped to `foundry` alone), sorted for a deterministic report order."""
     pattern = os.path.join(workspace_root, CONTRACT_GLOB)
     return sorted(glob.glob(pattern, recursive=True))
 
@@ -165,7 +169,7 @@ def main() -> int:
     mode = ap.add_mutually_exclusive_group(required=True)
     mode.add_argument("--dry-run", action="store_true", help="report only; writes nothing")
     mode.add_argument("--apply", action="store_true", help="write the derived done_when blocks")
-    ap.add_argument("workspace_root", help="the consumer workspace root (holds specs/features/foundry/**)")
+    ap.add_argument("workspace_root", help="the consumer workspace root (holds specs/features/**, every product)")
     args = ap.parse_args()
 
     root = os.path.abspath(args.workspace_root)

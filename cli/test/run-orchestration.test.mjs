@@ -133,6 +133,57 @@ test('dry_run_still_reports_the_pre_write_state_and_writes_nothing', async () =>
 });
 
 // ============================================================================================ //
+// floor-retires-rows (AC-FRR-1/-5, ER #199) — the --existing reconcile drives the real runCli path
+// ============================================================================================ //
+
+test('existing_reconcile_retires_a_stale_root_glob_row_end_to_end', async () => {
+  const dir = scratch();
+  fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+  const staleRow = `Bash(${MAP.plugin_root_glob}/scripts/foundry-fleet-doctor.py:*)`;
+  fs.writeFileSync(
+    path.join(dir, '.claude', 'settings.json'),
+    `${JSON.stringify({
+      extraKnownMarketplaces: PIN,
+      permissions: {
+        allow: [staleRow, ...MAP.entries.filter((e) => e.tier === 'allow').map((e) => e.rule)],
+        ask: MAP.entries.filter((e) => e.tier === 'ask').map((e) => e.rule),
+        deny: MAP.entries.filter((e) => e.tier === 'deny').map((e) => e.rule),
+      },
+    }, null, 2)}\n`,
+  );
+
+  const { text } = await invoke(dir, ['--existing']);
+  assert.match(text, new RegExp(`\\[retired\\] ${staleRow.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.match(text, /— 0 added, 1 retired, \d+ unchanged/);
+
+  const written = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf-8'));
+  assert.ok(!written.permissions.allow.includes(staleRow), 'the stale row survived the real reconcile path');
+});
+
+test('dry_run_reports_retirement_and_writes_nothing', async () => {
+  const dir = scratch();
+  fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+  const staleRow = `Bash(${MAP.plugin_root_glob}/scripts/foundry-fleet-doctor.py:*)`;
+  fs.writeFileSync(
+    path.join(dir, '.claude', 'settings.json'),
+    `${JSON.stringify({
+      extraKnownMarketplaces: PIN,
+      permissions: {
+        allow: [staleRow, ...MAP.entries.filter((e) => e.tier === 'allow').map((e) => e.rule)],
+        ask: MAP.entries.filter((e) => e.tier === 'ask').map((e) => e.rule),
+        deny: MAP.entries.filter((e) => e.tier === 'deny').map((e) => e.rule),
+      },
+    }, null, 2)}\n`,
+  );
+  const before = fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf-8');
+
+  const { text } = await invoke(dir, ['--existing', '--dry-run']);
+  assert.match(text, new RegExp(`\\[retired\\] ${staleRow.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.equal(fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf-8'), before,
+    'dry run retired a row on disk');
+});
+
+// ============================================================================================ //
 // gitignore-block-reconcile (ER #177, AC-GBR-1/-4) — wired beside floorReconcile's own rows
 // ============================================================================================ //
 

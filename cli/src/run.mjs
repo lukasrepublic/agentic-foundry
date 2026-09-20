@@ -16,7 +16,7 @@ import { renderPreview, TRUST_HANDOFF_TEXT } from './preview.mjs';
 import { validateSlug, resolveIdentity, wireIdentity, plannedMachineScopeWrites } from './identity.mjs';
 import {
   resolveTarget, readTarget, readTrackedRules, planAdditions, applyAdditions,
-  writeTargetAtomically, renderPlan,
+  planRetirements, applyRetirements, writeTargetAtomically, renderPlan,
 } from './floorReconcile.mjs';
 import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from './gitignoreReconcile.mjs';
 
@@ -198,6 +198,7 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
     // would stay incomplete while the report said converged — and the repo would then ship to every
     // other clone and to CI without it.
     let floorPlan = null;
+    let floorRetirementPlan = null;
     let floorTarget = null;
     if (answers.reconcileFloor) {
       floorTarget = resolveTarget(physicalRoot);
@@ -208,8 +209,14 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
         });
         floorPlan = planAdditions({ findings: trackedFindings, map, settingsObj, pins });
         floorPlan.settingsObj = settingsObj;
+        // AC-FRR-1 (ER #199): a row shaped exactly like the floor's own root-glob rows, whose
+        // name(+sub) the shipped map no longer declares, is retired from allow/ask — computed
+        // over the SAME tracked settingsObj the additions plan just read, before anything writes.
+        floorRetirementPlan = planRetirements({ settingsObj, map });
         print('');
-        for (const line of renderPlan(floorPlan, { applied: false })) print(line);
+        for (const line of renderPlan(floorPlan, {
+          applied: false, retirementPlan: floorRetirementPlan, mapEntryCount: map.entries.length,
+        })) print(line);
       } else {
         // absent settings.json is the CREATE path's business, not this one's — the managed-file
         // plan above already writes the full floor for it, and racing that would duplicate it
@@ -223,7 +230,9 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
     // permission floor unattended; --yes must be given EXPLICITLY. This sits above applyPlan
     // deliberately — a "refused" verdict printed after the scaffold write had already landed reads
     // as "nothing happened", which is the one thing it must not mean.
-    if (floorPlan && floorPlan.total > 0 && !isTTY && answers.yes !== true) {
+    const floorHasWork = Boolean(floorPlan)
+      && (floorPlan.total > 0 || (floorRetirementPlan && floorRetirementPlan.total > 0));
+    if (floorHasWork && !isTTY && answers.yes !== true) {
       throw new RefusalError(
         'refusing --reconcile-floor without a terminal: pass --yes explicitly to confirm the write',
         'reconcile-floor',
@@ -252,10 +261,14 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
     // --reconcile-floor's pre-write refusal exists for.
     applyGitignorePlan(gitignorePlan);
 
-    if (floorPlan && floorPlan.total > 0) {
-      writeTargetAtomically(floorTarget.path, applyAdditions(floorPlan.settingsObj, floorPlan, { map, pins }));
+    if (floorHasWork) {
+      const added = applyAdditions(floorPlan.settingsObj, floorPlan, { map, pins });
+      const retired = applyRetirements(added, floorRetirementPlan);
+      writeTargetAtomically(floorTarget.path, retired);
       print('');
-      for (const line of renderPlan(floorPlan, { applied: true })) print(line);
+      for (const line of renderPlan(floorPlan, {
+        applied: true, retirementPlan: floorRetirementPlan, mapEntryCount: map.entries.length,
+      })) print(line);
     }
 
     if (slug) {
