@@ -196,6 +196,14 @@
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-routine-wake-prompt.py:*)",
             "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-done-when-backfill.py --dry-run:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-governance-budget.py:*)",
+            "origin": "settings.json"
           }
         ],
         "ask": [
@@ -273,6 +281,10 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-merge-when-green.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-done-when-backfill.py --apply:*)",
             "origin": "settings.json"
           }
         ],
@@ -480,6 +492,14 @@
           {
             "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-routine-wake-prompt.py:*)",
             "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-done-when-backfill.py --dry-run:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-governance-budget.py:*)",
+            "origin": "settings.json"
           }
         ],
         "ask": [
@@ -557,6 +577,10 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-merge-when-green.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-done-when-backfill.py --apply:*)",
             "origin": "settings.json"
           }
         ],
@@ -736,6 +760,14 @@
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_session_mode.py:*)",
             "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-done-when-backfill.py --dry-run:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-governance-budget.py:*)",
+            "origin": "settings.json"
           }
         ],
         "ask": [
@@ -809,6 +841,10 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_tier_preflight.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-done-when-backfill.py --apply:*)",
             "origin": "settings.json"
           }
         ],
@@ -1020,6 +1056,14 @@
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_session_mode.py:*)",
             "origin": "settings.local.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-done-when-backfill.py --dry-run:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-governance-budget.py:*)",
+            "origin": "settings.json"
           }
         ],
         "ask": [
@@ -1089,6 +1133,10 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_tier_preflight.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-done-when-backfill.py --apply:*)",
             "origin": "settings.json"
           }
         ],
@@ -1286,6 +1334,14 @@
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_session_mode.py:*)",
             "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-done-when-backfill.py --dry-run:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-governance-budget.py:*)",
+            "origin": "settings.json"
           }
         ],
         "ask": [
@@ -1355,6 +1411,10 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_tier_preflight.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-done-when-backfill.py --apply:*)",
             "origin": "settings.json"
           }
         ],
