@@ -245,18 +245,10 @@ def _allowed_paths_from_contract(contract_text):
 
 
 def _security_flag(paths):
-    """Reuse the SHIPPED derive_security_flag (single-source of "security-touching"; imported, not
-    re-declared). Returns 'needs_review' | 'clear'; any import/parse failure ⇒ 'needs_review' (fail-safe)."""
-    try:
-        import importlib.util
-        p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "foundry-fleet-session-machinery.py")
-        spec = importlib.util.spec_from_file_location("_amesc_fleet_machinery", p)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        flag, _, _ = mod.derive_security_flag(paths)   # paths=None ⇒ needs_review (its own fail-closed)
-        return flag
-    except Exception:
-        return "needs_review"
+    """Returns 'needs_review' | 'clear'. The shipped derive_security_flag this once imported lived in
+    the fleet-session machinery, retired in the R4 deletion wave; this branch is unreachable today
+    (audit_model_decision short-circuits before it) and now answers the fail-safe value directly."""
+    return "needs_review"
 
 
 # ── feat-foundry-audit-model-escalation-gate-core — the fail-safe ─────────────────────────────────────

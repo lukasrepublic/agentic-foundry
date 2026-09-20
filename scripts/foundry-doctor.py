@@ -68,8 +68,8 @@ PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.dirname(HERE)
 # details — an unhandled/malformed-input exception's `str(e)` can carry attacker-reachable text
 # (e.g. a crafted settings-file path or JSON payload) straight into the report untouched. A local
 # duplicate rather than an import from foundry_permission_floor (which may itself be the thing
-# that failed to import) — mirrors the local-render-floor pattern already used by
-# foundry-fleet-roster.py / foundry-fleet-session-machinery.py / foundry-fleet-session-registry.py.
+# that failed to import) — the local-render-floor pattern (the fleet-session scripts that first
+# carried it were retired in the R4 deletion wave; the pattern stays).
 _DOCTOR_CTRL_RE = re.compile(r"(\x1b\[[0-9;]*[A-Za-z]|\x1b[@-Z\\-_]|[\x00-\x1f\x7f-\x9f])")
 _DOCTOR_DETAIL_CAP = 200
 
