@@ -1,6 +1,6 @@
 ---
 name: doctor
-description: Foundry health check (/foundry:doctor) — a thin, six-check probe (the v0.25.0 test-suite realignment shrank this from a 2,900-line drop-in-check registry to one file). Checks the plugin manifest loads, hooks.json parses with every referenced hook script present, every skills/*/SKILL.md frontmatter YAML-parses, the stack-profile lock (if any) resolves, the operator registry resolves, and the control-plane preflight (no dangling repos{} path, no ancestor manifest already governing this project dir). Plus two advisory-only lines never counted toward RED — permissions-policy and agent-teams. Fails CLOSED for an operator-invoked check (exit non-zero on any hard failure); the --session-start cadence is advisory (fail-open, never wedges a session). Trigger when the operator says "/foundry:doctor", "foundry health check", or to diagnose why a session looks unhealthy.
+description: Foundry health check (/foundry:doctor) — a thin, six-check probe (the v0.25.0 test-suite realignment shrank this from a 2,900-line drop-in-check registry to one file). Checks the plugin manifest loads, hooks.json parses with every referenced hook script present, every skills/*/SKILL.md frontmatter YAML-parses, the stack-profile lock (if any) resolves, the operator registry resolves, and the control-plane preflight (no dangling repos{} path, no ancestor manifest already governing this project dir). Plus three advisory-only lines never counted toward RED — permissions-policy, agent-teams, and branches. Fails CLOSED for an operator-invoked check (exit non-zero on any hard failure); the --session-start cadence is advisory (fail-open, never wedges a session). Trigger when the operator says "/foundry:doctor", "foundry health check", or to diagnose why a session looks unhealthy.
 ---
 
 # /foundry:doctor
@@ -61,6 +61,13 @@ lane signal — Tier B advisory) plus `hooks/foundry-git-discipline.sh`'s determ
      `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` to `"1"` (`~/.claude/settings.json`, then the
      project's `.claude/settings.json`, then `.claude/settings.local.json`, ascending precedence).
      Never RED: flipping the flag is an adopter opt-in — see `docs/how-to/agent-teams.md`.
+   - **`branches`** (branch-and-worktree-discipline, AC-BWD-3) — `branches: <n>
+     merged-not-deleted, <m> stale worktrees`, computed by importing
+     `scripts/foundry-worktree-gc.py`'s own classifier (ancestry-only, no live `gh` call — this
+     stays a cheap, offline, every-run probe) over the session's own project dir. Reads `n/a (not
+     a git checkout)` when it is not one. Never RED: a repo-wide sweep is an operator/agent action
+     (`--apply`, `ask`-tiered), never a doctor-enforced one — see
+     `docs/how-to/branching-and-cleanup.md`.
 
    Each probe is individually crash-proof — an unexpected exception inside one check is reported
    as that check's own RED result (`probe crashed: <type>: <detail>`), never an uncaught
@@ -98,6 +105,8 @@ lane signal — Tier B advisory) plus `hooks/foundry-git-discipline.sh`'s determ
 - This project's own manifest + any ancestor `.claude/foundry-project.json` (control-plane).
 - `~/.claude/settings.json` + `.claude/settings.json` + `.claude/settings.local.json` (advisory-only
   `agent-teams` line, ascending precedence).
+- The session's own project dir's git refs/worktrees, read-only, via `scripts/foundry-worktree-
+  gc.py`'s classifier (advisory-only `branches` line; `n/a` when the project dir is not a git repo).
 
 ## Outputs
 

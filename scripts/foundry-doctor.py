@@ -37,6 +37,12 @@ What this probe checks, every run, cheaply:
      ASCENDING-precedence (last-one-present-wins) order, mirroring the platform's own
      user/project/local override resolution. Never RED: flipping the flag is an adopter opt-in,
      never a doctor-enforced default (see `docs/how-to/agent-teams.md`).
+  9. `branches` (branch-and-worktree-discipline, AC-BWD-3): one advisory line, `branches: <n>
+     merged-not-deleted, <m> stale worktrees`, computed by IMPORTING
+     `scripts/foundry-worktree-gc.py`'s own classifier (ancestry-only, `use_gh=False` -- this
+     stays a cheap offline probe, never a live `gh` call) over the session's own project dir.
+     Never RED: reads `n/a (not a git checkout)` when the project dir is not a git repository
+     (see `docs/how-to/branching-and-cleanup.md`).
 
 Fails CLOSED for the operator-invoked check (exit non-zero on any hard failure). The
 --session-start cadence is ADVISORY (exits 0 so it never wedges a session) — the real merge-side
@@ -469,6 +475,44 @@ def _settings_candidate_paths(project_dir, plugin_root):
     return paths
 
 
+def _load_worktree_gc_module(plugin_root):
+    """Mirrors `_load_capability_preflight_module` above -- a hyphenated filename, loaded by
+    explicit path (never a bare `import`)."""
+    path = os.path.join(plugin_root, "scripts", "foundry-worktree-gc.py")
+    if not os.path.isfile(path):
+        return None
+    spec = importlib.util.spec_from_file_location("foundry_worktree_gc_doctor", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def check_branches_advisory(plugin_root=None, project_dir=None):
+    """AC-BWD-3: one advisory line, `branches: <n> merged-not-deleted, <m> stale worktrees`,
+    NEVER RED -- computed by IMPORTING `scripts/foundry-worktree-gc.py`'s own `classify_repo`
+    (never a re-implementation of the git plumbing here). Runs `use_gh=False` deliberately: this
+    is a cheap, offline, every-run probe (the module docstring's own "thin probe" discipline), not
+    a live `gh` query -- an unmerged branch that gh WOULD tell apart as `open-pr` is still counted
+    here as neither `merged-not-deleted` nor a false positive, since ancestry-only classification
+    can only ever UNDER-report `merged` relative to the live gc run, never over-report it.
+
+    `project_dir` defaults to this session's own project dir (mirrors every other probe here);
+    when it is not a git checkout at all (an adopter running doctor from a non-repo directory, or
+    the plugin's own installed cache tree, which is never a checkout), this reads
+    `"n/a (not a git checkout)"` rather than attempting a git call that would only fail."""
+    pdir = project_dir or _project_dir()
+    try:
+        gc = _load_worktree_gc_module(plugin_root or PLUGIN_ROOT)
+        if gc is None or not gc.is_git_repo(pdir):
+            return True, "n/a (not a git checkout)"
+        rows, _worktrees = gc.classify_repo(pdir, use_gh=False)
+        merged = [r for r in rows if r["class"] == "merged"]
+        stale_worktrees = [r for r in merged if r.get("worktree")]
+        return True, f"{len(merged)} merged-not-deleted, {len(stale_worktrees)} stale worktrees"
+    except Exception as e:  # noqa: BLE001 -- deliberate: AC-BWD-3 must never redden or crash the run
+        return ADVISORY, _sanitize_detail(f"unknown (probe error: {type(e).__name__}: {e})")
+
+
 def check_agent_teams_flag(plugin_root=None, project_dir=None):
     """AC-ATE-4: `agent-teams: on (settings env) | off`, NEVER RED -- flipping the flag is an
     adopter opt-in, never a doctor-enforced default (this workspace's own settings are the
@@ -585,6 +629,13 @@ def main():
     # RED") without touching docs/QUICKSTART.md, which is outside this atom's allowed_paths.
     at_ok, at_detail = check_agent_teams_flag(project_dir=project_dir)
     _render_row("agent-teams", at_ok, at_detail)
+
+    # `branches` (AC-BWD-3) is rendered the SAME way, for the SAME reason (the agent-teams
+    # precedent this atom follows verbatim): deliberately not a `_run("<name>", ...)` call-site
+    # literal, so it stays outside tests/test_doc_claims.py's doctor-probe-claims bijection
+    # (docs/QUICKSTART.md is outside this atom's allowed_paths).
+    br_ok, br_detail = check_branches_advisory(project_dir=project_dir)
+    _render_row("branches", br_ok, br_detail)
 
     header = "foundry doctor" + (" (session-start advisory)" if args.session_start else "")
     body = header + "\n" + "\n".join(out_lines)

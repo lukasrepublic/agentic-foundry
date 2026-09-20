@@ -23,7 +23,7 @@ matter on day one, see the `## Start here` table in [README.md](../README.md).
 | `/foundry:command-deck` | Arms a recurring watcher over one programme and manages it — `status`, `stop`, `restart`, `tick`, `prompt`, `list`. Each tick re-measures the ready-set, dispatches, verifies, lands and reports |
 | `/foundry:context` | Loads the workspace and product context a session needs to start |
 | `/foundry:env-hygiene` | Flags stray environment variables a session should not be carrying |
-| `/foundry:work-isolation` | Manages the worktree write-jail and post-merge cleanup around an isolated worker |
+| `/foundry:work-isolation` | Manages the worktree write-jail and post-merge cleanup around an isolated worker — the repo-wide sweep is `scripts/foundry-worktree-gc.py --dry-run`/`--apply` (`docs/how-to/branching-and-cleanup.md`) |
 
 ## Specify
 

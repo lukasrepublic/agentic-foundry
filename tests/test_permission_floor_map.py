@@ -574,7 +574,7 @@ def test_doctor_green_regression(tmp_path):
 # the SAME digest and regex-search THIS file (not the deleted one) for MERGE_BASE_ENTRIES_DIGEST --
 # see their own R8 comments; a re-pin here must land in the same diff as any of the three.
 # --------------------------------------------------------------------------------------------- #
-MERGE_BASE_ENTRIES_DIGEST = "76d07810da18291c7129466f45824f2da84fba3109569e435a7d7c02bcc3555b"
+MERGE_BASE_ENTRIES_DIGEST = "da41ecd64ce86c1cbf672cea1c9e1a3c6afad5cb1ece1a88c861ce5450e3436e"
 
 
 def _entries_digest(entries):

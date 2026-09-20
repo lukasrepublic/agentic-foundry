@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/lukasrepublic/agentic-foundry/schema/release.schema.json",
+  "title": "Release manifest (.foundry/releases/<id>/release.yaml)",
+  "description": "DOCUMENTATION of the shape `scripts/foundry_release.py`'s own `_validate()` enforces at load time -- that Python function, not this file, is the ENFORCED floor (the module's own docstring: 'there is NO floor-gate field -- the floor is core-owned'); this schema is not loaded/validated-against by any script, mirroring how the release manifest has always been hand-validated in Python rather than jsonschema-driven. Kept in sync with `_TOP_REQUIRED_FIELDS`/`_TOP_OPTIONAL_FIELDS`/`_ATOM_FIELDS`/`_ATOM_OPTIONAL_FIELDS` by convention, for a human or an LLM authoring a manifest by hand.",
+  "type": "object",
+  "required": ["id", "description", "state", "atoms"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "The release's slug; must match its directory name under .foundry/releases/."
+    },
+    "description": {"type": "string", "minLength": 1},
+    "state": {
+      "type": "string",
+      "enum": ["backlog", "planned", "active", "completed", "proposed"],
+      "description": "The RA/RD state machine's forward-only state. `proposed` reads as a synonym of `planned` on load; a subsequent write always persists the real four-value vocabulary."
+    },
+    "integration_branch": {
+      "type": "string",
+      "minLength": 1,
+      "description": "(branch-and-worktree-discipline, AC-BWD-4, v1.16.0) The release's integration branch, e.g. 'release/1.16.0' -- created from `main` as `/foundry:intake`'s LAST step. Purely descriptive: never read by the RA/RD state machine or `derive_closure`. Consumed by `/foundry:merge-when-green` (the base-branch refusal) and `skills/cut-release/SKILL.md` (the R -> R2 -> tag flow)."
+    },
+    "acceptance": {
+      "type": "array",
+      "description": "The optional PRACTICE acceptance log (date, operator, verdict, note) -- never a gate.",
+      "items": {
+        "type": "object",
+        "required": ["date", "operator", "verdict", "note"],
+        "properties": {
+          "date": {"type": "string"},
+          "operator": {"type": "string"},
+          "verdict": {"type": "string", "enum": ["accepted", "rejected"]},
+          "note": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "atoms": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "depends_on"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+          "depends_on": {"type": "array", "items": {"type": "string"}},
+          "spec_ref": {
+            "type": "string",
+            "description": "Factory-lane atom (paired with contract_ref); EXCLUSIVE of charter_ref."
+          },
+          "contract_ref": {"type": "string"},
+          "charter_ref": {
+            "type": "string",
+            "description": "Charter-lane atom (release-loader-vocabulary, AC-RLV-2); EXCLUSIVE of spec_ref/contract_ref."
+          },
+          "lane": {"type": "string", "enum": ["charter", "factory"]},
+          "kind": {"type": "string", "description": "Free-text atom kind (e.g. NS, HC); never gated."},
+          "security": {"type": "boolean"},
+          "paths": {"type": "array", "items": {"type": "string"}},
+          "journeys": {"type": "array", "items": {"type": "string", "minLength": 1}},
+          "lands": {"type": "string", "description": "Programme ordering hint (e.g. \"first\"); informational only."}
+        },
+        "additionalProperties": false
+      }
+    },
+    "program": {"type": "string"},
+    "version": {"type": "string"},
+    "target_repo": {"type": "string"},
+    "target_version": {"type": "string"},
+    "depends_on_release": {"type": "string"},
+    "value": {"type": "string"},
+    "subtraction": {"type": "boolean"},
+    "gate_before_authorize": {"type": "boolean"},
+    "supersedes_atoms": {"type": "array", "items": {"type": "string"}},
+    "exit": {"type": "string"}
+  },
+  "additionalProperties": false
+}

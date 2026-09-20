@@ -91,13 +91,19 @@ VERIFYING
   merge-state.
 
 LANDING
+- BRANCH AND WORKTREE DISCIPLINE: see `context/branch-discipline.md` (cited, never copied) for the
+  full block — one worktree+branch per atom cut from the release's integration branch, one push
+  after local-green, the atom PR targets `release/<version>` (not `main`) when the manifest names
+  one, ONE PR to `main` per release, delete-after-merge-never-before, and the codified
+  `scripts/foundry-worktree-gc.py` sweep.
 - Land a worker's output ONLY from its completion notification. A "completed" status plus a file on
   disk is not a finished deliverable.
-- WAIT FOR A PR'S CHECKS VIA `/foundry:merge-when-green <pr> --watch`, NEVER A HAND-ROLLED
-  SLEEP-THEN-POLL LOOP re-running `gh pr checks` yourself. Arm a native `Monitor` on it and let it
-  notify this session on the next state change; it merges via the same already-permitted `gh pr
-  merge <pr> --squash` the instant every check is green, and escalates ONCE with evidence rather
-  than spinning forever when no check will ever report.
+- WAIT FOR A PR'S CHECKS VIA `/foundry:merge-when-green <pr> --release <id> --watch`, NEVER A
+  HAND-ROLLED SLEEP-THEN-POLL LOOP re-running `gh pr checks` yourself. Arm a native `Monitor` on it
+  and let it notify this session on the next state change; it merges via the same already-permitted
+  `gh pr merge <pr> --squash` the instant every check is green, and escalates ONCE with evidence
+  rather than spinning forever when no check will ever report. `--release <id>` is auto-derived
+  when omitted, but name the tick's own release explicitly.
 - COMMIT AND PUSH the moment it is lint-clean — before review, not after. A branch costs nothing
   and survives a crash.
 - "DID THIS LAND?" IS ANSWERED BY PROBING FOR THE ARTIFACT, never by an ancestry test — squash-merge
