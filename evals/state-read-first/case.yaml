@@ -1,0 +1,11 @@
+schema_version: "1.1"
+name: state-read-first
+description: >
+  autonomy-continuation R3 "native swarm substrate" (v1.14.0) fixture — `state.yaml` gained
+  `next_action` (#188 manifest-to-tasklist) precisely so a resumed session reads it FIRST instead
+  of re-deriving the ready-set from scratch or guessing. Scaffolds a release's `state.yaml` (via
+  scaffold_script, run only with `--scaffold`) with a `next_action` and checks that the reply
+  names it before doing anything else.
+tags: [v1.14.0, manifest-to-tasklist, autonomy-continuation-r3]
+context:
+  scaffold_script: fixture.sh

@@ -1,0 +1,11 @@
+schema_version: "1.1"
+name: keep-going
+description: >
+  autonomy-continuation R1 "stop stopping" (v1.12.0) mining fixture — the measured #1 failure
+  was a silent yield at a natural pause inside a multi-step task, with no criterion met and no
+  fork hit. This case gives Claude a three-file reading task with a pause between each file and
+  checks that it finishes the whole task in one turn instead of stopping to ask a directive
+  question between steps.
+tags: [v1.12.0, keep-going, autonomy-continuation-r1]
+context:
+  add_dirs: [resources]
