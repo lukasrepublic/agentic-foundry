@@ -648,24 +648,11 @@ def test_plugins_dir_env_var_is_described_by_its_reader():
     assert not failures, "; ".join(failures)
 
 
-def _quickstart_plugins_dir_note_failures(text):
-    """AC-DTR-2 checkpoint 2: QUICKSTART carries >=1 FOUNDRY_PLUGINS_DIR mention that both
-    satisfies the co-occurrence rule AND names the default `~/.claude/plugins`."""
-    matches = list(re.finditer(re.escape(_FOUNDRY_PLUGINS_DIR), text))
-    if not matches:
-        return ["docs/QUICKSTART.md carries no FOUNDRY_PLUGINS_DIR mention"]
-    for m in matches:
-        sl = _slice_at(text, m.start())
-        if all(lit in sl for lit in _FLEET_DOCTOR_SCOPE_LITERALS) and "~/.claude/plugins" in sl:
-            return []
-    return ["no FOUNDRY_PLUGINS_DIR mention in docs/QUICKSTART.md is both co-scoped with the "
-            "fleet-doctor literals and names the default ~/.claude/plugins"]
-
-
-def test_quickstart_documents_the_plugins_dir_override():
-    """AC-DTR-2 / DTR-2-QUICKSTART-NOTE-OK."""
-    failures = _quickstart_plugins_dir_note_failures(_read(QUICKSTART))
-    assert not failures, "; ".join(failures)
+# AC-DTR-2 checkpoint 2 (QUICKSTART documents the FOUNDRY_PLUGINS_DIR override) RETIRED here:
+# subtraction-wave (AC-SUB-1b, → fleet-is-listagents R3) deleted foundry-fleet-doctor.py, the
+# override's only reader, and dropped the QUICKSTART row with it. docs/troubleshooting.md's own
+# mention is untouched (outside this atom's allowed_paths) — checkpoint 1's co-scoping test above
+# still covers it.
 
 
 # --- AC-DTR-3 -- every concrete spec-path mention in the reconciled doc set is 3+ segments ----

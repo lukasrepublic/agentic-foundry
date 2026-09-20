@@ -122,7 +122,7 @@ registration no scope still enables; without the flag it previews and removes no
 Confirm inside a session in your repo:
 
 ```
-/foundry:doctor        # → DOCTOR-GREEN (7 probes: manifest, hooks, skills, profile lock, operators, control-plane, permission-floor)
+/foundry:doctor        # → DOCTOR-GREEN (6 probes: manifest, hooks, skills, profile lock, operators, control-plane)
 ```
 
 ## 1. Wire your repo (once)
@@ -285,4 +285,3 @@ runbook is in **[troubleshooting.md](troubleshooting.md)**, symptom-first.
 | Operator registry / project config | `.claude/foundry-operators.json` / `.claude/foundry-project.json` |
 | Review + release records | `.foundry/` (gitignored evidence) + your git history (the ledger) |
 | Stack profiles | `packs/stack-profiles/` (node-web, aws-eks-karpenter, python-uv-lib, python-uv-service) |
-| `foundry-fleet-doctor`'s adopter-registry lookup root | default `~/.claude/plugins` (holds `installed_plugins.json`); override with `FOUNDRY_PLUGINS_DIR` |

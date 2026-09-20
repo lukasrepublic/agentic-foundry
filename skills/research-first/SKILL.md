@@ -56,7 +56,8 @@ this phase. `deep-research` is a **native harness skill — NOT vendored or pinn
 **unavailable** in a given environment.
 
 - **When `deep-research` is UNAVAILABLE**, you have exactly two honest moves:
-  - **escalate** to the operator that live research is unavailable for this fork; **or**
+  - **escalate** to the operator that live research is unavailable for this fork, per the shared
+    blocker schema (`schema/blocker.schema.json`, feat-foundry-blocker-requires-evidence); **or**
   - fall back to **EXPLICITLY-DISCLOSED parametric** answering, labeled verbatim
     **"no live research available — parametric, lower confidence"**, carrying that disclosure through to the
     distilled recommendation and the decision record.

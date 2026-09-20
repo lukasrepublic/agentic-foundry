@@ -64,29 +64,19 @@
       "rationale": "bare invocation runs the thin 5-check health probe; read-only, fail-open; exact rule deliberately — flag-qualified forms fall through to a prompt so no allow-prefix can reach the --heal ceremony (security review 2026-08-02)."
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-done-when-backfill.py --dry-run:*)",
+      "tier": "allow",
+      "rationale": "read-only report of every acceptance-contract.yaml lacking a top-level done_when and its derivation; writes nothing (AC-SUB-3)"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-env-hygiene.py:*)",
       "tier": "allow",
       "rationale": "status/reap over machine-scoped worker sandbox envs; confined to isolated per-worker state"
     },
     {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-fleet-doctor.py:*)",
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-governance-budget.py:*)",
       "tier": "allow",
-      "rationale": "read-only health sweep across all adopter handbooks wiring the plugin on one machine"
-    },
-    {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-fleet-roster.py:*)",
-      "tier": "allow",
-      "rationale": "read-only live roster render, one row per native session, via the session-registry"
-    },
-    {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-fleet-session-machinery.py:*)",
-      "tier": "allow",
-      "rationale": "derives a typed process-machinery overlay for the fleet surface; read-only"
-    },
-    {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-fleet-session-registry.py:*)",
-      "tier": "allow",
-      "rationale": "thin read-only overlay of foundry work-context onto the native session list"
+      "rationale": "read-only report of skill prose lines / shipped scripts / floor rows / hook commands / pytest count; prints only, writes nothing (AC-SUB-4)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-graph-mcp.py:*)",
@@ -277,6 +267,11 @@
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-decommission.py record:*)",
       "tier": "ask",
       "rationale": "ceremony: leading subcommand, writes a decommission record"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-done-when-backfill.py --apply:*)",
+      "tier": "ask",
+      "rationale": "writes a derived done_when: block into every acceptance-contract.yaml it backfills across the workspace's whole spec corpus; the --dry-run flag above is the read-only tier (AC-SUB-3)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-doctor.py --heal:*)",

@@ -108,8 +108,14 @@ def _git(root, *args):
 
 
 @pytest.fixture
-def corpus(tmp_path):
+def corpus(tmp_path, monkeypatch):
     root = os.path.realpath(str(tmp_path))
+    # AC-SUB-2: `render_prompt` now reads the effective settings' `env` block (via the doctor's
+    # `agent-teams` probe, `~/.claude/settings.json` included) to decide whether the ready set
+    # renders under the advisory header. HOME is redirected to a fixture dir with no settings
+    # files at all, so every test below is hermetic against the INVOKING operator's real
+    # `~/.claude/settings.json` rather than accidentally depending on it.
+    monkeypatch.setenv("HOME", os.path.join(root, "_fixture_home"))
     _git(root, "init", "-q", "-b", "main")
     _git(root, "config", "user.email", "fixture@example.invalid")
     _git(root, "config", "user.name", "fixture")
@@ -212,6 +218,81 @@ def test_render_prompt_lists_done_when_and_escalate_when_per_ready_atom(corpus):
     # the bare atom (no done_when/escalate_when declared) renders the absence, not silence
     assert "bareatom" in text
     assert "(not declared)" in text
+
+
+# ──────────────────────────────────── AC-SUB-2: the ready set is advisory in a team session ==== #
+
+def _write_settings_env(path, env):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"env": env}, fh)
+
+
+def test_agent_teams_advisory_off_by_default(corpus):
+    assert watch.agent_teams_advisory_on(project_dir=corpus) is False
+
+
+def test_agent_teams_advisory_on_from_project_settings(corpus):
+    _write_settings_env(os.path.join(corpus, ".claude", "settings.json"),
+                        {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"})
+    assert watch.agent_teams_advisory_on(project_dir=corpus) is True
+
+
+def test_agent_teams_advisory_on_from_user_global_settings(corpus):
+    _write_settings_env(os.path.join(os.environ["HOME"], ".claude", "settings.json"),
+                        {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"})
+    assert watch.agent_teams_advisory_on(project_dir=corpus) is True
+
+
+def test_agent_teams_advisory_local_settings_off_wins_over_project_on(corpus):
+    _write_settings_env(os.path.join(corpus, ".claude", "settings.json"),
+                        {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"})
+    _write_settings_env(os.path.join(corpus, ".claude", "settings.local.json"),
+                        {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "0"})
+    assert watch.agent_teams_advisory_on(project_dir=corpus) is False
+
+
+def test_render_prompt_ready_set_is_plain_outside_a_team_session(corpus):
+    """Outside a team session (the default), nothing changes: no advisory header, the same
+    "Ready to dispatch at arm time: ..." line as before AC-SUB-2."""
+    text = watch.render_prompt("prog-dwe", project_dir=corpus)
+    assert watch.ADVISORY_HEADER not in text
+    assert "Ready to dispatch at arm time:" in text
+
+
+def test_render_prompt_ready_set_renders_under_advisory_header_in_a_team_session(corpus):
+    _write_settings_env(os.path.join(corpus, ".claude", "settings.json"),
+                        {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"})
+    text = watch.render_prompt("prog-dwe", project_dir=corpus)
+    assert f"{watch.ADVISORY_HEADER}:" in text
+    header_idx = text.index(watch.ADVISORY_HEADER)
+    ready_idx = text.index("Ready to dispatch at arm time:")
+    assert header_idx < ready_idx, "the advisory header must precede the ready-set line"
+
+
+def test_snapshot_agrees_with_doctors_agent_teams_probe(corpus):
+    """The header and the doctor's own `agent-teams` probe must never disagree -- both read the
+    SAME effective settings via the SAME helper (`_load_doctor_module`), not two derivations."""
+    _write_settings_env(os.path.join(corpus, ".claude", "settings.json"),
+                        {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"})
+    doctor = watch._load_doctor_module()
+    assert doctor is not None, "the sibling doctor module must be importable in this repo"
+    _ok, detail = doctor.check_agent_teams_flag(project_dir=corpus)
+    assert detail == "on (settings env)"
+    assert watch.agent_teams_advisory_on(project_dir=corpus) is True
+
+
+def test_agent_teams_advisory_never_raises_when_doctor_module_missing(corpus, monkeypatch):
+    """The bounded-read fallback path: if the sibling doctor script is not importable for any
+    reason, `agent_teams_advisory_on` still resolves (never raises) via its own duplicated
+    bounded read."""
+    def _never(*_a, **_kw):
+        return None
+    monkeypatch.setattr(watch, "_load_doctor_module", _never)
+    assert watch.agent_teams_advisory_on(project_dir=corpus) is False
+    _write_settings_env(os.path.join(corpus, ".claude", "settings.json"),
+                        {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"})
+    assert watch.agent_teams_advisory_on(project_dir=corpus) is True
 
 
 # ──────────────────────────────── feat programme-state-minimal (AC-PSM-2/-4): tick ordering ==== #

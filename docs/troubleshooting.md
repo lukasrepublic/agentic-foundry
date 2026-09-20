@@ -212,9 +212,7 @@ claude plugin uninstall foundry@agentic-foundry --scope project
 claude plugin marketplace remove agentic-foundry --scope user
 claude plugin marketplace remove agentic-foundry --scope project
 
-# 3. clear the plugin cache (default location; see docs/QUICKSTART.md's "Where things live" for
-#    the fleet-doctor lookup-root override, which does not move this cache) -- filesystem, not
-#    scoped, so this runs once
+# 3. clear the plugin cache (default location) -- filesystem, not scoped, so this runs once
 rm -rf ~/.claude/plugins/cache/
 
 # (the same cache clear also resolves a stale registry entry in

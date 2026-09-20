@@ -173,7 +173,9 @@ intake LOADS the primitive, it does not re-implement the procedure.
 **Composition.** The discovery loop walks the decision tree depth-first; at each
 **best-practice node** the research gate / `research-first` resolves it (adopt the
 convergent practice, or escalate only a genuine fork). This replaces "ask the operator
-about everything" with "research everything, ask only on the genuine forks."
+about everything" with "research everything, ask only on the genuine forks." A fork escalated
+outside the live interview (e.g. discovered async, mid-build) hands off per the shared blocker
+schema (`schema/blocker.schema.json`, feat-foundry-blocker-requires-evidence).
 
 ### Prior art / industry grounding
 

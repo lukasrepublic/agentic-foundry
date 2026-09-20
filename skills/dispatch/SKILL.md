@@ -85,14 +85,9 @@ multi-atom fan-out).
    CI checks (`docs/merge-floor.md`), plus `hooks/foundry-git-discipline.sh` for any merge attempted
    from inside a session. Merge per the atom's `merge_autonomy_mode` (Regular → operator/diff-review; Lean → pr-reviewer pass + merge-on-green (reviewer advisory, never the merge approval)).
 
-**Run-duration capture — RETIRED (feat-foundry-run-duration-capture, subtracted by
-feat-yield-and-silent-yield-instrument, 2026-09-18).** `hooks/foundry-run-metrics.sh` and
-`scripts/foundry_run_metrics.py` — the `PostToolUse(Agent|Workflow)` hook that appended one
-gathering-only row per atom to `.foundry/run-metrics.jsonl` — every row `measurement:
-"unobserved"`, nothing read it — have been removed. `scripts/foundry-autonomy-instrument.py`
-(report-only, run on demand, never gated on a hook seam) is the atom's successor: six ratios
-mined from transcripts + the authorization corpus, including the two the run-metrics ledger never
-computed (silent-yield, authorized→built conversion).
+Run-duration capture is retired; `scripts/foundry-autonomy-instrument.py` (report-only, six ratios
+mined from transcripts + the authorization corpus) is the standing successor
+(feat-yield-and-silent-yield-instrument, autonomy-continuation R1).
 
 ## Worker return contract (claim-check) — AC-WCD-2
 

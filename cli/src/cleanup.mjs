@@ -16,9 +16,9 @@ import {
 
 /** The union of every scope record's `version` for `<plugin>@<marketplace>` in
  * installed_plugins.json, plus the refreshed marketplace manifest's `version` — NEVER the highest
- * semver on disk. `scripts/foundry-fleet-doctor.py:70-83`'s `installed_index()` is correct for its
- * own job (report ONE adopter's resolved plugin) and unsafe here: it `break`s after the first
- * record and would silently drop a scope pinned to an older version that is still live. */
+ * semver on disk. Stopping after the first matching record (rather than unioning every one) would
+ * silently drop a scope pinned to an older version that is still live — this cleanup path must
+ * never prune a directory a live scope still resolves to. */
 export function deriveLiveSet({ registry, manifestVersion, pluginKey }) {
   if (!registry.ok) return { ok: false, reason: registry.reason };
   const records = scopeRecordsFor(registry.doc, pluginKey);

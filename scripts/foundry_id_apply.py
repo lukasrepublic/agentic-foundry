@@ -287,8 +287,8 @@ def decide_apply(*, changed_paths, infra_binding):
 
 
 # ─────────────────────────────────────────────────────────── AC-IDAGR-11: render/scrub (local only) ── #
-# MIRRORS the shape of scripts/foundry-fleet-session-machinery.py:43-55 (_SECRET_RE) — NOT imported;
-# that file is out of this atom's scope and the gate carries no cross-surface import. The scrub applies
+# A local secret-shape scrub (its original mirror, the fleet-session machinery, was retired in the R4
+# deletion wave) — NOT imported; the gate carries no cross-surface import. The scrub applies
 # ONLY to the rendered/logged copy; the EXECUTE branch's runnable command stays the frozen
 # infra_binding.apply bytes, unaltered, because a redacted command is not a runnable one.
 _SECRET_RE = re.compile(
