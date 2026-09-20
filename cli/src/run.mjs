@@ -15,8 +15,7 @@ import { planManagedFiles, applyPlan, exitCodeForPlan } from './reconcile.mjs';
 import { renderPreview, TRUST_HANDOFF_TEXT } from './preview.mjs';
 import { validateSlug, resolveIdentity, wireIdentity, plannedMachineScopeWrites } from './identity.mjs';
 import {
-  resolveTarget, readTarget, readTrackedRules, planAdditions, applyAdditions,
-  writeTargetAtomically, renderPlan,
+  resolveTarget, readTarget, applyAdditions, planReconcile, writeTargetAtomically, renderPlan,
 } from './floorReconcile.mjs';
 import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from './gitignoreReconcile.mjs';
 
@@ -198,18 +197,25 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
     // would stay incomplete while the report said converged — and the repo would then ship to every
     // other clone and to CI without it.
     let floorPlan = null;
+    let floorRetirementPlan = null;
     let floorTarget = null;
     if (answers.reconcileFloor) {
       floorTarget = resolveTarget(physicalRoot);
       if (floorTarget.present) {
         const settingsObj = readTarget(floorTarget.path);
-        const trackedFindings = classifyDrift(map, readTrackedRules(settingsObj), {
-          pluginRootExpansion, unreadableOrigins: [], home: homeDir,
+        // AC-FRR-1 (ER #199, review round 1): retirement first, additions planned against the
+        // POST-retirement rule set — never against the raw settingsObj directly. See
+        // floorReconcile.mjs's own comment on planReconcile for why the other order loses a grant
+        // for one cycle across a map restructure.
+        const { additionsPlan, retirementPlan } = planReconcile({
+          settingsObj, map, pins, pluginRootExpansion, unreadableOrigins: [], home: homeDir,
         });
-        floorPlan = planAdditions({ findings: trackedFindings, map, settingsObj, pins });
-        floorPlan.settingsObj = settingsObj;
+        floorPlan = additionsPlan;
+        floorRetirementPlan = retirementPlan;
         print('');
-        for (const line of renderPlan(floorPlan, { applied: false })) print(line);
+        for (const line of renderPlan(floorPlan, {
+          applied: false, retirementPlan: floorRetirementPlan, mapEntryCount: map.entries.length,
+        })) print(line);
       } else {
         // absent settings.json is the CREATE path's business, not this one's — the managed-file
         // plan above already writes the full floor for it, and racing that would duplicate it
@@ -223,7 +229,9 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
     // permission floor unattended; --yes must be given EXPLICITLY. This sits above applyPlan
     // deliberately — a "refused" verdict printed after the scaffold write had already landed reads
     // as "nothing happened", which is the one thing it must not mean.
-    if (floorPlan && floorPlan.total > 0 && !isTTY && answers.yes !== true) {
+    const floorHasWork = Boolean(floorPlan)
+      && (floorPlan.total > 0 || (floorRetirementPlan && floorRetirementPlan.total > 0));
+    if (floorHasWork && !isTTY && answers.yes !== true) {
       throw new RefusalError(
         'refusing --reconcile-floor without a terminal: pass --yes explicitly to confirm the write',
         'reconcile-floor',
@@ -252,10 +260,15 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
     // --reconcile-floor's pre-write refusal exists for.
     applyGitignorePlan(gitignorePlan);
 
-    if (floorPlan && floorPlan.total > 0) {
+    if (floorHasWork) {
+      // floorPlan.settingsObj is ALREADY post-retirement (planReconcile derived it that way) —
+      // applyAdditions composes onto it directly; a second applyRetirements call here would be
+      // retiring an object that was never given the rows back in the first place.
       writeTargetAtomically(floorTarget.path, applyAdditions(floorPlan.settingsObj, floorPlan, { map, pins }));
       print('');
-      for (const line of renderPlan(floorPlan, { applied: true })) print(line);
+      for (const line of renderPlan(floorPlan, {
+        applied: true, retirementPlan: floorRetirementPlan, mapEntryCount: map.entries.length,
+      })) print(line);
     }
 
     if (slug) {

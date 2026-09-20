@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { loadMap, classifyDrift } from '../src/permissionFloor.mjs';
 import {
   resolveTarget, readTarget, readTrackedRules, planAdditions, applyAdditions,
+  planRetirements, applyRetirements, parseFloorRootShape, planReconcile,
   writeTargetAtomically, renderPlan, classifyPin, ADDITIVE_CLASSES,
 } from '../src/floorReconcile.mjs';
 import { RefusalError } from '../src/util.mjs';
@@ -446,4 +447,199 @@ test('an_empty_pin_block_repo_cannot_match_an_empty_entry_repo', () => {
   const entry = { source: { source: 'github', repo: '' } };
   const pin = classifyPin({ extraKnownMarketplaces: { [PINS.marketplace_name]: entry } }, brokenPins);
   assert.equal(pin.state, 'unpinned', 'a broken pin block must fail closed, never match by degeneracy');
+});
+
+// ── floor-retires-rows (AC-FRR-1/-2/-4, ER #199) ─────────────────────────────────────────────────
+// The reconcile above only ever ADDED: the four fleet scripts v1.15.0 deleted (#196) kept `allow`
+// rules in every upgraded workspace forever, and nothing reported it. These drive the retirement
+// side directly (parseFloorRootShape/planRetirements/applyRetirements), the same pipeline shape
+// `plan()`/`commit()` above drive for additions.
+
+const RETIRED_ROW = `Bash(${MAP.plugin_root_glob}/scripts/foundry-fleet-doctor.py:*)`;
+const RETIRED_ROW_WITH_SUB = `Bash(${MAP.plugin_root_glob}/scripts/foundry-fleet-roster.py list:*)`;
+
+test('parse_floor_root_shape_extracts_name_and_sub_or_returns_null', () => {
+  assert.deepEqual(parseFloorRootShape(RETIRED_ROW, MAP.plugin_root_glob),
+    { name: 'foundry-fleet-doctor.py', sub: null });
+  assert.deepEqual(parseFloorRootShape(RETIRED_ROW_WITH_SUB, MAP.plugin_root_glob),
+    { name: 'foundry-fleet-roster.py', sub: 'list' });
+  // a real shipped row with a subcommand parses the same way the shape it was written in demands
+  const shippedWithSub = byTier('allow').find((r) => r.includes('foundry_repo_fleet.py status'));
+  assert.deepEqual(parseFloorRootShape(shippedWithSub, MAP.plugin_root_glob),
+    { name: 'foundry_repo_fleet.py', sub: 'status' });
+  // AC-FRR-2: any OTHER shape — no plugin-root glob, a different prefix, the map's own bare
+  // (non-`:*`) doctor exception — is never a retirement candidate
+  assert.equal(parseFloorRootShape('Bash(scripts/foundry-fleet-doctor.py:*)', MAP.plugin_root_glob), null);
+  assert.equal(parseFloorRootShape('Bash(make build:*)', MAP.plugin_root_glob), null);
+  const bareDoctor = byTier('allow').find((r) => r.includes('foundry-doctor.py)'));
+  assert.equal(parseFloorRootShape(bareDoctor, MAP.plugin_root_glob), null);
+});
+
+test('retirement_removes_a_row_the_shipped_map_no_longer_declares', () => {
+  const root = target({
+    permissions: { allow: [RETIRED_ROW, ...byTier('allow')], ask: byTier('ask'), deny: byTier('deny') },
+    extraKnownMarketplaces: PINNED,
+  });
+  const settingsObj = readTarget(resolveTarget(root).path);
+  const r = planRetirements({ settingsObj, map: MAP });
+  assert.deepEqual(r.retirements.allow, [RETIRED_ROW]);
+  assert.deepEqual(r.retirements.ask, []);
+  assert.equal(r.total, 1);
+
+  const after = applyRetirements(settingsObj, r);
+  assert.ok(!after.permissions.allow.includes(RETIRED_ROW), 'the retired row survived');
+  // every rule the map still declares survives, untouched
+  for (const rule of byTier('allow')) assert.ok(after.permissions.allow.includes(rule));
+  assert.deepEqual(after.permissions.ask, settingsObj.permissions.ask);
+  assert.deepEqual(after.permissions.deny, settingsObj.permissions.deny);
+});
+
+test('retirement_leaves_an_adopter_row_of_another_shape_alone', () => {
+  const adopterRow = 'Bash(scripts/foundry-fleet-doctor.py:*)'; // names the same script, no plugin-root glob
+  const root = target({
+    permissions: { allow: [adopterRow, ...byTier('allow')], ask: byTier('ask'), deny: byTier('deny') },
+    extraKnownMarketplaces: PINNED,
+  });
+  const settingsObj = readTarget(resolveTarget(root).path);
+  const r = planRetirements({ settingsObj, map: MAP });
+  assert.equal(r.total, 0, 'an adopter-authored row of another shape was queued for retirement');
+  const after = applyRetirements(settingsObj, r);
+  assert.ok(after.permissions.allow.includes(adopterRow), 'the adopter row was removed');
+});
+
+test('retirement_never_touches_deny', () => {
+  const retiredDenyShaped = `Bash(${MAP.plugin_root_glob}/scripts/foundry-fleet-doctor.py:*)`;
+  const root = target({
+    permissions: { allow: byTier('allow'), ask: byTier('ask'), deny: [retiredDenyShaped, ...byTier('deny')] },
+    extraKnownMarketplaces: PINNED,
+  });
+  const settingsObj = readTarget(resolveTarget(root).path);
+  const r = planRetirements({ settingsObj, map: MAP });
+  assert.equal(r.total, 0, 'a deny-tier row of the retired shape was queued for removal');
+  const after = applyRetirements(settingsObj, r);
+  assert.deepEqual(after.permissions.deny, settingsObj.permissions.deny);
+});
+
+test('a_present_map_name_with_a_different_sub_still_retires_the_stale_sub', () => {
+  // AC-FRR-1: the check is on the (name, sub) PAIR, not the name alone — retiring `status` must not
+  // depend on whether `validate` (a different sub of the SAME script) is still declared.
+  const stillDeclaredName = byTier('allow').find((r) => r.includes('foundry_repo_fleet.py status'));
+  const staleSub = stillDeclaredName.replace(' status:*', ' no-longer-shipped-sub:*');
+  const root = target({
+    permissions: { allow: [staleSub, ...byTier('allow')], ask: byTier('ask'), deny: byTier('deny') },
+    extraKnownMarketplaces: PINNED,
+  });
+  const settingsObj = readTarget(resolveTarget(root).path);
+  const r = planRetirements({ settingsObj, map: MAP });
+  assert.deepEqual(r.retirements.allow, [staleSub]);
+  const after = applyRetirements(settingsObj, r);
+  assert.ok(after.permissions.allow.includes(stillDeclaredName), 'the still-shipped sub was removed too');
+});
+
+test('reconcile_pipeline_reports_retired_rows_and_the_composite_summary_line', () => {
+  const root = target({
+    permissions: { allow: [RETIRED_ROW, ...byTier('allow')], ask: byTier('ask'), deny: byTier('deny') },
+    extraKnownMarketplaces: PINNED,
+  });
+  const settingsObj = readTarget(resolveTarget(root).path);
+  // planReconcile — the single entry point either call site uses (review round 1): never
+  // planAdditions/planRetirements invoked separately against the same raw settingsObj from here on.
+  const { additionsPlan, retirementPlan } = planReconcile({
+    settingsObj, map: MAP, pins: PINS, pluginRootExpansion: ['x'], unreadableOrigins: [], home: HOME,
+  });
+  const lines = renderPlan(additionsPlan, {
+    applied: true, retirementPlan, mapEntryCount: MAP.entries.length,
+  });
+  assert.ok(lines.some((l) => l === `  [retired] ${RETIRED_ROW}`), 'the retired row was not printed');
+  assert.ok(
+    lines.some((l) => l.includes(`0 added, ${retirementPlan.total} retired, ${MAP.entries.length} unchanged`)),
+    `summary line missing the composite counts: ${lines.join('\n')}`,
+  );
+});
+
+// ── review round 1 (PR #201): additions MUST be planned against the POST-retirement rule set ────
+
+test('a_bare_row_split_into_two_subs_by_a_map_restructure_retires_and_adds_in_ONE_pass', () => {
+  // The defect the pre-fix ordering had: covers() is a PREFIX fold, so a bare `<name>:*` row a
+  // workspace still carries reads as ALREADY COVERING both split entries a map restructure might
+  // introduce — planning additions against the PRE-retirement settings would therefore queue
+  // NEITHER split row in the SAME pass that retires the bare one, losing the grant for one cycle.
+  const glob = MAP.plugin_root_glob;
+  const bareRow = `Bash(${glob}/scripts/foo.py:*)`;
+  const splitA = `Bash(${glob}/scripts/foo.py --a:*)`;
+  const splitB = `Bash(${glob}/scripts/foo.py --b:*)`;
+  // A minimal, self-contained map (never the real 71-entry one) so the ONLY thing this fixture
+  // exercises is the bare-to-split restructure, not any other entry's absence/presence.
+  const restructuredMap = {
+    schema_version: 1,
+    plugin_root_glob: glob,
+    entries: [
+      { rule: splitA, tier: 'allow', rationale: 'split a' },
+      { rule: splitB, tier: 'allow', rationale: 'split b' },
+    ],
+  };
+  const root = target({
+    permissions: { allow: [bareRow], ask: [], deny: [] },
+    extraKnownMarketplaces: PINNED,
+  });
+  const settingsObj = readTarget(resolveTarget(root).path);
+
+  // (a) the OLD, unsafe order — additions planned against the RAW (pre-retirement) settingsObj —
+  // reproduces the loss: neither split row is queued, because the bare row still "covers" both.
+  const unsafeRetirement = planRetirements({ settingsObj, map: restructuredMap });
+  const unsafeFindings = classifyDrift(restructuredMap, readTrackedRules(settingsObj), {
+    pluginRootExpansion: ['x'], unreadableOrigins: [], home: HOME,
+  });
+  const unsafeAdditions = planAdditions({
+    findings: unsafeFindings, map: restructuredMap, settingsObj, pins: PINS,
+  });
+  assert.deepEqual(unsafeRetirement.retirements.allow, [bareRow]);
+  assert.equal(unsafeAdditions.total, 0,
+    'sanity check: the OLD ordering must reproduce the one-cycle loss, or this test proves nothing');
+
+  // (b) planReconcile — the FIX — retires the bare row AND adds both split rows in the SAME pass.
+  const { additionsPlan, retirementPlan } = planReconcile({
+    settingsObj, map: restructuredMap, pins: PINS,
+    pluginRootExpansion: ['x'], unreadableOrigins: [], home: HOME,
+  });
+  assert.deepEqual(retirementPlan.retirements.allow, [bareRow]);
+  assert.deepEqual(additionsPlan.additions.allow.slice().sort(), [splitA, splitB].sort());
+
+  const written = applyAdditions(additionsPlan.settingsObj, additionsPlan, { map: restructuredMap, pins: PINS });
+  assert.ok(!written.permissions.allow.includes(bareRow), 'the bare row survived');
+  assert.ok(written.permissions.allow.includes(splitA), 'split row a was never added');
+  assert.ok(written.permissions.allow.includes(splitB), 'split row b was never added');
+});
+
+test('full_pipeline_idempotence_through_the_real_entry_point_second_run_is_silent', () => {
+  // Additions AND retirements composed through planReconcile, driven twice over the SAME on-disk
+  // target the way run.mjs actually drives it (plan -> commit -> re-plan): the second pass must
+  // report zero of each and must not touch the file at all.
+  const root = target({
+    permissions: { allow: [RETIRED_ROW, ...byTier('allow')], ask: byTier('ask'), deny: byTier('deny') },
+    extraKnownMarketplaces: PINNED,
+  });
+  const t = resolveTarget(root);
+
+  const first = planReconcile({
+    settingsObj: readTarget(t.path), map: MAP, pins: PINS,
+    pluginRootExpansion: ['x'], unreadableOrigins: [], home: HOME,
+  });
+  assert.equal(first.retirementPlan.total, 1, 'the fixture did not actually seed a retirement candidate');
+  writeTargetAtomically(t.path, applyAdditions(first.additionsPlan.settingsObj, first.additionsPlan, { map: MAP, pins: PINS }));
+
+  const bytesAfterFirst = fs.readFileSync(t.path);
+  const inoAfterFirst = fs.statSync(t.path).ino;
+
+  const second = planReconcile({
+    settingsObj: readTarget(t.path), map: MAP, pins: PINS,
+    pluginRootExpansion: ['x'], unreadableOrigins: [], home: HOME,
+  });
+  assert.equal(second.additionsPlan.total, 0, 'a second run over its own output queued an addition');
+  assert.equal(second.retirementPlan.total, 0, 'a second run over its own output queued a retirement');
+
+  // never actually written — the second plan is inert, but assert the FILE too, not only the plan,
+  // exactly as the pre-existing additive-only idempotence test does
+  assert.deepEqual(fs.readFileSync(t.path), bytesAfterFirst, 'a no-op second plan changed the bytes');
+  assert.equal(fs.statSync(t.path).ino, inoAfterFirst, 'a no-op second plan rewrote the file');
 });

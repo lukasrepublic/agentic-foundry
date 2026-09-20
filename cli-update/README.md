@@ -49,11 +49,17 @@ and want it to stay that way, disable it again after the update, or migrate that
    `--cleanup`, every candidate path and registration is still previewed, but nothing is removed and
    no `claude` invocation runs for this phase at all. Pass `--cleanup` to actually delete what was
    previewed.
-4. **Reinitialization** — the same never-clobber managed-file reconcile and additive permission-floor
+4. **Reinitialization** — the same never-clobber managed-file reconcile and permission-floor
    reconcile `create-agentic-workspace --existing` already implements: an operator-edited file is
-   reported drifted and left byte-identical, never overwritten. `.gitignore`'s own managed-block
-   reconcile runs here too, so a workspace that predates a later block content change catches up on
-   the next update run rather than staying stuck on whatever it was scaffolded with.
+   reported drifted and left byte-identical, never overwritten. The permission-floor reconcile is
+   additive with one narrow exception — a row shaped exactly like the floor's own root-glob rows,
+   whose `(name, sub)` PAIR — not the script name alone — the shipped floor no longer declares, is
+   retired from `allow`/`ask` (printed `[retired] <row>`): retiring one dropped subcommand of a
+   script that still ships others removes only that stale pair, never the whole family, and a
+   script deleted outright does not leave a standing grant behind forever. `.gitignore`'s own
+   managed-block reconcile runs here too, so a workspace that predates a
+   later block content change catches up on the next update run rather than staying stuck on
+   whatever it was scaffolded with.
 
 Every run previews every `claude` invocation and every path it will touch **before** the first one
 happens, and ends with a per-phase summary (`changed` / `already current` / `skipped: <reason>`).
