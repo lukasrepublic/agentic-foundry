@@ -33,7 +33,6 @@ import json
 import os
 import re
 import shlex
-import stat
 import sys
 
 import yaml
@@ -169,7 +168,6 @@ def record_age(rec) -> dict:
 # than re-deriving it, so the doctor's on/off verdict and this header can never disagree.
 
 _AGENT_TEAMS_ENV_KEY = "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"
-_SETTINGS_MAX_BYTES = 1024 * 1024
 ADVISORY_HEADER = "advisory — the task list is the queue"
 
 
@@ -191,23 +189,16 @@ def _load_doctor_module():
         return None
 
 
-def _bounded_env_block(path):
-    """The same bounded, exception-tolerant `env`-block read the doctor's `check_agent_teams_flag`
-    performs, duplicated here ONLY as the fallback path when the doctor module is not importable
-    (never raises)."""
-    try:
-        st = os.stat(path)
-        if not stat.S_ISREG(st.st_mode) or st.st_size > _SETTINGS_MAX_BYTES:
-            return {}
-        with open(path, "rb") as f:
-            raw = f.read()
-        doc = json.loads(raw.decode("utf-8"))
-        if not isinstance(doc, dict):
-            return {}
-        env = doc.get("env")
-        return env if isinstance(env, dict) else {}
-    except Exception:
-        return {}
+def _import_permission_floor():
+    """Deferred import of the shared bounded-read module (AC-RES-3) -- never at module load time,
+    matching this file's own `_load_doctor_module` posture: a broken/absent
+    `foundry_permission_floor.py` must degrade this advisory gate to its safe default (`False`),
+    never raise out of `agent_teams_advisory_on`."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import foundry_permission_floor as pf
+    return pf
 
 
 def agent_teams_advisory_on(project_dir=None) -> bool:
@@ -215,7 +206,13 @@ def agent_teams_advisory_on(project_dir=None) -> bool:
     files' `env` block sets `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` to `"1"`, at the SAME
     ascending-precedence layers (user, project, project-local) the doctor's `agent-teams` probe
     reads. NEVER raises -- any failure resolves to `False` (outside a team session, nothing
-    changes is the safe default)."""
+    changes is the safe default).
+
+    AC-RES-3: reuses `foundry_permission_floor.load_settings_env` (the SAME shared bounded read
+    the doctor's own `check_agent_teams_flag` calls) rather than maintaining a local copy of the
+    doctor's read -- first via the doctor module when it is importable (kept, since a real doctor
+    run and this header can then never disagree even on some OTHER probe surface), otherwise via
+    the shared module directly."""
     root = fr._project_dir(project_dir)
     doctor = _load_doctor_module()
     if doctor is not None:
@@ -224,19 +221,15 @@ def agent_teams_advisory_on(project_dir=None) -> bool:
             return isinstance(detail, str) and detail.startswith("on")
         except Exception:
             pass
-    # Fallback: the doctor module could not be loaded -- the same bounded read, duplicated.
-    paths = [
-        os.path.join(os.path.expanduser("~"), ".claude", "settings.json"),
-        os.path.join(root, ".claude", "settings.json"),
-        os.path.join(root, ".claude", "settings.local.json"),
-    ]
-    on = False
-    for path in paths:
-        env = _bounded_env_block(path)
-        val = env.get(_AGENT_TEAMS_ENV_KEY)
-        if val is not None:
-            on = (val == "1")
-    return on
+    # Fallback: the doctor module could not be loaded -- read the SAME shared helper directly.
+    try:
+        pf = _import_permission_floor()
+        paths = [os.path.join(os.path.expanduser("~"), ".claude", "settings.json")]
+        paths += [os.path.join(root, rel) for rel in pf.SETTINGS_RELATIVE_PATHS]  # one source (review)
+        env = pf.load_settings_env(paths)
+        return env.get(_AGENT_TEAMS_ENV_KEY) == "1"
+    except Exception:
+        return False
 
 
 # ── measurement ──────────────────────────────────────────────────────────────────────────────

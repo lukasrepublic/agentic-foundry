@@ -204,6 +204,10 @@
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-governance-budget.py:*)",
             "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-worktree-gc.py --dry-run:*)",
+            "origin": "settings.json"
           }
         ],
         "ask": [
@@ -285,6 +289,10 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-done-when-backfill.py --apply:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-worktree-gc.py --apply:*)",
             "origin": "settings.json"
           }
         ],
@@ -500,6 +508,10 @@
           {
             "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-governance-budget.py:*)",
             "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-worktree-gc.py --dry-run:*)",
+            "origin": "settings.json"
           }
         ],
         "ask": [
@@ -581,6 +593,10 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-done-when-backfill.py --apply:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-worktree-gc.py --apply:*)",
             "origin": "settings.json"
           }
         ],

@@ -52,6 +52,13 @@ _TOP_OPTIONAL_FIELDS = {
     "acceptance",
     "program", "version", "target_repo", "target_version", "depends_on_release",
     "value", "subtraction", "lane", "gate_before_authorize", "supersedes_atoms", "exit",
+    # (branch-and-worktree-discipline, AC-BWD-4): the release's integration branch
+    # (`release/<version>`, created from `main` as `/foundry:intake`'s LAST step) — purely
+    # descriptive at THIS loader, same as the release-loader-vocabulary fields above: never read
+    # by the RA/RD state machine, `derive_closure`, or `transition`. Consumed by
+    # `/foundry:merge-when-green` (AC-BWD-5, the base-branch refusal) and
+    # `skills/cut-release/SKILL.md` (the R -> R2 -> tag flow onto it).
+    "integration_branch",
 }
 _ATOM_FIELDS = {"id", "depends_on"}
 # (feat-foundry-wave-plan): ADDITIVE optional atom fields consumed by
@@ -109,7 +116,8 @@ class Atom:
 
 
 class Release:
-    def __init__(self, id, description, state, atoms, order, acceptance=None):
+    def __init__(self, id, description, state, atoms, order, acceptance=None,
+                integration_branch=None):
         self.id = id
         self.description = description
         self.state = state
@@ -119,6 +127,11 @@ class Release:
         # the optional PRACTICE acceptance log — list[{date, operator, verdict, note}],
         # oldest first, never touched by the RA/RD state machine (see `append_acceptance`).
         self.acceptance = list(acceptance or [])
+        # (branch-and-worktree-discipline, AC-BWD-4): the release's integration branch, e.g.
+        # "release/1.16.0" -- None when the manifest carries no such field (every manifest
+        # authored before this extension). Purely descriptive here; never touched by the RA/RD
+        # state machine. See `_TOP_OPTIONAL_FIELDS`'s own comment for the consumers.
+        self.integration_branch = integration_branch
 
     def __repr__(self):
         return f"<Release {self.id} state={self.state} atoms={len(self.atoms)}>"
@@ -212,6 +225,12 @@ def _validate(doc, expected_id):
         raise ReleaseError(f"release id {rid!r} does not match its directory {expected_id!r}")
     if not isinstance(doc["description"], str) or not doc["description"].strip():
         raise ReleaseError(f"release {rid!r}: `description` must be a non-empty string")
+    integration_branch = doc.get("integration_branch")
+    if integration_branch is not None:
+        if (not isinstance(integration_branch, str) or not integration_branch.strip()
+                or "\n" in integration_branch or integration_branch != integration_branch.strip()):
+            raise ReleaseError(f"release {rid!r}: `integration_branch` must be a single-line, "
+                               f"non-empty string with no leading/trailing whitespace")
     state = doc["state"]
     state = _STATE_READ_SYNONYMS.get(state, state)      # AC-RLV-4: `proposed` reads as `planned`
     if state not in STATES:
@@ -292,7 +311,8 @@ def _validate(doc, expected_id):
 
     order = _toposort(atoms)                      # raises on cycle / dangling edge
     acceptance = _validate_acceptance(rid, doc.get("acceptance", []))
-    return Release(rid, doc["description"], state, atoms, order, acceptance=acceptance)
+    return Release(rid, doc["description"], state, atoms, order, acceptance=acceptance,
+                   integration_branch=integration_branch)
 
 
 def load_release(id, *, project_dir=None, root=None):
@@ -353,6 +373,10 @@ def save_release(release, *, project_dir=None):
         "state": release.state,
         "atoms": [_atom_doc(a) for a in release.atoms],
     }
+    # round-trip `integration_branch` only when set, same convention as `acceptance` below (no
+    # `integration_branch: null` noise on a manifest authored before this extension).
+    if release.integration_branch is not None:
+        doc["integration_branch"] = release.integration_branch
     # round-trip `acceptance:` only when populated, so a manifest authored before this
     # extension (or one with no acceptance records yet) re-saves byte-stable (no `acceptance: []`
     # noise added) — same convention as `paths`/`journeys` above.

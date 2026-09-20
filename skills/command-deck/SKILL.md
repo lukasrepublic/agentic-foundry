@@ -170,6 +170,10 @@ job is gone means **re-arm**, and the record exists precisely so a restarted ses
 - **Do not invent review or security machinery for a gap the operator's own authorize gate already
   covers.** A five-lens review of this capability once returned 16 Blocks of which 12 were phantom
   gaps assuming the operator had left the room. They have not.
+- **Branch and worktree discipline is not restated here either.** See
+  `context/branch-discipline.md` (cited, never copied, from every driver): each dispatched atom's
+  worktree/branch/PR-target shape, when to delete, and the codified `scripts/foundry-worktree-gc.py`
+  sweep that replaces the manual cleanup step nobody ran.
 
 ## Learning across waves (wave-learn)
 

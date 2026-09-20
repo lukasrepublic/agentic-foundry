@@ -61,11 +61,13 @@ case "${1:-}" in
         # `... --json labels -q '.labels[].name'` (spec-link + security-path). Dispatched on the
         # `--json` field name present in argv, not on job identity.
         #
-        # `--json mergeStateStatus` / `--json mergeCommit` (feat-merge-when-green, AC-MWG-1):
-        # foundry-merge-when-green.py's own polling + post-merge query. ONE fixture body serves
-        # both field requests -- the caller always asks for a SINGLE field per call and reads
-        # only the key it asked for, so a body carrying both keys answers either call correctly.
-        if printf '%s\n' "$*" | grep -qE -- '--json (mergeStateStatus|mergeCommit)'; then
+        # `--json mergeStateStatus` / `--json mergeCommit` (feat-merge-when-green, AC-MWG-1) /
+        # `--json baseRefName` (branch-and-worktree-discipline, AC-BWD-5: the base-branch refusal
+        # reads the PR's real base before comparing it against the release manifest's
+        # `integration_branch`). ONE fixture body serves every one of these field requests -- the
+        # caller always asks for a SINGLE field per call and reads only the key it asked for, so a
+        # body carrying all three keys answers any of them correctly.
+        if printf '%s\n' "$*" | grep -qE -- '--json (mergeStateStatus|mergeCommit|baseRefName)'; then
           if [ -n "${GH_STUB_VIEW_JSON:-}" ]; then
             printf '%s\n' "${GH_STUB_VIEW_JSON}"
           else
@@ -93,6 +95,39 @@ case "${1:-}" in
         # (never `--admin`), the same shape `hooks/foundry-git-discipline.sh`'s clause already
         # admits.
         exit "${GH_STUB_MERGE_EXIT:-0}"
+        ;;
+      list)
+        # foundry-worktree-gc.py's own `gh pr list --head <branch> --state <merged|open> --json
+        # number` query (branch-and-worktree-discipline, AC-BWD-2). Additive: every pre-existing
+        # `gh pr` subcommand arm above is unchanged.
+        #
+        # GH_STUB_PR_LIST_BY_BRANCH (JSON: {"<branch>": {"merged": [...], "open": [...]}}) drives
+        # a PER-BRANCH, PER-STATE answer -- required because one classify_repo() run queries gh
+        # once per non-ancestor-merged candidate branch, and different branches in the SAME
+        # fixture need different verdicts (an "open-pr" branch vs an "unmerged-no-pr" branch in
+        # the same repo). Falls back to GH_STUB_PR_LIST_JSON (one body for every branch/state)
+        # when unset, so a single-branch test needs no JSON authoring at all.
+        branch=""
+        state=""
+        rest=("$@")
+        for ((i = 2; i < ${#rest[@]}; i++)); do
+          case "${rest[i]}" in
+            --head) branch="${rest[i+1]:-}" ;;
+            --state) state="${rest[i+1]:-}" ;;
+          esac
+        done
+        if [ -n "${GH_STUB_PR_LIST_BY_BRANCH:-}" ]; then
+          printf '%s\n' "${GH_STUB_PR_LIST_BY_BRANCH}" | python3 -c '
+import json, sys
+doc = json.loads(sys.stdin.read())
+branch, state = sys.argv[1], sys.argv[2]
+rows = (doc.get(branch) or {}).get(state) or []
+print(json.dumps(rows))
+' "$branch" "$state"
+        else
+          printf '%s\n' "${GH_STUB_PR_LIST_JSON:-[]}"
+        fi
+        exit "${GH_STUB_PR_LIST_EXIT:-0}"
         ;;
       *)
         echo "gh-stub: unrecognized 'gh pr' subcommand: $*" >&2
