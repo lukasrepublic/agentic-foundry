@@ -28,10 +28,12 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import importlib.util
 import json
 import os
 import re
 import shlex
+import stat
 import sys
 
 import yaml
@@ -158,6 +160,83 @@ def record_age(rec) -> dict:
         return {"expired": None, "remaining_hours": None}
     remaining = (expires - _now()).total_seconds() / 3600
     return {"expired": remaining <= 0, "remaining_hours": round(remaining, 1)}
+
+
+# ── agent-teams advisory gate (AC-SUB-2) ────────────────────────────────────────────────────────
+# The ready set is advisory (never authoritative) in a team session, because Routines/native task
+# assignment there is the actual queue — this reuses the SAME effective-settings `env` read the
+# doctor's own `agent-teams` probe already does (feat-agent-teams-enablement, AC-ATE-4), rather
+# than re-deriving it, so the doctor's on/off verdict and this header can never disagree.
+
+_AGENT_TEAMS_ENV_KEY = "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"
+_SETTINGS_MAX_BYTES = 1024 * 1024
+ADVISORY_HEADER = "advisory — the task list is the queue"
+
+
+def _load_doctor_module():
+    """Best-effort dynamic load of the sibling doctor script (hyphenated filename, so a plain
+    `import` cannot name it) -- mirrors `scripts/foundry-doctor.py`'s OWN `_load_*_module` helpers
+    for its sibling hyphenated scripts. Returns None on any failure (missing file, syntax error,
+    etc.) so the caller always has the bounded-read fallback below."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(here, "foundry-doctor.py")
+    if not os.path.isfile(path):
+        return None
+    try:
+        spec = importlib.util.spec_from_file_location("_cdw_doctor_agent_teams", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:
+        return None
+
+
+def _bounded_env_block(path):
+    """The same bounded, exception-tolerant `env`-block read the doctor's `check_agent_teams_flag`
+    performs, duplicated here ONLY as the fallback path when the doctor module is not importable
+    (never raises)."""
+    try:
+        st = os.stat(path)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > _SETTINGS_MAX_BYTES:
+            return {}
+        with open(path, "rb") as f:
+            raw = f.read()
+        doc = json.loads(raw.decode("utf-8"))
+        if not isinstance(doc, dict):
+            return {}
+        env = doc.get("env")
+        return env if isinstance(env, dict) else {}
+    except Exception:
+        return {}
+
+
+def agent_teams_advisory_on(project_dir=None) -> bool:
+    """Whether the ready set should render under the advisory header: the effective settings
+    files' `env` block sets `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` to `"1"`, at the SAME
+    ascending-precedence layers (user, project, project-local) the doctor's `agent-teams` probe
+    reads. NEVER raises -- any failure resolves to `False` (outside a team session, nothing
+    changes is the safe default)."""
+    root = fr._project_dir(project_dir)
+    doctor = _load_doctor_module()
+    if doctor is not None:
+        try:
+            _ok, detail = doctor.check_agent_teams_flag(project_dir=root)
+            return isinstance(detail, str) and detail.startswith("on")
+        except Exception:
+            pass
+    # Fallback: the doctor module could not be loaded -- the same bounded read, duplicated.
+    paths = [
+        os.path.join(os.path.expanduser("~"), ".claude", "settings.json"),
+        os.path.join(root, ".claude", "settings.json"),
+        os.path.join(root, ".claude", "settings.local.json"),
+    ]
+    on = False
+    for path in paths:
+        env = _bounded_env_block(path)
+        val = env.get(_AGENT_TEAMS_ENV_KEY)
+        if val is not None:
+            on = (val == "1")
+    return on
 
 
 # ── measurement ──────────────────────────────────────────────────────────────────────────────
@@ -311,12 +390,17 @@ def _template_text() -> str:
     )
 
 
-def _snapshot(m: dict) -> str:
+def _snapshot(m: dict, advisory: bool = False) -> str:
     """§5 of the prompt: a state line that WILL be stale by the next tick, and says so.
 
     Deliberately a snapshot rather than a live query. It carries "re-measure, do not trust this
     line" and its job is to train re-measurement — a prompt that quietly stayed current would
     instead train the agent to trust a number nothing re-derives.
+
+    `advisory` (AC-SUB-2): when the session has native agent-teams on, the ready-set line renders
+    under the `ADVISORY_HEADER` -- the task list (Routines / native task assignment) is the real
+    queue there, and this line is a snapshot, never an instruction to dispatch it directly.
+    Outside a team session `advisory` is False and nothing about this line changes.
     """
     counts = " · ".join(f"{k} {v}" for k, v in sorted(m["counts"].items())) or "(no rows derived)"
     lines = [
@@ -325,7 +409,11 @@ def _snapshot(m: dict) -> str:
         f"Open wave: {m['open_wave'] if m['open_wave'] is not None else 'none — no unfinished wave'}.",
     ]
     if m["ready"]:
-        lines.append(f"Ready to dispatch at arm time: {', '.join(m['ready'])}.")
+        if advisory:
+            lines.append(f"{ADVISORY_HEADER}:")
+            lines.append(f"  Ready to dispatch at arm time: {', '.join(m['ready'])}.")
+        else:
+            lines.append(f"Ready to dispatch at arm time: {', '.join(m['ready'])}.")
     else:
         lines.append("Nothing was ready at arm time. Every atom's exclusion reason:")
         for aid, why in sorted(m["excluded"].items()):
@@ -406,7 +494,7 @@ def render_prompt(programme: str, project_dir=None, branch="main", cron=DEFAULT_
         "{{MANIFEST_PATH}}": f".foundry/releases/{m['programme']}/release.yaml",
         "{{CRON}}": cron,
         "{{ARMED_AT}}": m["measured_at"],
-        "{{SNAPSHOT}}": _snapshot(m),
+        "{{SNAPSHOT}}": _snapshot(m, advisory=agent_teams_advisory_on(project_dir=root)),
         "{{STATE_SUMMARY}}": _state_summary(release, project_dir=project_dir),
         "{{STANDING_YIELD_RULE}}": STANDING_YIELD_RULE,
         "{{DONE_ESCALATE}}": _render_done_escalate_block(release, m["ready"], project_dir=project_dir),
