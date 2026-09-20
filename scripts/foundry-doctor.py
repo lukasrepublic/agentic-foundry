@@ -19,14 +19,7 @@ What this probe checks, every run, cheaply:
      hosted repo. A MISTAKE-CATCHER for the operator, not a floor — see
      `scripts/foundry_control_plane.py`'s module docstring. `--session-start` still fails open
      (AC-CPP-7); the operator-invoked exit code is this check's only enforcement.
-  7. Permission-floor drift (feat-foundry-doctor-permission-floor-check, AC-DPF-1..8): compares
-     the workspace's EFFECTIVE permission configuration (`.claude/settings.json` AND
-     `.claude/settings.local.json`, unioned) against the shipped `docs/permission-floor.json`.
-     ADVISORY-only — a mismatch never reddens the run — because the ask-to-allow harness persist
-     option writes into `.claude/settings.local.json` with no second trust dialog, and this is the
-     one probe that watches that file. See `scripts/foundry_permission_floor.py`'s module
-     docstring. RED only on a malformed `docs/permission-floor.json`.
-  8. `permissions-policy` (feat-foundry-authorization-capability-preflight-at-dispatch, AC-CPD-4;
+  7. `permissions-policy` (feat-foundry-authorization-capability-preflight-at-dispatch, AC-CPD-4;
      replaces the R1 `permissions-policy` drift-only advisory, feat-foundry-authorization-standing-
      grants-as-policy AC-SGP-6, but KEEPS the R1 drift state on the same line rather than dropping
      it): one ADVISORY line -- runs `scripts/foundry-capability-preflight.py` over every atom
@@ -37,7 +30,7 @@ What this probe checks, every run, cheaply:
      permission workspace must never wedge a session; `/foundry:mode-autonomous`'s own preflight-
      before-dispatch (AC-CPD-3) and the operator's own settings review are the real enforcement
      surface.
-  9. `agent-teams` (feat-agent-teams-enablement, AC-ATE-4): one advisory line, `agent-teams: on
+  8. `agent-teams` (feat-agent-teams-enablement, AC-ATE-4): one advisory line, `agent-teams: on
      (settings env) | off`, derived from whether the EFFECTIVE settings files' top-level `env`
      block sets `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` to `"1"` — `~/.claude/settings.json`, then
      `<project>/.claude/settings.json`, then `<project>/.claude/settings.local.json`, in that
@@ -299,7 +292,12 @@ def check_control_plane(plugin_root=None, project_dir=None):
 
 
 # --------------------------------------------------------------------------------------- #
-# 7. permission-floor drift (feat-foundry-doctor-permission-floor-check, AC-DPF-1..8)
+# shared helper -- lazy-loads scripts/foundry_permission_floor.py. The probe that owned this
+# loader (permission-floor drift, feat-foundry-doctor-permission-floor-check, AC-DPF-1..8) was
+# deleted by subtraction-wave (AC-SUB-1c, -> feat-foundry-authorization-capability-preflight-at-
+# dispatch, AC-CPD-4, which carries the same drift signal on the permissions-policy line below).
+# The loader itself stays: probe 8 (agent-teams) below still reuses it for
+# `foundry_permission_floor.SETTINGS_RELATIVE_PATHS`.
 # --------------------------------------------------------------------------------------- #
 def _load_permission_floor_module(plugin_root):
     path = os.path.join(plugin_root, "scripts", "foundry_permission_floor.py")
@@ -312,35 +310,8 @@ def _load_permission_floor_module(plugin_root):
     return pf
 
 
-def check_permission_floor(plugin_root=None, project_dir=None, session_start=False):
-    root = plugin_root or PLUGIN_ROOT
-    pdir = project_dir or _project_dir()
-    try:
-        pf = _load_permission_floor_module(root)
-    except Exception as e:
-        return False, _sanitize_detail(f"permission-floor module unimportable: {e}")
-    if pf is None:
-        return None, "permission-floor module absent (not applicable)"
-    try:
-        result = pf.run_check(root, pdir, for_session_start=session_start)
-    except pf.FloorMalformed as e:
-        return False, _sanitize_detail(f"permission-floor.json malformed: {e}")
-    # One finding per LINE, not semicolon-joined into one. The module already returns `lines` as a
-    # list; flattening it produced a single ~4,000-character row once the vocabulary grew to ten
-    # classes — technically correct and practically unreadable, in the one probe whose entire job is
-    # operator visibility. `_run`'s renderer indents continuation lines.
-    detail = result["summary"]
-    if result["lines"]:
-        detail = detail + "\n" + "\n".join(result["lines"])
-    if result["outcome"] == "skip":
-        return None, detail
-    if result["outcome"] == "ok":
-        return True, detail
-    return ADVISORY, detail
-
-
 # --------------------------------------------------------------------------------------- #
-# 8. permissions-policy advisory -- capability preflight over every active-release atom
+# 7. permissions-policy advisory -- capability preflight over every active-release atom
 #    (feat-foundry-authorization-capability-preflight-at-dispatch, AC-CPD-4; replaces the R1
 #    permissions-policy drift-only advisory, feat-foundry-authorization-standing-grants-as-policy
 #    AC-SGP-6)
@@ -469,7 +440,7 @@ def check_permissions_policy(plugin_root=None, project_dir=None):
 
 
 # --------------------------------------------------------------------------------------- #
-# 9. agent-teams advisory -- whether the native team surface is on (feat-agent-teams-enablement,
+# 8. agent-teams advisory -- whether the native team surface is on (feat-agent-teams-enablement,
 #    AC-ATE-4)
 # --------------------------------------------------------------------------------------- #
 _AGENT_TEAMS_ENV_KEY = "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"
@@ -582,8 +553,6 @@ def main():
         _run("stack-profile-lock", check_stack_profile_lock, project_dir=project_dir),
         _run("operator-registry", check_operator_registry, project_dir),
         _run("control-plane", check_control_plane, project_dir=project_dir),
-        _run("permission-floor", check_permission_floor, project_dir=project_dir,
-             session_start=args.session_start),
     ]
 
     hard_fail = False

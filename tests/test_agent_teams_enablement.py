@@ -22,9 +22,8 @@ import sys
 
 import pytest
 
-from conftest import REPO_ROOT, load_module
+from conftest import REPO_ROOT, load_module, _functional_plugin_root
 from test_workflow_export_shape import elided_view
-from test_permission_floor_check import _functional_plugin_root
 
 RELEASE_WAVE_JS = os.path.join(REPO_ROOT, "workflows", "release-wave.js")
 COMMAND_DECK_SKILL = os.path.join(REPO_ROOT, "skills", "command-deck", "SKILL.md")
@@ -242,9 +241,9 @@ def test_agent_teams_never_red_on_a_populated_workspace(tmp_path, monkeypatch):
 # ------------------------------------------------------------------------------------------------ #
 
 def _broken_plugin_root(base):
-    """A functional plugin tree (`test_permission_floor_check._functional_plugin_root` — every
-    other doctor probe's dependency present) whose `scripts/foundry_permission_floor.py` is
-    syntactically broken."""
+    """A functional plugin tree (`conftest._functional_plugin_root` — every other doctor
+    probe's dependency present) whose `scripts/foundry_permission_floor.py` is syntactically
+    broken."""
     root = _functional_plugin_root(base)
     broken_path = os.path.join(root, "scripts", "foundry_permission_floor.py")
     with open(broken_path, "w", encoding="utf-8") as f:
@@ -255,8 +254,9 @@ def _broken_plugin_root(base):
 def test_agent_teams_survives_a_broken_permission_floor_import(tmp_path, monkeypatch):
     """In-process variant of the crash fixture. `_load_permission_floor_module` does a bare
     `import foundry_permission_floor as pf`, which is subject to ordinary `sys.modules` name
-    caching — since this test suite's own cross-import of `test_permission_floor_check` already
-    populated `sys.modules["foundry_permission_floor"]` with the REAL (working) module, a bare
+    caching — since this test suite's own module-level `import foundry_permission_floor` (e.g.
+    tests/test_floor_drift_classification.py) already populates
+    `sys.modules["foundry_permission_floor"]` with the REAL (working) module, a bare
     re-import would silently return that cached module instead of ever touching the broken copy at
     `broken_root`. `monkeypatch.delitem` evicts the cache entry for just this test (auto-restoring
     the real cached module afterward), forcing a genuine re-import from `broken_root`'s `scripts/`."""
