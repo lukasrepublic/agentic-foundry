@@ -11,7 +11,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-governance-budget.py"
 ## subtraction-wave (autonomy-continuation R4)
 
 **Before** — branch base `7ffbff7` (v1.14.0 + #195, the commit `atom/subtraction-wave` forked
-from), measured by running THIS script (from the subtraction-wave branch) with `--root` pointed
+from), measured by running THIS script (from `atom/subtraction-wave`) with `--root` pointed
 at a detached-HEAD checkout of that commit — the script did not exist at `7ffbff7` itself:
 
 ```bash
