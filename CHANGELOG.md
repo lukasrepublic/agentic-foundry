@@ -8,6 +8,37 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.16.0 — 2026-09-20
+
+### Branch discipline and the last residuals
+
+Two atoms. An operator directive becomes machinery: releases no longer land as one pull request to `main`
+per atom, and merged branches and worktrees no longer accumulate. The four residuals the R3/R4 reviews
+recorded are closed.
+
+- **Branch and worktree discipline** (#205; `context/branch-discipline.md`, `scripts/foundry-worktree-gc.py`).
+  One block, cited by the autonomous driver, the deck, dispatch and cut-release: an atom builds in its own
+  worktree on `atom/<id>` cut from `release/<version>`, commits there first, passes the full local suite before
+  its one push, and opens its PR against the release branch; `main` receives one PR per release, so an
+  adopter's per-merge staging deploy fires once. The manifest gains an optional `integration_branch`; intake
+  creates the branch; `merge-when-green` refuses an atom PR whose base is `main` while a release names one
+  (deriving the active release itself when `--release` is omitted). The garbage collector classifies every
+  worktree and branch as merged, open-pr, unmerged-no-pr or protected — merged only when the tip is an
+  ancestor of the integration target or a merged PR's head equals the tip exactly — and under `--apply`
+  removes the worktree, the local branch (`-d`, then a narrated `-D` for squash merges) and the remote branch
+  for the merged class only. The doctor renders a `branches:` advisory line. The how-to quotes an adopter's
+  real deploy triggers and the review-label base hash that changes with the PR's base.
+- **Residuals** (#204). The completed hook names its freshness caveat on platforms without a birth time; the
+  idle-nudges ledger rotates at two thousand lines and the cap counts both files; the doctor and the deck share
+  one bounded settings read (`load_settings_env`) and the floor module's dead drift engine is deleted with a test
+  pinning the surviving surface.
+
+Packages: `create-agentic-workspace@0.16.0` and `update-agentic-workspace@0.1.10` carry the worktree-gc floor
+rows (`--dry-run` allow, `--apply` ask).
+
+Security disposition: charter-lane, fresh-context code reviews; the gc deletes only branches whose tip is
+contained in the integration target, never under `--dry-run`.
+
 ## v1.15.1 — 2026-09-20
 
 ### The upgrader retires what the floor retired (ER #199, #200)
