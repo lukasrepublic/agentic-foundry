@@ -1,34 +1,34 @@
 #!/usr/bin/env python3
-"""foundry_permission_floor — the doctor's `permission-floor` drift comparison
-(feat-foundry-doctor-permission-floor-check).
+"""foundry_permission_floor — shared, read-only settings-reading and permission-rule-comparison
+primitives (feat-foundry-doctor-permission-floor-check; AC-PFM-1..7, the sibling map).
 
 A PURE, imported library — no argparse, no `main()`, no `__main__` block, never in command
 position (see the corresponding `not_invoked` row this atom adds to `docs/permission-floor.json`).
-`scripts/foundry-doctor.py` is the only caller.
 
-Compares the workspace's EFFECTIVE permission configuration — the union of `permissions.allow`,
-`permissions.ask` and `permissions.deny` read from BOTH `<project_dir>/.claude/settings.json` and
-`<project_dir>/.claude/settings.local.json`, origin-tracked — against the shipped
-`docs/permission-floor.json` (AC-PFM-1..7, the sibling map). Discharges R6 of
-`[[feat-foundry-permission-floor-map]]`: the harness's ask-to-allow persist option writes into
-`.claude/settings.local.json` with no second trust dialog, silently converting a declared ceremony
-`ask` into a standing local grant that never appears in a reviewed `settings.json` diff — this
-module is what notices.
-
-READ-ONLY, asserted at the OUTCOME level by the test suite (byte-identical fixture tree, a
-`sys.addaudithook` write-event witness, and this module's own import closure carrying no
-`subprocess`/`socket`/`http`/`urllib`/`requests`) rather than by enumerating forbidden call
-shapes. Every settings file is `stat`-ed and read only if it is a regular file of at most 1 MiB;
-ANY exception while resolving/reading/parsing/validating a settings file is caught and recorded as
-a `settings-unreadable` finding for that file, never propagated (AC-DPF-2).
+r4-residuals AC-RES-3: this module's own top-level drift-comparison ENTRY POINT (`run_check`, plus
+the rendering/effective-config glue only it used) was DEAD CODE — the doctor probe that called it
+was already deleted by subtraction-wave (`scripts/foundry-doctor.py`'s own comment on
+`_load_permission_floor_module` names the replacement:
+`feat-foundry-authorization-capability-preflight-at-dispatch`, AC-CPD-4, which carries the drift
+signal on the doctor's `permissions-policy` line instead). That entry point, and everything ONLY it
+used, is deleted here. What remains, and who reuses it:
+  * `load_settings_file` (the audited `permissions` read) — `foundry-capability-preflight.py` and
+    `foundry-permissions-compile.py` both reuse it (AC-SGP-2), never re-implementing their own
+    stat/size-cap/JSON-parse read.
+  * `load_settings_env` (the sibling `env`-block read, AC-RES-3) — the doctor's `agent-teams`
+    probe and `foundry_command_deck_watch`'s advisory-header gate both reuse it.
+  * `sanitize` — `foundry-capability-preflight.py` reuses it as its own render floor.
+  * `covers` / `canonicalize` / `canonicalize_identity` / `deny_covers` / `is_blanket_rule` / the
+    `_classify` engine and its `RANK` vocabulary — the shared subsumption logic
+    `tests/test_floor_drift_classification.py` runs differentially against the Node twin
+    (`cli/src/permissionFloor.mjs`) over `tests/fixtures/floor-drift-corpus.json`; this is what
+    keeps the two implementations' classification agreeing "by construction" rather than by
+    comment.
 
 Non-disclosure is VALUE-scoped: no settings-derived string reaches a caller except (i) a rule that
 actually COVERS a map entry (rendered verbatim, sanitized), (ii) a settings file's own path/label,
 (iii) a tier key from the closed set allow|ask|deny. An `unclassified` rule is reported by
 tool-name prefix + origin + tier + count only — its body is never returned (AC-DPF-2(c), AC-DPF-8).
-
-A mismatch is ADVISORY, never RED. RED (raised as `FloorMalformed`) fires ONLY on a schema-invalid
-`docs/permission-floor.json` — the one broken-install case (AC-DPF-4).
 """
 from __future__ import annotations
 
@@ -43,7 +43,6 @@ import stat
 # --------------------------------------------------------------------------------------------- #
 
 _MAX_FILE_BYTES = 1024 * 1024  # 1 MiB, both the settings files and the floor file itself
-_PINNED_PLUGIN_ROOT_PREFIX = "~/.claude/plugins/cache/"
 _GLOB_EXPANSION_CAP = 256
 
 INTERPRETER_WORDS = frozenset({"python3", "python", "bash", "sh"})
@@ -62,7 +61,6 @@ _TOOL_PREFIX_VALID_RE = re.compile(r"\A[A-Za-z0-9_-]{1,32}\Z")
 _CTRL_RE = re.compile(r"(\x1b\[[0-9;]*[A-Za-z]|\x1b[@-Z\\-_]|[\x00-\x1f\x7f-\x9f])")
 _ZW_BIDI_RE = re.compile("[\u061C\u200B-\u200F\u2028\u2029\u202A-\u202E\u2066-\u2069\uFEFF]")
 _LINE_CAP = 200
-_MAX_LINES_PER_CLASS = 50
 
 SETTINGS_RELATIVE_PATHS = (
     os.path.join(".claude", "settings.json"),
@@ -97,17 +95,6 @@ RANK = (
 )
 _ACTIONABLE_RANKS = frozenset(RANK[:6])
 _INFORMATIONAL_RANKS = frozenset(RANK[6:])
-
-CEREMONY_LEAD_LITERAL = "the front-authorization prompt is not firing"
-
-
-#: The one map schema_version this build understands (AC-FDC-4). Mirrored by the Node classifier's
-#: MAP_SCHEMA_VERSION; the two must move together or the differential corpus diverges.
-MAP_SCHEMA_VERSION = 1
-
-
-class FloorMalformed(Exception):
-    """Raised only for a schema-validation failure of docs/permission-floor.json (AC-DPF-4)."""
 
 
 # --------------------------------------------------------------------------------------------- #
@@ -177,78 +164,57 @@ def load_settings_file(path):
         return {"status": "unreadable"}
 
 
-# --------------------------------------------------------------------------------------------- #
-# floor-file load + schema validation (AC-DPF-4)
-# --------------------------------------------------------------------------------------------- #
+def load_settings_env(paths):
+    """Bounded, exception-tolerant read of the top-level `env` object, folded across MULTIPLE
+    settings files in ASCENDING PRECEDENCE order (`paths` is ordered least-specific to
+    most-specific; a key present in a LATER file overwrites the same key from an earlier one) --
+    the same read discipline `load_settings_file` uses (regular file, <= 1 MiB, UTF-8 JSON), but
+    reading the `env` sibling key instead of `permissions`. NEVER raises: an absent, oversized, or
+    unparseable file at ANY position in `paths` is simply skipped (not fatal to the fold, and not
+    reported) -- this is a settings CONVENIENCE read for an advisory flag (AC-RES-3), not the
+    audited `permissions` read above.
+
+    AC-RES-3: the doctor's `agent-teams` probe and `foundry_command_deck_watch`'s advisory-header
+    gate both call this instead of maintaining their own local copy of the same bounded read."""
+    merged: dict = {}
+    for path in paths:
+        try:
+            st = os.stat(path)
+            if not stat.S_ISREG(st.st_mode) or st.st_size > _MAX_FILE_BYTES:
+                continue
+            with open(path, "rb") as fh:
+                raw = fh.read()
+            doc = json.loads(raw.decode("utf-8"))
+        except Exception:
+            continue
+        if not isinstance(doc, dict):
+            continue
+        env = doc.get("env")
+        if isinstance(env, dict):
+            merged.update(env)
+    return merged
 
 
-def validate_plugin_root_glob(glob_pat):
-    """Validated BEFORE it is ever expanded. Raises FloorMalformed on any violation."""
-    if not isinstance(glob_pat, str) or not glob_pat.startswith(_PINNED_PLUGIN_ROOT_PREFIX):
-        raise FloorMalformed(
-            f"plugin_root_glob must begin with {_PINNED_PLUGIN_ROOT_PREFIX!r}: {glob_pat!r}"
-        )
-    if any(seg == ".." for seg in glob_pat.split("/")):
-        raise FloorMalformed(f"plugin_root_glob must not contain a .. segment: {glob_pat!r}")
-    if "**" in glob_pat:
-        raise FloorMalformed(f"plugin_root_glob must not contain **: {glob_pat!r}")
-    if glob_pat.count("*") > 2:
-        raise FloorMalformed(f"plugin_root_glob must contain at most two * characters: {glob_pat!r}")
+# --------------------------------------------------------------------------------------------- #
+# plugin-root glob expansion (AC-DPF-4) — `_classify`'s own `stale-plugin-path` class still calls
+# `expand_plugin_root_glob` against a `floor_doc["plugin_root_glob"]` the CALLER already validated
+# (`tests/test_floor_drift_classification.py` loads `docs/permission-floor.json` directly via
+# `json.load`, never through a schema-validating loader here — r4-residuals AC-RES-3 deleted this
+# module's OWN schema-validating loader, `load_permission_floor`/`validate_plugin_root_glob`, along
+# with `FloorMalformed` and `MAP_SCHEMA_VERSION` — those existed only to feed the dead `run_check`
+# entry point; the map's schema is still validated live by the Node twin's own
+# `cli/src/permissionFloor.mjs::loadMap`, unaffected by this deletion).
+# --------------------------------------------------------------------------------------------- #
 
 
 def expand_plugin_root_glob(glob_pat, home=None, cap=_GLOB_EXPANSION_CAP):
-    """Non-recursive expansion, capped. Assumes `glob_pat` already passed validation."""
+    """Non-recursive expansion, capped. Assumes `glob_pat` is already a well-formed
+    `~/.claude/plugins/cache/...` glob (the caller's concern now — see the section note above)."""
     home = home or os.path.expanduser("~")
     pattern = home.rstrip("/") + glob_pat[1:]
     matches = sorted(glob.glob(pattern))
     dirs = [m for m in matches if os.path.isdir(m)]
     return dirs[:cap]
-
-
-def load_permission_floor(plugin_root):
-    """Returns (doc, status) where status is None (loaded) or "absent" (skip case).
-    Raises FloorMalformed for any schema-validation failure of a PRESENT file."""
-    path = os.path.join(plugin_root, "docs", "permission-floor.json")
-    try:
-        st = os.stat(path)
-    except Exception:
-        return None, "absent"
-    if not stat.S_ISREG(st.st_mode):
-        return None, "absent"
-    if st.st_size > _MAX_FILE_BYTES:
-        raise FloorMalformed("permission-floor.json exceeds 1 MiB")
-    try:
-        with open(path, "rb") as fh:
-            raw = fh.read()
-        doc = json.loads(raw.decode("utf-8"))
-    except Exception as e:
-        raise FloorMalformed(f"permission-floor.json unparseable: {type(e).__name__}: {e}") from e
-    if not isinstance(doc, dict):
-        raise FloorMalformed("permission-floor.json is not a JSON object")
-    # AC-FDC-4. The tier enum below was already checked here; schema_version was not, so a map
-    # written to a future shape would be read optimistically under this build's assumptions. The
-    # tier field is load-bearing — it decides which effective tier an entry is compared against,
-    # and which tier a consumer writes it into — so an unknown shape is refused, not guessed at.
-    if doc.get("schema_version") != MAP_SCHEMA_VERSION:
-        raise FloorMalformed(
-            f"permission-floor.json schema_version {doc.get('schema_version')!r} is not the "
-            f"{MAP_SCHEMA_VERSION} this build understands"
-        )
-    glob_pat = doc.get("plugin_root_glob")
-    entries = doc.get("entries")
-    if not isinstance(glob_pat, str) or not glob_pat:
-        raise FloorMalformed("permission-floor.json missing plugin_root_glob")
-    if not isinstance(entries, list) or not entries:
-        raise FloorMalformed("permission-floor.json missing entries")
-    for e in entries:
-        if not isinstance(e, dict) or "rule" not in e or "tier" not in e:
-            raise FloorMalformed("permission-floor.json entry missing rule/tier")
-        if not isinstance(e["rule"], str) or not e["rule"]:
-            raise FloorMalformed("permission-floor.json entry has a non-string/empty rule")
-        if e["tier"] not in ("allow", "ask", "deny"):
-            raise FloorMalformed(f"permission-floor.json entry has invalid tier {e['tier']!r}")
-    validate_plugin_root_glob(glob_pat)
-    return doc, None
 
 
 # --------------------------------------------------------------------------------------------- #
@@ -369,31 +335,15 @@ def _tool_prefix(rule):
 
 
 # --------------------------------------------------------------------------------------------- #
-# the comparison (AC-DPF-8)
+# the comparison (AC-DPF-8) — `_classify` is the shared classification engine
+# `tests/test_floor_drift_classification.py` runs differentially against the Node twin (AC-FDC-6);
+# it takes an already-loaded `floor_doc` and an already-built `effective` config directly, rather
+# than loading either itself, so a caller can feed it fixture data with no filesystem at all.
+# `_effective_config` — the settings-file-reading glue that used to build `effective` for
+# `run_check` specifically — was deleted alongside it (r4-residuals AC-RES-3): every current
+# caller builds `effective` its own way (the differential test reads `tests/fixtures/floor-drift-
+# corpus.json` directly).
 # --------------------------------------------------------------------------------------------- #
-
-
-def _effective_config(project_dir):
-    """Returns (effective, unreadable_labels, any_file_exists) where `effective` is
-    {"allow": [...], "ask": [...], "deny": [...]}, each element {"raw": rule, "label": file_label,
-    "tier": tier}. `label` is one of SETTINGS_RELATIVE_PATHS — the only settings-derived path
-    ever surfaced (AC-DPF-2(c))."""
-    effective = {"allow": [], "ask": [], "deny": []}
-    unreadable_labels = []
-    any_exists = False
-    for label in SETTINGS_RELATIVE_PATHS:
-        path = os.path.join(project_dir, label)
-        result = load_settings_file(path)
-        if result["status"] == "absent":
-            continue
-        any_exists = True
-        if result["status"] == "unreadable":
-            unreadable_labels.append(label)
-            continue
-        for tier in ("allow", "ask", "deny"):
-            for raw in result["rules"][tier]:
-                effective[tier].append({"raw": raw, "label": label, "tier": tier})
-    return effective, unreadable_labels, any_exists
 
 
 def _classify(floor_doc, effective, unreadable_labels, home):
@@ -608,69 +558,3 @@ def _classify(floor_doc, effective, unreadable_labels, home):
 
     rules_by_class = {k: sorted(v) for k, v in rules_by_class.items()}
     return lines_by_class, counts, ceremony_shadowed, rules_by_class
-
-
-def _render(lines_by_class, counts, ceremony_shadowed, for_session_start):
-    count_str = ", ".join(f"{k}={counts[k]}" for k in RANK)
-    summary = f"permission-floor: {count_str}"
-    if ceremony_shadowed:
-        summary = f"{CEREMONY_LEAD_LITERAL} — {summary}"
-    summary = sanitize(summary)
-
-    lines = []
-    for klass in RANK:
-        if for_session_start and klass not in _ACTIONABLE_RANKS:
-            continue
-        cls_lines = lines_by_class[klass]
-        shown = cls_lines[:_MAX_LINES_PER_CLASS]
-        remainder = len(cls_lines) - len(shown)
-        for ln in shown:
-            lines.append(sanitize(ln))
-        if remainder > 0:
-            lines.append(sanitize(f"{klass}: +{remainder} more finding(s) truncated"))
-
-    if for_session_start:
-        # Derived from _INFORMATIONAL_RANKS rather than a second hand-written list, so a class
-        # added to the vocabulary cannot fall out of the count or out of the names (AC-FDC-1/-2
-        # each added one, and a hardcoded pair would have silently under-reported both).
-        info_classes = [k for k in RANK if k in _INFORMATIONAL_RANKS]
-        info_count = sum(counts[k] for k in info_classes)
-        lines.append(sanitize(
-            f"{info_count} informational finding(s) ({', '.join(info_classes)}) — run "
-            "`/foundry:doctor` (no --session-start) for detail"
-        ))
-
-    return summary, lines
-
-
-def run_check(plugin_root, project_dir, home=None, for_session_start=False):
-    """The whole comparison. Returns a dict:
-    {"outcome": "skip"|"ok"|"advisory", "summary": str, "lines": [str, ...], "counts": {...}}.
-    Raises FloorMalformed only for a schema-invalid, PRESENT docs/permission-floor.json."""
-    home = home or os.path.expanduser("~")
-    floor_doc, status = load_permission_floor(plugin_root)
-    if status == "absent":
-        return {
-            "outcome": "skip",
-            "summary": "permission-floor.json absent from the plugin tree (not applicable)",
-            "lines": [],
-            "counts": {},
-        }
-
-    effective, unreadable_labels, any_exists = _effective_config(project_dir)
-
-    if not any_exists:
-        line = sanitize(
-            "no-configuration: neither .claude/settings.json nor .claude/settings.local.json "
-            "exists. Remedy: run the pre-session bootstrap CLI to apply the permission floor."
-        )
-        return {"outcome": "advisory", "summary": line, "lines": [], "counts": {}}
-
-    lines_by_class, counts, ceremony_shadowed, rules_by_class = _classify(
-        floor_doc, effective, unreadable_labels, home
-    )
-    summary, lines = _render(lines_by_class, counts, ceremony_shadowed, for_session_start)
-    total = sum(counts.values())
-    outcome = "ok" if total == 0 else "advisory"
-    return {"outcome": outcome, "summary": summary, "lines": lines, "counts": dict(counts),
-            "rules": rules_by_class}

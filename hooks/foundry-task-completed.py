@@ -97,6 +97,14 @@ def run(payload: dict, *, project_dir: "str | None" = None, tasks_dir: "str | No
             raise ffh.FloorHookError("payload carries no usable task_id")
         created_at = ffh.task_created_at(task_id, tasks_dir=tasks_dir, session_id=session_id)
 
+        # AC-RES-1: on the fallback path (no `st_birthtime` on this platform) `created_at` is the
+        # task file's `st_mtime`, not a true creation time — name that caveat directly in the
+        # refusal text rather than leaving it discoverable only in the shared module's docstring.
+        freshness_caveat = (
+            " (freshness baseline is mtime on this platform)"
+            if getattr(created_at, "source", None) == "mtime" else ""
+        )
+
         record = ffh.read_evidence_record(atom_id, pd)
         record_at = ffh.parse_utc(record["at"])
         ffh.check_not_future(record_at, label="evidence record 'at'")
@@ -104,6 +112,7 @@ def run(payload: dict, *, project_dir: "str | None" = None, tasks_dir: "str | No
             raise ffh.FloorHookError(
                 f"evidence record for atom:{release_id}/{atom_id} predates the task "
                 f"(record at {record_at.isoformat()}, task created {created_at.isoformat()})"
+                f"{freshness_caveat}"
             )
 
         # Last-row-wins on a duplicate locator (review round 1, item 8): iterate in file order

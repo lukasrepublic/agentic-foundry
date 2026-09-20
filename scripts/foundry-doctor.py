@@ -56,7 +56,6 @@ import importlib.util
 import json
 import os
 import re
-import stat
 import sys
 
 import yaml
@@ -444,9 +443,10 @@ def check_permissions_policy(plugin_root=None, project_dir=None):
 #    AC-ATE-4)
 # --------------------------------------------------------------------------------------- #
 _AGENT_TEAMS_ENV_KEY = "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"
-# Mirrors `foundry_permission_floor._MAX_FILE_BYTES` -- kept as a local literal (not imported)
-# because this probe must still degrade gracefully when that module is absent (see
-# `_settings_candidate_paths` below), and a bare 1 MiB cap needs no cross-module coupling to state.
+# Mirrors `foundry_permission_floor._MAX_FILE_BYTES` -- the actual bounded read (AC-RES-3) is now
+# `foundry_permission_floor.load_settings_env`, so this local literal no longer gates a read of
+# its own; kept as the same 1 MiB value this probe's own tests fixture against, so a test can
+# construct an oversized settings file without importing the shared module's private constant.
 _SETTINGS_MAX_BYTES = 1024 * 1024
 
 
@@ -469,30 +469,6 @@ def _settings_candidate_paths(project_dir, plugin_root):
     return paths
 
 
-def _read_env_block(path):
-    """Bounded, exception-tolerant read of one settings file's top-level `env` object.
-
-    `foundry_permission_floor.load_settings_file` already does this exact stat/size-cap/JSON-parse
-    read for the SAME settings files, but only ever returns the `permissions` block -- `env` is a
-    sibling top-level key that module does not expose, and it is out of this atom's scope to widen
-    (`scripts/foundry_permission_floor.py` is not in `agent-teams-enablement`'s allowed_paths). This
-    mirrors that function's discipline (regular file, <= 1 MiB, UTF-8 JSON, any exception -> empty
-    result) rather than re-parsing permissions itself. NEVER raises."""
-    try:
-        st = os.stat(path)
-        if not stat.S_ISREG(st.st_mode) or st.st_size > _SETTINGS_MAX_BYTES:
-            return {}
-        with open(path, "rb") as f:
-            raw = f.read()
-        doc = json.loads(raw.decode("utf-8"))
-        if not isinstance(doc, dict):
-            return {}
-        env = doc.get("env")
-        return env if isinstance(env, dict) else {}
-    except Exception:
-        return {}
-
-
 def check_agent_teams_flag(plugin_root=None, project_dir=None):
     """AC-ATE-4: `agent-teams: on (settings env) | off`, NEVER RED -- flipping the flag is an
     adopter opt-in, never a doctor-enforced default (this workspace's own settings are the
@@ -503,16 +479,22 @@ def check_agent_teams_flag(plugin_root=None, project_dir=None):
     `import foundry_permission_floor`, and this probe is called directly from `main()` -- NOT
     through the crash-proof `_run("<name>", ...)` wrapper the `checks` list uses -- so without this
     try/except a broken `foundry_permission_floor.py` would traceback straight out of `main()`,
-    BEFORE the `--session-start` fail-open branch even runs, wedging every session start."""
+    BEFORE the `--session-start` fail-open branch even runs, wedging every session start.
+
+    AC-RES-3: the bounded `env`-block read across the candidate settings files is now
+    `foundry_permission_floor.load_settings_env` (shared with `foundry_command_deck_watch`'s
+    advisory-header gate) rather than a local copy -- when that module is unavailable,
+    `_settings_candidate_paths` already falls back to the two literal project-scoped paths, and
+    an absent `pf` module here simply means the shared reader is never reached; `on` stays `False`
+    (the safe default), matching this function's own NEVER-RED contract."""
     root = plugin_root or PLUGIN_ROOT
     pdir = project_dir or _project_dir()
     try:
-        on = False
-        for path in _settings_candidate_paths(pdir, root):
-            env = _read_env_block(path)
-            val = env.get(_AGENT_TEAMS_ENV_KEY)
-            if val is not None:
-                on = (val == "1")  # last-one-present wins (ascending precedence order above)
+        pf = _load_permission_floor_module(root)
+        if pf is None:
+            return True, "off"
+        env = pf.load_settings_env(_settings_candidate_paths(pdir, root))
+        on = env.get(_AGENT_TEAMS_ENV_KEY) == "1"
         return True, "on (settings env)" if on else "off"
     except Exception as e:  # noqa: BLE001 -- deliberate: AC-ATE-4 must never redden or crash the run
         return ADVISORY, _sanitize_detail(f"unknown (probe error: {type(e).__name__}: {e})")

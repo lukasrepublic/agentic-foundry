@@ -20,8 +20,8 @@ task FILE's own filesystem creation time rather than a JSON field — the spec n
 tasks dir", not a specific field, so this is a within-spec implementation choice, not a spec
 change.
 
-RESIDUAL — platform + rewrite caveats on the task-creation-time signal (review round 1, item 5;
-tracked as R4 backfill material, not fixed here):
+DOCUMENTED LIMITATION — platform + rewrite caveats on the task-creation-time signal (review round
+1, item 5; researched + closed as a documented limitation by r4-residuals AC-RES-1, not a TODO):
   * `st_birthtime` (the file's true creation time) is macOS/BSD-only. On Linux `stat(2)` reports
     no birth time at all — `hasattr(st, "st_birthtime")` is `False` there — so `task_created_at`
     falls back to `st_mtime`. On Linux that means (a) the harness rewriting a task file on ANY
@@ -34,8 +34,27 @@ tracked as R4 backfill material, not fixed here):
     rename's own time, not the file's original creation moment, if the harness's own task writer
     ever uses that idiom for an in-place update. This function cannot distinguish "genuinely just
     created" from "just rewritten in place."
-  Neither caveat is closed here. A durable, explicit creation-time record living IN the tasks dir
-  (rather than inferred from filesystem metadata) would close both, and is R4 material.
+  RESEARCH (AC-RES-1, 2026-09-20): the hooks are read-only per floor-hooks AC-FLH-3 (no write of
+  a durable first-seen record is available to close this), and Python's stdlib `os.stat` exposes
+  no birth time on Linux at all (`st_birthtime` simply is not populated by CPython's
+  `stat_result` there — this is a CPython/glibc gap, not a kernel one: `statx(2)` with
+  `STATX_BTIME` has existed since Linux 4.11, but (a) it is not wrapped by the stdlib, so using it
+  would mean hand-rolling a `ctypes` syscall + struct layout, (b) `STATX_BTIME` is opt-in per
+  filesystem and silently ABSENT from the returned `stx_mask` on tmpfs/overlayfs — exactly the
+  filesystems most CI containers and ephemeral build sandboxes use for `~/.claude/tasks/` — so a
+  raw-syscall path would need its own silent-absence fallback anyway, buying determinism on some
+  hosts at the cost of a new platform-specific failure mode on the rest, and (c) the general
+  precedent (GNU coreutils' own `stat --format=%W` prints `0` rather than guessing when
+  unsupported; Rust's `std::fs::Metadata::created()` documents the same "may not be available"
+  contract) is to surface unavailability rather than attempt a best-effort raw read. Consensus:
+  ADOPT the mtime fallback as-is (no `ctypes`/`statx` addition) and instead make its caveat
+  externally visible — `task_created_at` now returns a `datetime` subclass carrying which signal
+  produced it (`.source`, `"birthtime"` or `"mtime"`), and `hooks/foundry-task-completed.py`
+  names the caveat directly in its refusal text on the fallback path ("freshness baseline is
+  mtime on this platform") rather than leaving it undiscoverable in this docstring alone. Neither
+  caveat is closed by this — a durable, explicit creation-time record living IN the tasks dir
+  would still be the real fix, and remains future material — but the fallback's existence and its
+  operational meaning are now surfaced at the point where it can bite someone.
 
 Separately: the observed team directory name on this machine is a full session UUID
 (`~/.claude/tasks/<uuid>/`), not the truncated `session-<8>` form the lane README's PRIMARY-DOC
@@ -287,19 +306,41 @@ def resolve_task_file(task_id, *, tasks_dir=None, session_id=None) -> str:
     raise FloorHookError(f"task {task_id!r} not found in any tasks dir tried: {tried}")
 
 
+class CreatedAt(datetime):
+    """A `datetime` subclass IS-A `datetime` (every existing comparison/`.isoformat()` call site
+    keeps working untouched) that additionally carries which platform signal produced it — AC-RES-1:
+    `"birthtime"` where `st_birthtime` is exposed, `"mtime"` on the fallback path — so a caller
+    (the completed hook's refusal message) can name the freshness-baseline caveat without
+    re-`stat`-ing the file itself."""
+
+    source: str
+
+    def __new__(cls, dt: datetime, source: str):
+        obj = super().__new__(
+            cls, dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second, dt.microsecond,
+            dt.tzinfo,
+        )
+        obj.source = source
+        return obj
+
+
 def task_created_at(task_id, *, tasks_dir=None, session_id=None) -> datetime:
-    """The task file's own filesystem creation time (see module docstring's RESIDUAL section for
-    the platform + atomic-rewrite caveats — review round 1 item 5). Raises `FloorHookError` —
-    naming the gap — via `resolve_task_file` for an unresolvable tasks dir or a task id absent
-    from every candidate tried (AC-FLH-2's "task id not found in the tasks dir")."""
+    """The task file's own filesystem creation time (see module docstring's DOCUMENTED LIMITATION
+    section for the platform + atomic-rewrite caveats — review round 1 item 5; AC-RES-1). Raises
+    `FloorHookError` — naming the gap — via `resolve_task_file` for an unresolvable tasks dir or a
+    task id absent from every candidate tried (AC-FLH-2's "task id not found in the tasks dir").
+    Returns a `CreatedAt` (a `datetime` subclass) whose `.source` is `"birthtime"` or `"mtime"`."""
     path = resolve_task_file(task_id, tasks_dir=tasks_dir, session_id=session_id)
     st = os.stat(path)
     # Gate explicitly on `hasattr` (review round 1 item 5), not a `getattr(..., None) is None`
     # check — the two are equivalent in practice (no platform reports `st_birthtime == None`),
     # but `hasattr` says directly what is being tested: does THIS platform's stat_result carry a
     # birth time at all.
-    ts = st.st_birthtime if hasattr(st, "st_birthtime") else st.st_mtime
-    return datetime.fromtimestamp(ts, tz=timezone.utc)
+    if hasattr(st, "st_birthtime"):
+        ts, source = st.st_birthtime, "birthtime"
+    else:
+        ts, source = st.st_mtime, "mtime"
+    return CreatedAt(datetime.fromtimestamp(ts, tz=timezone.utc), source)
 
 
 # --------------------------------------------------------------------------------------------- #

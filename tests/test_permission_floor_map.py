@@ -588,3 +588,71 @@ def test_the_map_entries_array_is_unchanged():
         "docs/permission-floor.json `entries` changed — if this is a legitimate map edit, update "
         "MERGE_BASE_ENTRIES_DIGEST in the SAME reviewed diff (R8)"
     )
+
+
+# --------------------------------------------------------------------------------------------- #
+# r4-residuals AC-RES-3 -- scripts/foundry_permission_floor.py's dead drift-comparison entry point
+# (`run_check`, plus `_render`/`_effective_config`/`load_permission_floor`/
+# `validate_plugin_root_glob`/`FloorMalformed`/`MAP_SCHEMA_VERSION`, everything only IT used) was
+# deleted: its only caller, the doctor's own permission-floor probe, was already retired by
+# subtraction-wave (see the R8 comment above -- the same retirement this file's R8 section
+# documents). This pins the surviving surface every current importer/test actually reaches, so a
+# future edit that quietly deletes one of THESE fails a test here rather than downstream.
+# --------------------------------------------------------------------------------------------- #
+
+
+def test_permission_floor_surviving_public_surface_is_intact():
+    import sys as _sys
+
+    scripts_dir = os.path.join(REPO_ROOT, "scripts")
+    if scripts_dir not in _sys.path:
+        _sys.path.insert(0, scripts_dir)
+    import foundry_permission_floor as pf
+
+    # the preflight's own reuse (scripts/foundry-capability-preflight.py: `_pf.sanitize`,
+    # `_pf.load_settings_file`) and the compiler's (`scripts/foundry-permissions-compile.py`:
+    # `_pf.load_settings_file`).
+    assert callable(pf.sanitize)
+    assert callable(pf.load_settings_file)
+    # the doctor's `agent-teams` probe and `foundry_command_deck_watch`'s advisory-header gate
+    # (AC-RES-3's new shared helper).
+    assert callable(pf.load_settings_env)
+    # the shared subsumption primitive the sibling map suite (AC-DPF-5(c)) and
+    # `tests/test_floor_drift_classification.py`'s differential both drive.
+    assert callable(pf.covers)
+    # the differential's own direct call sites (AC-FDC-6) -- `_classify` and the vocabulary it
+    # returns rule sets against.
+    assert callable(pf._classify)
+    assert isinstance(pf.RANK, tuple) and pf.RANK
+    assert isinstance(pf._ACTIONABLE_RANKS, frozenset)
+    assert isinstance(pf._INFORMATIONAL_RANKS, frozenset)
+
+    # the dead entry point and everything ONLY it used must actually be gone, not just unused --
+    # a stale re-add would be exactly the kind of drift this atom's charter closes.
+    for dead in (
+        "run_check", "_render", "_effective_config", "load_permission_floor",
+        "validate_plugin_root_glob", "FloorMalformed", "MAP_SCHEMA_VERSION",
+        "CEREMONY_LEAD_LITERAL", "_MAX_LINES_PER_CLASS", "_PINNED_PLUGIN_ROOT_PREFIX",
+    ):
+        assert not hasattr(pf, dead), f"foundry_permission_floor.{dead} should have been deleted"
+
+
+def test_capability_preflight_and_permissions_compile_suites_still_pass():
+    """AC-RES-3's own verification clause, made a checked fact rather than an assumption: both
+    scripts that import `foundry_permission_floor` (`foundry-capability-preflight.py`,
+    `foundry-permissions-compile.py`) still pass their own suites after the dead-code deletion.
+    Each runs as its own subprocess (matching this repo's own precedent, e.g.
+    tests/test_release_suite_gate.py) rather than a nested in-process pytest.main(), which would
+    collide with the outer run's own collection/plugin state."""
+    import subprocess
+    import sys as _sys
+
+    for suite in ("test_capability_preflight.py", "test_permissions_policy.py"):
+        r = subprocess.run(
+            [_sys.executable, "-m", "pytest", os.path.join(REPO_ROOT, "tests", suite), "-q"],
+            capture_output=True, text=True, cwd=REPO_ROOT, timeout=120,
+        )
+        assert r.returncode == 0, (
+            f"tests/{suite} did not pass after foundry_permission_floor.py's dead-code deletion "
+            f"(AC-RES-3):\n{r.stdout}\n{r.stderr}"
+        )
