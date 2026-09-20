@@ -9,6 +9,19 @@ regardless of the computed ratios, and writes no ledger and no `.foundry/` file 
 given. A malformed/unsafe `--out` argument is a distinct CLI-usage refusal (non-zero exit, clear
 stderr message), not a "gated ratio" — see `validate_out_path()`.
 
+PRE-EXISTING BUG, FOUND BY THIS ATOM'S OWN round-2 review (certify-by-remeasure, AC-CBR-1): every
+prior run of this instrument AND its two workspace-extractor ancestors
+(`mine_failures.py`/`spec_signals.py`, `mine-autonomy-2026-07-16.md`/`mine-autonomy-2026-09-18.md`)
+evaluated extended thinking's multi-fragment assistant turns per RAW record instead of per
+LOGICAL turn (see `_group_logical_assistant_turns()`). A thinking-only fragment misread as a
+tool-free "stop" inflated BOTH `other-harness` (its next record is usually the sibling tool_use's
+tool_result) and `silent_yield` (a phantom SILENT stop preceding every extended-thinking turn that
+happened to end in a real question, since the thinking fragment alone never carries the
+question). The July 2026-07-16 and September 2026-09-18 mining numbers this instrument was built
+to reproduce (the "0.81" fixture, the R3-boundary 0.80 read) are TAINTED by this same bug and
+should be treated as upper bounds, not as the corrected ground truth — this fix changes the
+computed ratios going forward but does not retroactively correct those two prior write-ups.
+
 The six ratios:
   1. silent-yield        — of the agent's real "stops" (a tool-free assistant turn end) that are
                             `human-resumed` (see the three-way classification below), the share
@@ -305,20 +318,88 @@ def read_jsonl(path):
 # --------------------------------------------------------------------------------------------- #
 
 
+def _message_id(r):
+    return (r.get("message") or {}).get("id")
+
+
+def _stop_reason(r):
+    return (r.get("message") or {}).get("stop_reason")
+
+
+def _group_logical_assistant_turns(filtered):
+    """AC-CBR-1 round-2 review (extended-thinking phantom stop): Claude Code writes one logical
+    assistant turn with extended thinking as MULTIPLE consecutive `type: "assistant"` JSONL
+    records sharing one `message.id` — a thinking-only fragment (content=[thinking],
+    `stop_reason: "tool_use"`) followed by a tool_use fragment (content=[tool_use], the SAME
+    `message.id`). Evaluating each raw record as its own turn-end candidate (the pre-fix design)
+    let the thinking-only fragment pass `tool_uses(r)` as empty and read as a tool-free "stop"
+    whose immediately-following record is the tool_result — misclassified as harness-resumed
+    (`other-harness`) at best, or as a phantom SILENT human-resumed stop when the REAL turn
+    happened to end in a question (the thinking fragment carries no question, so `is_q` reads
+    False) — inflating BOTH `other-harness` and `silent_yield` on every extended-thinking turn.
+
+    Yields `(fragments, last_j)` for each logical assistant turn: `fragments` is the list of
+    raw records to merge (tool_uses/text/stop_reason unioned across all of them — see
+    `_evaluate_logical_turn()`); `last_j` is the LAST fragment's position in `filtered` (the
+    forward scan for `next_record` resumes from `last_j + 1`, never from the thinking-only
+    fragment's own position). Consecutive `type: "assistant"` records are merged into ONE group
+    ONLY when they share the same NON-None `message.id`; a record with no `message.id` (older
+    transcripts, and every pre-existing fixture in this suite) is always its own singleton group
+    — this keeps every fixture predating this fix byte-for-byte unaffected."""
+    fragments = []
+    current_mid = None
+    last_j = None
+    for j, (_i, r) in enumerate(filtered):
+        if r.get("type") != "assistant":
+            if fragments:
+                yield fragments, last_j
+                fragments = []
+                current_mid = None
+            continue
+        mid = _message_id(r)
+        if fragments and mid is not None and mid == current_mid:
+            fragments.append(r)
+            last_j = j
+        else:
+            if fragments:
+                yield fragments, last_j
+            fragments = [r]
+            current_mid = mid
+            last_j = j
+    if fragments:
+        yield fragments, last_j
+
+
+def _logical_turn_has_tool_use(fragments):
+    """True iff ANY fragment of a logical assistant turn carries a tool_use content block OR a
+    `stop_reason: "tool_use"` (the latter consulted per round-2 review as a redundant signal — a
+    real transcript's thinking-only fragment already carries `stop_reason: "tool_use"` even
+    before its sibling tool_use fragment arrives, so this alone is enough to exclude it without
+    needing the merge to have completed)."""
+    for r in fragments:
+        if tool_uses(r):
+            return True
+        if _stop_reason(r) == "tool_use":
+            return True
+    return False
+
+
 def mine_file(path):
     """Returns {"stops": [{"silent": bool, "reply_len": int}], "denials": [...],
     "harness_resumed_count": int, "harness_resumed_by_kind": {kind: int, ...}, "session_end_count":
-    int}. A "stop" (silent-yield/directive-reply input) is a tool-free assistant turn end
-    classified `human-resumed` by `classify_turn_end()` (AC-CBR-1) — the immediately following
-    user-role record is a genuine operator turn. A tool-free turn end classified `harness-resumed`
-    or `session-end` is counted but never added to `stops` — it never was a real handoff to a
-    human, so it must not inflate silent-yield's denominator (the R3-boundary blind spot this
-    atom removes). Every `harness-resumed` turn end is ALSO attributed a sub-kind via
+    int}. A "stop" (silent-yield/directive-reply input) is a tool-free LOGICAL assistant turn end
+    (see `_group_logical_assistant_turns()` — extended-thinking's multi-fragment turns are merged
+    first) classified `human-resumed` by `classify_turn_end()` (AC-CBR-1) — the immediately
+    following user-role record is a genuine operator turn. A tool-free turn end classified
+    `harness-resumed` or `session-end` is counted but never added to `stops` — it never was a real
+    handoff to a human, so it must not inflate silent-yield's denominator (the R3-boundary blind
+    spot this atom removes). Every `harness-resumed` turn end is ALSO attributed a sub-kind via
     `classify_envelope_kind()` (round-2 review: `classify_turn_end()` alone left that function
     dead code) — one of `HARNESS_KINDS`, "other-harness" covering a non-human shape it does not
-    recognize, never silently dropped. An assistant turn that DOES carry a tool_use is never
-    evaluated as a turn end at all — it is a rhetorical aside or in-flight work, not a handoff
-    (avoids the "self-answered question" lie).
+    recognize, never silently dropped. A logical turn that DOES carry a tool_use (in any fragment)
+    is never evaluated as a turn end at all — it is a rhetorical aside or in-flight work, not a
+    handoff (avoids the "self-answered question" lie AND, per this round of review, the
+    extended-thinking phantom-stop lie).
 
     Each denial's "text" is the RAW (2000-char-capped) tool_result body — NOT yet redacted or
     excerpt-truncated. Redaction + `ex()` truncation happen at report-assembly time, gated by
@@ -336,46 +417,60 @@ def mine_file(path):
     harness_resumed_by_kind = {k: 0 for k in HARNESS_KINDS}
     session_end_count = 0
     fname = os.path.basename(path)
-    for j, (i, r) in enumerate(filtered):
-        rtype = r.get("type")
-        if rtype == "assistant":
-            for tu in tool_uses(r):
-                tid = tu.get("id") or tu.get("tool_use_id")
-                if tid:
-                    tool_use_by_id[tid] = (tu.get("name", ""), tu.get("input") or {})
-            if tool_uses(r):
-                continue  # a turn WITH a tool call is never a turn end (in-flight, not a stop)
-            next_record = None
-            for k in range(j + 1, n):
-                _, rk = filtered[k]
-                if rk.get("type") == "user":
-                    next_record = rk
-                    break
-            verdict = classify_turn_end(next_record)
-            if verdict == "human-resumed":
-                tail = text_of(r)[-400:]
-                is_q = bool(Q_TAIL.search(tail)) or bool(Q_PHRASE.search(tail))
-                reply_len = len(text_of(next_record).strip())
-                stops.append({"silent": not is_q, "reply_len": reply_len})
-            elif verdict == "harness-resumed":
-                harness_resumed_count += 1
-                subkind = classify_envelope_kind(next_record) or "other-harness"
-                harness_resumed_by_kind[subkind] = harness_resumed_by_kind.get(subkind, 0) + 1
-            else:
-                session_end_count += 1
-        elif rtype == "user":
-            for tid, _is_err, txt in tool_results(r):
-                if DENY.search(txt):
-                    name, inp = tool_use_by_id.get(tid, ("", {}))
-                    cmd = (inp or {}).get("command") if name == "Bash" else None
-                    denials.append({
-                        "file": fname,
-                        "record_index": i,
-                        "text": txt,
-                        "tool_name": name,
-                        "verb": verb_of(name, inp) if name else None,
-                        "command": cmd,
-                    })
+
+    # Pass 1: register every tool_use block's id -> (tool_name, input), across ALL assistant
+    # fragments, regardless of grouping — a later tool_result always names the id of whichever
+    # fragment actually emitted it, so this must see every fragment, not just group heads.
+    for _j, (_i, r) in enumerate(filtered):
+        if r.get("type") != "assistant":
+            continue
+        for tu in tool_uses(r):
+            tid = tu.get("id") or tu.get("tool_use_id")
+            if tid:
+                tool_use_by_id[tid] = (tu.get("name", ""), tu.get("input") or {})
+
+    # Pass 2: denials (independent of assistant-turn grouping — every "user" record's tool_result
+    # blocks are mined exactly as before).
+    for i, r in enumerate(recs):
+        if r.get("isSidechain") or r.get("type") != "user":
+            continue
+        for tid, _is_err, txt in tool_results(r):
+            if DENY.search(txt):
+                name, inp = tool_use_by_id.get(tid, ("", {}))
+                cmd = (inp or {}).get("command") if name == "Bash" else None
+                denials.append({
+                    "file": fname,
+                    "record_index": i,
+                    "text": txt,
+                    "tool_name": name,
+                    "verb": verb_of(name, inp) if name else None,
+                    "command": cmd,
+                })
+
+    # Pass 3: logical-turn-end classification (AC-CBR-1 + the extended-thinking merge above).
+    for fragments, last_j in _group_logical_assistant_turns(filtered):
+        if _logical_turn_has_tool_use(fragments):
+            continue  # a turn WITH a tool call (in any fragment) is never a turn end
+        next_record = None
+        for k in range(last_j + 1, n):
+            _, rk = filtered[k]
+            if rk.get("type") == "user":
+                next_record = rk
+                break
+        verdict = classify_turn_end(next_record)
+        if verdict == "human-resumed":
+            merged_text = " ".join(t for t in (text_of(frag) for frag in fragments) if t)
+            tail = merged_text[-400:]
+            is_q = bool(Q_TAIL.search(tail)) or bool(Q_PHRASE.search(tail))
+            reply_len = len(text_of(next_record).strip())
+            stops.append({"silent": not is_q, "reply_len": reply_len})
+        elif verdict == "harness-resumed":
+            harness_resumed_count += 1
+            subkind = classify_envelope_kind(next_record) or "other-harness"
+            harness_resumed_by_kind[subkind] = harness_resumed_by_kind.get(subkind, 0) + 1
+        else:
+            session_end_count += 1
+
     return {
         "stops": stops,
         "denials": denials,

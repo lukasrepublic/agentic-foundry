@@ -703,6 +703,85 @@ def test_thresholds_path_falls_back_to_shipped_default_when_no_workspace_overrid
     assert path == frm._SHIPPED_THRESHOLDS_PATH
 
 
+# --------------------------------------------------------------------------------------------- #
+# AC-CBR-1 round-2 review — the extended-thinking phantom-stop bug: Claude Code writes one
+# logical assistant turn as MULTIPLE `type:"assistant"` records sharing one `message.id` (a
+# thinking-only fragment, `stop_reason: "tool_use"`, then a tool_use fragment). Per-record
+# evaluation misread the thinking-only fragment as its own tool-free turn end. Fixed by grouping
+# consecutive same-`message.id` fragments into one logical turn before evaluating anything.
+# --------------------------------------------------------------------------------------------- #
+
+EXTENDED_THINKING_FIXTURE = os.path.join(FIXTURES, "extended-thinking-turn")
+
+
+def test_group_logical_assistant_turns_merges_same_message_id_fragments():
+    thinking = {"type": "assistant", "message": {"id": "m1", "stop_reason": "tool_use", "content": [{"type": "thinking", "thinking": "..."}]}}
+    tool_use = {"type": "assistant", "message": {"id": "m1", "stop_reason": "tool_use", "content": [{"type": "tool_use", "id": "tu", "name": "Bash", "input": {}}]}}
+    filtered = [(0, thinking), (1, tool_use)]
+    groups = list(frm._group_logical_assistant_turns(filtered))
+    assert len(groups) == 1
+    fragments, last_j = groups[0]
+    assert fragments == [thinking, tool_use]
+    assert last_j == 1  # the tool_use fragment's position, never the thinking-only fragment's
+
+
+def test_group_logical_assistant_turns_keeps_none_id_fragments_singleton():
+    # backward compatibility (AC-CBR-4): every pre-existing fixture predates message.id and must
+    # keep evaluating each raw assistant record as its own turn.
+    a = {"type": "assistant", "message": {"content": [{"type": "text", "text": "a"}]}}
+    b = {"type": "assistant", "message": {"content": [{"type": "text", "text": "b"}]}}
+    filtered = [(0, a), (1, b)]
+    groups = list(frm._group_logical_assistant_turns(filtered))
+    assert len(groups) == 2
+    assert groups[0] == ([a], 0)
+    assert groups[1] == ([b], 1)
+
+
+def test_logical_turn_has_tool_use_true_from_stop_reason_alone():
+    # round-2 review: a thinking-only fragment ALONE already carries stop_reason "tool_use" in
+    # real transcripts, even before its sibling tool_use fragment is considered — this must be
+    # enough on its own, redundantly with the content-block check.
+    thinking_only = {"type": "assistant", "message": {"id": "m1", "stop_reason": "tool_use", "content": [{"type": "thinking", "thinking": "..."}]}}
+    assert frm._logical_turn_has_tool_use([thinking_only]) is True
+
+
+def test_logical_turn_has_tool_use_false_for_a_genuine_end_turn_group():
+    thinking = {"type": "assistant", "message": {"id": "m2", "stop_reason": "end_turn", "content": [{"type": "thinking", "thinking": "..."}]}}
+    text = {"type": "assistant", "message": {"id": "m2", "stop_reason": "end_turn", "content": [{"type": "text", "text": "Ready?"}]}}
+    assert frm._logical_turn_has_tool_use([thinking, text]) is False
+
+
+def test_extended_thinking_tool_use_group_produces_zero_stops_and_zero_of_anything_else():
+    # scenario (a): thinking-only + tool_use fragments sharing a message.id, followed by a
+    # tool_result. The merged logical turn correctly reads as "uses tools" and is skipped
+    # entirely — not a stop, not harness-resumed, not session-end. Pre-fix, the thinking-only
+    # fragment alone would have read as a tool-free turn end whose next_record is the
+    # tool_result (a plain "user" record with no origin) -> misclassified harness-resumed
+    # ("other-harness").
+    path = os.path.join(EXTENDED_THINKING_FIXTURE, "session.jsonl")
+    result = frm.mine_file(path)
+    # exactly one stop total in this file — scenario (b)'s question, below; scenario (a)
+    # contributes nothing to stops, harness_resumed_count, OR session_end_count.
+    assert len(result["stops"]) == 1
+    assert result["harness_resumed_count"] == 0
+    assert result["session_end_count"] == 0
+
+
+def test_extended_thinking_question_group_is_one_non_silent_human_resumed_stop():
+    # scenario (b): a thinking fragment + a text fragment ending in a question, sharing a
+    # message.id, followed by a genuine human reply -> exactly one human-resumed stop, NOT
+    # silent (the merged text's tail carries the question mark from the text fragment).
+    path = os.path.join(EXTENDED_THINKING_FIXTURE, "session.jsonl")
+    result = frm.mine_file(path)
+    assert len(result["stops"]) == 1
+    assert result["stops"][0]["silent"] is False
+
+
+def test_extended_thinking_fixture_end_to_end_silent_yield_ratio_is_zero():
+    report = frm.build_report(FAR_PAST, [EXTENDED_THINKING_FIXTURE], repo=None)
+    assert report["ratios"]["silent_yield"] == {"numerator": 0, "denominator": 1, "ratio": 0.0}
+
+
 def test_write_out_report_refuses_to_follow_a_symlink_at_the_final_write_step(tmp_path):
     real_target = tmp_path / "real.json"
     real_target.write_text("{}")
