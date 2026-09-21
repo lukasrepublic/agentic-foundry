@@ -68,9 +68,10 @@ The vocabulary, in one place. Terms link to the doc that owns them.
   procedure families the sd-*/id-* skills form, walked by the operator/agent in order.
   "Step N" labels a skill's position in the sequence — there is no shipped workflow engine
   or state-machine file behind them.
-- **Charter** — the lightweight, pre-flattened acceptance record for a charter-lane atom
-  (findings + acceptance criteria + scope, no separate spec/contract pair to freeze). See
-  [skills/amend/SKILL.md](../skills/amend/SKILL.md).
+- **Charter** — the one-page unit of work of the charter lane (the default lane): a Goal,
+  acceptance criteria, `Done when`, `Escalate when`, the write scope, verification, the merge
+  rule and an `## Amendments` table — committed to the workspace, no separate spec/contract pair
+  to freeze. See [context/charter-template.md](../context/charter-template.md).
 - **Amendment** — a re-freeze of an already-authorized spec/contract or charter: hashes
   recomputed, `auth_seq` bumped, recorded without a new operator step unless the change widens
   scope or touches a security-reviewed boundary. See
