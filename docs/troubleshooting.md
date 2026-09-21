@@ -5,7 +5,7 @@ the shipped CLI, that's a bug — file it.
 
 ## `/foundry:doctor` is RED
 
-The output names the failing probe. The seven probes and their usual causes:
+The output names the failing probe. The six probes and their usual causes:
 
 | Probe | Usual cause | Fix |
 |---|---|---|
@@ -15,7 +15,6 @@ The output names the failing probe. The seven probes and their usual causes:
 | `stack-profile-lock` | `.foundry/stack-profile.lock` points at a profile not in `packs/` | re-run `/foundry:relock`, or remove the lock |
 | `operator-registry` | `.claude/foundry-operators.json` missing or invalid | re-run `/foundry:init`, then add yourself |
 | `control-plane` | session rooted in a hosted repo, or below the control plane, or a dangling `repos{}` path | see below |
-| `permission-floor` | a malformed `docs/permission-floor.json` in the plugin tree (the ONLY case that reddens this probe — see below) | reinstall/update the plugin |
 
 ## `/foundry:init` reports a status line, sandbox, or gh-jail finding instead of wiring it
 
@@ -29,29 +28,44 @@ wired, point at the by-hand remedy. See
 for the exact commands and the two `gh` jail caveats (plaintext token at rest; a local logout does
 not revoke server-side).
 
-## `foundry doctor` reports `permission-floor` as `[adv ]` (advisory)
+## `foundry doctor` reports a `permissions-policy` advisory line
 
-`permission-floor` compares the workspace's EFFECTIVE permission configuration — BOTH
-`.claude/settings.json` **and** `.claude/settings.local.json` — against the plugin's shipped
-`docs/permission-floor.json`. A mismatch here is **advisory, never RED, and never auto-fixed**:
-local divergence from the shipped floor is frequently a deliberate operator choice, so the doctor
-reports it and stops rather than reddening a legitimate local grant. The one case that DOES redden
-this probe (`[XX ]`) is a `docs/permission-floor.json` that fails schema validation — a broken
-plugin install, not a configuration mismatch.
+Doctor renders one ADVISORY line, never `[adv ]`-paired with the six structural probes above and
+never RED by design — a stale-permission workspace must never wedge a session. The line has two
+parts:
 
-The finding that matters most is **`ask-shadowed-ceremony`**: an `ask` rule the map ships as a
-front-authorization ceremony (e.g. `foundry-authorize.py`) that is now covered by a broader
-`allow` rule. This is exactly what happens when you accept the harness's "always allow" persist
-option on a ceremony prompt — it writes the new `allow` into **`.claude/settings.local.json`**
-with no second trust dialog, and that file is easy to forget is even consulted. The summary line
-leads with **"the front-authorization prompt is not firing"** whenever this fires. Remedy: open
-`.claude/settings.local.json`, find the overly-broad `allow` rule the finding names, and narrow or
-remove it so the ceremony prompt fires again.
+- **Capability preflight**, over every atom (contract or charter) of every active release:
+  `preflight ok (<n> atoms)` when every capability the release needs resolves, or
+  `preflight: <n> missing rule(s)` when it doesn't.
+- **Policy drift**, the same derivation `foundry-permissions-compile.py --check` runs:
+  `policy absent` (no `.foundry/permissions.yaml` yet), `policy in-sync`, or
+  `policy drift (<k>)` (the compiled `.claude/settings.json` no longer matches the policy source).
 
-Other findings (`deny-missing`, `stale-plugin-path`, and the informational `allow-absent` /
-`unclassified` buckets) are named on their own finding line with a one-line remedy; run
-`/foundry:doctor` (not `--session-start`) for the full report — `--session-start` only shows the
-actionable lines plus one count of the informational ones.
+Remedies:
+
+- **`preflight: <n> missing rule(s)`** — run the preflight directly to see which rule(s) are
+  missing and paste the reported `/permissions` addition yourself; never self-grant by editing
+  `.claude/settings.json` directly:
+
+  ```bash
+  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-capability-preflight.py" --contract <path-to-acceptance-contract.yaml>
+  # or, for a charter-lane atom:
+  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-capability-preflight.py" --charter <path-to-charter.md>
+  ```
+
+  `/foundry:mode-autonomous` already runs this preflight before dispatching any atom — the doctor
+  line is the same signal, visible without a live dispatch.
+
+- **`policy drift (<k>)`** — reconcile the compiled settings from the policy source (`--check` is
+  read-only; `--write` reconciles):
+
+  ```bash
+  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-permissions-compile.py" --check
+  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-permissions-compile.py" --write
+  ```
+
+- **`policy absent`** — expected until you adopt `.foundry/permissions.yaml`; not itself a
+  problem.
 
 ## `foundry doctor` reports `control-plane` RED
 

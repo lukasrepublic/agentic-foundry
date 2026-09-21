@@ -379,6 +379,7 @@ def test_the_update_package_manifest_has_no_lifecycle_scripts():
                             # own version move together.
         "0.16.0": "0.1.10", # v1.16.0 -- the bundled floor gains the worktree-gc rows; pin and own version move
                             # together.
+        "0.16.1": "0.1.11", # v1.16.1 -- docs-only plugin patch; the pin and own version move with the plugin.
     }
     pin = deps["create-agentic-workspace"]
     expected_update_version = CLI_UPDATE_VERSION_BY_PIN.get(pin)
@@ -526,6 +527,8 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         "1.15.1": "0.15.1",
         # v1.16.0: the bundled floor gains the worktree-gc rows (dry-run allow, apply ask) — a minor bump.
         "1.16.0": "0.16.0",
+        # v1.16.1: docs-only plugin patch; the tarball version moves with the plugin pin.
+        "1.16.1": "0.16.1",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (

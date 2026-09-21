@@ -9,7 +9,7 @@ Run `/list-agents` — the native enumerator (this machine's sessions, plus cont
 while both sides are on Remote Control). Foundry adds ONE overlay: for a row whose name matches a
 known container/session name, annotate it with that workspace's programme — `next_action` read
 from `.foundry/releases/<programme>/state.yaml`. Nothing else; the prior registry-based roster
-steps are retired here (the fleet scripts stay until R4 removes them).
+scripts were retired in R4 (v1.15.0) — this skill is the only surface left.
 
 Read-only, never acts. For the cross-session message-kind convention (`FINDING` /
 `NEEDS-INTERFACE` / `CHALLENGE` / `HANDOFF`), see `docs/how-to/deck-and-containers.md` and

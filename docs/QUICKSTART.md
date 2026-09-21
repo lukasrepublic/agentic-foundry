@@ -1,8 +1,8 @@
 # Quickstart — zero to your first governed merge
 
-Every command below is copy-paste-runnable against **v1.6.0**. If a command here ever
-drifts from the shipped CLI, that's a bug — file it (a CI doc-drift test locks the pins
-on our side).
+Every command below is copy-paste-runnable — kept current by the CI doc-drift suites, so no
+version pin here can go stale. If a command here ever drifts from the shipped CLI, that's a
+bug — file it (a CI doc-drift test locks the pins on our side).
 
 What you'll produce, artifact by artifact:
 

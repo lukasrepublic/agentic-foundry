@@ -72,7 +72,7 @@ The plugin is **wired into** the workspace via native Claude Code mechanisms:
 That last row is the crux: **`${CLAUDE_PLUGIN_ROOT}` (the wired-in factory) ↔
 `CLAUDE_PROJECT_DIR` (the host workspace).** The factory brings the verbs; it reads the
 workspace's nouns. `/foundry:doctor` health-checks the wiring (manifest, hooks, skills,
-profile lock, operator registry) in under a second.
+profile lock, operator registry, control plane) in under a second.
 
 ## 4. Two reusable deliverables
 
