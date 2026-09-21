@@ -175,15 +175,18 @@ hook_comment_expectation:
   #      rule byte-identical; only what text feeds them changed), and block() gained a
   #      remediation/retryable/evidence-carrying JSON verdict (AC-GSO-4) replacing the old plain
   #      "BLOCK <reason>" line. Both are real, reviewed executable changes to this hook.
-  #   8. guard-paren-tokens (2026-09-21, hotfix lane, security-reviewed): unquoted grouping
-  #      parens are spaced into standalone SEPARATOR tokens before shlex. Measured before the
-  #      change, `(git push --force origin main)` and `git push --force origin main)` were
-  #      ADMITTED (shlex kept `(git` / `main)` as one word each, so the verb matched nothing and
-  #      the refspec was not `main`) while the spaced form blocked. The grouped-cd context check
-  #      now keys on the `(` token before `cd`. Same class as the Claude Code 2.1.275 sandbox fix
-  #      (one exempt component excusing a whole compound command). Regression corpus in
+  #   8. guard-paren-tokens (2026-09-21, hotfix lane, security-reviewed): unquoted `(`, `)` and
+  #      backticks are spaced into standalone PLAIN tokens before shlex (not SEPARATORS — the
+  #      first cut made `(` bound a clause, which truncated `git push $(cat r) --force main` to
+  #      an ADMIT; the independent security review caught it and the corpus pins it). Measured
+  #      before the change, `(git push --force origin main)`, `git push --force origin main)`
+  #      and `` `git push --force origin main` `` were ADMITTED (shlex kept `(git` / `main)` /
+  #      `` `git `` as one word each) while the spaced forms blocked. The grouped-cd context
+  #      check now refuses a `cd` ANYWHERE inside an unclosed `(`; the merge-args parser and the
+  #      env-prefix loop skip the grouping tokens. Same class as the Claude Code 2.1.275 sandbox
+  #      fix (one exempt component excusing a whole compound command). Regression corpus in
   #      tests/test_hooks_guards.py::test_discipline_convicts_compound_and_grouped_shapes.
-  executable_content_sha256: '0ea88056d2e9ee19c05b64cbab5f5d417d8cb830056a05b6f2e590c7e95dbdc9'
+  executable_content_sha256: 'f91c1bbf680f57ab1cc942047a779e661120a70a49a6a1b2128650218ed3f97d'
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
 operator_registry_shape:

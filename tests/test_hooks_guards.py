@@ -243,6 +243,17 @@ def test_discipline_blocks_admin_merge_outright():
     # force intent spelled as a `+` refspec or a `src:dst` refspec
     "git push origin +main",
     "git push --force origin HEAD:main",
+    # backticks: the same glued-word-boundary class (`` `git `` is not a verb) — measured ADMITTED
+    # before the rule spaced them, found by the security review of the paren rule
+    "`git push --force origin main`",
+    "echo `git push --force origin main`",
+    # an unquoted `$(…)` BEFORE the guarded token must not truncate the clause's argument run —
+    # these three went BLOCK→ADMIT in the first version of the paren rule (which made `(` a
+    # SEPARATOR), found by the same review; they are the reason the grouping tokens are plain
+    # tokens, not clause boundaries
+    "git push $(cat r) --force main",
+    "git commit $(cat a) --no-verify",
+    "rm -rf $(pwd)/.git",
 ])
 def test_discipline_convicts_compound_and_grouped_shapes(cmd):
     p = _discipline(cmd)
@@ -255,24 +266,57 @@ def test_discipline_convicts_compound_and_grouped_shapes(cmd):
     "(git status)",
     "git push --force-with-lease origin feat",
     "echo $(git rev-parse --short HEAD)",
+    "x=`cat v`; git status",
+    # QUOTED parens stay one shlex token whatever the normalizer inserts inside the quotes —
+    # a commit message is prose, not a clause (the CLAUDE.md "inline -m is fine" promise)
+    'git commit -m "fix(scope): x"',
+    'git commit -m "see (git push --force origin main)"',
 ])
 def test_discipline_admits_benign_compound_and_grouped_shapes(cmd):
     p = _discipline(cmd)
     assert p.returncode == 0, p.stdout + p.stderr
 
 
+def test_discipline_grouped_merge_reads_no_stray_selector():
+    """A `)` glued to the PR selector is a grouping token, not a second selector: with green
+    checks the grouped plain merge admits exactly as the bare one does."""
+    env = _gh_stub_env(GH_STUB_CHECKS_EXIT=0, GH_STUB_CHECKS_OUTPUT="check-a\tpass\t1s\turl")
+    p = _discipline("(gh pr merge 42 --merge)", extra_env=env)
+    assert p.returncode == 0, p.stdout + p.stderr
+
+
 @pytest.mark.parametrize("cmd", [
-    # The declared BOUNDED RESIDUAL (the hook's own header): shell indirection is not seen
-    # through. `$(…)` now over-matches by construction (its `(` is spaced out, so the inner verb
-    # scans), which is the safe direction; `bash -c "…"` still admits — a quoted string is one
-    # shlex token. Pinned here so a change in either direction is a deliberate, visible one.
+    "( cd /tmp && gh pr merge 42 --merge )",
+    "(:; cd /tmp) && gh pr merge 42 --merge",
+], ids=["cd-first-in-subshell", "cd-later-in-subshell"])
+def test_discipline_blocks_merge_after_subshell_scoped_cd(cmd):
+    """A `cd` anywhere inside a `( … )` group is scoped to that subshell in real bash, so the
+    checkout `gh` resolves the PR from is NOT the one the scan would pin the check query to.
+    Fail-closed even on green checks — this is the AC-MVC-4 false-ALLOW shape."""
+    env = _gh_stub_env(GH_STUB_CHECKS_EXIT=0, GH_STUB_CHECKS_OUTPUT="check-a\tpass\t1s\turl")
+    p = _discipline(cmd, extra_env=env)
+    assert p.returncode == 2, p.stdout + p.stderr
+    assert "directory change" in p.stderr, p.stderr
+
+
+@pytest.mark.parametrize("cmd", [
+    # The declared BOUNDED RESIDUAL (the hook's own header) is shell indirection whose TEXT the
+    # scan never sees: `bash -c "…"` admits because a quoted string is one shlex token. `$(…)`
+    # is different — its text IS scanned once `(` is spaced out, so a guarded verb inside it
+    # blocks (over-matching, the safe direction), while its evaluation is still not modelled.
+    # Both directions are pinned so a change to either is deliberate and visible.
+    # (The `bash -c` row duplicates tests/test_verb_path_resolution.py's residual assertion on
+    # purpose: that file owns the header-claim/behaviour agreement, this file owns the corpus.)
     ("echo $(git push --force origin main)", 2),
     ('bash -c "git push --force origin main"', 0),
 ])
 def test_discipline_indirection_residual_is_pinned(cmd):
     cmd, expected = cmd
     p = _discipline(cmd)
-    assert p.returncode == expected, p.stdout + p.stderr
+    assert p.returncode == expected, (
+        p.stdout + p.stderr + "\n— if indirection now BLOCKS, good: then update the hook header's "
+        "declared residual and tests/test_verb_path_resolution.py in the same change, never "
+        "just this expectation.")
 
 
 # ---- TRIPWIRE: heredoc bodies must stay in the scan -----------------------------------------

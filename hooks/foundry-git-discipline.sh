@@ -41,9 +41,10 @@
 # an unbypassable sandbox. "NO bypass" = there is NO in-session CONFIG off-switch (no
 # per-invocation flag, no env var, no session-writable file) that downgrades a BLOCK to an
 # ADMIT. It does NOT mean "no command can evade it": a literal-string scan cannot see
-# through shell indirection (`bash -c …`, `eval`, `$(…)`, variable indirection, aliases,
+# through shell indirection (`bash -c …`, `eval`, variable indirection, aliases,
 # write-script-then-run) or reach non-Bash channels — those are acknowledged BOUNDED
-# RESIDUALS (spec §8), not closed holes. Path-qualified invocation used to belong on that
+# RESIDUALS (spec §8), not closed holes. `$(…)` and backticks sit half-way: their text IS
+# scanned (a guarded verb inside one blocks), their evaluation is not modelled. Path-qualified invocation used to belong on that
 # list; it no longer does (see VERB MATCHING above) — an absolute path is an ordinary thing
 # for an agent to emit, not an unusual construction, so it was a realistic mistake-path rather
 # than a deliberate-evasion residual.
@@ -217,16 +218,24 @@ norm = re.sub(r";", " ; ", norm)
 # already surrounded by spaces, so a remaining bare `|`/`&` is a genuine pipe / background op.
 norm = re.sub(r"\|", " | ", norm)
 norm = re.sub(r"&", " & ", norm)
-# Grouping parentheses are word boundaries to bash but NOT to shlex: `(git push --force origin
-# main)` yielded the tokens `(git` and `main)` — the verb matched nothing and the refspec
-# resolved to a branch that is not protected — and ADMITTED a force-push that executes (measured
-# 2026-09-21; the spaced form `( git … )` blocked). Same class as the Claude Code 2.1.275
-# sandbox fix where one exempt component excused a whole compound command. Space them out so
-# each paren is its own SEPARATOR token. Only UNQUOTED parens are affected in practice: shlex
-# keeps a quoted string one token regardless of the spaces inserted inside it, exactly as the
-# connector rules above already rely on. `$(…)` now scans as `$ ( … )` — over-matching, the safe
-# direction for a guard that must never silently stop scanning.
-norm = re.sub(r"[()]", lambda m: " " + m.group(0) + " ", norm)
+# Grouping parentheses and backticks are word boundaries to bash but NOT to shlex: `(git push
+# --force origin main)` yielded the tokens `(git` and `main)` — the verb matched nothing and the
+# refspec resolved to a branch that is not protected — and ADMITTED a force-push that executes
+# (measured 2026-09-21; the spaced form `( git … )` blocked). `` `git push --force origin main` ``
+# admitted the same way (`` `git `` is not a verb). Same class as the Claude Code 2.1.275 sandbox
+# fix where one exempt component excused a whole compound command. Space them out so each is a
+# standalone token — but NOT a SEPARATOR: making `(` bound a clause truncated the argument run of
+# any clause containing an unquoted `$(…)` BEFORE its guarded token (`git push $(cat r) --force
+# main`, `rm -rf $(pwd)/.git` went BLOCK→ADMIT; found by the independent security review of
+# this change). As plain tokens they are inert inside an argument run, and a stray `(`, `)` or
+# `` ` `` is skipped where a positional would otherwise be read (the merge-args parser, the
+# env-prefix loop). Only UNQUOTED ones are affected: shlex keeps a quoted string one token
+# regardless of the spaces inserted inside it, exactly as the connector rules above rely on.
+# `$(…)` therefore scans as literal text: its INNER verb is seen (`echo $(git push --force …)`
+# blocks — over-matching, the safe direction) while its evaluation is not modelled (the
+# declared residual in the header is about the latter).
+norm = re.sub(r"[()`]", lambda m: " " + m.group(0) + " ", norm)
+GROUPING_TOKENS = {"(", ")", "`"}
 
 # --- Tokenize. shlex strips quotes (handles `"--force"`, `'rebase'`, --fo"rce" splice is a
 # residual, not in scope). On a shlex failure (unbalanced quotes etc.) fall back to a
@@ -267,7 +276,7 @@ def strip_dst_ref(ref):
 # and wrappers `sudo`/`time`/`env git …` implicitly: we just look for the literal `git`
 # token anywhere, then read forward to its subcommand. Compound separators (&&, ;, |) are
 # ordinary tokens that simply bound a clause's argument run. ---
-SEPARATORS = {"&&", "||", ";", "|", "&", "(", ")"}
+SEPARATORS = {"&&", "||", ";", "|", "&"}          # NOT the grouping tokens — see the paren rule above
 
 
 def _is_verb(tok, verb):
@@ -471,6 +480,11 @@ for i, t in enumerate(low):
             if re.match(r"^\d*[<>]+&?\d*$", a_):
                 k_ += 1
                 continue
+            # Grouping tokens (`(`, `)`, `` ` ``) are spaced out by the normalizer and are not
+            # arguments either: `(gh pr merge 1)` must not read `)` as a second PR selector.
+            if a_ in GROUPING_TOKENS:
+                k_ += 1
+                continue
             if end_of_flags or not a_.startswith("-") or a_ == "-":
                 bare_.append(a_)
                 k_ += 1
@@ -626,12 +640,18 @@ for i, t in enumerate(low):
     #     same-numbered PR. `pushd` and a subshell-grouped `(cd …` are directory changes this
     #     scan does not model, so they block rather than being ignored.
     run_cwd, cd_unresolved = None, None
-    j, cstart = 0, clause_start(i)
+    j, cstart, depth = 0, clause_start(i), 0
     while j < cstart:
         tok, ltok = toks[j], low[j]
-        # `(` is its own token now (see the paren rule in the normalizer), so a subshell-grouped
-        # `(cd …` is recognized by the token BEFORE `cd`, not by a glued `(cd` word.
-        if ltok in ("pushd", "popd") or (ltok == "cd" and j > 0 and toks[j - 1] == "("):
+        # `(` and `)` are their own tokens now (the paren rule in the normalizer). A `cd`
+        # ANYWHERE inside an unclosed `(` — not only right after it — is scoped to that subshell
+        # in real bash, so `gh` still runs in the original cwd: `(:; cd /other) && gh pr merge 1`
+        # must not pin the check query to /other (security review of the paren rule, 2026-09-21).
+        if tok == "(":
+            depth += 1
+        elif tok == ")":
+            depth = max(0, depth - 1)
+        if ltok in ("pushd", "popd") or (ltok == "cd" and depth > 0):
             run_cwd, cd_unresolved = None, f"a directory change this scan cannot model ({tok!r})"
         elif ltok == "cd":
             tgt, m = None, j + 1
@@ -688,7 +708,7 @@ for i, t in enumerate(low):
         # Wrappers are matched through the SAME path-qualified resolver as the guarded verbs, or
         # `/usr/bin/env GH_TOKEN=… gh pr merge …` would be refused as an unrecognized token
         # rather than taking the intended environment-reproduction path.
-        if t == "-" or any(_is_verb(t.lower(), w) for w in _WRAPPERS):
+        if t == "-" or t in GROUPING_TOKENS or any(_is_verb(t.lower(), w) for w in _WRAPPERS):
             continue
         m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", t)
         if not m:
