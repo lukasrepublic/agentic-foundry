@@ -213,6 +213,68 @@ def test_discipline_blocks_admin_merge_outright():
     assert p.returncode == 2, p.stdout + p.stderr
 
 
+# ==================================================================== compound / grouped =========
+# Regression corpus for the compound-command and grouping shapes, added 2026-09-21 after the
+# Claude Code 2.1.271–2.1.275 permission-parser fixes (a `cd`+`git` chain, two directory changes,
+# a subshell, and one exempt component excusing a whole compound command). The paren rows were
+# MEASURED ADMITTED before the paren rule in the normalizer: shlex kept `(git` and `main)` as
+# single words, so the verb matched nothing and the refspec was not `main`. The spaced form
+# `( git … )` blocked all along — the defect was the glue, not the grouping.
+
+@pytest.mark.parametrize("cmd", [
+    # cd + git chain, two directory changes, pushd
+    "cd /tmp/x && git push --force origin main",
+    "cd a && cd b && git push --force origin main",
+    "pushd a && git push --force origin main",
+    # a benign first component must not excuse the compound command
+    "echo ok; git push --force origin main",
+    "git status && git push -f origin main",
+    "true || git push --force origin main",
+    # grouping parens glued to the verb / the refspec / the PR selector (the measured bypass)
+    "(git push --force origin main)",
+    "(cd repo && git push --force origin main)",
+    "git push --force origin main)",
+    "(gh pr merge 1 --admin)",
+    "(git branch -D main)",
+    "gh pr view 1 && gh pr merge 1 --admin",
+    # spaced grouping, already blocked — kept so the paren rule can never regress them
+    "( git push --force origin main )",
+    "{ git push --force origin main; }",
+    # force intent spelled as a `+` refspec or a `src:dst` refspec
+    "git push origin +main",
+    "git push --force origin HEAD:main",
+])
+def test_discipline_convicts_compound_and_grouped_shapes(cmd):
+    p = _discipline(cmd)
+    assert p.returncode == 2, p.stdout + p.stderr
+
+
+@pytest.mark.parametrize("cmd", [
+    "cd a && git status",
+    "(cd a && git log -1)",
+    "(git status)",
+    "git push --force-with-lease origin feat",
+    "echo $(git rev-parse --short HEAD)",
+])
+def test_discipline_admits_benign_compound_and_grouped_shapes(cmd):
+    p = _discipline(cmd)
+    assert p.returncode == 0, p.stdout + p.stderr
+
+
+@pytest.mark.parametrize("cmd", [
+    # The declared BOUNDED RESIDUAL (the hook's own header): shell indirection is not seen
+    # through. `$(…)` now over-matches by construction (its `(` is spaced out, so the inner verb
+    # scans), which is the safe direction; `bash -c "…"` still admits — a quoted string is one
+    # shlex token. Pinned here so a change in either direction is a deliberate, visible one.
+    ("echo $(git push --force origin main)", 2),
+    ('bash -c "git push --force origin main"', 0),
+])
+def test_discipline_indirection_residual_is_pinned(cmd):
+    cmd, expected = cmd
+    p = _discipline(cmd)
+    assert p.returncode == expected, p.stdout + p.stderr
+
+
 # ---- TRIPWIRE: heredoc bodies must stay in the scan -----------------------------------------
 # These pass trivially against the guard as it stands, which does not treat a heredoc specially.
 # They are here for the NEXT person who tries to make it treat one specially.

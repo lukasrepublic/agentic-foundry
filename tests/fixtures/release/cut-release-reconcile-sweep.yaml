@@ -175,7 +175,15 @@ hook_comment_expectation:
   #      rule byte-identical; only what text feeds them changed), and block() gained a
   #      remediation/retryable/evidence-carrying JSON verdict (AC-GSO-4) replacing the old plain
   #      "BLOCK <reason>" line. Both are real, reviewed executable changes to this hook.
-  executable_content_sha256: 'd602aa40af5407a08eba67e4e9536c437d4cf7966a8c3c37364d6536b82d9548'
+  #   8. guard-paren-tokens (2026-09-21, hotfix lane, security-reviewed): unquoted grouping
+  #      parens are spaced into standalone SEPARATOR tokens before shlex. Measured before the
+  #      change, `(git push --force origin main)` and `git push --force origin main)` were
+  #      ADMITTED (shlex kept `(git` / `main)` as one word each, so the verb matched nothing and
+  #      the refspec was not `main`) while the spaced form blocked. The grouped-cd context check
+  #      now keys on the `(` token before `cd`. Same class as the Claude Code 2.1.275 sandbox fix
+  #      (one exempt component excusing a whole compound command). Regression corpus in
+  #      tests/test_hooks_guards.py::test_discipline_convicts_compound_and_grouped_shapes.
+  executable_content_sha256: '0ea88056d2e9ee19c05b64cbab5f5d417d8cb830056a05b6f2e590c7e95dbdc9'
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
 operator_registry_shape:

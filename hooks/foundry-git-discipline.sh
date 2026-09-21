@@ -217,6 +217,16 @@ norm = re.sub(r";", " ; ", norm)
 # already surrounded by spaces, so a remaining bare `|`/`&` is a genuine pipe / background op.
 norm = re.sub(r"\|", " | ", norm)
 norm = re.sub(r"&", " & ", norm)
+# Grouping parentheses are word boundaries to bash but NOT to shlex: `(git push --force origin
+# main)` yielded the tokens `(git` and `main)` — the verb matched nothing and the refspec
+# resolved to a branch that is not protected — and ADMITTED a force-push that executes (measured
+# 2026-09-21; the spaced form `( git … )` blocked). Same class as the Claude Code 2.1.275
+# sandbox fix where one exempt component excused a whole compound command. Space them out so
+# each paren is its own SEPARATOR token. Only UNQUOTED parens are affected in practice: shlex
+# keeps a quoted string one token regardless of the spaces inserted inside it, exactly as the
+# connector rules above already rely on. `$(…)` now scans as `$ ( … )` — over-matching, the safe
+# direction for a guard that must never silently stop scanning.
+norm = re.sub(r"[()]", lambda m: " " + m.group(0) + " ", norm)
 
 # --- Tokenize. shlex strips quotes (handles `"--force"`, `'rebase'`, --fo"rce" splice is a
 # residual, not in scope). On a shlex failure (unbalanced quotes etc.) fall back to a
@@ -257,7 +267,7 @@ def strip_dst_ref(ref):
 # and wrappers `sudo`/`time`/`env git …` implicitly: we just look for the literal `git`
 # token anywhere, then read forward to its subcommand. Compound separators (&&, ;, |) are
 # ordinary tokens that simply bound a clause's argument run. ---
-SEPARATORS = {"&&", "||", ";", "|", "&"}
+SEPARATORS = {"&&", "||", ";", "|", "&", "(", ")"}
 
 
 def _is_verb(tok, verb):
@@ -619,7 +629,9 @@ for i, t in enumerate(low):
     j, cstart = 0, clause_start(i)
     while j < cstart:
         tok, ltok = toks[j], low[j]
-        if ltok in ("pushd", "popd") or ltok.lstrip("(") == "cd" and ltok != "cd":
+        # `(` is its own token now (see the paren rule in the normalizer), so a subshell-grouped
+        # `(cd …` is recognized by the token BEFORE `cd`, not by a glued `(cd` word.
+        if ltok in ("pushd", "popd") or (ltok == "cd" and j > 0 and toks[j - 1] == "("):
             run_cwd, cd_unresolved = None, f"a directory change this scan cannot model ({tok!r})"
         elif ltok == "cd":
             tgt, m = None, j + 1
