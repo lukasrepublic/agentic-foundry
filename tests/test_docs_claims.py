@@ -247,6 +247,23 @@ def test_relative_doc_links_resolve():
     assert not broken, "broken relative links:\n" + "\n".join(broken)
 
 
+def test_every_how_to_is_linked_from_the_docs_index():
+    """AC-FDC-5: every `docs/how-to/*.md` file is reachable from `docs/README.md`'s own
+    "How-to guides" index — the docs home is the one page readers land on to find them, and a
+    shipped how-to absent from it is invisible. `test_relative_doc_links_resolve` above only
+    checks that EXISTING links resolve; this is the other direction (every file has a link)."""
+    how_to = os.path.join(REPO_ROOT, "docs", "how-to")
+    shipped = {f for f in os.listdir(how_to) if f.endswith(".md")}
+    index_text = _read(os.path.join(REPO_ROOT, "docs", "README.md"))
+    linked = {
+        os.path.basename(target)
+        for _text, target in re.findall(r"\[([^\]]+)\]\(([^)#]+)(?:#[^)]*)?\)", index_text)
+        if target.startswith("how-to/")
+    }
+    missing = sorted(shipped - linked)
+    assert not missing, f"docs/how-to/*.md not linked from docs/README.md's index: {missing}"
+
+
 # The corpus is wider than markdown (AC-LPS-6, from the first-run audit's scan-gap lesson:
 # a stale phrase survived the markdown-only sweep in a JSON comment, another in script
 # output). JSON/YAML/shell are user-visible surfaces. Python stays out: comments there

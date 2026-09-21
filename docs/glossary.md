@@ -45,8 +45,8 @@ The vocabulary, in one place. Terms link to the doc that owns them.
   (`packs/stack-profiles/`). The certify/verify verbs read it.
 - **Stage mode (`lean` / `scale`)** — how much ceremony the workspace runs with; lean is
   the solo default, scale enforces the full gates.
-- **Doctor** — the five-probe health check (`/foundry:doctor`); `DOCTOR-GREEN` or a named
-  failure, in under a second.
+- **Doctor** — the six-probe health check (`/foundry:doctor`); `DOCTOR-GREEN` or a named
+  failure, in under a second. See [QUICKSTART](QUICKSTART.md).
 - **Intake** — the front door: fuzzy ask → interactive discovery → atomic spec + contract.
 - **Spec-review** — the single-pass default review: deterministic pre-lints, three
   fresh-context reviewer questions, one remediation round, recorded content-bound.
@@ -68,3 +68,30 @@ The vocabulary, in one place. Terms link to the doc that owns them.
   procedure families the sd-*/id-* skills form, walked by the operator/agent in order.
   "Step N" labels a skill's position in the sequence — there is no shipped workflow engine
   or state-machine file behind them.
+- **Charter** — the lightweight, pre-flattened acceptance record for a charter-lane atom
+  (findings + acceptance criteria + scope, no separate spec/contract pair to freeze). See
+  [skills/amend/SKILL.md](../skills/amend/SKILL.md).
+- **Amendment** — a re-freeze of an already-authorized spec/contract or charter: hashes
+  recomputed, `auth_seq` bumped, recorded without a new operator step unless the change widens
+  scope or touches a security-reviewed boundary. See
+  [skills/amend/SKILL.md](../skills/amend/SKILL.md).
+- **Blocker** — a candidate escalation with a required shape (a claim, its evidence, what was
+  attempted, and a `why_operator` drawn from the closed `escalate_when` set) — one without
+  evidence is a Next Task, not a blocker. See
+  [schema/blocker.schema.json](../schema/blocker.schema.json).
+- **Handoff** — the DATA form of "the operator must run this themselves": a working directory,
+  one bare non-chaining command, why, and what success looks like — never prose the operator has
+  to parse. See [schema/blocker.schema.json](../schema/blocker.schema.json).
+- **Message kind** — the closed vocabulary (`FINDING` / `NEEDS-INTERFACE` / `CHALLENGE` /
+  `HANDOFF`) cross-session messages carry. See
+  [deck-and-containers.md](how-to/deck-and-containers.md).
+- **Integration branch** — the release's own branch (`release/<version>`, cut from `main` at
+  intake) that every atom's PR targets instead of `main`, so a per-merge deploy trigger fires
+  once per release rather than once per atom. See
+  [branching-and-cleanup.md](how-to/branching-and-cleanup.md).
+- **Evidence record** — the `done_when` evidence a builder writes to
+  `.foundry/evidence/<atom-id>.json`; the `TaskCompleted` hook's gate reads it before letting a
+  build report done. See `hooks/foundry-task-completed.py`.
+- **`next_action`** — the optional single next thing to do, written to a wave's `state.yaml` so
+  the next tick prompt or fresh session opens with it instead of re-deriving it; a write replaces
+  it rather than accumulating. See [schema/wave-state.schema.json](../schema/wave-state.schema.json).
