@@ -254,6 +254,18 @@ def test_discipline_blocks_admin_merge_outright():
     "git push $(cat r) --force main",
     "git commit $(cat a) --no-verify",
     "rm -rf $(pwd)/.git",
+    # the everyday spelling — force-push of the CURRENT branch, no refspec — wrapped: a stray
+    # `)` counted as a refspec and disabled the no-refspec ⇒ protected rule (second-round
+    # review, measured ADMIT; `git push -f origin)` had regressed from BLOCK)
+    "(git push --force origin)",
+    "`git push --force origin`",
+    "git push -f origin)",
+    "echo $(git push --force origin)",
+    # a non-literal refspec resolves to a branch the scan cannot know ⇒ protected (pre-existing
+    # ADMIT, closed in the same pass)
+    "git push --force origin $BRANCH",
+    "git push --force $(cat remote)",
+    "git push --force origin 'feat-*'",
 ])
 def test_discipline_convicts_compound_and_grouped_shapes(cmd):
     p = _discipline(cmd)
@@ -288,15 +300,26 @@ def test_discipline_grouped_merge_reads_no_stray_selector():
 @pytest.mark.parametrize("cmd", [
     "( cd /tmp && gh pr merge 42 --merge )",
     "(:; cd /tmp) && gh pr merge 42 --merge",
-], ids=["cd-first-in-subshell", "cd-later-in-subshell"])
+    "d=`cd /tmp && pwd`; gh pr merge 42 --merge",
+], ids=["cd-first-in-subshell", "cd-later-in-subshell", "cd-inside-backticks"])
 def test_discipline_blocks_merge_after_subshell_scoped_cd(cmd):
-    """A `cd` anywhere inside a `( … )` group is scoped to that subshell in real bash, so the
-    checkout `gh` resolves the PR from is NOT the one the scan would pin the check query to.
-    Fail-closed even on green checks — this is the AC-MVC-4 false-ALLOW shape."""
+    """A `cd` anywhere inside a `( … )` group or a backtick span is scoped to that subshell in
+    real bash, so the checkout `gh` resolves the PR from is NOT the one the scan would pin the
+    check query to. Fail-closed even on green checks — this is the AC-MVC-4 false-ALLOW shape."""
     env = _gh_stub_env(GH_STUB_CHECKS_EXIT=0, GH_STUB_CHECKS_OUTPUT="check-a\tpass\t1s\turl")
     p = _discipline(cmd, extra_env=env)
     assert p.returncode == 2, p.stdout + p.stderr
     assert "directory change" in p.stderr, p.stderr
+
+
+def test_discipline_backtick_selector_is_refused_as_non_literal():
+    """The backtick is deliberately NOT skipped in the merge-args positional slot: left there,
+    `` gh pr merge `cat n` `` trips the PR-selector literal check with the precise refusal
+    instead of querying gh for a PR named `cat` and failing closed by accident."""
+    env = _gh_stub_env(GH_STUB_CHECKS_EXIT=0, GH_STUB_CHECKS_OUTPUT="check-a\tpass\t1s\turl")
+    p = _discipline("gh pr merge `cat prnum` --merge", extra_env=env)
+    assert p.returncode == 2, p.stdout + p.stderr
+    assert "not a literal" in p.stderr, p.stderr
 
 
 @pytest.mark.parametrize("cmd", [
@@ -388,6 +411,10 @@ def test_discipline_indirection_residual_is_pinned(cmd):
     # A same-call write-then-run: the heredoc writes a script AND a later clause in the SAME
     # command string runs it — AC-GSO-2(iv) requires the sink path to be unmentioned elsewhere.
     "cat > f.sh <<EOF\ngit push --force origin main\nEOF\n; bash f.sh",
+    # The same write-then-run with the consumer wrapped in a subshell: `(bash` / `f.sh)` are not
+    # the sink path to a glue-blind tokenizer, so the body read as data and was neutralized.
+    # The mentioned-elsewhere scan now spaces grouping tokens (security review, 2026-09-21).
+    "cat > f.sh <<EOF\ngit push --force origin main\nEOF\n; (bash f.sh)",
     # A /dev/fd sink — AC-GSO-2(iii) excludes any path under /dev/ or /proc/ outright.
     "cat > /dev/fd/3 <<EOF\ngit push --force origin main\nEOF",
     # --- PR #178 security review round 1 (spec amendment auth_seq 3): the trailing-backslash

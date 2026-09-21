@@ -227,9 +227,10 @@ norm = re.sub(r"&", " & ", norm)
 # standalone token — but NOT a SEPARATOR: making `(` bound a clause truncated the argument run of
 # any clause containing an unquoted `$(…)` BEFORE its guarded token (`git push $(cat r) --force
 # main`, `rm -rf $(pwd)/.git` went BLOCK→ADMIT; found by the independent security review of
-# this change). As plain tokens they are inert inside an argument run, and a stray `(`, `)` or
-# `` ` `` is skipped where a positional would otherwise be read (the merge-args parser, the
-# env-prefix loop). Only UNQUOTED ones are affected: shlex keeps a quoted string one token
+# this change). As plain tokens they bound nothing; they are FILTERED out of every git clause's
+# argument run (clause_args — a stray `)` must never count as a refspec or a target) and the
+# parens are skipped by the merge-args parser and the env-prefix loop. Only UNQUOTED ones are
+# affected: shlex keeps a quoted string one token
 # regardless of the spaces inserted inside it, exactly as the connector rules above rely on.
 # `$(…)` therefore scans as literal text: its INNER verb is seen (`echo $(git push --force …)`
 # blocks — over-matching, the safe direction) while its evaluation is not modelled (the
@@ -306,7 +307,18 @@ def clause_args(start):
     while i < n:
         if toks[i] in SEPARATORS:
             break
-        out.append(toks[i])
+        # Grouping tokens are not arguments. Left in, a `)` became a REFSPEC of `(git push
+        # --force origin)`: one non-protected-looking refspec satisfied the "every destination
+        # provably non-protected" test and silently disabled the no-refspec ⇒ current-branch ⇒
+        # protected rule (second-round security review, measured: ADMIT; `git push -f origin)`
+        # had even regressed from BLOCK). The PARENS are filtered here so every clause — push
+        # refspecs, branch targets, rm paths, the gh positionals — sees only real words. The
+        # BACKTICK is kept on purpose: it is the non-literal marker. Filtered, `` `cat n` ``
+        # collapsed to the literal selector `cat` and a green check query ADMITTED the merge
+        # (measured); kept, it trips the literal checks (push: non-literal refspec ⇒ protected;
+        # gh: "the PR selector is not a literal value") with the precise refusal.
+        if toks[i] not in ("(", ")"):
+            out.append(toks[i])
         i += 1
     return out
 
@@ -361,6 +373,14 @@ for i, t in enumerate(low):
         # UNKNOWN => assume protected (BLOCK). Otherwise BLOCK iff any resolved dst is
         # protected OR unresolvable; ADMIT only if EVERY resolved dst is provably
         # non-protected.
+        # A remote or refspec that is not a literal word (`$BRANCH`, a glob, the `$` that a
+        # spaced-out `$(…)` leaves in the remote slot with its innards trailing as "refspecs")
+        # resolves to a destination this scan cannot know — the same "unknown ⇒ protected" rule
+        # as HEAD. `git push --force origin $BRANCH` and `git push --force $(cat remote)`
+        # ADMITTED before this (measured, second-round security review).
+        if any(any(c in b for c in ("$", "`", "*", "?")) for b in bare):
+            block("force-push with a non-literal remote/refspec (destination unknown to a "
+                  "string scan) => assumed protected (fail-closed). Command: " + cmd)
         if not refspecs:
             block("force-push with no refspec (destination = current branch, unknown to a "
                   "string scan) => assumed protected (fail-closed). Command: " + cmd)
@@ -480,9 +500,12 @@ for i, t in enumerate(low):
             if re.match(r"^\d*[<>]+&?\d*$", a_):
                 k_ += 1
                 continue
-            # Grouping tokens (`(`, `)`, `` ` ``) are spaced out by the normalizer and are not
-            # arguments either: `(gh pr merge 1)` must not read `)` as a second PR selector.
-            if a_ in GROUPING_TOKENS:
+            # Grouping parens are spaced out by the normalizer and are not arguments either:
+            # `(gh pr merge 1)` must not read `)` as a second PR selector. A backtick is NOT
+            # skipped here on purpose: left in the positional slot, `` gh pr merge `cat n` ``
+            # trips the PR-selector literal check with the precise refusal (skipping it let
+            # `cat` pass as the selector and fail closed only because gh errored).
+            if a_ in ("(", ")"):
                 k_ += 1
                 continue
             if end_of_flags or not a_.startswith("-") or a_ == "-":
@@ -640,18 +663,21 @@ for i, t in enumerate(low):
     #     same-numbered PR. `pushd` and a subshell-grouped `(cd …` are directory changes this
     #     scan does not model, so they block rather than being ignored.
     run_cwd, cd_unresolved = None, None
-    j, cstart, depth = 0, clause_start(i), 0
+    j, cstart, depth, in_backtick = 0, clause_start(i), 0, False
     while j < cstart:
         tok, ltok = toks[j], low[j]
-        # `(` and `)` are their own tokens now (the paren rule in the normalizer). A `cd`
-        # ANYWHERE inside an unclosed `(` — not only right after it — is scoped to that subshell
-        # in real bash, so `gh` still runs in the original cwd: `(:; cd /other) && gh pr merge 1`
+        # `(`, `)` and `` ` `` are their own tokens now (the paren rule in the normalizer). A
+        # `cd` ANYWHERE inside an unclosed `(` or an open backtick span — not only right after
+        # it — is scoped to that substitution/subshell in real bash, so `gh` still runs in the
+        # original cwd: `(:; cd /other) && gh pr merge 1` and `` d=`cd /other && pwd`; gh … ``
         # must not pin the check query to /other (security review of the paren rule, 2026-09-21).
         if tok == "(":
             depth += 1
         elif tok == ")":
             depth = max(0, depth - 1)
-        if ltok in ("pushd", "popd") or (ltok == "cd" and depth > 0):
+        elif tok == "`":
+            in_backtick = not in_backtick
+        if ltok in ("pushd", "popd") or (ltok == "cd" and (depth > 0 or in_backtick)):
             run_cwd, cd_unresolved = None, f"a directory change this scan cannot model ({tok!r})"
         elif ltok == "cd":
             tgt, m = None, j + 1
