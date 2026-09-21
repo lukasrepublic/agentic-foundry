@@ -182,7 +182,7 @@ hook_comment_expectation:
   #      before the change, `(git push --force origin main)`, `git push --force origin main)`
   #      and `` `git push --force origin main` `` were ADMITTED (shlex kept `(git` / `main)` /
   #      `` `git `` as one word each) while the spaced forms blocked. Second review round:
-  #      clause_args() FILTERS the grouping tokens out of every git clause's argument run (a
+  #      clause_args() FILTERS the parens (not the backtick) out of every git clause's argument run (a
   #      stray `)` had counted as a refspec of `(git push --force origin)` and disabled the
   #      no-refspec ⇒ protected rule — measured ADMIT), and a non-literal remote/refspec
   #      (`$BRANCH`, `$(…)`, a glob) is now assumed protected. The grouped-cd context check
