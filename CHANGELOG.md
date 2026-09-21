@@ -8,6 +8,23 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.16.1 — 2026-09-21
+
+### The public pages describe the stack that ships
+
+A docs-only patch from a read-only audit of the thirty-one public pages against v1.16.0 (#208).
+`docs/troubleshooting.md` no longer documents a doctor probe deleted in v1.15.0 (its findings vocabulary went
+with it) and describes the `permissions-policy` advisory line instead; the glossary counts six probes and gains
+entries for charter, amendment, blocker, handoff, message kind, integration branch, evidence record and
+`next_action`; the docs index links every how-to and a test keeps it so; the QUICKSTART's intro no longer pins
+itself to a version; the fleet skill speaks of its retired scripts in the past tense; the architecture page's
+probe list gains `control-plane`; five how-tos had every fenced command checked against the script it names.
+
+Packages: `create-agentic-workspace@0.16.1` and `update-agentic-workspace@0.1.11` move with the plugin pin;
+nothing in the floor or the templates changes.
+
+Security disposition: docs only; charter-lane, fresh-context review.
+
 ## v1.16.0 — 2026-09-20
 
 ### Branch discipline and the last residuals
