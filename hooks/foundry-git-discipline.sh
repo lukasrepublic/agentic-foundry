@@ -41,9 +41,10 @@
 # an unbypassable sandbox. "NO bypass" = there is NO in-session CONFIG off-switch (no
 # per-invocation flag, no env var, no session-writable file) that downgrades a BLOCK to an
 # ADMIT. It does NOT mean "no command can evade it": a literal-string scan cannot see
-# through shell indirection (`bash -c …`, `eval`, `$(…)`, variable indirection, aliases,
+# through shell indirection (`bash -c …`, `eval`, variable indirection, aliases,
 # write-script-then-run) or reach non-Bash channels — those are acknowledged BOUNDED
-# RESIDUALS (spec §8), not closed holes. Path-qualified invocation used to belong on that
+# RESIDUALS (spec §8), not closed holes. `$(…)` and backticks sit half-way: their text IS
+# scanned (a guarded verb inside one blocks), their evaluation is not modelled. Path-qualified invocation used to belong on that
 # list; it no longer does (see VERB MATCHING above) — an absolute path is an ordinary thing
 # for an agent to emit, not an unusual construction, so it was a realistic mistake-path rather
 # than a deliberate-evasion residual.
@@ -217,6 +218,25 @@ norm = re.sub(r";", " ; ", norm)
 # already surrounded by spaces, so a remaining bare `|`/`&` is a genuine pipe / background op.
 norm = re.sub(r"\|", " | ", norm)
 norm = re.sub(r"&", " & ", norm)
+# Grouping parentheses and backticks are word boundaries to bash but NOT to shlex: `(git push
+# --force origin main)` yielded the tokens `(git` and `main)` — the verb matched nothing and the
+# refspec resolved to a branch that is not protected — and ADMITTED a force-push that executes
+# (measured 2026-09-21; the spaced form `( git … )` blocked). `` `git push --force origin main` ``
+# admitted the same way (`` `git `` is not a verb). Same class as the Claude Code 2.1.275 sandbox
+# fix where one exempt component excused a whole compound command. Space them out so each is a
+# standalone token — but NOT a SEPARATOR: making `(` bound a clause truncated the argument run of
+# any clause containing an unquoted `$(…)` BEFORE its guarded token (`git push $(cat r) --force
+# main`, `rm -rf $(pwd)/.git` went BLOCK→ADMIT; found by the independent security review of
+# this change). As plain tokens they bound nothing; they are FILTERED out of every git clause's
+# argument run (clause_args — a stray `)` must never count as a refspec or a target) and the
+# parens are skipped by the merge-args parser and the env-prefix loop. Only UNQUOTED ones are
+# affected: shlex keeps a quoted string one token
+# regardless of the spaces inserted inside it, exactly as the connector rules above rely on.
+# `$(…)` therefore scans as literal text: its INNER verb is seen (`echo $(git push --force …)`
+# blocks — over-matching, the safe direction) while its evaluation is not modelled (the
+# declared residual in the header is about the latter).
+norm = re.sub(r"[()`]", lambda m: " " + m.group(0) + " ", norm)
+GROUPING_TOKENS = {"(", ")", "`"}
 
 # --- Tokenize. shlex strips quotes (handles `"--force"`, `'rebase'`, --fo"rce" splice is a
 # residual, not in scope). On a shlex failure (unbalanced quotes etc.) fall back to a
@@ -257,7 +277,7 @@ def strip_dst_ref(ref):
 # and wrappers `sudo`/`time`/`env git …` implicitly: we just look for the literal `git`
 # token anywhere, then read forward to its subcommand. Compound separators (&&, ;, |) are
 # ordinary tokens that simply bound a clause's argument run. ---
-SEPARATORS = {"&&", "||", ";", "|", "&"}
+SEPARATORS = {"&&", "||", ";", "|", "&"}          # NOT the grouping tokens — see the paren rule above
 
 
 def _is_verb(tok, verb):
@@ -287,7 +307,18 @@ def clause_args(start):
     while i < n:
         if toks[i] in SEPARATORS:
             break
-        out.append(toks[i])
+        # Grouping tokens are not arguments. Left in, a `)` became a REFSPEC of `(git push
+        # --force origin)`: one non-protected-looking refspec satisfied the "every destination
+        # provably non-protected" test and silently disabled the no-refspec ⇒ current-branch ⇒
+        # protected rule (second-round security review, measured: ADMIT; `git push -f origin)`
+        # had even regressed from BLOCK). The PARENS are filtered here so every clause — push
+        # refspecs, branch targets, rm paths, the gh positionals — sees only real words. The
+        # BACKTICK is kept on purpose: it is the non-literal marker. Filtered, `` `cat n` ``
+        # collapsed to the literal selector `cat` and a green check query ADMITTED the merge
+        # (measured); kept, it trips the literal checks (push: non-literal refspec ⇒ protected;
+        # gh: "the PR selector is not a literal value") with the precise refusal.
+        if toks[i] not in ("(", ")"):
+            out.append(toks[i])
         i += 1
     return out
 
@@ -342,6 +373,14 @@ for i, t in enumerate(low):
         # UNKNOWN => assume protected (BLOCK). Otherwise BLOCK iff any resolved dst is
         # protected OR unresolvable; ADMIT only if EVERY resolved dst is provably
         # non-protected.
+        # A remote or refspec that is not a literal word (`$BRANCH`, a glob, the `$` that a
+        # spaced-out `$(…)` leaves in the remote slot with its innards trailing as "refspecs")
+        # resolves to a destination this scan cannot know — the same "unknown ⇒ protected" rule
+        # as HEAD. `git push --force origin $BRANCH` and `git push --force $(cat remote)`
+        # ADMITTED before this (measured, second-round security review).
+        if any(any(c in b for c in ("$", "`", "*", "?")) for b in bare):
+            block("force-push with a non-literal remote/refspec (destination unknown to a "
+                  "string scan) => assumed protected (fail-closed). Command: " + cmd)
         if not refspecs:
             block("force-push with no refspec (destination = current branch, unknown to a "
                   "string scan) => assumed protected (fail-closed). Command: " + cmd)
@@ -459,6 +498,14 @@ for i, t in enumerate(low):
             # `2>&1` into `2>` and `1`, and `2>` then landed in the positional slot and became
             # the "PR selector" — the guard queried a nonexistent PR named `2>`. Skip them.
             if re.match(r"^\d*[<>]+&?\d*$", a_):
+                k_ += 1
+                continue
+            # Grouping parens are spaced out by the normalizer and are not arguments either:
+            # `(gh pr merge 1)` must not read `)` as a second PR selector. A backtick is NOT
+            # skipped here on purpose: left in the positional slot, `` gh pr merge `cat n` ``
+            # trips the PR-selector literal check with the precise refusal (skipping it let
+            # `cat` pass as the selector and fail closed only because gh errored).
+            if a_ in ("(", ")"):
                 k_ += 1
                 continue
             if end_of_flags or not a_.startswith("-") or a_ == "-":
@@ -616,10 +663,21 @@ for i, t in enumerate(low):
     #     same-numbered PR. `pushd` and a subshell-grouped `(cd …` are directory changes this
     #     scan does not model, so they block rather than being ignored.
     run_cwd, cd_unresolved = None, None
-    j, cstart = 0, clause_start(i)
+    j, cstart, depth, in_backtick = 0, clause_start(i), 0, False
     while j < cstart:
         tok, ltok = toks[j], low[j]
-        if ltok in ("pushd", "popd") or ltok.lstrip("(") == "cd" and ltok != "cd":
+        # `(`, `)` and `` ` `` are their own tokens now (the paren rule in the normalizer). A
+        # `cd` ANYWHERE inside an unclosed `(` or an open backtick span — not only right after
+        # it — is scoped to that substitution/subshell in real bash, so `gh` still runs in the
+        # original cwd: `(:; cd /other) && gh pr merge 1` and `` d=`cd /other && pwd`; gh … ``
+        # must not pin the check query to /other (security review of the paren rule, 2026-09-21).
+        if tok == "(":
+            depth += 1
+        elif tok == ")":
+            depth = max(0, depth - 1)
+        elif tok == "`":
+            in_backtick = not in_backtick
+        if ltok in ("pushd", "popd") or (ltok == "cd" and (depth > 0 or in_backtick)):
             run_cwd, cd_unresolved = None, f"a directory change this scan cannot model ({tok!r})"
         elif ltok == "cd":
             tgt, m = None, j + 1
@@ -676,7 +734,7 @@ for i, t in enumerate(low):
         # Wrappers are matched through the SAME path-qualified resolver as the guarded verbs, or
         # `/usr/bin/env GH_TOKEN=… gh pr merge …` would be refused as an unrecognized token
         # rather than taking the intended environment-reproduction path.
-        if t == "-" or any(_is_verb(t.lower(), w) for w in _WRAPPERS):
+        if t == "-" or t in GROUPING_TOKENS or any(_is_verb(t.lower(), w) for w in _WRAPPERS):
             continue
         m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", t)
         if not m:
