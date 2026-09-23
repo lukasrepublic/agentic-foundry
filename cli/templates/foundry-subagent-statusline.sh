@@ -36,5 +36,8 @@ fi
 
 [ -n "$selected" ] || exit 0
 [ -r "$selected" ] || exit 0
-printf '%s' "$PAYLOAD" | exec bash "$selected" "$@"
+# The resolved file must be the shipped renderer (its own header line), not merely a file at a
+# plausible path — security review, Risk 3.
+grep -q '^# foundry-subagent-statusline.sh' "$selected" 2>/dev/null || exit 0
+printf '%s' "$PAYLOAD" | bash "$selected" "$@"
 exit 0

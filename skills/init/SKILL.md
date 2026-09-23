@@ -208,9 +208,10 @@ standalone plugin repo) so the gates are live + fail-closed.
    <!-- foundry:init-verify-only:statusline v1 -->
    VERIFY-ONLY. init does not write the `statusLine`/`subagentStatusLine` wiring. The shipped
    writer (since v1.17.0, statusline-wiring) is **`npx update-agentic-workspace`** — and
-   `create-agentic-workspace --existing` on a workspace that already carries `.claude/settings.json`
-   — which installs the two wrappers under `.claude/hooks/` (framework-owned: converged when they
-   carry the marker, kept when they do not) and adds the two keys only when absent. The pre-session
+   `create-agentic-workspace --existing --reconcile-floor` on a workspace that already carries
+   `.claude/settings.json` — which installs the two wrappers under `.claude/hooks/` (framework-owned:
+   converged when they carry the marker, kept when they do not; a kept or refused wrapper is never
+   wired) and adds the two keys only when absent. The pre-session
    bootstrap still never emits them ([[feat-foundry-bootstrap-cli]] AC-BCL-4(c) closes the
    pre-session key set; that Block stands). This step only reads and reports; the doctor's
    `statusline:` advisory names the first missing piece.

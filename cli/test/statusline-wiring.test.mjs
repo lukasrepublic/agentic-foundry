@@ -121,3 +121,36 @@ test('dry-run = plan without apply: rows rendered, nothing written', () => {
   assert.equal(fs.existsSync(path.join(root, MAIN.rel)), false);
   assert.equal(settings(root).statusLine, undefined);
 });
+
+// Security review of this atom — Block 1 (temp write must not follow a planted symlink) and
+// Risk 2 (a kept or refused wrapper is never wired).
+test('Block 1: a planted symlink at the temp path is never followed; the victim is untouched and the wrapper still lands', () => {
+  const root = scratch();
+  withSettings(root);
+  fs.mkdirSync(path.join(root, '.claude', 'hooks'), { recursive: true });
+  const outside = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'slw-victim-'));
+  const victim = path.join(outside, 'victim');
+  fs.writeFileSync(victim, 'do not clobber\n');
+  const tmpName = `.${path.basename(MAIN.rel)}.${process.pid}.tmp`;
+  fs.symlinkSync(victim, path.join(root, '.claude', 'hooks', tmpName));
+  const plan = planStatuslineWiring({ physicalRoot: root, templatesDir: TEMPLATES_DIR });
+  assert.throws(() => applyStatuslineWiring(plan), /EEXIST/);
+  assert.equal(fs.readFileSync(victim, 'utf-8'), 'do not clobber\n');
+  assert.equal(fs.existsSync(path.join(root, MAIN.rel)), false);
+});
+
+test('Risk 2: a kept (no marker) or refused wrapper leaves its settings key NOT wired, and the row says so', () => {
+  const root = scratch();
+  withSettings(root);
+  fs.mkdirSync(path.join(root, '.claude', 'hooks'), { recursive: true });
+  fs.writeFileSync(path.join(root, MAIN.rel), '#!/usr/bin/env bash\necho mine\n');
+  fs.symlinkSync('/nonexistent-target', path.join(root, WRAPPERS[1].rel));
+  const plan = planStatuslineWiring({ physicalRoot: root, templatesDir: TEMPLATES_DIR });
+  assert.deepEqual(plan.files.map((f) => f.action), ['kept', 'refused']);
+  assert.deepEqual(plan.keys.map((k) => k.action), ['not-wired', 'not-wired']);
+  assert.ok(renderStatuslineRows(plan).some((r) => r.startsWith('  [statusline] NOT wired: statusLine, subagentStatusLine')));
+  applyStatuslineWiring(plan);
+  assert.equal(settings(root).statusLine, undefined);
+  assert.equal(settings(root).subagentStatusLine, undefined);
+  assert.equal(statuslineChanged(plan), false);
+});

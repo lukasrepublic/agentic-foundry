@@ -604,7 +604,7 @@ def check_statusline(plugin_root=None, project_dir=None):
         renderer, ver = _statusline_renderer_path(config_root)
         if renderer is None:
             return ADVISORY, _sanitize_detail(f"no renderer resolvable from this machine (looked under {config_root}/plugins) — the wrapper falls back to an inline bar")
-        return True, f"wired (renderer {ver})"
+        return True, _sanitize_detail(f"wired (renderer {ver})")
     except Exception as e:  # noqa: BLE001 -- NEVER-RED contract
         return ADVISORY, _sanitize_detail(f"unknown (probe error: {type(e).__name__}: {e})")
 

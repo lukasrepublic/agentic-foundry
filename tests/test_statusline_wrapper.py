@@ -25,10 +25,23 @@ PAYLOAD = json.dumps({"workspace": {"current_dir": "/tmp/x"}, "context_window": 
 pytestmark = pytest.mark.skipif(shutil.which("jq") is None, reason="jq is required by the wrapper's payload reads")
 
 
-def _fake_renderer(path, sentinel):
+def _fake_renderer(path, sentinel, header=None):
+    """A stand-in renderer that carries the shipped renderer's own header line — the wrapper
+    refuses to run a resolved file without it (security review, Risk 3)."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    header = header or f"# {os.path.basename(path)} — test fixture"
     with open(path, "w", encoding="utf-8") as fh:
-        fh.write(f"#!/usr/bin/env bash\ncat >/dev/null\necho '{sentinel}'\n")
+        fh.write(f"#!/usr/bin/env bash\n{header}\ncat >/dev/null\necho '{sentinel}'\n")
+
+
+def test_a_resolved_file_without_the_renderer_header_is_not_run(tmp_path):
+    cfg = tmp_path / "cfg"
+    _fake_renderer(str(cfg / "plugins" / "cache" / "m" / "foundry" / "9.0.0" / "scripts" / "foundry-statusline.sh"),
+                   "PLANTED", header="# not the renderer")
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    out = _run(WRAPPER, cfg, ws, payload=json.dumps({"workspace": {"current_dir": str(ws)}}))
+    assert out == "⌂ ws", out
 
 
 def _run(wrapper, cfg, project_dir, payload=PAYLOAD, extra_env=None):

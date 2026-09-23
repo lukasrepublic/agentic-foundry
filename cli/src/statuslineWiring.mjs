@@ -60,7 +60,13 @@ export function planStatuslineWiring({ physicalRoot, templatesDir }) {
   const settings = readTarget(target.path);
   for (const w of WRAPPERS) {
     const present = Object.prototype.hasOwnProperty.call(settings, w.key);
-    plan.keys.push({ key: w.key, action: present ? 'already-wired' : 'wired' });
+    // Security review (Risk 2): never wire a key at a file this framework did not write or could
+    // not verify — a `kept` (no marker) or `refused` (not a regular file) wrapper leaves its key
+    // `not-wired`, the row says so, and the operator decides. Decided at PLAN time so the preview
+    // and a dry-run say exactly what apply will do.
+    const fileRow = plan.files.find((f) => f.rel === w.rel);
+    const unverifiable = fileRow && (fileRow.action === 'kept' || fileRow.action === 'refused');
+    plan.keys.push({ key: w.key, action: present ? 'already-wired' : (unverifiable ? 'not-wired' : 'wired') });
   }
   return plan;
 }
@@ -72,10 +78,25 @@ export function applyStatuslineWiring(plan) {
   for (const f of plan.files) {
     if (f.action !== 'create' && f.action !== 'converged') continue;
     fs.mkdirSync(path.dirname(f.abs), { recursive: true });
-    const tmp = `${f.abs}.statusline.tmp`;
-    fs.writeFileSync(tmp, f.bytes, { mode: 0o755 });
-    fs.chmodSync(tmp, 0o755);
-    fs.renameSync(tmp, f.abs);
+    // Security review (statusline-wiring, Block 1): the temp path is opened with 'wx' — O_EXCL,
+    // never following a planted symlink at that name — pid-suffixed against a concurrent run,
+    // fchmod'ed on the fd (no follow-up chmod that would follow a link), and removed if the
+    // rename fails. The same primitive floorReconcile.writeTargetAtomically uses (PR #61 Block 2).
+    const tmp = path.join(path.dirname(f.abs), `.${path.basename(f.abs)}.${process.pid}.tmp`);
+    const fd = fs.openSync(tmp, 'wx', 0o755);
+    try {
+      fs.writeFileSync(fd, f.bytes);
+      fs.fchmodSync(fd, 0o755);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    try {
+      fs.renameSync(tmp, f.abs);
+    } catch (e) {
+      fs.rmSync(tmp, { force: true });
+      throw e;
+    }
   }
   const toAdd = plan.keys.filter((k) => k.action === 'wired');
   if (toAdd.length > 0) {
@@ -102,8 +123,10 @@ export function renderStatuslineRows(plan) {
   }
   const wired = plan.keys.filter((k) => k.action === 'wired').map((k) => k.key);
   const already = plan.keys.filter((k) => k.action === 'already-wired').map((k) => k.key);
+  const notWired = plan.keys.filter((k) => k.action === 'not-wired').map((k) => k.key);
   if (wired.length) rows.push(`  [statusline] wired ${wired.join(', ')} in .claude/settings.json`);
   if (already.length) rows.push(`  [statusline] already wired: ${already.join(', ')} (existing value kept)`);
+  if (notWired.length) rows.push(`  [statusline] NOT wired: ${notWired.join(', ')} — the wrapper at that path is not one this framework wrote (kept or refused); verify it, then wire by hand`);
   return rows;
 }
 

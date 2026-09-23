@@ -50,9 +50,14 @@ if [ -z "$selected" ] || [ ! -r "$selected" ]; then
   [ -r "$src" ] && selected="$src"
 fi
 
-if [ -n "$selected" ] && [ -r "$selected" ]; then
-  printf '%s' "$PAYLOAD" | exec bash "$selected" "$@"
-  exit 0                                # only reached if exec itself fails → fall through to the inline bar
+# The resolved file must be the shipped renderer, not merely a file at a plausible path (security
+# review, Risk 3): its own header line is required before it is run. A miss falls through to the
+# inline bar, and so does a renderer that exits non-zero — `exec` on the right of a pipe only
+# replaces the subshell, so the bar below is what "never silently absent" rests on.
+if [ -n "$selected" ] && [ -r "$selected" ] && grep -q '^# foundry-statusline.sh' "$selected" 2>/dev/null; then
+  if printf '%s' "$PAYLOAD" | bash "$selected" "$@"; then
+    exit 0
+  fi
 fi
 
 # 4. inline fallback — the bar itself, from the payload, so it is never silently absent

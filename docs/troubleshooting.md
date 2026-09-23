@@ -21,9 +21,11 @@ The output names the failing probe. The six probes and their usual causes:
 That's expected, not a bug. `/foundry:init` only **verifies and reports** on the
 `statusLine`/`subagentStatusLine` wiring, the native Bash sandbox enable, the `gh` jail's
 authentication, and the `GH_CONFIG_DIR` session-env carrier — it never writes any of them.
-There is **no shipped writer** for any of those four artifacts today (a plugin cannot edit its
-own session's confinement), so init's job there is to name what it found and, when nothing is
-wired, point at the by-hand remedy. See
+The status-line wiring has a shipped writer since v1.17.0: `npx update-agentic-workspace` (and
+`create-agentic-workspace --existing --reconcile-floor` on a trusted workspace) installs the
+wrappers and adds the keys when absent. The other three still have **no shipped writer** (a
+plugin cannot edit its own session's confinement), so init's job there is to name what it found
+and, when nothing is wired, point at the by-hand remedy. See
 [QUICKSTART.md → Before your first session](QUICKSTART.md#before-your-first-session)
 for the exact commands and the two `gh` jail caveats (plaintext token at rest; a local logout does
 not revoke server-side).
