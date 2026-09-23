@@ -369,3 +369,48 @@ test('Phase 4 leaves an already-converged gitignore block untouched (no write sy
   assert.equal(fs.statSync(gitignorePath).ino, beforeIno, 'an already-converged .gitignore was rewritten');
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+// amendments-backfill (ER #214, AC-AMB-1/-2/-5) — Phase 4's row and verdict through the real
+// upgrader: a spec that predates /foundry:amend gains the empty section, the phase reports
+// `changed`, and the very next run reports `backfilled 0` and `already current`.
+test('Phase 4 backfills the Amendments section on a pre-amend spec, then settles', async () => {
+  const { cwd, configDir } = steadyStateFixture('amb-uaw-');
+  const first = await invokeUpdate({ cwd, configDir });
+  assert.notEqual(first.res.exitCode, 1, first.res.output);
+  const settled = await invokeUpdate({ cwd, configDir });
+  assert.match(settled.res.output, /\[reinitialization] already current/, settled.res.output);
+
+  const specPath = path.join(cwd, 'specs', 'features', 'p', 'd', 'c', 'feat-old.md');
+  fs.mkdirSync(path.dirname(specPath), { recursive: true });
+  const normative = '# feat-old\n\n<!-- normative -->\n- **AC-OLD-1**: it works.\n<!-- /normative -->\n';
+  fs.writeFileSync(specPath, normative);
+
+  const { res, text } = await invokeUpdate({ cwd, configDir });
+  assert.notEqual(res.exitCode, 1, res.output);
+  assert.match(text, /\[amendments] backfilled 1 of 1 specs \(0 already present, 0 skipped: no normative region\)/, text);
+  assert.match(text, /\[reinitialization] changed/, text);
+  const after = fs.readFileSync(specPath, 'utf-8');
+  assert.ok(after.startsWith(normative), 'the spec body above the section was not preserved');
+  assert.ok(after.endsWith('## Amendments\n\n| date | what changed | why reality required it | auth_seq |\n|---|---|---|---|\n'));
+
+  const again = await invokeUpdate({ cwd, configDir });
+  assert.match(again.text, /\[amendments] backfilled 0 of 1 specs \(1 already present, 0 skipped: no normative region\)/, again.text);
+  assert.match(again.res.output, /\[reinitialization] already current/, again.res.output);
+  assert.equal(fs.readFileSync(specPath, 'utf-8'), after);
+});
+
+// post-upgrade-skill (AC-PUS-1) — the report is written on every completed run and the LAST
+// line names the skill; through the real upgrader, over the steady-state fixture.
+test('every completed run writes .foundry/upgrade-report.json and ends with the post-upgrade hand-off line', async () => {
+  const { cwd, configDir } = steadyStateFixture('upr-uaw-');
+  const { res, text } = await invokeUpdate({ cwd, configDir });
+  assert.notEqual(res.exitCode, 1, res.output);
+  const lines = res.output.trimEnd().split('\n');
+  assert.equal(lines[lines.length - 1], 'next: run /foundry:post-upgrade in your next session (report: .foundry/upgrade-report.json)', text);
+  const report = JSON.parse(fs.readFileSync(path.join(cwd, '.foundry', 'upgrade-report.json'), 'utf-8'));
+  assert.equal(report.schema_version, 1);
+  assert.equal(report.to_plugin_version, PINS.plugin_version);
+  assert.ok(Array.isArray(report.phases) && report.phases.some((p) => p.name === 'reinitialization'));
+  assert.ok(['created', 'kept'].includes(report.permissions_policy), report.permissions_policy);
+  assert.deepEqual(Object.keys(report.amendments).sort(), ['backfilled', 'present', 'skipped']);
+});

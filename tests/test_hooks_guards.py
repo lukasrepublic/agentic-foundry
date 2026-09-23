@@ -213,6 +213,135 @@ def test_discipline_blocks_admin_merge_outright():
     assert p.returncode == 2, p.stdout + p.stderr
 
 
+# ==================================================================== compound / grouped =========
+# Regression corpus for the compound-command and grouping shapes, added 2026-09-21 after the
+# Claude Code 2.1.271–2.1.275 permission-parser fixes (a `cd`+`git` chain, two directory changes,
+# a subshell, and one exempt component excusing a whole compound command). The paren rows were
+# MEASURED ADMITTED before the paren rule in the normalizer: shlex kept `(git` and `main)` as
+# single words, so the verb matched nothing and the refspec was not `main`. The spaced form
+# `( git … )` blocked all along — the defect was the glue, not the grouping.
+
+@pytest.mark.parametrize("cmd", [
+    # cd + git chain, two directory changes, pushd
+    "cd /tmp/x && git push --force origin main",
+    "cd a && cd b && git push --force origin main",
+    "pushd a && git push --force origin main",
+    # a benign first component must not excuse the compound command
+    "echo ok; git push --force origin main",
+    "git status && git push -f origin main",
+    "true || git push --force origin main",
+    # grouping parens glued to the verb / the refspec / the PR selector (the measured bypass)
+    "(git push --force origin main)",
+    "(cd repo && git push --force origin main)",
+    "git push --force origin main)",
+    "(gh pr merge 1 --admin)",
+    "(git branch -D main)",
+    "gh pr view 1 && gh pr merge 1 --admin",
+    # spaced grouping, already blocked — kept so the paren rule can never regress them
+    "( git push --force origin main )",
+    "{ git push --force origin main; }",
+    # force intent spelled as a `+` refspec or a `src:dst` refspec
+    "git push origin +main",
+    "git push --force origin HEAD:main",
+    # backticks: the same glued-word-boundary class (`` `git `` is not a verb) — measured ADMITTED
+    # before the rule spaced them, found by the security review of the paren rule
+    "`git push --force origin main`",
+    "echo `git push --force origin main`",
+    # an unquoted `$(…)` BEFORE the guarded token must not truncate the clause's argument run —
+    # these three went BLOCK→ADMIT in the first version of the paren rule (which made `(` a
+    # SEPARATOR), found by the same review; they are the reason the grouping tokens are plain
+    # tokens, not clause boundaries
+    "git push $(cat r) --force main",
+    "git commit $(cat a) --no-verify",
+    "rm -rf $(pwd)/.git",
+    # the everyday spelling — force-push of the CURRENT branch, no refspec — wrapped: a stray
+    # `)` counted as a refspec and disabled the no-refspec ⇒ protected rule (second-round
+    # review, measured ADMIT; `git push -f origin)` had regressed from BLOCK)
+    "(git push --force origin)",
+    "`git push --force origin`",
+    "git push -f origin)",
+    "echo $(git push --force origin)",
+    # a non-literal refspec resolves to a branch the scan cannot know ⇒ protected (pre-existing
+    # ADMIT, closed in the same pass)
+    "git push --force origin $BRANCH",
+    "git push --force $(cat remote)",
+    "git push --force origin 'feat-*'",
+])
+def test_discipline_convicts_compound_and_grouped_shapes(cmd):
+    p = _discipline(cmd)
+    assert p.returncode == 2, p.stdout + p.stderr
+
+
+@pytest.mark.parametrize("cmd", [
+    "cd a && git status",
+    "(cd a && git log -1)",
+    "(git status)",
+    "git push --force-with-lease origin feat",
+    "echo $(git rev-parse --short HEAD)",
+    "x=`cat v`; git status",
+    # QUOTED parens stay one shlex token whatever the normalizer inserts inside the quotes —
+    # a commit message is prose, not a clause (the CLAUDE.md "inline -m is fine" promise)
+    'git commit -m "fix(scope): x"',
+    'git commit -m "see (git push --force origin main)"',
+])
+def test_discipline_admits_benign_compound_and_grouped_shapes(cmd):
+    p = _discipline(cmd)
+    assert p.returncode == 0, p.stdout + p.stderr
+
+
+def test_discipline_grouped_merge_reads_no_stray_selector():
+    """A `)` glued to the PR selector is a grouping token, not a second selector: with green
+    checks the grouped plain merge admits exactly as the bare one does."""
+    env = _gh_stub_env(GH_STUB_CHECKS_EXIT=0, GH_STUB_CHECKS_OUTPUT="check-a\tpass\t1s\turl")
+    p = _discipline("(gh pr merge 42 --merge)", extra_env=env)
+    assert p.returncode == 0, p.stdout + p.stderr
+
+
+@pytest.mark.parametrize("cmd", [
+    "( cd /tmp && gh pr merge 42 --merge )",
+    "(:; cd /tmp) && gh pr merge 42 --merge",
+    "d=`cd /tmp && pwd`; gh pr merge 42 --merge",
+], ids=["cd-first-in-subshell", "cd-later-in-subshell", "cd-inside-backticks"])
+def test_discipline_blocks_merge_after_subshell_scoped_cd(cmd):
+    """A `cd` anywhere inside a `( … )` group or a backtick span is scoped to that subshell in
+    real bash, so the checkout `gh` resolves the PR from is NOT the one the scan would pin the
+    check query to. Fail-closed even on green checks — this is the AC-MVC-4 false-ALLOW shape."""
+    env = _gh_stub_env(GH_STUB_CHECKS_EXIT=0, GH_STUB_CHECKS_OUTPUT="check-a\tpass\t1s\turl")
+    p = _discipline(cmd, extra_env=env)
+    assert p.returncode == 2, p.stdout + p.stderr
+    assert "directory change" in p.stderr, p.stderr
+
+
+def test_discipline_backtick_selector_is_refused_as_non_literal():
+    """The backtick is deliberately NOT skipped in the merge-args positional slot: left there,
+    `` gh pr merge `cat n` `` trips the PR-selector literal check with the precise refusal
+    instead of querying gh for a PR named `cat` and failing closed by accident."""
+    env = _gh_stub_env(GH_STUB_CHECKS_EXIT=0, GH_STUB_CHECKS_OUTPUT="check-a\tpass\t1s\turl")
+    p = _discipline("gh pr merge `cat prnum` --merge", extra_env=env)
+    assert p.returncode == 2, p.stdout + p.stderr
+    assert "not a literal" in p.stderr, p.stderr
+
+
+@pytest.mark.parametrize("cmd", [
+    # The declared BOUNDED RESIDUAL (the hook's own header) is shell indirection whose TEXT the
+    # scan never sees: `bash -c "…"` admits because a quoted string is one shlex token. `$(…)`
+    # is different — its text IS scanned once `(` is spaced out, so a guarded verb inside it
+    # blocks (over-matching, the safe direction), while its evaluation is still not modelled.
+    # Both directions are pinned so a change to either is deliberate and visible.
+    # (The `bash -c` row duplicates tests/test_verb_path_resolution.py's residual assertion on
+    # purpose: that file owns the header-claim/behaviour agreement, this file owns the corpus.)
+    ("echo $(git push --force origin main)", 2),
+    ('bash -c "git push --force origin main"', 0),
+])
+def test_discipline_indirection_residual_is_pinned(cmd):
+    cmd, expected = cmd
+    p = _discipline(cmd)
+    assert p.returncode == expected, (
+        p.stdout + p.stderr + "\n— if indirection now BLOCKS, good: then update the hook header's "
+        "declared residual and tests/test_verb_path_resolution.py in the same change, never "
+        "just this expectation.")
+
+
 # ---- TRIPWIRE: heredoc bodies must stay in the scan -----------------------------------------
 # These pass trivially against the guard as it stands, which does not treat a heredoc specially.
 # They are here for the NEXT person who tries to make it treat one specially.
@@ -282,6 +411,10 @@ def test_discipline_blocks_admin_merge_outright():
     # A same-call write-then-run: the heredoc writes a script AND a later clause in the SAME
     # command string runs it — AC-GSO-2(iv) requires the sink path to be unmentioned elsewhere.
     "cat > f.sh <<EOF\ngit push --force origin main\nEOF\n; bash f.sh",
+    # The same write-then-run with the consumer wrapped in a subshell: `(bash` / `f.sh)` are not
+    # the sink path to a glue-blind tokenizer, so the body read as data and was neutralized.
+    # The mentioned-elsewhere scan now spaces grouping tokens (security review, 2026-09-21).
+    "cat > f.sh <<EOF\ngit push --force origin main\nEOF\n; (bash f.sh)",
     # A /dev/fd sink — AC-GSO-2(iii) excludes any path under /dev/ or /proc/ outright.
     "cat > /dev/fd/3 <<EOF\ngit push --force origin main\nEOF",
     # --- PR #178 security review round 1 (spec amendment auth_seq 3): the trailing-backslash

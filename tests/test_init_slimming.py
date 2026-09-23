@@ -210,8 +210,10 @@ def check_tiering_owners(text):
     _section, rows = check_tiering_rows_present(text)
     for key in ("git identity", "plugin enablement", "permission floor"):
         assert "pre-session bootstrap" in rows[key], f"{key} row owner is not pre-session bootstrap"
-    for key in ("status lines", "native Bash sandbox"):
-        assert "no shipped writer" in rows[key], f"{key} row owner is not no shipped writer"
+    # statusline-wiring (v1.17.0): the status-line row's owner is the updater now; the sandbox
+    # row still has no shipped writer.
+    assert "update-agentic-workspace" in rows["status lines"], "status lines row owner is not the updater"
+    assert "no shipped writer" in rows["native Bash sandbox"], "native Bash sandbox row owner is not no shipped writer"
     pf = rows["permission floor"]
     assert "/foundry:doctor" in pf, "permission floor row missing /foundry:doctor"
     assert "reports" in pf, "permission floor row missing 'reports'"
@@ -267,7 +269,8 @@ def test_statusline_region_is_verify_only_and_reports():
     region = check_region_pointer_and_zero_w(text, "statusline")
     assert "REPORT-ONLY" in region
     assert "REFUSE" not in region
-    assert "no shipped writer" in region
+    # statusline-wiring (v1.17.0): the region names the shipped writer instead of "no shipped writer"
+    assert "update-agentic-workspace" in region
 
 
 def test_sandbox_region_is_verify_only_and_reports():

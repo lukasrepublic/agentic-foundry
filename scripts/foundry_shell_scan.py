@@ -523,6 +523,11 @@ def _mentions_elsewhere(cmd: str, all_regions: List[Dict], region: Dict, path: s
     norm = re.sub(r";", " ; ", norm)
     norm = re.sub(r"\|", " | ", norm)
     norm = re.sub(r"&", " & ", norm)
+    # Grouping tokens are word boundaries to bash, not to shlex: `; (bash f.sh)` yielded
+    # `(bash` / `f.sh)`, neither of which is the sink path, so a same-call write-then-run
+    # wrapped in a subshell was not seen (security review of the guard's paren rule,
+    # 2026-09-21). Same spacing the guard applies.
+    norm = re.sub(r"[()`]", lambda m: " " + m.group(0) + " ", norm)
     try:
         toks = shlex.split(norm, posix=True)
     except Exception:
