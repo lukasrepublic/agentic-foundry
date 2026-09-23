@@ -105,3 +105,20 @@ def test_backfilled_section_is_appendable_by_amend(tmp_path):
     spec.write_text(NORMATIVE + "\n" + BLOCK, encoding="utf-8")
     AMEND.append_amendment_row(str(spec), "2026-09-23", "what", "why", 2)
     assert "| 2026-09-23 | what | why | 2 |" in spec.read_text(encoding="utf-8")
+
+
+def test_backfill_covers_any_basename_under_specs(tmp_path):
+    """ER #223: an adopter's delivery atoms are `spec-*.md`; the walker has no filename rule, like
+    foundry-amend.py itself. A README without a normative region is skipped, never written."""
+    d = tmp_path / "specs" / "delivery"
+    d.mkdir(parents=True)
+    (d / "spec-atom.md").write_text(NORMATIVE, encoding="utf-8")
+    (tmp_path / "specs" / "README.md").write_text("# index\n", encoding="utf-8")
+    js = (
+        "const m = await import(process.env.AMB_MODULE);"
+        "const p = m.planAmendmentsBackfill({ physicalRoot: process.env.AMB_ROOT });"
+        "process.stdout.write(m.applyAmendmentsBackfill(p) + ' ' + p.total + ' ' + p.skipped);"
+    )
+    assert _node(js, AMB_ROOT=str(tmp_path)) == "1 2 1"
+    assert AMEND.amendments_section_ok((d / "spec-atom.md").read_text(encoding="utf-8"))
+    assert (tmp_path / "specs" / "README.md").read_text(encoding="utf-8") == "# index\n"

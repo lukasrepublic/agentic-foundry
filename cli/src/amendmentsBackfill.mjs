@@ -22,7 +22,10 @@ export const AMENDMENTS_HEADING = '## Amendments';
  * "...\n\n" gets the heading directly. Header columns are `foundry-amend.py`'s own row shape. */
 export const AMENDMENTS_BLOCK = `${AMENDMENTS_HEADING}\n\n| date | what changed | why reality required it | auth_seq |\n|---|---|---|---|\n`;
 
-const SPEC_BASENAME_RE = /^feat-.*\.md$/;
+// ER #223 (v1.17.1): EVERY `*.md` under specs/, not only `feat-*.md` — foundry-amend.py has no
+// filename rule (it classifies by the normative region), and an adopter's delivery atoms are named
+// `spec-*.md`. A README or template without a normative region lands in `skipped`, never written.
+const SPEC_BASENAME_RE = /\.md$/;
 const CODE_FENCE_RE = /```[\s\S]*?```/g;
 
 /** The verdict `foundry-amend.py`'s amendments_section_ok gives: `present` when a `## Amendments`
@@ -42,7 +45,7 @@ export function classifySpec(text) {
   return 'absent';
 }
 
-/** Every regular `feat-*.md` under `<root>/specs`, depth-first, with symlinked FILES reported
+/** Every regular `*.md` under `<root>/specs` (any basename — ER #223), depth-first, with symlinked FILES reported
  * separately (never followed, never written — AC-AMB-2) and symlinked DIRECTORIES not descended
  * (the same confinement instinct as the scaffold's confinedJoin: nothing outside the workspace
  * root is ever touched). Absent `specs/` yields an empty walk, not an error. */

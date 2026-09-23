@@ -65,19 +65,24 @@ test('AC-AMB-1: append to every absent spec under specs/, count present and skip
   const a = writeSpec(root, 'specs/features/p/d/c/feat-a.md', NORMATIVE);
   writeSpec(root, 'specs/features/p/d/c/feat-b.md', WITH_SECTION);
   writeSpec(root, 'specs/lifecycle/feat-c.md', '# no marker here\n');
+  // ER #223: an adopter's delivery atoms are `spec-*.md`; any basename with a normative region counts
+  const d = writeSpec(root, 'specs/delivery/spec-d.md', NORMATIVE);
+  writeSpec(root, 'specs/README.md', '# index, no normative region\n');
   writeSpec(root, 'specs/features/p/d/c/acceptance-contract.yaml', 'not a spec\n');
   writeSpec(root, 'docs/feat-outside.md', NORMATIVE); // outside specs/: never seen
   const plan = planAmendmentsBackfill({ physicalRoot: root });
-  assert.deepEqual(plan.toAppend, [a]);
+  assert.deepEqual(plan.toAppend.sort(), [a, d].sort());
   assert.equal(plan.present, 1);
-  assert.equal(plan.skipped, 1);
-  assert.equal(plan.total, 3);
+  assert.equal(plan.skipped, 2);
+  assert.equal(plan.total, 5);
   assert.equal(
     renderAmendmentsRow(plan),
-    '  [amendments] backfilled 1 of 3 specs (1 already present, 1 skipped: no normative region)',
+    '  [amendments] backfilled 2 of 5 specs (1 already present, 2 skipped: no normative region)',
   );
-  assert.equal(applyAmendmentsBackfill(plan), 1);
+  assert.equal(applyAmendmentsBackfill(plan), 2);
   assert.equal(fs.readFileSync(a, 'utf-8'), `${NORMATIVE}\n${AMENDMENTS_BLOCK}`);
+  assert.equal(fs.readFileSync(d, 'utf-8'), `${NORMATIVE}\n${AMENDMENTS_BLOCK}`);
+  assert.equal(fs.readFileSync(path.join(root, 'specs/README.md'), 'utf-8'), '# index, no normative region\n');
   assert.equal(classifySpec(fs.readFileSync(a, 'utf-8')), 'present');
   assert.equal(fs.readFileSync(path.join(root, 'docs/feat-outside.md'), 'utf-8'), NORMATIVE);
 });

@@ -387,14 +387,14 @@ test('Phase 4 backfills the Amendments section on a pre-amend spec, then settles
 
   const { res, text } = await invokeUpdate({ cwd, configDir });
   assert.notEqual(res.exitCode, 1, res.output);
-  assert.match(text, /\[amendments] backfilled 1 of 1 specs \(0 already present, 0 skipped: no normative region\)/, text);
+  assert.match(text, /\[amendments] backfilled 1 of 3 specs \(0 already present, 2 skipped: no normative region\)/, text);
   assert.match(text, /\[reinitialization] changed/, text);
   const after = fs.readFileSync(specPath, 'utf-8');
   assert.ok(after.startsWith(normative), 'the spec body above the section was not preserved');
   assert.ok(after.endsWith('## Amendments\n\n| date | what changed | why reality required it | auth_seq |\n|---|---|---|---|\n'));
 
   const again = await invokeUpdate({ cwd, configDir });
-  assert.match(again.text, /\[amendments] backfilled 0 of 1 specs \(1 already present, 0 skipped: no normative region\)/, again.text);
+  assert.match(again.text, /\[amendments] backfilled 0 of 3 specs \(1 already present, 2 skipped: no normative region\)/, again.text);
   assert.match(again.res.output, /\[reinitialization] already current/, again.res.output);
   assert.equal(fs.readFileSync(specPath, 'utf-8'), after);
 });
