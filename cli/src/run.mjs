@@ -300,7 +300,10 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
     // AFTER the floor write above: that write serialises a settings object read before this
     // point, so wiring the statusLine keys first would have been overwritten by it. The wiring
     // re-reads settings.json itself and adds only the absent keys (AC-SLW-2).
-    if (statuslinePlan) applyStatuslineWiring(statuslinePlan);
+    // Re-planned FRESH here (review round 2): the plan above was computed before the interactive
+    // confirmation, and a wrapper that appeared during that window must classify as `kept`, not be
+    // renamed over — the same re-plan-before-write discipline update.mjs's Phase 4 uses.
+    if (statuslinePlan) applyStatuslineWiring(planStatuslineWiring({ physicalRoot, templatesDir: path.join(pkgDir, 'templates') }));
 
     if (slug) {
       ensureGitRepo(physicalRoot);

@@ -294,7 +294,8 @@ only verifies and reports on all five, and names the real owner for each.
 
 - **status lines** — verifies: whether `statusLine`/`subagentStatusLine` are wired, and to what.
   no longer does: install the wrapper scripts or set the `.claude/settings.json` keys. owner:
-  no shipped writer — wire them by hand, see QUICKSTART's "Before your first session".
+  `npx update-agentic-workspace` (since v1.17.0; also `create-agentic-workspace --existing
+  --reconcile-floor` on a trusted workspace) — or by hand, see QUICKSTART's "Before your first session".
 - **native Bash sandbox** — verifies: whether `sandbox.enabled` is set, and its value.
   no longer does: enable the sandbox. owner: no shipped writer — enable it by hand, see
   QUICKSTART's "Before your first session".
