@@ -11,6 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { confinedJoin } from './util.mjs';
+import { scopeRecordsFor } from './pluginRefresh.mjs';
 
 export const REPORT_REL = '.foundry/upgrade-report.json';
 export const REPORT_SCHEMA_VERSION = 1;
@@ -28,15 +29,17 @@ export function versionOrNull(v) {
  * plugin entries around the refresh (either may be null); `filePlan` is the managed-file plan;
  * `amendmentsPlan` is the applied backfill plan (or null); `phases` is what renderSummary got. */
 export function buildUpgradeReport({
-  beforeEntry, afterEntry, toPluginVersion, phases, filePlan, amendmentsPlan, now = new Date(),
+  installedBefore = null, afterEntry, toPluginVersion, phases, filePlan, amendmentsPlan, now = new Date(),
 }) {
   const seedRow = (filePlan || []).find((f) => f.seed);
   return {
     schema_version: REPORT_SCHEMA_VERSION,
     ran_at: now.toISOString(),
-    // null when no manifest was readable before the refresh (a first install) — the skill then
-    // lists only the current version's CHANGELOG section (AC-PUS-1, Out of scope).
-    from_plugin_version: beforeEntry ? versionOrNull(beforeEntry.version) : null,
+    // ER #222 (v1.17.1): THIS workspace's installed version from installed_plugins.json, captured
+    // before any mutation — never the marketplace clone's advertised version, which is per machine
+    // and already moved by the time Phase 1 reads it. null (no record, unreadable registry, a
+    // first install) makes the skill list only the current version's CHANGELOG section.
+    from_plugin_version: versionOrNull(installedBefore),
     to_plugin_version: (afterEntry && versionOrNull(afterEntry.version)) || versionOrNull(toPluginVersion),
     phases: (phases || []).map((p) => ({ name: p.name, verdict: p.verdict, ...(p.reason ? { reason: p.reason } : {}) })),
     amendments: amendmentsPlan
@@ -45,6 +48,18 @@ export function buildUpgradeReport({
     permissions_policy: seedRow ? (seedRow.action === 'create' ? 'created' : 'kept') : 'absent',
     drifted: (filePlan || []).filter((f) => f.action === 'drifted').map((f) => f.relPath),
   };
+}
+
+/** The version THIS workspace had installed before the run (ER #222): the project-scope record
+ * whose `projectPath` is `cwd`, else the user-scope record (no `projectPath`), else null. Reads the
+ * registry object `readInstalledPluginsRegistry` returns; `ok: false` is null, never a guess. */
+export function installedVersionBefore(registry, pluginKey, cwd) {
+  if (!registry || !registry.ok) return null;
+  const records = scopeRecordsFor(registry.doc, pluginKey).filter((r) => r && typeof r === 'object');
+  const project = records.find((r) => r.projectPath && path.resolve(String(r.projectPath)) === path.resolve(cwd));
+  const user = records.find((r) => !r.projectPath);
+  const hit = project || user;
+  return hit ? versionOrNull(hit.version) : null;
 }
 
 /** Write the report under the workspace root, creating `.foundry/` if needed. Overwrites.
