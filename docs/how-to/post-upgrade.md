@@ -30,7 +30,9 @@ then walks, in order:
 1. the CHANGELOG sections between the two versions, as an inventory of what was retired and added;
 2. standing grants into `.foundry/permissions.yaml`, compiled, until the doctor reads `policy in-sync`;
 3. `requires_capabilities` on contracts that are not frozen (frozen ones are listed for `/foundry:amend`);
-4. a truth pass over `CLAUDE.md`, `docs/`, `.claude/` and your memory directory against the inventory;
+4. a truth pass over `CLAUDE.md`, `docs/`, the prose under `.claude/` and your memory directory against
+   the inventory — never `settings.json` or the operator registry, and out-of-repo deletions are
+   quoted in the PR body because the diff cannot show them;
 5. branch garbage collection, dry-run first, then `--apply` on the merged class;
 6. verification: doctor green, policy in-sync, branches clean, an amend dry-run passing;
 7. one PR to `main` with a before/after table and the list of deletions.

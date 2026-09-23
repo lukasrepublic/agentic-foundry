@@ -10,10 +10,19 @@
 // report never lands in the adopter's repo.
 import fs from 'node:fs';
 import path from 'node:path';
+import { confinedJoin } from './util.mjs';
 
 export const REPORT_REL = '.foundry/upgrade-report.json';
 export const REPORT_SCHEMA_VERSION = 1;
 export const NEXT_LINE = `next: run /foundry:post-upgrade in your next session (report: ${REPORT_REL})`;
+
+/** The plugin version strings come from the marketplace manifest — remote content refreshed by
+ * `claude plugin marketplace update` — and land in a file an agent later reads and acts on. Only a
+ * version-shaped string is copied (PR #218 security review, Risk 3); anything else is `null`. */
+const VERSION_RE = /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]{1,40})?$/;
+export function versionOrNull(v) {
+  return typeof v === 'string' && v.length <= 64 && VERSION_RE.test(v) ? v : null;
+}
 
 /** Pure: assemble the report object. `beforeEntry`/`afterEntry` are the marketplace manifest's
  * plugin entries around the refresh (either may be null); `filePlan` is the managed-file plan;
@@ -27,8 +36,8 @@ export function buildUpgradeReport({
     ran_at: now.toISOString(),
     // null when no manifest was readable before the refresh (a first install) — the skill then
     // lists only the current version's CHANGELOG section (AC-PUS-1, Out of scope).
-    from_plugin_version: beforeEntry && typeof beforeEntry.version === 'string' ? beforeEntry.version : null,
-    to_plugin_version: afterEntry && typeof afterEntry.version === 'string' ? afterEntry.version : toPluginVersion,
+    from_plugin_version: beforeEntry ? versionOrNull(beforeEntry.version) : null,
+    to_plugin_version: (afterEntry && versionOrNull(afterEntry.version)) || versionOrNull(toPluginVersion),
     phases: (phases || []).map((p) => ({ name: p.name, verdict: p.verdict, ...(p.reason ? { reason: p.reason } : {}) })),
     amendments: amendmentsPlan
       ? { backfilled: amendmentsPlan.written ?? 0, present: amendmentsPlan.present, skipped: amendmentsPlan.skipped }
@@ -38,10 +47,20 @@ export function buildUpgradeReport({
   };
 }
 
-/** Write the report under the workspace root, creating `.foundry/` if needed. Overwrites. */
+/** Write the report under the workspace root, creating `.foundry/` if needed. Overwrites.
+ * Confined the way every other Phase-4 writer is (PR #218 security review, Risk 4): the target is
+ * joined through `confinedJoin`, a `.foundry` that is a symlink or a leaf that is not a regular
+ * file is REFUSED (returns null, nothing written) — the write can never land outside the
+ * physically-resolved root through a planted link. */
 export function writeUpgradeReport(physicalRoot, report) {
-  const abs = path.join(physicalRoot, REPORT_REL);
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  const abs = confinedJoin(physicalRoot, REPORT_REL);
+  if (abs === null) return null;
+  const dir = path.dirname(abs);
+  const dst = fs.lstatSync(dir, { throwIfNoEntry: false });
+  if (dst && !dst.isDirectory()) return null;          // `.foundry` is a symlink or a file
+  const lst = fs.lstatSync(abs, { throwIfNoEntry: false });
+  if (lst && !lst.isFile()) return null;               // the leaf is a symlink or special
+  fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(abs, `${JSON.stringify(report, null, 2)}\n`, 'utf-8');
   return abs;
 }

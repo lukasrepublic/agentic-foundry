@@ -328,8 +328,11 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     const report = buildUpgradeReport({
       beforeEntry, afterEntry, toPluginVersion: pins.plugin_version, phases, filePlan, amendmentsPlan,
     });
-    writeUpgradeReport(physicalRoot, report);
+    const reportPath = writeUpgradeReport(physicalRoot, report);
     print('');
+    if (reportPath === null) {
+      print('  [refused] .foundry/upgrade-report.json (.foundry is not a directory, or the report path is not a regular file — not written)');
+    }
     print(NEXT_LINE);
 
     const anyDrifted = filePlan.some((f) => f.action === 'drifted');
