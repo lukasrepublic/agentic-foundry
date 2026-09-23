@@ -13,8 +13,11 @@ matches the release that was just installed instead of being a prompt someone wr
 ## Preconditions (refuse, do not improvise)
 
 1. Read `.foundry/upgrade-report.json`. **Absent** → stop: *"run `npx update-agentic-workspace` first —
-   it writes the report this skill reads."* **`to_plugin_version` differs from the installed plugin**
-   (`claude plugin list`, or the doctor's header) → stop the same way; the report is stale.
+   it writes the report this skill reads."* **Not a regular file** (`ls -l` shows a symlink, or the
+   updater's last run printed `[refused] .foundry/upgrade-report.json`) → stop the same way: the
+   updater refuses to write through a link, so whatever sits there is not its report. **`to_plugin_version`
+   differs from the installed plugin** (`claude plugin list`, or the doctor's header) → stop the same
+   way; the report is stale.
 2. Run `/foundry:doctor` once and keep its output; the last step compares against it.
 
 ## The inventory (step 2 of the procedure)

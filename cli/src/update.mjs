@@ -331,9 +331,13 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     const reportPath = writeUpgradeReport(physicalRoot, report);
     print('');
     if (reportPath === null) {
-      print('  [refused] .foundry/upgrade-report.json (.foundry is not a directory, or the report path is not a regular file — not written)');
+      // PR #218 review round 2: never hand off to a report that was not written — a planted link
+      // at that path would otherwise be what the skill reads.
+      print('  [refused] .foundry/upgrade-report.json (.foundry is not a directory, or the report path is not a regular file — NOT written)');
+      print('next: make .foundry/upgrade-report.json a regular path and re-run — do not run /foundry:post-upgrade until this run writes its report');
+    } else {
+      print(NEXT_LINE);
     }
-    print(NEXT_LINE);
 
     const anyDrifted = filePlan.some((f) => f.action === 'drifted');
     // Same bucket a `drifted` managed file uses (exit 2), not the hard-refusal exit 1 — Phases 1-4
