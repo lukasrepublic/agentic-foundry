@@ -59,7 +59,12 @@ and want it to stay that way, disable it again after the update, or migrate that
    script deleted outright does not leave a standing grant behind forever. `.gitignore`'s own
    managed-block reconcile runs here too, so a workspace that predates a
    later block content change catches up on the next update run rather than staying stuck on
-   whatever it was scaffolded with.
+   whatever it was scaffolded with. The **Amendments backfill** runs here as well: every
+   `specs/**/feat-*.md` that has a normative region but no `## Amendments` section after it gets
+   the empty section `/foundry:amend` requires (one row: `[amendments] backfilled N of M specs …`).
+   The section sits outside the hashed normative region, so no `spec_sha256` and no authorization
+   moves; a spec that already has the section, has no normative region, or is a symlink is never
+   written.
 
 Every run previews every `claude` invocation and every path it will touch **before** the first one
 happens, and ends with a per-phase summary (`changed` / `already current` / `skipped: <reason>`).

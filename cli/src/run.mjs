@@ -18,6 +18,7 @@ import {
   resolveTarget, readTarget, applyAdditions, planReconcile, writeTargetAtomically, renderPlan,
 } from './floorReconcile.mjs';
 import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from './gitignoreReconcile.mjs';
+import { planAmendmentsBackfill, applyAmendmentsBackfill, renderAmendmentsRow } from './amendmentsBackfill.mjs';
 
 export { DECLARED_PATH_SET };
 
@@ -184,6 +185,16 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
       print('');
       print(gitignoreRow);
     }
+    // amendments-backfill (ER #214, AC-AMB-1): every `specs/**/feat-*.md` with a normative region
+    // and no `## Amendments` section after it gets the empty section `/foundry:amend` requires.
+    // Planned here for the same reason as the gitignore block — --dry-run reports the same row a
+    // real run would act on — and `null` when the workspace has no specs at all (a fresh scaffold).
+    const amendmentsPlan = planAmendmentsBackfill({ physicalRoot });
+    const amendmentsRow = renderAmendmentsRow(amendmentsPlan);
+    if (amendmentsRow) {
+      if (!gitignoreRow) print('');
+      print(amendmentsRow);
+    }
 
     // Resolved HERE — before the write phase and before the dry-run return — because the reconcile
     // below must know what it would add in order to decide whether to write at all, and --dry-run
@@ -259,6 +270,9 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
     // since it is a data-integrity issue local to one file, not the security-shaped case
     // --reconcile-floor's pre-write refusal exists for.
     applyGitignorePlan(gitignorePlan);
+    // Same never-clobber posture as the gitignore block: only a spec classified `absent` is ever
+    // written, and it is re-classified immediately before the atomic append (AC-AMB-2).
+    applyAmendmentsBackfill(amendmentsPlan);
 
     if (floorHasWork) {
       // floorPlan.settingsObj is ALREADY post-retirement (planReconcile derived it that way) —
@@ -324,7 +338,8 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
       // all keep the standard hand-off. The gitignore-block-reconcile counts too: it is the SAME
       // kind of write to an already-trusted workspace floorPlan's own comment describes, just to a
       // different file.
-      reconciledExisting: Boolean(floorPlan && floorPlan.total > 0) || gitignoreWrote,
+      reconciledExisting: Boolean(floorPlan && floorPlan.total > 0) || gitignoreWrote
+        || Boolean(amendmentsPlan && amendmentsPlan.applied && amendmentsPlan.written > 0),
     }));
 
     // A refused gitignore block joins the SAME non-zero bucket `drifted` files use (exit 2, "needs

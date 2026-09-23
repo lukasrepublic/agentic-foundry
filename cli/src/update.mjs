@@ -15,6 +15,7 @@ import {
   resolveTarget, readTarget, applyAdditions, planReconcile, writeTargetAtomically, renderPlan,
 } from './floorReconcile.mjs';
 import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from './gitignoreReconcile.mjs';
+import { planAmendmentsBackfill, applyAmendmentsBackfill, renderAmendmentsRow } from './amendmentsBackfill.mjs';
 import {
   ALLOWED_CLAUDE_SUBCOMMANDS, resolveClaudeOnPath, runClaude,
   defaultScopes, snapshotScopes, classifyMigration, migrationActions, migrateScope,
@@ -207,6 +208,10 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     }
     const previewGitignoreRow = renderGitignoreRow(previewGitignorePlan);
     if (previewGitignoreRow) previewLines.push(previewGitignoreRow);
+    // amendments-backfill (ER #214, AC-AMB-1): PREVIEW-ONLY like the two rows above; Phase 4
+    // re-plans fresh from disk before it writes.
+    const previewAmendmentsRow = renderAmendmentsRow(planAmendmentsBackfill({ physicalRoot }));
+    if (previewAmendmentsRow) previewLines.push(previewAmendmentsRow);
     print(previewLines.join('\n'));
 
     const env = { ...spawnEnv, CLAUDE_CONFIG_DIR: configDir };
@@ -294,15 +299,23 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
       if (gitignoreRow) print(gitignoreRow);
     }
 
+    // amendments-backfill (ER #214, AC-AMB-1/-2): re-planned FRESH from disk like the two blocks
+    // above, applied with the module's own re-classify-before-append guard.
+    const amendmentsPlan = planAmendmentsBackfill({ physicalRoot });
+    applyAmendmentsBackfill(amendmentsPlan);
+    const amendmentsRow = renderAmendmentsRow(amendmentsPlan);
+    if (amendmentsRow) print(amendmentsRow);
+
     const anyCreated = filePlan.some((f) => f.action === 'create');
     const anyFloorAdded = Boolean(floorPlan && floorPlan.total > 0)
       || Boolean(floorRetirementPlan && floorRetirementPlan.total > 0);
     const anyGitignoreChanged = Boolean(
       freshGitignorePlan && (freshGitignorePlan.action === 'converged' || freshGitignorePlan.action === 'appended'),
     );
+    const anyAmendmentsBackfilled = amendmentsPlan.written > 0;
     phases.push({
       name: 'reinitialization',
-      verdict: anyCreated || anyFloorAdded || anyGitignoreChanged ? 'changed' : 'already current',
+      verdict: anyCreated || anyFloorAdded || anyGitignoreChanged || anyAmendmentsBackfilled ? 'changed' : 'already current',
     });
 
     print('');
