@@ -59,7 +59,21 @@ and want it to stay that way, disable it again after the update, or migrate that
    script deleted outright does not leave a standing grant behind forever. `.gitignore`'s own
    managed-block reconcile runs here too, so a workspace that predates a
    later block content change catches up on the next update run rather than staying stuck on
-   whatever it was scaffolded with.
+   whatever it was scaffolded with. The **Amendments backfill** runs here as well: every
+   `specs/**/feat-*.md` that has a normative region but no `## Amendments` section after it gets
+   the empty section `/foundry:amend` requires (one row: `[amendments] backfilled N of M specs …`).
+   The section sits outside the hashed normative region, so no `spec_sha256` and no authorization
+   moves; a spec that already has the section, has no normative region, or is a symlink is never
+   written. `.foundry/permissions.yaml` is **seeded** here when absent — an empty, commented
+   starter for standing grants (`docs/how-to/standing-grants.md`) — and reported `[kept]` on
+   every later run: operator-owned, never compared, never overwritten.
+5. **The report and the hand-off** — every completed run writes `.foundry/upgrade-report.json`
+   (`schema_version`, `ran_at`, `from_plugin_version` / `to_plugin_version`, the phase verdicts,
+   what the Amendments backfill did, whether the policy file was `created` or `kept`, the drifted
+   paths) and ends with one line: `next: run /foundry:post-upgrade in your next session`. That
+   plugin skill owns the judgement half of an upgrade — standing grants into policy,
+   `requires_capabilities` on unfrozen contracts, a truth pass over your own prose, branch garbage
+   collection — and refuses without this report. `.foundry/` is gitignored; the report stays local.
 
 Every run previews every `claude` invocation and every path it will touch **before** the first one
 happens, and ends with a per-phase summary (`changed` / `already current` / `skipped: <reason>`).

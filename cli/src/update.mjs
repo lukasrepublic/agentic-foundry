@@ -15,6 +15,9 @@ import {
   resolveTarget, readTarget, applyAdditions, planReconcile, writeTargetAtomically, renderPlan,
 } from './floorReconcile.mjs';
 import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from './gitignoreReconcile.mjs';
+import { planAmendmentsBackfill, applyAmendmentsBackfill, renderAmendmentsRow } from './amendmentsBackfill.mjs';
+import { buildUpgradeReport, writeUpgradeReport, NEXT_LINE } from './upgradeReport.mjs';
+import { planStatuslineWiring, applyStatuslineWiring, renderStatuslineRows, statuslineChanged } from './statuslineWiring.mjs';
 import {
   ALLOWED_CLAUDE_SUBCOMMANDS, resolveClaudeOnPath, runClaude,
   defaultScopes, snapshotScopes, classifyMigration, migrationActions, migrateScope,
@@ -207,6 +210,12 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     }
     const previewGitignoreRow = renderGitignoreRow(previewGitignorePlan);
     if (previewGitignoreRow) previewLines.push(previewGitignoreRow);
+    // amendments-backfill (ER #214, AC-AMB-1): PREVIEW-ONLY like the two rows above; Phase 4
+    // re-plans fresh from disk before it writes.
+    const previewAmendmentsRow = renderAmendmentsRow(planAmendmentsBackfill({ physicalRoot }));
+    if (previewAmendmentsRow) previewLines.push(previewAmendmentsRow);
+    // statusline-wiring (AC-SLW-1/-2): PREVIEW-ONLY rows; Phase 4 re-plans fresh from disk.
+    previewLines.push(...renderStatuslineRows(planStatuslineWiring({ physicalRoot, templatesDir })));
     print(previewLines.join('\n'));
 
     const env = { ...spawnEnv, CLAUDE_CONFIG_DIR: configDir };
@@ -294,19 +303,51 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
       if (gitignoreRow) print(gitignoreRow);
     }
 
+    // amendments-backfill (ER #214, AC-AMB-1/-2): re-planned FRESH from disk like the two blocks
+    // above, applied with the module's own re-classify-before-append guard.
+    const amendmentsPlan = planAmendmentsBackfill({ physicalRoot });
+    applyAmendmentsBackfill(amendmentsPlan);
+    const amendmentsRow = renderAmendmentsRow(amendmentsPlan);
+    if (amendmentsRow) print(amendmentsRow);
+
     const anyCreated = filePlan.some((f) => f.action === 'create');
     const anyFloorAdded = Boolean(floorPlan && floorPlan.total > 0)
       || Boolean(floorRetirementPlan && floorRetirementPlan.total > 0);
     const anyGitignoreChanged = Boolean(
       freshGitignorePlan && (freshGitignorePlan.action === 'converged' || freshGitignorePlan.action === 'appended'),
     );
+    const anyAmendmentsBackfilled = amendmentsPlan.written > 0;
+    // statusline-wiring (v1.17.0, AC-SLW-1/-2): the updater is the post-trust writer of the
+    // wrapper files and the two settings keys (added only when absent). Planned fresh from disk
+    // here, after the floor write above, so the settings read is the current one.
+    const statuslinePlan = planStatuslineWiring({ physicalRoot, templatesDir });
+    applyStatuslineWiring(statuslinePlan);
+    for (const row of renderStatuslineRows(statuslinePlan)) print(row);
     phases.push({
       name: 'reinitialization',
-      verdict: anyCreated || anyFloorAdded || anyGitignoreChanged ? 'changed' : 'already current',
+      verdict: anyCreated || anyFloorAdded || anyGitignoreChanged || anyAmendmentsBackfilled
+        || statuslineChanged(statuslinePlan) ? 'changed' : 'already current',
     });
 
     print('');
     print(renderSummary(phases));
+
+    // post-upgrade-skill (AC-PUS-1): the hand-off to the judgement half. Written on every
+    // completed run (overwritten — a report, not a managed file; `.foundry/*` is gitignored), and
+    // named in the LAST line so the operator's next step is never a guess.
+    const report = buildUpgradeReport({
+      beforeEntry, afterEntry, toPluginVersion: pins.plugin_version, phases, filePlan, amendmentsPlan,
+    });
+    const reportPath = writeUpgradeReport(physicalRoot, report);
+    print('');
+    if (reportPath === null) {
+      // PR #218 review round 2: never hand off to a report that was not written — a planted link
+      // at that path would otherwise be what the skill reads.
+      print('  [refused] .foundry/upgrade-report.json (.foundry is not a directory, or the report path is not a regular file — NOT written)');
+      print('next: make .foundry/upgrade-report.json a regular path and re-run — do not run /foundry:post-upgrade until this run writes its report');
+    } else {
+      print(NEXT_LINE);
+    }
 
     const anyDrifted = filePlan.some((f) => f.action === 'drifted');
     // Same bucket a `drifted` managed file uses (exit 2), not the hard-refusal exit 1 — Phases 1-4

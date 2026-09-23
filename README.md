@@ -11,7 +11,7 @@ real running app → human sign-off.**
 > to earn its keep. A gate ships only if it names the observed failure it prevents; the
 > operator's own judgment is what the automation serves, never what it replaces.
 
-**Status: v1.16.1.** Built solo, dogfooded daily — Foundry is built *with* Foundry: every release
+**Status: v1.17.0.** Built solo, dogfooded daily — Foundry is built *with* Foundry: every release
 you can install was itself specced, authorized, floor-gated, and certified through it.
 
 ## The loop, in one picture
@@ -205,7 +205,7 @@ grouped by loop stage, is on **[docs/VERBS-QUICK-REF.md](docs/VERBS-QUICK-REF.md
 
 `intake → spec-review → authorize → dispatch → certify-local → release accept`
 
-That's the whole discipline. The other ~63 skills are an **optional catalog** — release-wave
+That's the whole discipline. The other ~64 skills are an **optional catalog** — release-wave
 fan-out, infra-delivery (`id-*`) craft for OpenTofu/K8s/ArgoCD shops, brownfield extraction,
 citation-graph MCP, fleet/status tooling. Use six verbs, ignore the rest, add lanes when you
 need them. Want zero ceremony for a small change? `/foundry:mode-interactive` is the

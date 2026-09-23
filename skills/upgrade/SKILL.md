@@ -86,3 +86,11 @@ registry whose entries are missing every field but the key still passes.
   Read the plan it prints first — that is why it prints one.
 - **Gitignoring the baseline.** It belongs in the repo with the config it tracks; otherwise every clone is
   unbaselined.
+
+## Everything beyond config drift: `/foundry:post-upgrade`
+
+This skill answers one question — has the adopter config drifted. The rest of finishing an upgrade
+(standing grants into policy, `requires_capabilities`, the truth pass over your own prose, branch
+garbage collection, verification, the PR) is `skills/post-upgrade/SKILL.md`, driven by the report
+`npx update-agentic-workspace` writes to `.foundry/upgrade-report.json`. See
+`docs/how-to/post-upgrade.md`.
