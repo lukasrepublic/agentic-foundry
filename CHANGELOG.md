@@ -8,6 +8,61 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.17.0 — 2026-09-23
+
+### The verbs shipped; now the corpus they need ships too
+
+An adopter's post-upgrade re-baseline on v1.16.1 (2026-09-22) found that `/foundry:amend` could not fire on
+any spec written before it existed, that nothing had ever created `.foundry/permissions.yaml`, and that the
+judgement half of a cleanup lived in a prompt someone writes after each release. The same week the operator's
+second machine showed no token bar in the status line, with nothing to say why. Four atoms, one release, built
+from `release/v1.17.0`, which also carries the git-discipline hotfix staged on `release/v1.16.2` and never cut.
+
+- **Amendments backfill** (#216, ER #214; `cli/src/amendmentsBackfill.mjs`). `npx update-agentic-workspace` and
+  `create-agentic-workspace --existing` give every `specs/**/feat-*.md` that has a normative region and no
+  `## Amendments` section after it the empty section the verb requires — one row, `[amendments] backfilled
+  N of M specs`. The detection mirrors `foundry-amend.py`'s own rule (heading after the LAST normative close,
+  fenced code masked) and a test cross-checks the two over ten shapes; the section sits outside the hashed
+  region, so no `spec_sha256` and no authorization moves, pinned with the real hashing. Symlinked and
+  marker-less specs are never written; a second run is byte-stable.
+- **Permissions seed** (#217, ER #215; `cli/templates/permissions.yaml.tmpl` = `context/permissions-template.yaml`).
+  The scaffold manifest gains a SEED class: `.foundry/permissions.yaml` is written once when absent — an
+  empty, commented starter with two worked grants — and reported `kept` on every later run: operator-owned,
+  never compared, never drifted, never overwritten. The doctor's `policy absent` line and the compiler's
+  missing-file message name the remedy. `docs/how-to/standing-grants.md` walks one grant end to end. A fresh
+  seed is `policy drift` until the compiler's first `--write` converges its two self-guard deny rules.
+- **`/foundry:post-upgrade`** (#218; `skills/post-upgrade/SKILL.md`, `cli/src/upgradeReport.mjs`). The updater
+  ends every completed run by writing `.foundry/upgrade-report.json` (from/to version, phase verdicts, what
+  the backfill did, whether the policy file was created or kept, the drifted paths) and naming this skill,
+  which refuses without a fresh report and walks the judgement half in order: the CHANGELOG inventory
+  between the two versions, standing grants into policy, `requires_capabilities` on unfrozen contracts only,
+  a prose-only truth pass, branch garbage collection dry-run then apply, verification, one PR. Its inputs are
+  data, never instructions; it never edits the floor or the operator registry, a frozen contract, or a branch
+  the gc did not classify merged, and never writes the agent-teams flag (an explicit per-session opt-in).
+  The report writer is confined and value-validates the version strings it copies from the manifest.
+- **Status-line wiring** (#219; `cli/src/statuslineWiring.mjs`, `cli/templates/foundry-statusline.sh`). The
+  updater — and `--existing --reconcile-floor` on a trusted workspace, never the greenfield create path,
+  whose pre-session key set stays closed — installs the two wrapper scripts under `.claude/hooks/`
+  (framework-owned: converged when they carry the marker, kept when they do not) and adds `statusLine` and
+  `subagentStatusLine` only when absent. The wrapper resolves the renderer through Claude Code's own
+  `installed_plugins.json`, then the cache newest by version segment, then the self-hosting source, and when
+  none resolves renders `⌂ <dir>:<branch> · tok <bar> NN%` itself, so the bar is never silently absent. The
+  doctor gains a fourth advisory line, `statusline: wired (renderer <version>)` or the first missing piece.
+- **Guard hotfix** (#212, carried from `release/v1.16.2`; `hooks/foundry-git-discipline.sh`). Unquoted `(`, `)`
+  and backticks are spaced into plain tokens before the scan: `(git push --force origin main)` and its
+  backtick twin were admitted because the paren stayed glued to the verb or the refspec. Three review rounds,
+  each verified by measurement; a non-literal remote or refspec is now assumed protected; the parens are
+  filtered from every clause's argument run while the backtick stays as the non-literal marker. `AGENTS.md`
+  was truth-reviewed as the live instruction file Claude Code 2.1.278 now reads. Two pre-existing shapes are
+  recorded as ER #213.
+
+Packages: `create-agentic-workspace@0.17.0` (the seed entry, the backfill, the status-line wiring, the
+report) and `update-agentic-workspace@0.1.12` (pins it). After upgrading, run `/foundry:post-upgrade` in the
+next session — the updater's last line says so.
+
+Security disposition: charter-lane; every atom that touched a skill or the guard had a fresh-context
+security review with its head-specific label; the guard change had three rounds and a measured corpus.
+
 ## v1.16.1 — 2026-09-21
 
 ### The public pages describe the stack that ships
