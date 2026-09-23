@@ -25,8 +25,9 @@ export function versionOrNull(v) {
   return typeof v === 'string' && v.length <= 64 && VERSION_RE.test(v) ? v : null;
 }
 
-/** Pure: assemble the report object. `beforeEntry`/`afterEntry` are the marketplace manifest's
- * plugin entries around the refresh (either may be null); `filePlan` is the managed-file plan;
+/** Pure: assemble the report object. `installedBefore` is this workspace's installed version from
+ * `installedVersionBefore` (or null); `afterEntry` is the marketplace manifest's plugin entry after
+ * the refresh (or null); `filePlan` is the managed-file plan;
  * `amendmentsPlan` is the applied backfill plan (or null); `phases` is what renderSummary got. */
 export function buildUpgradeReport({
   installedBefore = null, afterEntry, toPluginVersion, phases, filePlan, amendmentsPlan, now = new Date(),

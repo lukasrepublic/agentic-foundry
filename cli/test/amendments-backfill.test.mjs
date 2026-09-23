@@ -146,3 +146,25 @@ test('no specs/ at all: an empty walk, no row (a fresh scaffold prints nothing e
   assert.deepEqual(walkSpecs(root), { files: [], symlinks: [] });
   assert.equal(renderAmendmentsRow(planAmendmentsBackfill({ physicalRoot: root })), null);
 });
+
+// v1.17.1 security review Risks 1 and 2: the root is confined; the temp leaf is never a symlink.
+test('a symlinked specs/ root is never walked; a planted temp-path symlink is never written through', () => {
+  const root = scratch();
+  const elsewhere = writeSpec(root, 'elsewhere/shared/feat-shared.md', NORMATIVE);
+  fs.symlinkSync(path.join(root, 'elsewhere/shared'), path.join(root, 'specs'));
+  const plan = planAmendmentsBackfill({ physicalRoot: root });
+  assert.deepEqual(plan.toAppend, []);
+  assert.equal(plan.total, 0);
+  assert.equal(fs.readFileSync(elsewhere, 'utf-8'), NORMATIVE);
+
+  const root2 = scratch();
+  const a = writeSpec(root2, 'specs/f/feat-a.md', NORMATIVE);
+  const target = path.join(root2, 'outside.md');
+  fs.symlinkSync(target, `${a}.amendments-backfill.tmp`);
+  const plan2 = planAmendmentsBackfill({ physicalRoot: root2 });
+  assert.deepEqual(plan2.toAppend, [a]);
+  assert.equal(applyAmendmentsBackfill(plan2), 0);
+  assert.equal(fs.readFileSync(a, 'utf-8'), NORMATIVE);
+  assert.equal(fs.existsSync(target), false);
+  assert.equal(fs.lstatSync(`${a}.amendments-backfill.tmp`).isSymbolicLink(), true);
+});
