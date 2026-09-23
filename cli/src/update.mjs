@@ -16,7 +16,7 @@ import {
 } from './floorReconcile.mjs';
 import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from './gitignoreReconcile.mjs';
 import { planAmendmentsBackfill, applyAmendmentsBackfill, renderAmendmentsRow } from './amendmentsBackfill.mjs';
-import { buildUpgradeReport, writeUpgradeReport, NEXT_LINE } from './upgradeReport.mjs';
+import { buildUpgradeReport, writeUpgradeReport, installedVersionBefore, NEXT_LINE } from './upgradeReport.mjs';
 import { planStatuslineWiring, applyStatuslineWiring, renderStatuslineRows, statuslineChanged } from './statuslineWiring.mjs';
 import {
   ALLOWED_CLAUDE_SUBCOMMANDS, resolveClaudeOnPath, runClaude,
@@ -124,6 +124,8 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
 
     const registry = readInstalledPluginsRegistry(configDir);
     const isInstalled = isInstalledInScopeFactory(registry, pluginKey, cwd);
+    // ER #222: the report's `from` is what THIS workspace had installed, read before any mutation.
+    const installedBefore = installedVersionBefore(registry, pluginKey, cwd);
 
     const migrations = [];
     const indeterminateInstalledness = [];
@@ -336,7 +338,7 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     // completed run (overwritten — a report, not a managed file; `.foundry/*` is gitignored), and
     // named in the LAST line so the operator's next step is never a guess.
     const report = buildUpgradeReport({
-      beforeEntry, afterEntry, toPluginVersion: pins.plugin_version, phases, filePlan, amendmentsPlan,
+      installedBefore, afterEntry, toPluginVersion: pins.plugin_version, phases, filePlan, amendmentsPlan,
     });
     const reportPath = writeUpgradeReport(physicalRoot, report);
     print('');

@@ -65,19 +65,24 @@ test('AC-AMB-1: append to every absent spec under specs/, count present and skip
   const a = writeSpec(root, 'specs/features/p/d/c/feat-a.md', NORMATIVE);
   writeSpec(root, 'specs/features/p/d/c/feat-b.md', WITH_SECTION);
   writeSpec(root, 'specs/lifecycle/feat-c.md', '# no marker here\n');
+  // ER #223: an adopter's delivery atoms are `spec-*.md`; any basename with a normative region counts
+  const d = writeSpec(root, 'specs/delivery/spec-d.md', NORMATIVE);
+  writeSpec(root, 'specs/README.md', '# index, no normative region\n');
   writeSpec(root, 'specs/features/p/d/c/acceptance-contract.yaml', 'not a spec\n');
   writeSpec(root, 'docs/feat-outside.md', NORMATIVE); // outside specs/: never seen
   const plan = planAmendmentsBackfill({ physicalRoot: root });
-  assert.deepEqual(plan.toAppend, [a]);
+  assert.deepEqual(plan.toAppend.sort(), [a, d].sort());
   assert.equal(plan.present, 1);
-  assert.equal(plan.skipped, 1);
-  assert.equal(plan.total, 3);
+  assert.equal(plan.skipped, 2);
+  assert.equal(plan.total, 5);
   assert.equal(
     renderAmendmentsRow(plan),
-    '  [amendments] backfilled 1 of 3 specs (1 already present, 1 skipped: no normative region)',
+    '  [amendments] backfilled 2 of 5 specs (1 already present, 2 skipped: no normative region)',
   );
-  assert.equal(applyAmendmentsBackfill(plan), 1);
+  assert.equal(applyAmendmentsBackfill(plan), 2);
   assert.equal(fs.readFileSync(a, 'utf-8'), `${NORMATIVE}\n${AMENDMENTS_BLOCK}`);
+  assert.equal(fs.readFileSync(d, 'utf-8'), `${NORMATIVE}\n${AMENDMENTS_BLOCK}`);
+  assert.equal(fs.readFileSync(path.join(root, 'specs/README.md'), 'utf-8'), '# index, no normative region\n');
   assert.equal(classifySpec(fs.readFileSync(a, 'utf-8')), 'present');
   assert.equal(fs.readFileSync(path.join(root, 'docs/feat-outside.md'), 'utf-8'), NORMATIVE);
 });
@@ -140,4 +145,26 @@ test('no specs/ at all: an empty walk, no row (a fresh scaffold prints nothing e
   const root = scratch();
   assert.deepEqual(walkSpecs(root), { files: [], symlinks: [] });
   assert.equal(renderAmendmentsRow(planAmendmentsBackfill({ physicalRoot: root })), null);
+});
+
+// v1.17.1 security review Risks 1 and 2: the root is confined; the temp leaf is never a symlink.
+test('a symlinked specs/ root is never walked; a planted temp-path symlink is never written through', () => {
+  const root = scratch();
+  const elsewhere = writeSpec(root, 'elsewhere/shared/feat-shared.md', NORMATIVE);
+  fs.symlinkSync(path.join(root, 'elsewhere/shared'), path.join(root, 'specs'));
+  const plan = planAmendmentsBackfill({ physicalRoot: root });
+  assert.deepEqual(plan.toAppend, []);
+  assert.equal(plan.total, 0);
+  assert.equal(fs.readFileSync(elsewhere, 'utf-8'), NORMATIVE);
+
+  const root2 = scratch();
+  const a = writeSpec(root2, 'specs/f/feat-a.md', NORMATIVE);
+  const target = path.join(root2, 'outside.md');
+  fs.symlinkSync(target, `${a}.amendments-backfill.tmp`);
+  const plan2 = planAmendmentsBackfill({ physicalRoot: root2 });
+  assert.deepEqual(plan2.toAppend, [a]);
+  assert.equal(applyAmendmentsBackfill(plan2), 0);
+  assert.equal(fs.readFileSync(a, 'utf-8'), NORMATIVE);
+  assert.equal(fs.existsSync(target), false);
+  assert.equal(fs.lstatSync(`${a}.amendments-backfill.tmp`).isSymbolicLink(), true);
 });

@@ -14,6 +14,7 @@
 // never written), atomic writes, and a plan/apply split so `--dry-run` prints the same row.
 import fs from 'node:fs';
 import path from 'node:path';
+import { confinedJoin } from './util.mjs';
 
 export const NORMATIVE_CLOSE = '<!-- /normative -->';
 export const AMENDMENTS_HEADING = '## Amendments';
@@ -22,7 +23,10 @@ export const AMENDMENTS_HEADING = '## Amendments';
  * "...\n\n" gets the heading directly. Header columns are `foundry-amend.py`'s own row shape. */
 export const AMENDMENTS_BLOCK = `${AMENDMENTS_HEADING}\n\n| date | what changed | why reality required it | auth_seq |\n|---|---|---|---|\n`;
 
-const SPEC_BASENAME_RE = /^feat-.*\.md$/;
+// ER #223 (v1.17.1): EVERY `*.md` under specs/, not only `feat-*.md` — foundry-amend.py has no
+// filename rule (it classifies by the normative region), and an adopter's delivery atoms are named
+// `spec-*.md`. A README or template without a normative region lands in `skipped`, never written.
+const SPEC_BASENAME_RE = /\.md$/;
 const CODE_FENCE_RE = /```[\s\S]*?```/g;
 
 /** The verdict `foundry-amend.py`'s amendments_section_ok gives: `present` when a `## Amendments`
@@ -42,15 +46,19 @@ export function classifySpec(text) {
   return 'absent';
 }
 
-/** Every regular `feat-*.md` under `<root>/specs`, depth-first, with symlinked FILES reported
+/** Every regular `*.md` under `<root>/specs` (any basename — ER #223), depth-first, with symlinked FILES reported
  * separately (never followed, never written — AC-AMB-2) and symlinked DIRECTORIES not descended
  * (the same confinement instinct as the scaffold's confinedJoin: nothing outside the workspace
  * root is ever touched). Absent `specs/` yields an empty walk, not an error. */
 export function walkSpecs(physicalRoot) {
-  const specsRoot = path.join(physicalRoot, 'specs');
   const files = [];
   const symlinks = [];
-  if (!fs.existsSync(specsRoot)) return { files, symlinks };
+  // v1.17.1 security review Risk 1: the ROOT is confined like every entry under it — a `specs`
+  // that is itself a symlink (or resolves outside the workspace) is never descended, never written.
+  const specsRoot = confinedJoin(physicalRoot, 'specs');
+  if (!specsRoot) return { files, symlinks };
+  const rootStat = fs.lstatSync(specsRoot, { throwIfNoEntry: false });
+  if (!rootStat || rootStat.isSymbolicLink() || !rootStat.isDirectory()) return { files, symlinks };
   const stack = [specsRoot];
   while (stack.length > 0) {
     const dir = stack.pop();
@@ -120,8 +128,19 @@ export function applyAmendmentsBackfill(plan) {
     }
     if (classifySpec(text) !== 'absent') continue;
     const tmp = `${abs}.amendments-backfill.tmp`;
-    fs.writeFileSync(tmp, text + appendBytesFor(text), 'utf-8');
-    fs.renameSync(tmp, abs);
+    // v1.17.1 security review Risk 2: `wx` refuses to write through a planted sibling — a symlink
+    // or a leftover file at the temp path means this spec is skipped, never written elsewhere.
+    try {
+      fs.writeFileSync(tmp, text + appendBytesFor(text), { encoding: 'utf-8', flag: 'wx' });
+    } catch {
+      continue;
+    }
+    try {
+      fs.renameSync(tmp, abs);
+    } catch {
+      fs.rmSync(tmp, { force: true });
+      continue;
+    }
     written += 1;
   }
   plan.applied = true;
