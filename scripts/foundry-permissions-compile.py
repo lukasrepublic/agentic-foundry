@@ -182,7 +182,9 @@ def load_policy(project_dir):
     missing-file or schema/structural problem, naming the error."""
     path = os.path.join(project_dir, POLICY_REL)
     if not os.path.isfile(path):
-        raise PolicyError(f"{POLICY_REL} is missing")
+        # permissions-scaffold (ER #215, AC-PSC-4): name the remedy, not just the absence.
+        raise PolicyError(f"{POLICY_REL} is missing — seed it: `npx update-agentic-workspace` writes a "
+                          "starter, or copy context/permissions-template.yaml from the plugin")
     try:
         st = os.stat(path)
         if st.st_size > _MAX_FILE_BYTES:

@@ -1,0 +1,37 @@
+# .foundry/permissions.yaml — this workspace's STANDING GRANTS as policy.
+#
+# The operator edits this file; the agent never does (`Edit`/`Write` on it are refused by the
+# compiled floor). `foundry-permissions-compile.py --write` turns every grant into one native
+# Claude Code rule `<tool>(<pattern>)` in .claude/settings.json; `--check` reports drift; the
+# doctor's `permissions-policy` line says `policy in-sync (<n>)` when the two agree. A contract's
+# `requires_capabilities` is checked against these grants by the capability preflight before an
+# atom is dispatched, so a denial surfaces before the work starts, not in the middle of it.
+#
+# Seeded EMPTY by `npx update-agentic-workspace` / `create-agentic-workspace --existing` and never
+# reconciled again (operator-owned). Schema: <plugin>/schema/permissions.schema.json.
+#
+# Each grant:
+#   id             a slug; surfaced in report and blocker lines
+#   tool           Bash | Edit | Write | Read | WebFetch | Agent
+#   pattern        the native rule's parenthesised body — the compiled rule is exactly <tool>(<pattern>)
+#   mode           automatic         — proceed once every listed precondition has been verified by command
+#                  approval_required — one blocker line naming this grant's id; the operator decides
+#   preconditions  closed set: ci-green, security-reviewed-label, spec-authorized, charter-committed,
+#                  worktree-clean, branch-up-to-date
+#
+# Two worked examples (commented out — copy one under `grants:` and edit it):
+#
+#   # An atom PR may be merged by the agent once its checks are green and the branch is current.
+#   - id: merge-atom-pr-when-green
+#     tool: Bash
+#     pattern: "gh pr merge:*"
+#     mode: automatic
+#     preconditions: [ci-green, branch-up-to-date]
+#
+#   # Pushing a tag is always the operator's call.
+#   - id: push-release-tag
+#     tool: Bash
+#     pattern: "git push origin v*"
+#     mode: approval_required
+schema_version: 1
+grants: []

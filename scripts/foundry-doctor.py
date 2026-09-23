@@ -437,6 +437,10 @@ def check_permissions_policy(plugin_root=None, project_dir=None):
         )
         drift_state, drift_ok = _policy_drift_state(pc, pdir)
         detail = f"{preflight_part}; policy {drift_state}"
+        # permissions-scaffold (ER #215, AC-PSC-4): an absent policy names its remedy in one clause.
+        if str(drift_state).startswith("absent"):
+            detail += (" — seed it: `npx update-agentic-workspace` writes a starter "
+                       ".foundry/permissions.yaml, or copy context/permissions-template.yaml")
         if missing_total == 0 and drift_ok:
             return True, detail
         return ADVISORY, detail

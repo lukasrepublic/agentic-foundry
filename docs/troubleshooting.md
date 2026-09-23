@@ -64,8 +64,10 @@ Remedies:
   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-permissions-compile.py" --write
   ```
 
-- **`policy absent`** — expected until you adopt `.foundry/permissions.yaml`; not itself a
-  problem.
+- **`policy absent`** — no `.foundry/permissions.yaml` yet; not itself a problem. The line names
+  the remedy: `npx update-agentic-workspace` seeds an empty, commented starter (operator-owned
+  from then on, never reconciled), or copy the plugin's `context/permissions-template.yaml`. See
+  [how-to/standing-grants.md](how-to/standing-grants.md) for writing and compiling a grant.
 
 ## `foundry doctor` reports `control-plane` RED
 
