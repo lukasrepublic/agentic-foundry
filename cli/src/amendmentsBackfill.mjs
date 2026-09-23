@@ -14,6 +14,7 @@
 // never written), atomic writes, and a plan/apply split so `--dry-run` prints the same row.
 import fs from 'node:fs';
 import path from 'node:path';
+import { confinedJoin } from './util.mjs';
 
 export const NORMATIVE_CLOSE = '<!-- /normative -->';
 export const AMENDMENTS_HEADING = '## Amendments';
@@ -50,10 +51,14 @@ export function classifySpec(text) {
  * (the same confinement instinct as the scaffold's confinedJoin: nothing outside the workspace
  * root is ever touched). Absent `specs/` yields an empty walk, not an error. */
 export function walkSpecs(physicalRoot) {
-  const specsRoot = path.join(physicalRoot, 'specs');
   const files = [];
   const symlinks = [];
-  if (!fs.existsSync(specsRoot)) return { files, symlinks };
+  // v1.17.1 security review Risk 1: the ROOT is confined like every entry under it — a `specs`
+  // that is itself a symlink (or resolves outside the workspace) is never descended, never written.
+  const specsRoot = confinedJoin(physicalRoot, 'specs');
+  if (!specsRoot) return { files, symlinks };
+  const rootStat = fs.lstatSync(specsRoot, { throwIfNoEntry: false });
+  if (!rootStat || rootStat.isSymbolicLink() || !rootStat.isDirectory()) return { files, symlinks };
   const stack = [specsRoot];
   while (stack.length > 0) {
     const dir = stack.pop();
@@ -123,8 +128,19 @@ export function applyAmendmentsBackfill(plan) {
     }
     if (classifySpec(text) !== 'absent') continue;
     const tmp = `${abs}.amendments-backfill.tmp`;
-    fs.writeFileSync(tmp, text + appendBytesFor(text), 'utf-8');
-    fs.renameSync(tmp, abs);
+    // v1.17.1 security review Risk 2: `wx` refuses to write through a planted sibling — a symlink
+    // or a leftover file at the temp path means this spec is skipped, never written elsewhere.
+    try {
+      fs.writeFileSync(tmp, text + appendBytesFor(text), { encoding: 'utf-8', flag: 'wx' });
+    } catch {
+      continue;
+    }
+    try {
+      fs.renameSync(tmp, abs);
+    } catch {
+      fs.rmSync(tmp, { force: true });
+      continue;
+    }
     written += 1;
   }
   plan.applied = true;
