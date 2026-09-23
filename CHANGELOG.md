@@ -18,7 +18,7 @@ Patch to v1.17.0 from the same day's test passes. `create-agentic-workspace` 0.1
 - **Amendments backfill walks every `*.md` under `specs/`** (#224, closes ER #223;
   `cli/src/amendmentsBackfill.mjs`). v1.17.0 walked `feat-*.md` only. `foundry-amend.py` has no filename
   rule — it classifies by the normative region — and an adopter's delivery atoms are named `spec-*.md`, so
-  on the operator's piiq upgrade the row was truthful and useless (its delivery atoms untouched) and
+  on the operator's first adopter upgrade the row was truthful and useless (its delivery atoms untouched) and
   `/foundry:post-upgrade` had to ask whether to extend the corpus by hand. Any basename with a normative
   region now gets the section; a README or template without one lands in `skipped`, never written. The
   row's `M` widens by the scaffold's own README files; `N` does not.
