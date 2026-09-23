@@ -49,6 +49,7 @@ matter on day one, see the `## Start here` table in [README.md](../README.md).
 | `/foundry:merge-when-green` | Waits for a PR's checks and mergeStateStatus, then merges the instant both are green — the one primitive that replaces a hand-rolled sleep-then-poll loop |
 | `/foundry:revert` | Rolls a merged change back out through the same governed loop |
 | `/foundry:upgrade` | After a `claude plugin update`, reports whether your adopter config has drifted from the current shape or gone malformed |
+| `/foundry:post-upgrade` | After `npx update-agentic-workspace`, reads its report and walks the judgement half of the upgrade — grants into policy, `requires_capabilities` on unfrozen contracts, a truth pass over your own prose, branch gc, one PR |
 | `/foundry:relock` | Re-locks your **already-locked** stack profiles after a trusted profile-version advance, refusing a downgrade or an incompatible profile |
 
 ## Certify and release

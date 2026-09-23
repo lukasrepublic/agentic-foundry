@@ -398,3 +398,19 @@ test('Phase 4 backfills the Amendments section on a pre-amend spec, then settles
   assert.match(again.res.output, /\[reinitialization] already current/, again.res.output);
   assert.equal(fs.readFileSync(specPath, 'utf-8'), after);
 });
+
+// post-upgrade-skill (AC-PUS-1) — the report is written on every completed run and the LAST
+// line names the skill; through the real upgrader, over the steady-state fixture.
+test('every completed run writes .foundry/upgrade-report.json and ends with the post-upgrade hand-off line', async () => {
+  const { cwd, configDir } = steadyStateFixture('upr-uaw-');
+  const { res, text } = await invokeUpdate({ cwd, configDir });
+  assert.notEqual(res.exitCode, 1, res.output);
+  const lines = res.output.trimEnd().split('\n');
+  assert.equal(lines[lines.length - 1], 'next: run /foundry:post-upgrade in your next session (report: .foundry/upgrade-report.json)', text);
+  const report = JSON.parse(fs.readFileSync(path.join(cwd, '.foundry', 'upgrade-report.json'), 'utf-8'));
+  assert.equal(report.schema_version, 1);
+  assert.equal(report.to_plugin_version, PINS.plugin_version);
+  assert.ok(Array.isArray(report.phases) && report.phases.some((p) => p.name === 'reinitialization'));
+  assert.ok(['created', 'kept'].includes(report.permissions_policy), report.permissions_policy);
+  assert.deepEqual(Object.keys(report.amendments).sort(), ['backfilled', 'present', 'skipped']);
+});

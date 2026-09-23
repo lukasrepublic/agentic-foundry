@@ -31,6 +31,7 @@ Four kinds of page, four kinds of question. Start where your question lives:
 - [Run a multi-repo control plane](how-to/multi-repo-control-plane.md) — **the mode Foundry is built for**: one workspace governing several code repos, and why you run Claude from the control plane rather than inside a repo
 - [Cut a release](how-to/cut-a-release.md)
 - [Migrate from Spec Kit](how-to/migrate-from-spec-kit.md) · [Migrate from OpenSpec](how-to/migrate-from-openspec.md)
+- [Finish a plugin upgrade](how-to/post-upgrade.md) — `npx update-agentic-workspace` (the script half), then `/foundry:post-upgrade` (the judgement half)
 - [Turn a standing grant into policy](how-to/standing-grants.md) — `.foundry/permissions.yaml` (seeded by the updater), compile, the capability preflight
 - [Enable agent teams](how-to/agent-teams.md)
 - [Wake the command deck with a Routine](how-to/routine-wake.md)
