@@ -177,14 +177,24 @@ def _structural_check(data):
     return errors
 
 
+def _with_remedy(msg):
+    """permissions-scaffold (ER #215, AC-PSC-4): an absent policy names its remedy at the CLI
+    boundary, so the exception text foundry-capability-preflight.py classifies on stays exact."""
+    if msg.rstrip().endswith("is missing"):
+        return msg + (" — seed it: `npx update-agentic-workspace` writes a starter, or copy "
+                      "context/permissions-template.yaml from the plugin")
+    return msg
+
+
 def load_policy(project_dir):
     """Returns the parsed+validated grants list. Raises PolicyError (AC-SGP-2 exit 2) on any
     missing-file or schema/structural problem, naming the error."""
     path = os.path.join(project_dir, POLICY_REL)
     if not os.path.isfile(path):
-        # permissions-scaffold (ER #215, AC-PSC-4): name the remedy, not just the absence.
-        raise PolicyError(f"{POLICY_REL} is missing — seed it: `npx update-agentic-workspace` writes a "
-                          "starter, or copy context/permissions-template.yaml from the plugin")
+        # The exact "... is missing" suffix is load-bearing: foundry-capability-preflight.py
+        # classifies an absent policy by it (`str(e).rstrip().endswith("is missing")`). The remedy
+        # (ER #215, AC-PSC-4) is appended at the CLI boundary in `_check`, not here.
+        raise PolicyError(f"{POLICY_REL} is missing")
     try:
         st = os.stat(path)
         if st.st_size > _MAX_FILE_BYTES:
@@ -360,7 +370,7 @@ def run_check(project_dir):
     try:
         grants = load_policy(project_dir)
     except PolicyError as e:
-        return EXIT_MISSING_OR_INVALID, str(e)
+        return EXIT_MISSING_OR_INVALID, _with_remedy(str(e))
     derived = derive_rules(grants)
     settings_rules = _effective_settings_rules(project_dir)
     try:
@@ -383,7 +393,7 @@ def run_write(project_dir):
     try:
         grants = load_policy(project_dir)
     except PolicyError as e:
-        return EXIT_MISSING_OR_INVALID, str(e)
+        return EXIT_MISSING_OR_INVALID, _with_remedy(str(e))
     derived = derive_rules(grants)
 
     settings_path = os.path.join(project_dir, SETTINGS_REL)
