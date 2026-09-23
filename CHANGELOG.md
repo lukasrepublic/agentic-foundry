@@ -8,6 +8,27 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.17.1 — 2026-09-23
+
+### The backfill covers every spec; the report knows what this workspace had
+
+Patch to v1.17.0 from the same day's test passes. `create-agentic-workspace` 0.17.1 and
+`update-agentic-workspace` 0.1.13 are published together.
+
+- **Amendments backfill walks every `*.md` under `specs/`** (#224, closes ER #223;
+  `cli/src/amendmentsBackfill.mjs`). v1.17.0 walked `feat-*.md` only. `foundry-amend.py` has no filename
+  rule — it classifies by the normative region — and an adopter's delivery atoms are named `spec-*.md`, so
+  on the operator's piiq upgrade the row was truthful and useless (its delivery atoms untouched) and
+  `/foundry:post-upgrade` had to ask whether to extend the corpus by hand. Any basename with a normative
+  region now gets the section; a README or template without one lands in `skipped`, never written. The
+  row's `M` widens by the scaffold's own README files; `N` does not.
+- **The upgrade report's `from_plugin_version` is this workspace's installed plugin** (#224, closes
+  ER #222; `cli/src/upgradeReport.mjs` `installedVersionBefore`, `cli/src/update.mjs`). v1.17.0 read it
+  from the marketplace manifest, after the orphaned-registration migration had already refreshed that
+  per-machine clone, so `from == to` on a machine's second upgraded workspace and the skill's CHANGELOG
+  inventory collapsed to one section. It is now the project-scope record for the workspace in
+  `installed_plugins.json` (else the user-scope record, else `null`), captured before any mutation.
+
 ## v1.17.0 — 2026-09-23
 
 ### The verbs shipped; now the corpus they need ships too
