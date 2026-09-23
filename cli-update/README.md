@@ -60,7 +60,7 @@ and want it to stay that way, disable it again after the update, or migrate that
    managed-block reconcile runs here too, so a workspace that predates a
    later block content change catches up on the next update run rather than staying stuck on
    whatever it was scaffolded with. The **Amendments backfill** runs here as well: every
-   `specs/**/feat-*.md` that has a normative region but no `## Amendments` section after it gets
+   `*.md` under `specs/` (any basename — `feat-*`, `spec-*`, …) that has a normative region but no `## Amendments` section after it gets
    the empty section `/foundry:amend` requires (one row: `[amendments] backfilled N of M specs …`).
    The section sits outside the hashed normative region, so no `spec_sha256` and no authorization
    moves; a spec that already has the section, has no normative region, or is a symlink is never

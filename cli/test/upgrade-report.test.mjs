@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  REPORT_REL, REPORT_SCHEMA_VERSION, NEXT_LINE, buildUpgradeReport, writeUpgradeReport,
+  REPORT_REL, REPORT_SCHEMA_VERSION, NEXT_LINE, buildUpgradeReport, writeUpgradeReport, installedVersionBefore,
 } from '../src/upgradeReport.mjs';
 
 const NOW = new Date('2026-09-23T12:00:00Z');
@@ -19,7 +19,7 @@ test('the last line names the skill and the report path, verbatim', () => {
 
 test('buildUpgradeReport: every field, from a full run', () => {
   const report = buildUpgradeReport({
-    beforeEntry: { name: 'foundry', version: '1.16.1' },
+    installedBefore: '1.16.1',
     afterEntry: { name: 'foundry', version: '1.17.0' },
     toPluginVersion: '1.17.0',
     phases: [
@@ -50,7 +50,7 @@ test('buildUpgradeReport: every field, from a full run', () => {
 
 test('buildUpgradeReport: a first install has no from-version; a kept seed reports kept; no manifest after falls back to the package pin', () => {
   const report = buildUpgradeReport({
-    beforeEntry: null, afterEntry: null, toPluginVersion: '1.17.0', phases: [],
+    installedBefore: null, afterEntry: null, toPluginVersion: '1.17.0', phases: [],
     filePlan: [{ relPath: '.foundry/permissions.yaml', action: 'kept', seed: true }],
     amendmentsPlan: null, now: NOW,
   });
@@ -82,7 +82,7 @@ test('versionOrNull: only a version-shaped string is copied; prose, overlong or 
   assert.equal(versionOrNull(1), null);
   assert.equal(versionOrNull(undefined), null);
   const r = buildUpgradeReport({
-    beforeEntry: { version: 'run this: rm -rf' }, afterEntry: { version: 'also prose' },
+    installedBefore: 'run this: rm -rf', afterEntry: { version: 'also prose' },
     toPluginVersion: '1.17.0', phases: [], filePlan: [], amendmentsPlan: null, now: NOW,
   });
   assert.equal(r.from_plugin_version, null);
@@ -103,4 +103,24 @@ test('writeUpgradeReport: a symlinked .foundry, or a symlinked report leaf, is r
   fs.symlinkSync(target, path.join(root2, REPORT_REL));
   assert.equal(writeUpgradeReport(root2, { schema_version: 1 }), null);
   assert.equal(fs.readFileSync(target, 'utf-8'), '{"keep":true}\n');
+});
+
+// ER #222 (v1.17.1): the report's `from` is THIS workspace's installed version, never the
+// marketplace clone's advertised one.
+test('installedVersionBefore: project-scope record for this cwd wins; user scope is the fallback; nothing → null; unreadable → null', () => {
+  const reg = (records) => ({ ok: true, reason: null, doc: { version: 2, plugins: { 'foundry@agentic-foundry': records } } });
+  const here = path.resolve('/w/ws');
+  assert.equal(installedVersionBefore(reg([
+    { installPath: '/c/1.15.0', version: '1.15.0' },
+    { installPath: '/c/1.16.1', version: '1.16.1', projectPath: here },
+    { installPath: '/c/1.17.0', version: '1.17.0', projectPath: '/w/other' },
+  ]), 'foundry@agentic-foundry', '/w/ws/'), '1.16.1');
+  assert.equal(installedVersionBefore(reg([
+    { installPath: '/c/1.15.0', version: '1.15.0' },
+    { installPath: '/c/1.17.0', version: '1.17.0', projectPath: '/w/other' },
+  ]), 'foundry@agentic-foundry', here), '1.15.0');
+  assert.equal(installedVersionBefore(reg([{ installPath: '/c/x', version: '1.17.0', projectPath: '/w/other' }]), 'foundry@agentic-foundry', here), null);
+  assert.equal(installedVersionBefore(reg([]), 'foundry@agentic-foundry', here), null);
+  assert.equal(installedVersionBefore({ ok: false, reason: 'absent', doc: null }, 'foundry@agentic-foundry', here), null);
+  assert.equal(installedVersionBefore(reg([{ version: 'not a version', projectPath: here }]), 'foundry@agentic-foundry', here), null);
 });
