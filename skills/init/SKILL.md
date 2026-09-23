@@ -206,10 +206,14 @@ standalone plugin repo) so the gates are live + fail-closed.
    `DOCTOR-GREEN`.
 
    <!-- foundry:init-verify-only:statusline v1 -->
-   VERIFY-ONLY. init does not write the `statusLine`/`subagentStatusLine` wiring — no shipped
-   writer owns this artifact today ([[feat-foundry-bootstrap-cli]] AC-BCL-4(c) forbids the
-   pre-session bootstrap from emitting it, at any nesting level, and states it is not relocated
-   to another writer). This step only reads and reports.
+   VERIFY-ONLY. init does not write the `statusLine`/`subagentStatusLine` wiring. The shipped
+   writer (since v1.17.0, statusline-wiring) is **`npx update-agentic-workspace`** — and
+   `create-agentic-workspace --existing` on a workspace that already carries `.claude/settings.json`
+   — which installs the two wrappers under `.claude/hooks/` (framework-owned: converged when they
+   carry the marker, kept when they do not) and adds the two keys only when absent. The pre-session
+   bootstrap still never emits them ([[feat-foundry-bootstrap-cli]] AC-BCL-4(c) closes the
+   pre-session key set; that Block stands). This step only reads and reports; the doctor's
+   `statusline:` advisory names the first missing piece.
 
    - **Present** — read `.claude/settings.json`. A local `.claude/hooks/foundry-statusline.sh`
      carrying the `feat-foundry-init-statusline-wrapper` marker, with a `statusLine.command`

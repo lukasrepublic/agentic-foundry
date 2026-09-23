@@ -69,6 +69,17 @@ Remedies:
   from then on, never reconciled), or copy the plugin's `context/permissions-template.yaml`. See
   [how-to/standing-grants.md](how-to/standing-grants.md) for writing and compiling a grant.
 
+## The token bar (`tok ██████░░░░ 69%`) is missing from the status line
+
+The status line is rendered by the plugin's `scripts/foundry-statusline.sh`, reached through a thin
+wrapper at `.claude/hooks/foundry-statusline.sh` and a `statusLine` key in `.claude/settings.json`.
+Run `/foundry:doctor` and read its `statusline:` advisory line: it names the FIRST missing piece —
+no `statusLine` key, wrapper absent, wrapper without the framework marker (yours, never touched),
+or no renderer resolvable from this machine (with the config root it looked under). The first two
+are fixed by `npx update-agentic-workspace`, which wires both on a trusted workspace and refreshes a
+framework-owned wrapper. Even with no renderer the wrapper now prints `⌂ <dir>:<branch> · tok <bar> NN%`
+itself, so a plainer line means "renderer not found", never "nothing configured".
+
 ## `foundry doctor` reports `control-plane` RED
 
 You started the session in the wrong place, or `.claude/foundry-project.json` has a stale

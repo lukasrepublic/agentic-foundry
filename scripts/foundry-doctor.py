@@ -548,6 +548,67 @@ def check_agent_teams_flag(plugin_root=None, project_dir=None):
         return ADVISORY, _sanitize_detail(f"unknown (probe error: {type(e).__name__}: {e})")
 
 
+_STATUSLINE_MARKER = "feat-foundry-init-statusline-wrapper"
+_STATUSLINE_WRAPPER_REL = os.path.join(".claude", "hooks", "foundry-statusline.sh")
+
+
+def _statusline_renderer_path(config_root):
+    """The renderer the wrapper would resolve from THIS machine: installed_plugins.json's
+    installPath first, then the cache newest by version segment. Returns (path, version) or
+    (None, None). Mirrors cli/templates/foundry-statusline.sh's resolution order (AC-SLW-3)."""
+    ip = os.path.join(config_root, "plugins", "installed_plugins.json")
+    try:
+        with open(ip, encoding="utf-8") as fh:
+            doc = json.load(fh)
+        entry = (doc.get("plugins") or {}).get("foundry@agentic-foundry") or doc.get("foundry@agentic-foundry")
+        if isinstance(entry, list):
+            entry = entry[0] if entry else None
+        install = entry.get("installPath") if isinstance(entry, dict) else None
+        if install and os.path.isfile(os.path.join(install, "scripts", "foundry-statusline.sh")):
+            return os.path.join(install, "scripts", "foundry-statusline.sh"), os.path.basename(install.rstrip("/"))
+    except Exception:  # noqa: BLE001 -- absent/unreadable registry is simply "not this path"
+        pass
+    import glob
+    best = None
+    for cand in glob.glob(os.path.join(config_root, "plugins", "cache", "*", "foundry", "*", "scripts", "foundry-statusline.sh")):
+        ver = os.path.basename(os.path.dirname(os.path.dirname(cand)))
+        key = tuple(int(p) if p.isdigit() else p for p in ver.replace("-", ".").split("."))
+        if best is None or key > best[0]:
+            best = (key, cand, ver)
+    return (best[1], best[2]) if best else (None, None)
+
+
+def check_statusline(plugin_root=None, project_dir=None):
+    """statusline-wiring (v1.17.0, AC-SLW-4): `statusline: wired (renderer <version>)` when the
+    settings key, the framework wrapper and a renderer resolvable from this machine are all present;
+    otherwise the FIRST missing piece, named. NEVER RED — the status line is fail-open by design and
+    absence is a supported state; this line exists so an absent token bar is explained, not guessed."""
+    pdir = project_dir or _project_dir()
+    try:
+        settings_path = os.path.join(pdir, ".claude", "settings.json")
+        key = None
+        try:
+            with open(settings_path, encoding="utf-8") as fh:
+                key = (json.load(fh) or {}).get("statusLine")
+        except Exception:  # noqa: BLE001
+            key = None
+        if not key:
+            return ADVISORY, "no `statusLine` key in .claude/settings.json — run `npx update-agentic-workspace` (it wires it)"
+        wrapper = os.path.join(pdir, _STATUSLINE_WRAPPER_REL)
+        if not os.path.isfile(wrapper):
+            return ADVISORY, f"wrapper absent at {_STATUSLINE_WRAPPER_REL} — run `npx update-agentic-workspace`"
+        with open(wrapper, encoding="utf-8", errors="replace") as fh:
+            if _STATUSLINE_MARKER not in fh.read():
+                return ADVISORY, f"{_STATUSLINE_WRAPPER_REL} carries no framework marker (operator-owned; not reconciled)"
+        config_root = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+        renderer, ver = _statusline_renderer_path(config_root)
+        if renderer is None:
+            return ADVISORY, _sanitize_detail(f"no renderer resolvable from this machine (looked under {config_root}/plugins) — the wrapper falls back to an inline bar")
+        return True, f"wired (renderer {ver})"
+    except Exception as e:  # noqa: BLE001 -- NEVER-RED contract
+        return ADVISORY, _sanitize_detail(f"unknown (probe error: {type(e).__name__}: {e})")
+
+
 # --------------------------------------------------------------------------------------- #
 # main
 # --------------------------------------------------------------------------------------- #
@@ -640,6 +701,11 @@ def main():
     # (docs/QUICKSTART.md is outside this atom's allowed_paths).
     br_ok, br_detail = check_branches_advisory(project_dir=project_dir)
     _render_row("branches", br_ok, br_detail)
+
+    # `statusline` (AC-SLW-4) is rendered the SAME way, for the SAME reason: an advisory line
+    # outside the `_run("...")` probe count, never RED — it explains an absent token bar.
+    sl_ok, sl_detail = check_statusline(project_dir=project_dir)
+    _render_row("statusline", sl_ok, sl_detail)
 
     header = "foundry doctor" + (" (session-start advisory)" if args.session_start else "")
     body = header + "\n" + "\n".join(out_lines)
