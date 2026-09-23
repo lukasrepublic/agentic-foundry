@@ -21,9 +21,11 @@ The output names the failing probe. The six probes and their usual causes:
 That's expected, not a bug. `/foundry:init` only **verifies and reports** on the
 `statusLine`/`subagentStatusLine` wiring, the native Bash sandbox enable, the `gh` jail's
 authentication, and the `GH_CONFIG_DIR` session-env carrier — it never writes any of them.
-There is **no shipped writer** for any of those four artifacts today (a plugin cannot edit its
-own session's confinement), so init's job there is to name what it found and, when nothing is
-wired, point at the by-hand remedy. See
+The status-line wiring has a shipped writer since v1.17.0: `npx update-agentic-workspace` (and
+`create-agentic-workspace --existing --reconcile-floor` on a trusted workspace) installs the
+wrappers and adds the keys when absent. The other three still have **no shipped writer** (a
+plugin cannot edit its own session's confinement), so init's job there is to name what it found
+and, when nothing is wired, point at the by-hand remedy. See
 [QUICKSTART.md → Before your first session](QUICKSTART.md#before-your-first-session)
 for the exact commands and the two `gh` jail caveats (plaintext token at rest; a local logout does
 not revoke server-side).
@@ -68,6 +70,17 @@ Remedies:
   the remedy: `npx update-agentic-workspace` seeds an empty, commented starter (operator-owned
   from then on, never reconciled), or copy the plugin's `context/permissions-template.yaml`. See
   [how-to/standing-grants.md](how-to/standing-grants.md) for writing and compiling a grant.
+
+## The token bar (`tok ██████░░░░ 69%`) is missing from the status line
+
+The status line is rendered by the plugin's `scripts/foundry-statusline.sh`, reached through a thin
+wrapper at `.claude/hooks/foundry-statusline.sh` and a `statusLine` key in `.claude/settings.json`.
+Run `/foundry:doctor` and read its `statusline:` advisory line: it names the FIRST missing piece —
+no `statusLine` key, wrapper absent, wrapper without the framework marker (yours, never touched),
+or no renderer resolvable from this machine (with the config root it looked under). The first two
+are fixed by `npx update-agentic-workspace`, which wires both on a trusted workspace and refreshes a
+framework-owned wrapper. Even with no renderer the wrapper now prints `⌂ <dir>:<branch> · tok <bar> NN%`
+itself, so a plainer line means "renderer not found", never "nothing configured".
 
 ## `foundry doctor` reports `control-plane` RED
 

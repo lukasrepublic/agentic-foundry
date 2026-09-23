@@ -17,6 +17,7 @@ import {
 import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from './gitignoreReconcile.mjs';
 import { planAmendmentsBackfill, applyAmendmentsBackfill, renderAmendmentsRow } from './amendmentsBackfill.mjs';
 import { buildUpgradeReport, writeUpgradeReport, NEXT_LINE } from './upgradeReport.mjs';
+import { planStatuslineWiring, applyStatuslineWiring, renderStatuslineRows, statuslineChanged } from './statuslineWiring.mjs';
 import {
   ALLOWED_CLAUDE_SUBCOMMANDS, resolveClaudeOnPath, runClaude,
   defaultScopes, snapshotScopes, classifyMigration, migrationActions, migrateScope,
@@ -213,6 +214,8 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     // re-plans fresh from disk before it writes.
     const previewAmendmentsRow = renderAmendmentsRow(planAmendmentsBackfill({ physicalRoot }));
     if (previewAmendmentsRow) previewLines.push(previewAmendmentsRow);
+    // statusline-wiring (AC-SLW-1/-2): PREVIEW-ONLY rows; Phase 4 re-plans fresh from disk.
+    previewLines.push(...renderStatuslineRows(planStatuslineWiring({ physicalRoot, templatesDir })));
     print(previewLines.join('\n'));
 
     const env = { ...spawnEnv, CLAUDE_CONFIG_DIR: configDir };
@@ -314,9 +317,16 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
       freshGitignorePlan && (freshGitignorePlan.action === 'converged' || freshGitignorePlan.action === 'appended'),
     );
     const anyAmendmentsBackfilled = amendmentsPlan.written > 0;
+    // statusline-wiring (v1.17.0, AC-SLW-1/-2): the updater is the post-trust writer of the
+    // wrapper files and the two settings keys (added only when absent). Planned fresh from disk
+    // here, after the floor write above, so the settings read is the current one.
+    const statuslinePlan = planStatuslineWiring({ physicalRoot, templatesDir });
+    applyStatuslineWiring(statuslinePlan);
+    for (const row of renderStatuslineRows(statuslinePlan)) print(row);
     phases.push({
       name: 'reinitialization',
-      verdict: anyCreated || anyFloorAdded || anyGitignoreChanged || anyAmendmentsBackfilled ? 'changed' : 'already current',
+      verdict: anyCreated || anyFloorAdded || anyGitignoreChanged || anyAmendmentsBackfilled
+        || statuslineChanged(statuslinePlan) ? 'changed' : 'already current',
     });
 
     print('');

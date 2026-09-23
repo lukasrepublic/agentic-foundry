@@ -113,7 +113,9 @@ class TestStatuslineWrapperVersionResolution:
             os.makedirs(d, exist_ok=True)
             script = os.path.join(d, "foundry-statusline.sh")
             with open(script, "w", encoding="utf-8") as f:
-                f.write("#!/bin/sh\necho RENDERED-%s\n" % v)
+                # the wrapper runs only a file carrying the shipped renderer's own header line
+                # (statusline-wiring v1.17.0, security review Risk 3)
+                f.write("#!/bin/sh\n# foundry-statusline.sh — test fixture\necho RENDERED-%s\n" % v)
             os.chmod(script, os.stat(script).st_mode | stat.S_IXUSR)
 
     def test_selects_highest_version_by_path_segment_not_lexical_sort(self, tmp_path, monkeypatch):
@@ -125,13 +127,17 @@ class TestStatuslineWrapperVersionResolution:
         assert proc.returncode == 0
         assert "RENDERED-0.11.1" in proc.stdout
 
-    def test_fails_open_with_no_cache_match(self, tmp_path, monkeypatch):
+    def test_fails_open_with_no_cache_match_to_the_inline_bar(self, tmp_path, monkeypatch):
+        """statusline-wiring v1.17.0 (AC-SLW-3): a miss is no longer silent — the wrapper renders
+        the location itself (`⌂ <dir>[:<branch>]`, plus the tok bar when the payload carries a
+        percentage), still exit 0."""
         home = str(tmp_path)
         monkeypatch.setenv("HOME", home)
         proc = subprocess.run(["bash", WRAPPER], input="{}", capture_output=True, text=True,
-                              env=dict(os.environ, HOME=home))
+                              env=dict(os.environ, HOME=home, CLAUDE_PROJECT_DIR=home), cwd=home)
         assert proc.returncode == 0
-        assert proc.stdout == ""
+        assert proc.stdout.startswith("⌂ "), proc.stdout
+        assert "RENDERED" not in proc.stdout
 
 
 # ==================================================== statusline-wiring-live.py ==== #
