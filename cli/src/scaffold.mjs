@@ -13,6 +13,11 @@ export const TEMPLATE_ENTRIES = Object.freeze([
   { template: 'specs-features-README.md', target: 'specs/features/README.md' },
   { template: 'specs-lifecycle-README.md', target: 'specs/lifecycle/README.md' },
   { template: 'foundry-README.md', target: '.foundry/README.md' },
+  // permissions-scaffold (ER #215, AC-PSC-2): a SEED, not a managed file. Written once when
+  // absent; once present it is operator-owned — never read for comparison, never reported
+  // drifted, never written again (reconcile.mjs reports it `kept`). The other entries are
+  // framework-owned text an adopter is not expected to edit; this one is the opposite.
+  { template: 'permissions.yaml.tmpl', target: '.foundry/permissions.yaml', seed: true },
 ]);
 
 /** Render a template's raw text with the CLAUDE.md substitutions (the only templated file). */
@@ -46,7 +51,10 @@ export function buildManagedFiles({
     }
     const raw = fs.readFileSync(path.join(templatesDir, entry.template), 'utf-8');
     const rendered = renderTemplate(entry.target, raw, { projectName, stageMode });
-    files.push({ relPath: entry.target, absPath: joined, bytes: Buffer.from(rendered, 'utf-8') });
+    files.push({
+      relPath: entry.target, absPath: joined, bytes: Buffer.from(rendered, 'utf-8'),
+      ...(entry.seed ? { seed: true } : {}),
+    });
   }
 
   const settingsJoined = confinedJoin(physicalRoot, '.claude/settings.json');
@@ -68,4 +76,5 @@ export const DECLARED_PATH_SET = Object.freeze([
   'specs/features/README.md',
   'specs/lifecycle/README.md',
   '.foundry/README.md',
+  '.foundry/permissions.yaml',
 ]);

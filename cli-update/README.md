@@ -64,7 +64,9 @@ and want it to stay that way, disable it again after the update, or migrate that
    the empty section `/foundry:amend` requires (one row: `[amendments] backfilled N of M specs …`).
    The section sits outside the hashed normative region, so no `spec_sha256` and no authorization
    moves; a spec that already has the section, has no normative region, or is a symlink is never
-   written.
+   written. `.foundry/permissions.yaml` is **seeded** here when absent — an empty, commented
+   starter for standing grants (`docs/how-to/standing-grants.md`) — and reported `[kept]` on
+   every later run: operator-owned, never compared, never overwritten.
 
 Every run previews every `claude` invocation and every path it will touch **before** the first one
 happens, and ends with a per-phase summary (`changed` / `already current` / `skipped: <reason>`).

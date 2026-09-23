@@ -12,6 +12,11 @@ export function planManagedFiles(managedFiles) {
     const { present, equal, notRegular } = fileBytesEqual(f.absPath, f.bytes);
     let action;
     if (!present) action = 'create';
+    // permissions-scaffold (ER #215, AC-PSC-2): a SEED entry is written once when absent and is
+    // operator-owned from then on — present means `kept`, whatever its bytes: never compared,
+    // never `drifted`, never written. Only `drifted` feeds exitCodeForPlan, so a seed never
+    // turns a converged run into exit 2.
+    else if (f.seed) action = 'kept';
     else if (notRegular) action = 'drifted';
     else action = equal ? 'unchanged' : 'drifted';
     return { ...f, action };

@@ -682,7 +682,8 @@ def test_doctor_permissions_policy_reports_ok_with_zero_atoms(tmp_path, monkeypa
     assert ok is True
     # AC-CPD-4: the R1 drift state rides the SAME line -- no .foundry/permissions.yaml here, so
     # the policy half reads `absent`, exactly like the pre-existing R1 probe did on its own line.
-    assert detail == "preflight ok (0 atoms); policy absent"
+    # permissions-scaffold (ER #215, AC-PSC-4): an absent policy names its remedy in the same line
+    assert detail.startswith("preflight ok (0 atoms); policy absent — seed it: `npx update-agentic-workspace`"), detail
 
 
 def test_doctor_permissions_policy_counts_missing_rules_from_an_active_release(tmp_path, monkeypatch):
@@ -706,7 +707,7 @@ def test_doctor_permissions_policy_counts_missing_rules_from_an_active_release(t
         )
     ok, detail = doctor.check_permissions_policy(plugin_root=REPO_ROOT, project_dir=project_dir)
     assert ok is doctor.ADVISORY
-    assert detail == "preflight: 1 missing rule(s); policy absent"
+    assert detail.startswith("preflight: 1 missing rule(s); policy absent — seed it: `npx update-agentic-workspace`"), detail
 
 
 def test_doctor_permissions_policy_keeps_the_r1_drift_state_on_the_same_line(tmp_path, monkeypatch):

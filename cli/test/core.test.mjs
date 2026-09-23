@@ -161,7 +161,7 @@ test('AC-BCL-8: classifyDrift emits exactly the AC-DPF-8 vocabulary, never anoth
   assert.deepEqual([...everySeen].sort(), [...DRIFT_CLASSES].sort());
 });
 
-test('AC-BCL-6: the greenfield scaffold declares exactly the seven closed paths', () => {
+test('AC-BCL-6: the greenfield scaffold declares exactly the closed path set (eight since the permissions seed, ER #215)', () => {
   const dir = tmpdir('bcl-scaffold-');
   const settingsBytes = Buffer.from('{}');
   const files = buildManagedFiles({

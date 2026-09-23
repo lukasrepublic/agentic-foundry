@@ -222,6 +222,7 @@ DECLARED_PATH_SET = {
     "specs/features/README.md",
     "specs/lifecycle/README.md",
     ".foundry/README.md",
+    ".foundry/permissions.yaml",  # permissions-scaffold (ER #215): a SEED — created once, then `kept`
 }
 
 FORBIDDEN_SETTINGS_KEYS = {
@@ -1313,7 +1314,9 @@ def test_a_second_run_writes_nothing(tmp_path):
     after = snapshot_tree(target)
     assert before == after
     for rel in DECLARED_PATH_SET:
-        assert f"[unchanged] {rel}" in proc2.stdout
+        # the permissions seed is operator-owned once present: `kept`, never compared (ER #215)
+        expected = "[kept]" if rel == ".foundry/permissions.yaml" else "[unchanged]"
+        assert f"{expected} {rel}" in proc2.stdout
 
 
 def test_an_edited_managed_file_is_reported_not_overwritten(tmp_path):
