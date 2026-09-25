@@ -292,3 +292,30 @@ class TestNonconformingAcIdWarning:
         for token in shapes:
             text = _fenced(token)
             assert prep.nonconforming_ac_id_tokens(text) == [token], token
+
+
+def test_size_ceiling_excludes_the_amendments_ledger(tmp_path):
+    """ER #228 (v1.17.2): the `## Amendments` table is bookkeeping outside the normative region; the
+    updater's backfill adds it to every spec and must never tip a spec over the word ceiling."""
+    body = "# feat-big\n\n<!-- normative -->\n- **AC-BIG-1**: " + ("word " * 7990) + "\n<!-- /normative -->\n"
+    ledger = ("\n## Amendments\n\n| date | what changed | why reality required it | auth_seq |\n"
+              "|---|---|---|---|\n| 2026-09-24 | a b c d e f | g h i j k l | 1 |\n")
+    ac, words_plain = prep.spec_size_metrics(body)
+    ac2, words_with = prep.spec_size_metrics(body + ledger)
+    assert ac == ac2 == 1
+    assert words_with == words_plain, "the ledger must not count"
+    assert words_plain <= 8000 < len((body + ledger).split()), "the fixture sits at the ceiling only because of the ledger"
+    # the section is detected only AFTER the last normative close, outside fences — a fenced example is prose
+    fenced = body + "\n## Notes\n\n```\n## Amendments\n| x |\n```\n"
+    assert prep.spec_size_metrics(fenced)[1] == len(fenced.split())
+    # a later heading ends the section
+    tail = body + ledger + "\n## Notes\n\nfour five six\n"
+    assert prep.spec_size_metrics(tail)[1] == words_plain + 5
+    # end to end through the lint: the same spec passes with the ledger and fails once real prose crosses the line
+    spec = tmp_path / "feat-big.md"
+    spec.write_text(body + ledger, encoding="utf-8")
+    ok, findings = sl.lint_spec(str(spec), project_dir=str(tmp_path))
+    assert ok, findings
+    spec.write_text(body + ledger + "\n## Notes\n\n" + ("more " * 20), encoding="utf-8")
+    ok, findings = sl.lint_spec(str(spec), project_dir=str(tmp_path))
+    assert not ok and any("OVERSIZE" in f for f in findings)

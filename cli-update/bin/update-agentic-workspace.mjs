@@ -12,6 +12,7 @@
 // accepts the workspace trust dialog and never pre-grants anything: every invocation is drawn from
 // one frozen, closed allowlist (ALLOWED_CLAUDE_SUBCOMMANDS) of non-interactive `plugin` subcommands,
 // none of which can start a session or reach a trust dialog.
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
@@ -37,7 +38,13 @@ const pkgDir = path.dirname(
   fileURLToPath(import.meta.resolve('create-agentic-workspace/package.json')),
 );
 
+// This wrapper's OWN version, for the run's first line and the report (ER #228).
+const updaterVersion = JSON.parse(
+  fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf-8'),
+).version;
+
 const { exitCode } = await runUpdate(rawArgv, {
+  updaterVersion,
   cwd: process.cwd(),
   configDir: process.env.CLAUDE_CONFIG_DIR || path.join(process.env.HOME || os.homedir(), '.claude'),
   homeDir: process.env.HOME || os.homedir(),

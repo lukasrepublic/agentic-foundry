@@ -117,11 +117,36 @@ def _normative_region(spec_text):
     return "".join(parts) if parts else spec_text
 
 
+_AMENDMENTS_HEADING = "## Amendments"
+_NORMATIVE_CLOSE_MARK = "<!-- /normative -->"
+_FENCE_RE = re.compile(r"```[\s\S]*?```")
+
+
+def strip_amendments_section(spec_text):
+    """The spec text without its `## Amendments` section — the bookkeeping table `/foundry:amend`
+    appends after the LAST normative close marker (outside any fenced block), up to the next `## `
+    heading or EOF. ER #228 (v1.17.2): the size ceiling must not count it — the updater's backfill
+    adds ~16 words to every spec and tipped near-ceiling specs over a gate they had no other reason
+    to fail. Detection mirrors foundry-amend.py's amendments_section_ok so both agree on which
+    heading is THE section. Text without the section is returned unchanged."""
+    close = spec_text.rfind(_NORMATIVE_CLOSE_MARK)
+    if close == -1:
+        return spec_text
+    masked = _FENCE_RE.sub(lambda m: "\0" * len(m.group(0)), spec_text)
+    start = masked.find(_AMENDMENTS_HEADING, close)
+    if start == -1:
+        return spec_text
+    nxt = re.compile(r"^## ", re.M).search(masked, start + len(_AMENDMENTS_HEADING))
+    end = nxt.start() if nxt else len(spec_text)
+    return spec_text[:start] + spec_text[end:]
+
+
 def spec_size_metrics(spec_text):
-    """(ac_count, word_count): distinct normative AC-IDs, and total spec word count (the prose each
-    critic must review). Pure, host-side, no LLM — the machine-detectable pre-run size signal."""
+    """(ac_count, word_count): distinct normative AC-IDs, and the spec's word count EXCLUDING the
+    `## Amendments` section (the prose each critic must review; the amendments table is a ledger,
+    not prose — ER #228). Pure, host-side, no LLM — the machine-detectable pre-run size signal."""
     ac_count = len(set(_SIZE_AC_RE.findall(_normative_region(spec_text))))
-    word_count = len(spec_text.split())
+    word_count = len(strip_amendments_section(spec_text).split())
     return ac_count, word_count
 
 

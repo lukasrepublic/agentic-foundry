@@ -388,6 +388,8 @@ test('Phase 4 backfills the Amendments section on a pre-amend spec, then settles
   const { res, text } = await invokeUpdate({ cwd, configDir });
   assert.notEqual(res.exitCode, 1, res.output);
   assert.match(text, /\[amendments] backfilled 1 of 3 specs \(0 already present, 2 skipped: no normative region\)/, text);
+  // ER #228 (v1.17.2): the run says WHICH updater ran, first; the report carries the denominator
+  assert.match(text.split('\n')[0], /^update-agentic-workspace (unknown|\d+\.\d+\.\d+) \(core create-agentic-workspace \d+\.\d+\.\d+, built for plugin \d+\.\d+\.\d+\)$/, text.split('\n')[0]);
   assert.match(text, /\[reinitialization] changed/, text);
   const after = fs.readFileSync(specPath, 'utf-8');
   assert.ok(after.startsWith(normative), 'the spec body above the section was not preserved');
@@ -412,5 +414,9 @@ test('every completed run writes .foundry/upgrade-report.json and ends with the 
   assert.equal(report.to_plugin_version, PINS.plugin_version);
   assert.ok(Array.isArray(report.phases) && report.phases.some((p) => p.name === 'reinitialization'));
   assert.ok(['created', 'kept'].includes(report.permissions_policy), report.permissions_policy);
-  assert.deepEqual(Object.keys(report.amendments).sort(), ['backfilled', 'present', 'skipped']);
+  assert.deepEqual(Object.keys(report.amendments).sort(), ['backfilled', 'present', 'skipped', 'total']);
+  assert.equal(report.amendments.backfilled + report.amendments.present + report.amendments.skipped, report.amendments.total);
+  // ER #228: the report names the updater's core and the plugin it was built for
+  assert.match(report.core_version, /^\d+\.\d+\.\d+$/);
+  assert.equal(report.updater_plugin_version, report.to_plugin_version);
 });

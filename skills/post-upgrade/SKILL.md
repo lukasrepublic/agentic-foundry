@@ -17,7 +17,12 @@ matches the release that was just installed instead of being a prompt someone wr
    updater's last run printed `[refused] .foundry/upgrade-report.json`) → stop the same way: the
    updater refuses to write through a link, so whatever sits there is not its report. **`to_plugin_version`
    differs from the installed plugin** (`claude plugin list`, or the doctor's header) → stop the same
-   way; the report is stale.
+   way; the report is stale. **`updater_version` absent, or `updater_plugin_version` differs from
+   `to_plugin_version`** → stop: *"the report was written by an updater built for another plugin
+   version (a stale npx cache) — run `npx update-agentic-workspace@latest` and come back."* An older
+   updater walks less than this release expects (ER #228: it never opened the delivery specs), so its
+   report cannot be trusted to say what was done. Check the walk's arithmetic too:
+   `amendments.backfilled + present + skipped` must equal `amendments.total`.
 2. Run `/foundry:doctor` once and keep its output; the last step compares against it.
 
 ## The inventory (step 2 of the procedure)
