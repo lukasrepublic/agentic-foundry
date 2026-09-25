@@ -24,6 +24,7 @@
     "src",
     "templates",
     "permission-floor.json",
+    "retired-artifacts.json",
     "package.json",
     "README.md"
   ],

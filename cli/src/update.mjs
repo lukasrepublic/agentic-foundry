@@ -7,7 +7,7 @@
 // machinery run.mjs's create path already uses (cli/src/reconcile.mjs, cli/src/floorReconcile.mjs).
 import fs from 'node:fs';
 import path from 'node:path';
-import { RefusalError, physicalResolve } from './util.mjs';
+import { RefusalError, physicalResolve, confinedJoin } from './util.mjs';
 import { loadMap, buildSettings } from './permissionFloor.mjs';
 import { buildManagedFiles } from './scaffold.mjs';
 import { planManagedFiles, applyPlan } from './reconcile.mjs';
@@ -19,6 +19,8 @@ import { planAmendmentsBackfill, applyAmendmentsBackfill, renderAmendmentsRow } 
 import { buildUpgradeReport, writeUpgradeReport, installedVersionBefore, versionOrNull, NEXT_LINE } from './upgradeReport.mjs';
 import { planStatuslineWiring, applyStatuslineWiring, renderStatuslineRows, statuslineChanged } from './statuslineWiring.mjs';
 import { policyPresent, missingSelfGuardDeny, applySelfGuardDeny, renderSelfGuardRow, selfGuardShapeOk } from './selfGuardDeny.mjs';
+import { loadRetiredCatalogue, planRetiredArtifacts, applyRetiredArtifacts, renderRetiredArtifactRows } from './retiredArtifacts.mjs';
+import { planRetirements, applyRetirements, askRootKeys } from './floorReconcile.mjs';
 import {
   ALLOWED_CLAUDE_SUBCOMMANDS, resolveClaudeOnPath, runClaude,
   defaultScopes, snapshotScopes, classifyMigration, migrationActions, migrateScope,
@@ -48,6 +50,29 @@ export function parseUpdateArgv(argv) {
  * itself defines (marketplace-refresh, plugin-update, reinitialization); the full orchestrator
  * below may print a fourth `cleanup` row once the sibling atom's phase is wired in, which is a
  * property of the RUNTIME composition, not of this formatter's own contract. */
+/** hotfix-v1.17.4 (ER #236): the retirement-only plan over `.claude/settings.local.json`, which the
+ * tracked-file reconcile never reads. Read-only; `{ rel, abs, plan, error }` — `plan` null when the
+ * file is absent, not a regular file, or resolves outside the root; `error` set when it exists but
+ * does not parse (reported, never guessed). A pinned `ask` row is retired only when the TRACKED file
+ * carries the replacing wildcard row (`askCoveredBy`; PR #237 security review Risk 3). */
+function planLocalRetirement({ physicalRoot, map, trackedSettingsObj }) {
+  const rel = '.claude/settings.local.json';
+  const abs = confinedJoin(physicalRoot, rel);
+  if (!abs) return { rel, abs: null, plan: null, error: 'resolves outside the workspace' };
+  try {
+    if (!fs.lstatSync(abs).isFile()) return { rel, abs, plan: null, error: 'not a regular file' };
+  } catch (e) {
+    return { rel, abs, plan: null, error: e && e.code === 'ENOENT' ? null : e.message };
+  }
+  try {
+    const settingsObj = readTarget(abs);
+    const askCoveredBy = trackedSettingsObj ? askRootKeys(trackedSettingsObj, map) : new Set();
+    return { rel, abs, settingsObj, plan: planRetirements({ settingsObj, map, askCoveredBy }), error: null };
+  } catch (e) {
+    return { rel, abs, plan: null, error: e.message };
+  }
+}
+
 export function renderSummary(phases) {
   const lines = ['Summary:'];
   for (const p of phases) {
@@ -230,6 +255,18 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     if (previewAmendmentsRow) previewLines.push(previewAmendmentsRow);
     // statusline-wiring (AC-SLW-1/-2): PREVIEW-ONLY rows; Phase 4 re-plans fresh from disk.
     previewLines.push(...renderStatuslineRows(planStatuslineWiring({ physicalRoot, templatesDir })));
+    // retired-artifacts (hotfix-v1.17.4, ER #236): PREVIEW-ONLY rows; Phase 4 re-plans fresh from disk.
+    const retiredCatalogue = loadRetiredCatalogue(pkgDir);
+    previewLines.push(...renderRetiredArtifactRows(planRetiredArtifacts({ physicalRoot, catalogue: retiredCatalogue }), { cleanup: flags.cleanup }));
+    // settings.local.json retirement (hotfix-v1.17.4): PREVIEW-ONLY row (PR #237 review Risk 2 —
+    // every Phase 4 write is announced before the first write happens); Phase 4 re-plans fresh.
+    {
+      const lp = planLocalRetirement({
+        physicalRoot, map, trackedSettingsObj: floorTarget.present ? readTarget(floorTarget.path) : null,
+      });
+      if (lp.plan && lp.plan.total > 0) previewLines.push(`  [permission-floor] ${lp.rel}: would retire allow=${lp.plan.retirements.allow.length}, ask=${lp.plan.retirements.ask.length} (never adds)`);
+      else if (lp.error) previewLines.push(`  [permission-floor] ${lp.rel}: would not be reconciled (${lp.error})`);
+    }
     print(previewLines.join('\n'));
 
     const env = { ...spawnEnv, CLAUDE_CONFIG_DIR: configDir };
@@ -348,10 +385,40 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     const statuslinePlan = planStatuslineWiring({ physicalRoot, templatesDir });
     applyStatuslineWiring(statuslinePlan);
     for (const row of renderStatuslineRows(statuslinePlan)) print(row);
+    // retired-artifacts (hotfix-v1.17.4, ER #236): re-planned FRESH from disk; reported every run,
+    // removed only under --cleanup, only catalogued paths of the catalogued kind, never a hook a
+    // settings hook command still names.
+    const retiredPlan = planRetiredArtifacts({ physicalRoot, catalogue: retiredCatalogue });
+    let retiredRemoved = 0;
+    if (flags.cleanup && retiredPlan.present > 0) retiredRemoved = applyRetiredArtifacts(retiredPlan, physicalRoot);
+    for (const row of renderRetiredArtifactRows(retiredPlan, { cleanup: flags.cleanup })) print(row);
+
+    // settings.local.json (hotfix-v1.17.4): the tracked-file reconcile never reads it, so a
+    // version-pinned floor row an old init left there survived every upgrade. Only RETIREMENT is
+    // applied here (never additions — the local file is the operator's), with the same planner and
+    // the same never-clobber, mode-preserving write as the tracked file. The tracked file is re-read
+    // AFTER its own write above, so an `ask` row is retired only when the wildcard row that replaces
+    // it is really there (Risk 3); confined like every other path (Risk 4).
+    let localRetired = 0;
+    {
+      const lp = planLocalRetirement({
+        physicalRoot, map,
+        trackedSettingsObj: freshFloorTarget.present ? readTarget(freshFloorTarget.path) : null,
+      });
+      if (lp.plan && lp.plan.total > 0) {
+        writeTargetAtomically(lp.abs, applyRetirements(lp.settingsObj, lp.plan));
+        localRetired = lp.plan.total;
+        for (const tier of ['allow', 'ask']) for (const r of lp.plan.retirements[tier]) print(`  [retired] ${lp.rel}: ${r}`);
+        print(`  [permission-floor] ${lp.rel}: retired ${localRetired} version-pinned/gone row(s)`);
+      } else if (lp.error) {
+        print(`  [permission-floor] ${lp.rel}: not reconciled (${lp.error})`);
+      }
+    }
+
     phases.push({
       name: 'reinitialization',
       verdict: anyCreated || anyFloorAdded || anyGitignoreChanged || anyAmendmentsBackfilled
-        || statuslineChanged(statuslinePlan) ? 'changed' : 'already current',
+        || statuslineChanged(statuslinePlan) || retiredRemoved > 0 || localRetired > 0 ? 'changed' : 'already current',
     });
 
     print('');
@@ -363,6 +430,8 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     const report = buildUpgradeReport({
       installedBefore, afterEntry, toPluginVersion: pins.plugin_version, phases, filePlan, amendmentsPlan,
       updaterVersion, coreVersion: corePkg.version, updaterPluginVersion: pins.plugin_version,
+      retiredArtifacts: { present: retiredPlan.rows.filter((r) => r.state === 'stale').map((r) => r.relPath), removed: retiredRemoved, refused: retiredPlan.refused },
+      localRetired,
     });
     const reportPath = writeUpgradeReport(physicalRoot, report);
     print('');

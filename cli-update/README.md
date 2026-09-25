@@ -66,7 +66,21 @@ and want it to stay that way, disable it again after the update, or migrate that
    moves; a spec that already has the section, has no normative region, or is a symlink is never
    written. `.foundry/permissions.yaml` is **seeded** here when absent — an empty, commented
    starter for standing grants (`docs/how-to/standing-grants.md`) — and reported `[kept]` on
-   every later run: operator-owned, never compared, never overwritten.
+   every later run: operator-owned, never compared, never overwritten. The policy file's two
+   self-guard deny rules are converged here (`[permissions] self-guard deny rules added (2)` /
+   `already present`). Then the **retired-artifacts sweep**: every file an earlier release wrote and
+   no current release reads (the shipped catalogue `retired-artifacts.json` — `wiring-hash.pin`, the
+   old dispatcher files, a retired exec-guard hook, …) is reported `[stale] <path> — retired in vX
+   (<why>); remove with --cleanup` on every run and removed only under `--cleanup`, only for
+   catalogued paths of the catalogued kind (a link or the other kind is `[refused]`, left alone;
+   so is a hook under `.claude/hooks/` that a hook command in `.claude/settings*.json` still
+   names, and every hook when a settings file does not parse; a directory row shows its entry
+   count). `.claude/skills`, `.claude/agents` and files outside the catalogue are invisible to it.
+   Finally `.claude/settings.local.json`, which the tracked-file reconcile never reads, has its
+   version-pinned or gone floor rows **retired** (never anything added; a pinned `ask` row only
+   when the tracked file carries the wildcard `ask` row that replaces it), written by the same
+   rename-install that keeps the file's mode bits, previewed like every other write, and is
+   otherwise untouched.
 5. **The report and the hand-off** — every completed run writes `.foundry/upgrade-report.json`
    (`schema_version`, `ran_at`, `from_plugin_version` / `to_plugin_version`, the phase verdicts,
    what the Amendments backfill did, whether the policy file was `created` or `kept`, the drifted
@@ -80,8 +94,9 @@ happens, and ends with a per-phase summary (`changed` / `already current` / `ski
 
 ## Flags
 
-- `--cleanup` — also perform the destructive cache-prune and stale-registration removal previewed
-  above. Off by default; a flagless run removes nothing and prunes nothing.
+- `--cleanup` — also perform the destructive cache-prune, stale-registration removal and the
+  retired-artifacts removal previewed above. Off by default; a flagless run removes nothing and
+  prunes nothing.
 - `--help` — print usage and exit.
 
 ## Exit codes
