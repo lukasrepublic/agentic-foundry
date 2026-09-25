@@ -200,7 +200,12 @@ hook_comment_expectation:
   #      could change the branch before it runs, or push more than one branch, stays refused
   #      fail-closed (AC-V118B-3). Every other clause byte-identical. Corpus:
   #      tests/test_hooks_guards.py::test_v118b*.
-  executable_content_sha256: '981c42ff9eb20903ef8a231a08ccd5377e10049137dbae9714ef5518455fbac4'
+  #  10. v1.18.0 security review R1 (2026-09-25): the no-refspec resolution in entry 9 is narrowed —
+  #      every EARLIER clause must itself be a branch-preserving `git` command (`bash -c "git
+  #      checkout main" && …`, `./x.sh; …`, `make …` and `git stash branch …` keep the push
+  #      refused), and a remote configured as a mirror keeps it refused. Strictly narrower than 9.
+  #      Corpus: tests/test_hooks_guards.py::test_v118_review_r1_*.
+  executable_content_sha256: '9b27dd7302d42fe2e696b10c5c6fda06bc90ed34fd7e64db81e36eaa6e2cb42c'
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
 operator_registry_shape:
