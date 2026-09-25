@@ -463,6 +463,10 @@ test('Phase 4 reports a retired artifact every run, removes it only under --clea
   const cleaned = await invokeUpdate({ cwd, configDir, argv: ['--cleanup'] });
   assert.notEqual(cleaned.res.exitCode, 1, cleaned.res.output);
   assert.match(cleaned.text, /\[removed] \.foundry\/wiring-hash\.pin — retired in v0\.24\.0/, cleaned.text);
+  // hotfix-v1.17.5: the preview row under --cleanup announces the removal and precedes it
+  const willIdx = cleaned.text.search(/\[stale] \.foundry\/wiring-hash\.pin — retired in v0\.24\.0 .*; will be removed/);
+  assert.ok(willIdx !== -1 && willIdx < cleaned.text.indexOf('[removed] .foundry/wiring-hash.pin'), cleaned.text);
+  assert.ok(!cleaned.text.includes('NOT removed'), cleaned.text);
   assert.equal(fs.existsSync(path.join(cwd, '.foundry', 'wiring-hash.pin')), false);
   assert.equal(fs.existsSync(path.join(cwd, '.claude', 'skills', 'mine.md')), true, 'operator files are invisible to the sweep');
   const report2 = readJson(path.join(cwd, '.foundry', 'upgrade-report.json'));

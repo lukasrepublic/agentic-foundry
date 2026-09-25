@@ -161,28 +161,38 @@ export function applyRetiredArtifacts(plan, physicalRoot) {
       else fs.unlinkSync(abs);
       removed += 1;
       row.state = 'removed';
-    } catch {
+    } catch (e) {
       row.state = 'refused';
+      row.why = 'remove-failed';
+      row.error = e && e.code ? e.code : 'error';
     }
   }
   plan.removed = removed;
   return removed;
 }
 
-/** The rows every writer prints. `cleanup` false → `[stale]` (nothing removed); true → `[removed]`
- * for what went, `[refused]` for what did not. Empty when nothing catalogued is present. */
-export function renderRetiredArtifactRows(plan, { cleanup }) {
+/** The rows every writer prints. `phase` is `'preview'` (before the first write) or `'result'`
+ * (after apply; the default). `cleanup` false → `[stale] …; remove with --cleanup` in both phases.
+ * `cleanup` true → the preview says `; will be removed`; after apply, `[removed]` for what went,
+ * `[refused]` for what was never removable, and `— NOT removed (changed since the plan)` only for a
+ * row apply skipped because it changed between plan and apply (hotfix-v1.17.5: the preview used to
+ * print that last wording, contradicting the `[removed]` row the same run printed next). Empty when
+ * nothing catalogued is present. */
+export function renderRetiredArtifactRows(plan, { cleanup, phase = 'result' }) {
   const out = [];
   for (const r of plan.rows) {
     const size = r.kind === 'dir' && typeof r.entries === 'number' ? ` [${r.entries} entr${r.entries === 1 ? 'y' : 'ies'}]` : '';
     if (r.state === 'stale') {
-      out.push(cleanup
-        ? `  [stale] ${r.relPath}${size} — retired in v${r.retired_in} (${r.reason}) — NOT removed`
-        : `  [stale] ${r.relPath}${size} — retired in v${r.retired_in} (${r.reason}); remove with --cleanup`);
+      const tail = !cleanup ? '; remove with --cleanup'
+        : phase === 'preview' ? '; will be removed'
+          : ' — NOT removed (changed since the plan)';
+      out.push(`  [stale] ${r.relPath}${size} — retired in v${r.retired_in} (${r.reason})${tail}`);
     } else if (r.state === 'removed') {
       out.push(`  [removed] ${r.relPath}${size} — retired in v${r.retired_in}`);
     } else if (r.why === 'referenced') {
       out.push(`  [refused] ${r.relPath} — still named by a hook command in .claude/settings*.json — left alone`);
+    } else if (r.why === 'remove-failed') {
+      out.push(`  [refused] ${r.relPath} — removal failed (${r.error}) — left in place`);
     } else if (r.why === 'settings-unreadable') {
       out.push(`  [refused] ${r.relPath} — .claude/settings*.json does not parse, so its hook wiring is unknown — left alone`);
     } else {

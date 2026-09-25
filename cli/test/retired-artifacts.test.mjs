@@ -51,6 +51,11 @@ test('plan reports catalogued leftovers, refuses a link, the wrong kind and a wi
   assert.equal(plan.present, 3);
   assert.equal(plan.refused, 3);
   assert.equal(plan.rows.find((r) => r.relPath === '.foundry/context-snapshots').entries, 1);
+  // hotfix-v1.17.5: the --cleanup PREVIEW says what the run will do, never "NOT removed"
+  const preview = renderRetiredArtifactRows(plan, { cleanup: true, phase: 'preview' });
+  assert.ok(preview.some((l) => l.startsWith('  [stale] .foundry/wiring-hash.pin') && l.endsWith('; will be removed')));
+  assert.ok(!preview.some((l) => l.includes('NOT removed')));
+  assert.deepEqual(renderRetiredArtifactRows(plan, { cleanup: false, phase: 'preview' }), renderRetiredArtifactRows(plan, { cleanup: false }));
   const rows = renderRetiredArtifactRows(plan, { cleanup: false });
   assert.ok(rows.some((l) => l.startsWith('  [stale] .foundry/wiring-hash.pin') && l.endsWith('remove with --cleanup')));
   assert.ok(rows.some((l) => l.startsWith('  [stale] .foundry/context-snapshots [1 entry]')));
@@ -80,4 +85,16 @@ test('a settings file that does not parse makes every hook candidate refused (fa
   assert.equal(row.why, 'settings-unreadable');
   assert.equal(applyRetiredArtifacts(plan, root), 0);
   assert.equal(fs.existsSync(path.join(root, '.claude/hooks/zeta-exec-guard.sh')), true);
+});
+
+test('after apply, a row that changed since the plan reads NOT removed (changed since the plan)', () => {
+  const plan = { rows: [{ relPath: '.foundry/wiring-hash.pin', kind: 'file', retired_in: '0.24.0', reason: 'r', state: 'stale' }] };
+  assert.deepEqual(renderRetiredArtifactRows(plan, { cleanup: true }),
+    ['  [stale] .foundry/wiring-hash.pin — retired in v0.24.0 (r) — NOT removed (changed since the plan)']);
+});
+
+test('a removal that fails reads "removal failed", never "not a regular file"', () => {
+  const plan = { rows: [{ relPath: '.foundry/wiring-hash.pin', kind: 'file', retired_in: '0.24.0', reason: 'r', state: 'refused', why: 'remove-failed', error: 'EACCES' }] };
+  assert.deepEqual(renderRetiredArtifactRows(plan, { cleanup: true }),
+    ['  [refused] .foundry/wiring-hash.pin — removal failed (EACCES) — left in place']);
 });
