@@ -68,8 +68,11 @@ lane signal — Tier B advisory) plus `hooks/foundry-git-discipline.sh`'s determ
    - **`branches`** (branch-and-worktree-discipline, AC-BWD-3) — `branches: <n>
      merged-not-deleted, <m> stale worktrees`, computed by importing
      `scripts/foundry-worktree-gc.py`'s own classifier (ancestry-only, no live `gh` call — this
-     stays a cheap, offline, every-run probe) over the session's own project dir. Reads `n/a (not
-     a git checkout)` when it is not one. Never RED: a repo-wide sweep is an operator/agent action
+     stays a cheap, offline, every-run probe) over the session's own project dir. The line says
+     what it measured (ER #244): `(ancestry only; squash-merged branches need the gc's gh check)`,
+     plus `; <n> ref(s) outside the glob set — widen with --include` when the built-in prefixes
+     dropped any — on a squash-merge repo ancestry alone reads 0, so run the gc itself for a live
+     count. Reads `n/a (not a git checkout)` when it is not one. Never RED: a repo-wide sweep is an operator/agent action
      (`--apply`, `ask`-tiered), never a doctor-enforced one — see
      `docs/how-to/branching-and-cleanup.md`.
 
