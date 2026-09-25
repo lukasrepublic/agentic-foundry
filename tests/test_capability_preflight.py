@@ -182,14 +182,26 @@ def test_exit_codes_ok_missing_unreadable(tmp_path):
     assert verdict["status"] == "ok"
     assert verdict["missing"] == []
 
-    # missing: a second declared capability has no covering rule anywhere.
+    # v1.18.0 (AC-V118A-5): a declared capability with no covering allow is ADVISORY — listed under
+    # `classifier`, status stays ok, exit 0, never `missing` with a rule to add.
     _write_contract(contract_path, ["Bash(git status:*)", "Bash(gh pr merge:*)"])
+    r = _run_cli(root, home, "--contract", contract_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    verdict = json.loads(r.stdout)
+    assert verdict["status"] == "ok"
+    assert verdict["missing"] == []
+    assert [c["capability"] for c in verdict["classifier"]] == ["Bash(gh pr merge:*)"]
+    assert "rule_to_add" not in verdict["classifier"][0]
+
+    # missing: only a DENY refusing a declared capability blocks (exit 3).
+    _write_settings(root, allow=["Bash(git status:*)"], deny=["Bash(gh pr merge:*)"])
     r = _run_cli(root, home, "--contract", contract_path)
     assert r.returncode == 3, r.stdout + r.stderr
     verdict = json.loads(r.stdout)
     assert verdict["status"] == "missing"
     assert [m["capability"] for m in verdict["missing"]] == ["Bash(gh pr merge:*)"]
-    assert verdict["missing"][0]["rule_to_add"] == "Bash(gh pr merge:*)"
+    assert verdict["missing"][0]["where"] == "denied"
+    assert verdict["classifier"] == []
 
     # unreadable: a malformed settings.json (invalid JSON) is a fail-closed input error.
     settings_path = os.path.join(root, ".claude", "settings.json")
@@ -346,6 +358,9 @@ def test_every_string_echoed_into_the_verdict_is_sanitized(tmp_path):
     home = _home_root(tmp_path)
     cap = "Bash(gh pr merge:*)"
     verdict = CPF.preflight([cap], root, home=home)
+    assert verdict["classifier"][0]["capability"] == CPF._sanitize(cap)
+    _write_settings(root, deny=[cap])
+    verdict = CPF.preflight([cap], root, home=home)
     assert verdict["missing"][0]["capability"] == CPF._sanitize(cap)
     assert verdict["missing"][0]["rule_to_add"] == CPF._sanitize(cap)
 
@@ -360,11 +375,12 @@ def test_ask_does_not_grant_and_deny_subtracts(tmp_path):
     root = _workspace_root(tmp_path)
     home = _home_root(tmp_path)
 
-    # Bash: an `ask` rule alone never grants.
+    # Bash: an `ask` rule alone never grants — the capability reads `classifier` (advisory).
     _write_settings(root, ask=["Bash(gh pr merge:*)"])
     verdict = CPF.preflight(["Bash(gh pr merge:*)"], root, home=home)
-    assert verdict["status"] == "missing"
-    assert verdict["missing"][0]["capability"] == "Bash(gh pr merge:*)"
+    assert verdict["status"] == "ok"
+    assert verdict["missing"] == []
+    assert verdict["classifier"][0]["capability"] == "Bash(gh pr merge:*)"
 
     # Bash: an otherwise-covering allow is subtracted by a deny on the same rule (deny covers the
     # capability) — reported `where: "denied"`.
@@ -390,10 +406,12 @@ def test_ask_does_not_grant_and_deny_subtracts(tmp_path):
     verdict = CPF.preflight(["Bash(gh pr merge:*)"], root, home=home)
     assert verdict["status"] == "ok"
 
-    # non-Bash: an `ask` rule alone never grants.
+    # non-Bash: an `ask` rule alone never grants — advisory `classifier`, not `missing`.
     _write_settings(root, ask=["Edit(scripts/**)"])
     verdict = CPF.preflight(["Edit(scripts/foo.py)"], root, home=home)
-    assert verdict["status"] == "missing"
+    assert verdict["status"] == "ok"
+    assert verdict["missing"] == []
+    assert [c["capability"] for c in verdict["classifier"]] == ["Edit(scripts/foo.py)"]
 
     # non-Bash: a deny subtracts an otherwise-covering allow (deny covers the capability).
     _write_settings(root, allow=["Edit(scripts/**)"], deny=["Edit(scripts/**)"])
@@ -466,14 +484,19 @@ def test_approval_required_grant_does_not_count_as_granted(tmp_path):
         "    mode: approval_required\n"
     ))
     verdict = CPF.preflight(["Bash(tofu apply:*)"], root, home=home)
-    assert verdict["status"] == "missing"
+    # not granted -> advisory `classifier`, never a blocker (v1.18.0, AC-V118A-5)
+    assert verdict["status"] == "ok"
+    assert verdict["missing"] == []
+    assert [c["capability"] for c in verdict["classifier"]] == ["Bash(tofu apply:*)"]
 
 
 def test_missing_permissions_yaml_is_not_an_error(tmp_path):
     root = _workspace_root(tmp_path)
     home = _home_root(tmp_path)
     verdict = CPF.preflight(["Bash(git status:*)"], root, home=home)
-    assert verdict["status"] == "missing"  # nothing grants it, but no crash/exception
+    # nothing grants it, but no crash/exception -- and not-granted is advisory
+    assert verdict["status"] == "ok"
+    assert [c["capability"] for c in verdict["classifier"]] == ["Bash(git status:*)"]
 
 
 def test_user_scope_settings_contribute_a_grant(tmp_path):
@@ -500,7 +523,7 @@ def test_settings_local_json_contributes_a_grant(tmp_path):
 ADOPTER_A_SETTINGS = os.path.join(REPO_ROOT, "tests", "fixtures", "preflight", "settings-adopter-a.json")
 
 
-def test_adopter_a_allowlist_names_each_missing_rule(tmp_path):
+def test_adopter_a_allowlist_names_each_not_pre_granted_capability(tmp_path):
     with open(ADOPTER_A_SETTINGS, encoding="utf-8") as fh:
         adopter_doc = json.load(fh)
     assert "allow" in adopter_doc["permissions"]
@@ -514,14 +537,17 @@ def test_adopter_a_allowlist_names_each_missing_rule(tmp_path):
 
     required = ["Bash(gh pr merge:*)", "CronCreate"]
     verdict = CPF.preflight(required, root, home=home)
-    assert verdict["status"] == "missing"
-    assert {m["capability"] for m in verdict["missing"]} == set(required)
-    for m in verdict["missing"]:
-        assert m["rule_to_add"] == m["capability"]
+    # v1.18.0 (AC-V118A-5): named exactly, under the advisory `classifier` key, never `missing`
+    assert verdict["status"] == "ok"
+    assert verdict["missing"] == []
+    assert {c["capability"] for c in verdict["classifier"]} == set(required)
+    for c in verdict["classifier"]:
+        assert "rule_to_add" not in c
 
-    # sanity: a capability the adopter DID grant is not reported missing.
+    # sanity: a capability the adopter DID grant is not reported at all.
     verdict2 = CPF.preflight(["Bash(git status:*)"], root, home=home)
     assert verdict2["status"] == "ok"
+    assert verdict2["classifier"] == []
 
 
 # --------------------------------------------------------------------------------------------- #
@@ -624,9 +650,17 @@ def test_charter_requires_capabilities_section_is_read(tmp_path):
     charter_path = os.path.join(root, "charter.md")
     _write_charter(charter_path, capabilities=["Bash(gh pr merge:*)", "CronCreate"])
     r = _run_cli(root, home, "--charter", charter_path)
+    # both declared capabilities are read (and are advisory: nothing pre-grants them)
+    assert r.returncode == 0, r.stdout + r.stderr
+    verdict = json.loads(r.stdout)
+    assert {c["capability"] for c in verdict["classifier"]} == {"Bash(gh pr merge:*)", "CronCreate"}
+    # a deny on one of them makes the charter a blocker
+    _write_settings(root, deny=["CronCreate"])
+    r = _run_cli(root, home, "--charter", charter_path)
     assert r.returncode == 3, r.stdout + r.stderr
     verdict = json.loads(r.stdout)
-    assert {m["capability"] for m in verdict["missing"]} == {"Bash(gh pr merge:*)", "CronCreate"}
+    assert [m["capability"] for m in verdict["missing"]] == ["CronCreate"]
+    assert [c["capability"] for c in verdict["classifier"]] == ["Bash(gh pr merge:*)"]
 
 
 def test_charter_missing_file_is_unreadable(tmp_path):
@@ -683,7 +717,7 @@ def test_doctor_permissions_policy_reports_ok_with_zero_atoms(tmp_path, monkeypa
     # AC-CPD-4: the R1 drift state rides the SAME line -- no .foundry/permissions.yaml here, so
     # the policy half reads `absent`, exactly like the pre-existing R1 probe did on its own line.
     # permissions-scaffold (ER #215, AC-PSC-4): an absent policy names its remedy in the same line
-    assert detail.startswith("preflight ok (0 atoms); policy absent — seed it: `npx update-agentic-workspace`"), detail
+    assert detail.startswith("preflight over 0 active atom(s): 0 denied; policy absent (.foundry/permissions.yaml vs .claude/settings.json) — seed it"), detail
 
 
 def test_doctor_permissions_policy_counts_missing_rules_from_an_active_release(tmp_path, monkeypatch):
@@ -706,8 +740,9 @@ def test_doctor_permissions_policy_counts_missing_rules_from_an_active_release(t
             "    depends_on: []\n"
         )
     ok, detail = doctor.check_permissions_policy(plugin_root=REPO_ROOT, project_dir=project_dir)
-    assert ok is doctor.ADVISORY
-    assert detail.startswith("preflight: 1 missing rule(s); policy absent — seed it: `npx update-agentic-workspace`"), detail
+    # v1.18.0 (AC-V118A-5): not pre-granted is advisory information, never a blocker — the line
+    # stays ok (the absent policy is informational too)
+    assert detail.startswith("preflight over 1 active atom(s): 0 denied, 1 not pre-granted; policy absent"), detail
 
 
 def test_doctor_permissions_policy_keeps_the_r1_drift_state_on_the_same_line(tmp_path, monkeypatch):
@@ -725,11 +760,11 @@ def test_doctor_permissions_policy_keeps_the_r1_drift_state_on_the_same_line(tmp
         "    pattern: \"gh pr merge:*\"\n"
         "    mode: automatic\n"
     ))
-    # drift: the derived allow rule AND the two fixed AC-SGP-4 policy-file deny rules are not
-    # (yet) reflected in .claude/settings.json -- three findings.
+    # drift: the derived allow rule is not (yet) in .claude/settings.json -- one finding (v1.18.0:
+    # the self-guard deny pair is retired, so it is no longer derived).
     ok, detail = doctor.check_permissions_policy(plugin_root=REPO_ROOT, project_dir=project_dir)
     assert ok is doctor.ADVISORY
-    assert detail == "preflight ok (0 atoms); policy drift (3)"
+    assert detail == "preflight over 0 active atom(s): 0 denied; policy drift (1) (.foundry/permissions.yaml vs .claude/settings.json)"
 
     # reconcile it, via the real compiler this time -- --check now reports in-sync.
     pc = load_module("scripts/foundry-permissions-compile.py", "foundry_permissions_compile_for_doctor_test")
@@ -737,4 +772,4 @@ def test_doctor_permissions_policy_keeps_the_r1_drift_state_on_the_same_line(tmp
     assert code == 0
     ok, detail = doctor.check_permissions_policy(plugin_root=REPO_ROOT, project_dir=project_dir)
     assert ok is True
-    assert detail == "preflight ok (0 atoms); policy in-sync"
+    assert detail == "preflight over 0 active atom(s): 0 denied; policy in-sync (.foundry/permissions.yaml vs .claude/settings.json)"

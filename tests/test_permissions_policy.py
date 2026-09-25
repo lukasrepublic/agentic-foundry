@@ -144,19 +144,17 @@ def test_load_policy_rejects_bad_yaml_syntax(tmp_path):
         PC.load_policy(root)
 
 
-def test_derive_rules_maps_automatic_to_allow_and_approval_required_to_ask():
+def test_derive_rules_maps_automatic_to_allow_and_approval_required_to_nothing():
     grants = [
         {"id": "a", "tool": "Bash", "pattern": "gh pr merge:*", "mode": "automatic"},
         {"id": "b", "tool": "Bash", "pattern": "tofu apply:*", "mode": "approval_required"},
     ]
     derived = PC.derive_rules(grants)
     assert derived["allow"] == ["Bash(gh pr merge:*)"]
-    assert derived["ask"] == ["Bash(tofu apply:*)"]
-    # AC-SGP-4 (v2): the two fixed policy-file deny rules ride every derivation, grant-independent.
-    assert derived["deny"] == [
-        "Edit(.foundry/permissions.yaml)",
-        "Write(.foundry/permissions.yaml)",
-    ]
+    # v1.18.0 (AC-V118A-3): a grant only ever widens -- approval_required compiles to NO rule
+    assert derived["ask"] == []
+    # v1.18.0 (AC-V118A-4): the self-guard deny pair is retired -- no deny rule is derived
+    assert derived["deny"] == []
 
 
 # --------------------------------------------------------------------------------------------- #
@@ -198,7 +196,8 @@ def test_check_reports_drift_exit_3(tmp_path):
     code, msg = PC.run_check(root)
     assert code == PC.EXIT_DRIFT == 3
     assert "missing allow rule: 'Bash(gh pr merge:*)'" in msg
-    assert "missing ask rule: 'Bash(tofu apply:*)'" in msg
+    assert "ask rule" not in msg, "approval_required must compile to no rule (AC-V118A-3)"
+    assert "deny rule" not in msg, "the retired self-guard pair must not be reported missing"
 
 
 def test_check_reports_drift_when_grant_removed_after_a_write(tmp_path):
@@ -206,20 +205,19 @@ def test_check_reports_drift_when_grant_removed_after_a_write(tmp_path):
     _write_yaml(root, _ONE_GRANT_YAML)
     code, _ = PC.run_write(root)
     assert code == 0
-    # Now narrow the policy to one grant -- the second rule is still sitting in settings.json,
+    # Now narrow the policy -- the retired grant's allow rule is still sitting in settings.json,
     # recorded in the sidecar, but no longer derived: an "extra" finding.
     _write_yaml(root, """\
 schema_version: 1
 grants:
-  - id: self-merge-on-green
+  - id: destructive-infra
     tool: Bash
-    pattern: "gh pr merge:*"
-    mode: automatic
+    pattern: "tofu apply:*"
+    mode: approval_required
 """)
     code, msg = PC.run_check(root)
     assert code == 3
-    assert "extra ask rule" in msg
-    assert "tofu apply" in msg
+    assert "extra allow rule (previously compiled, no longer derived): 'Bash(gh pr merge:*)'" in msg
 
 
 def test_check_reports_moved_rule_when_settings_tier_disagrees_with_derivation(tmp_path):
@@ -259,18 +257,12 @@ def test_write_adds_exactly_the_derived_rules(tmp_path):
     assert code == 0
     settings = _read_settings(root)
     assert settings["permissions"]["allow"] == ["Bash(gh pr merge:*)"]
-    assert settings["permissions"]["ask"] == ["Bash(tofu apply:*)"]
-    assert settings["permissions"]["deny"] == [
-        "Edit(.foundry/permissions.yaml)",
-        "Write(.foundry/permissions.yaml)",
-    ]
+    assert settings["permissions"]["ask"] == []
+    assert settings["permissions"]["deny"] == []
     sidecar = _read_sidecar(root)
     assert sidecar["rules"]["allow"] == ["Bash(gh pr merge:*)"]
-    assert sidecar["rules"]["ask"] == ["Bash(tofu apply:*)"]
-    assert sidecar["rules"]["deny"] == [
-        "Edit(.foundry/permissions.yaml)",
-        "Write(.foundry/permissions.yaml)",
-    ]
+    assert sidecar["rules"]["ask"] == []
+    assert sidecar["rules"]["deny"] == []
     assert sidecar["yaml_sha256"] == PC._policy_sha256(root)
 
 
@@ -285,9 +277,9 @@ def test_write_leaves_every_other_operator_rule_untouched(tmp_path):
     assert "Bash(git status:*)" in settings["permissions"]["allow"]
     assert "Bash(git push:*)" in settings["permissions"]["ask"]
     assert "Bash(gh pr merge:*)" in settings["permissions"]["allow"]
-    assert "Bash(tofu apply:*)" in settings["permissions"]["ask"]
-    assert "Edit(.foundry/permissions.yaml)" in settings["permissions"]["deny"]
-    assert "Write(.foundry/permissions.yaml)" in settings["permissions"]["deny"]
+    assert settings["permissions"]["ask"] == ["Bash(git push:*)"], "only the operator's ask row remains"
+    assert settings["permissions"]["allow"] == ["Bash(git status:*)", "Bash(gh pr merge:*)"]
+    assert settings["permissions"]["deny"] == []
     assert settings["enabledPlugins"] == {"foundry": True}
 
 
@@ -313,20 +305,20 @@ def test_write_is_idempotent_and_owns_only_its_rules(tmp_path):
     assert settings_bytes_1 == settings_bytes_2, "second --write must not change settings.json bytes"
     assert sidecar_bytes_1 == sidecar_bytes_2, "second --write must not change the sidecar's bytes"
 
-    # Narrow the policy to one grant, then --write again: the retired grant's rule (which this
-    # compiler itself added) is removed; the operator's own hand-authored rules are NEVER touched.
+    # Narrow the policy, then --write again: the retired grant's rule (which this compiler itself
+    # added) is removed; the operator's own hand-authored rules are NEVER touched.
     _write_yaml(root, """\
 schema_version: 1
 grants:
-  - id: self-merge-on-green
+  - id: destructive-infra
     tool: Bash
-    pattern: "gh pr merge:*"
-    mode: automatic
+    pattern: "tofu apply:*"
+    mode: approval_required
 """)
     code3, _ = PC.run_write(root)
     assert code3 == 0
     settings = _read_settings(root)
-    assert "Bash(tofu apply:*)" not in settings["permissions"]["ask"], \
+    assert "Bash(gh pr merge:*)" not in settings["permissions"]["allow"], \
         "a retired compiler-owned rule must be removed on --write"
     assert "Bash(git status:*)" in settings["permissions"]["allow"], \
         "an operator-authored allow rule must never be removed by --write"
@@ -359,69 +351,79 @@ def test_write_refuses_a_malformed_settings_json_without_clobbering_it(tmp_path)
 
 
 # --------------------------------------------------------------------------------------------- #
-# AC-SGP-4 (v2, auth_seq 2) — --write places the policy-file deny rules; --check counts their
-# absence as drift. The agent never edits the policy.
+# v1.18.0 (AC-V118A-3/-4) — `--write` takes back the ask rows it previously compiled and the retired
+# self-guard deny pair; `--check` reports a leftover pair as drift. Operator rows are never touched.
 # --------------------------------------------------------------------------------------------- #
 
+_SELF_GUARD_PAIR = ["Edit(.foundry/permissions.yaml)", "Write(.foundry/permissions.yaml)"]
 
-def test_write_emits_policy_file_deny_rules_and_check_counts_their_absence(tmp_path):
-    """The named checkpoint test for AC-SGP-4: --write places BOTH fixed native deny rules on
-    `.foundry/permissions.yaml` into `.claude/settings.json` `permissions.deny` (recorded in the
-    sidecar exactly like every allow/ask rule this compiler owns, idempotently, leaving any
-    operator-authored deny rule untouched); --check on a workspace missing either one reports
-    drift and exits 3."""
+
+def _write_legacy_sidecar(root, allow=(), ask=(), deny=()):
+    """A sidecar as a pre-v1.18.0 `--write` left it: owning an ask row and the self-guard pair."""
+    d = os.path.join(root, ".claude")
+    os.makedirs(d, exist_ok=True)
+    doc = {"yaml_sha256": PC._policy_sha256(root),
+           "rules": {"allow": sorted(allow), "ask": sorted(ask), "deny": sorted(deny)}}
+    with open(os.path.join(d, "foundry-permissions.compiled.json"), "w", encoding="utf-8") as fh:
+        json.dump(doc, fh, indent=2)
+        fh.write("\n")
+
+
+def test_write_retires_previously_compiled_ask_rows_and_the_self_guard_pair(tmp_path):
     root = str(tmp_path)
     _write_yaml(root, _ONE_GRANT_YAML)
+    # the state a pre-v1.18.0 compiler left: the approval_required grant compiled to ask, the
+    # self-guard pair in deny -- next to the operator's own ask and deny rows
+    _write_settings(root, allow=["Bash(gh pr merge:*)", "Bash(git status:*)"],
+                    ask=["Bash(tofu apply:*)", "Bash(git push:*)"],
+                    deny=["Bash(rm -rf /:*)", *_SELF_GUARD_PAIR, "Edit(.foundry/other.yaml)"])
+    _write_legacy_sidecar(root, allow=["Bash(gh pr merge:*)"], ask=["Bash(tofu apply:*)"], deny=_SELF_GUARD_PAIR)
 
-    # --check before any --write: the deny rules are absent, alongside the allow/ask rules.
     code, msg = PC.run_check(root)
     assert code == PC.EXIT_DRIFT == 3
-    assert "missing deny rule: 'Edit(.foundry/permissions.yaml)'" in msg
-    assert "missing deny rule: 'Write(.foundry/permissions.yaml)'" in msg
-
-    # An operator's own, unrelated deny rule must never be touched by --write.
-    _write_settings(root, deny=["Bash(rm -rf /:*)"])
+    assert "extra ask rule (previously compiled, no longer derived): 'Bash(tofu apply:*)'" in msg
+    for r in _SELF_GUARD_PAIR:
+        assert f"extra deny rule (previously compiled, no longer derived): {r!r}" in msg
 
     code, _ = PC.run_write(root)
     assert code == 0
     settings = _read_settings(root)
-    assert "Edit(.foundry/permissions.yaml)" in settings["permissions"]["deny"]
-    assert "Write(.foundry/permissions.yaml)" in settings["permissions"]["deny"]
-    assert "Bash(rm -rf /:*)" in settings["permissions"]["deny"], \
-        "an operator-authored deny rule must never be removed by --write"
+    assert settings["permissions"]["allow"] == ["Bash(gh pr merge:*)", "Bash(git status:*)"]
+    assert settings["permissions"]["ask"] == ["Bash(git push:*)"], \
+        "the compiled ask row must go; the operator's ask row must stay"
+    assert settings["permissions"]["deny"] == ["Bash(rm -rf /:*)", "Edit(.foundry/other.yaml)"], \
+        "the self-guard pair must go; every operator deny rule must stay, in order"
     sidecar = _read_sidecar(root)
-    assert set(sidecar["rules"]["deny"]) == {
-        "Edit(.foundry/permissions.yaml)", "Write(.foundry/permissions.yaml)",
-    }
+    assert sidecar["rules"] == {"allow": ["Bash(gh pr merge:*)"], "ask": [], "deny": []}
 
-    # Now --check reports in-sync (deny rules present, recorded, agreeing).
     code, msg = PC.run_check(root)
     assert code == PC.EXIT_OK == 0, msg
 
-    # An operator (or a stray edit) removing ONE of the two deny rules is drift, not silence.
-    settings["permissions"]["deny"].remove("Edit(.foundry/permissions.yaml)")
-    with open(os.path.join(root, ".claude", "settings.json"), "w", encoding="utf-8") as fh:
-        json.dump(settings, fh, indent=2)
-        fh.write("\n")
+
+def test_check_reports_a_leftover_self_guard_pair_even_with_no_sidecar(tmp_path):
+    """An earlier UPDATER (not only this compiler) placed the pair, so there may be no sidecar
+    owning it: `--check` still reports it and `--write` still takes it back -- and never an
+    operator-authored deny rule of any other shape."""
+    root = str(tmp_path)
+    _write_yaml(root, _ONE_GRANT_YAML)
+    _write_settings(root, allow=["Bash(gh pr merge:*)"], deny=["Write(.foundry/permissions.yaml)", "Bash(rm -rf /:*)"])
+
     code, msg = PC.run_check(root)
     assert code == PC.EXIT_DRIFT == 3
-    assert "missing deny rule: 'Edit(.foundry/permissions.yaml)'" in msg
-    assert "missing deny rule: 'Write(.foundry/permissions.yaml)'" not in msg, \
-        "the still-present Write deny rule must not be reported missing"
+    assert msg == ("drift:\n  extra deny rule (previously compiled, no longer derived): "
+                   "'Write(.foundry/permissions.yaml)'"), msg
 
-    # --write heals it back deterministically, idempotently.
     code, _ = PC.run_write(root)
     assert code == 0
-    settings = _read_settings(root)
-    assert "Edit(.foundry/permissions.yaml)" in settings["permissions"]["deny"]
-    assert "Bash(rm -rf /:*)" in settings["permissions"]["deny"]
+    assert _read_settings(root)["permissions"]["deny"] == ["Bash(rm -rf /:*)"]
     code, msg = PC.run_check(root)
     assert code == 0, msg
 
 
-def test_write_deny_rules_are_idempotent_across_repeated_writes(tmp_path):
+def test_write_never_reintroduces_the_self_guard_pair_across_repeated_writes(tmp_path):
     root = str(tmp_path)
     _write_yaml(root, _ONE_GRANT_YAML)
+    _write_settings(root, deny=[*_SELF_GUARD_PAIR])
     PC.run_write(root)
     settings_path = os.path.join(root, ".claude", "settings.json")
     before = open(settings_path, "rb").read()
@@ -429,8 +431,8 @@ def test_write_deny_rules_are_idempotent_across_repeated_writes(tmp_path):
     after = open(settings_path, "rb").read()
     assert before == after
     settings = _read_settings(root)
-    assert settings["permissions"]["deny"].count("Edit(.foundry/permissions.yaml)") == 1
-    assert settings["permissions"]["deny"].count("Write(.foundry/permissions.yaml)") == 1
+    for r in _SELF_GUARD_PAIR:
+        assert r not in settings["permissions"]["deny"]
 
 
 # --------------------------------------------------------------------------------------------- #

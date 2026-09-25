@@ -211,7 +211,7 @@ export const DRIFT_CLASSES = Object.freeze([
  * marketplace/plugin pins (AC-BCL-4). */
 /** v1.18.0 (AC-V118A-2): the ONLY tier the floor writes into settings. Measured 2026-09-25 with live
  * `claude -p` runs: no Bash rule naming a script path matches (not the floor's
- * `~/.claude/plugins/cache/*\/foundry/*\/scripts/...` shape, not even an exact absolute path), so the
+ * plugin-cache glob shape, not even an exact absolute path), so the
  * allow rows granted nothing and the ask rows gated nothing. The plugin's own scripts are allowed by
  * the `foundry-plugin-scripts-allow.py` PreToolUse hook instead, and the map's script rows stay as the
  * closed-world REGISTRY of every script (AC-PFM-2), never projected. */
@@ -281,7 +281,8 @@ export function buildSettings(map, pins) {
  * rationale (AC-BCL-3). */
 export function renderCapabilityLines(map) {
   const lines = [];
-  for (const tier of ['allow', 'ask', 'deny']) {
+  lines.push("  [allow] the plugin's own scripts — by the plugin's PreToolUse hook, not by settings rules");
+  for (const tier of PROJECTED_TIERS) {
     const entries = map.entries.filter((e) => e.tier === tier);
     if (entries.length === 0) continue;
     lines.push(`  [${tier}] (${entries.length} rules)`);

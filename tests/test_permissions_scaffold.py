@@ -80,36 +80,45 @@ def test_scaffold_seeds_the_policy_then_keeps_it(tmp_path):
 
 
 def test_fresh_scaffold_compiles_in_sync_and_the_doctor_agrees(tmp_path):
-    """hotfix-v1.17.3 (AC-PSC-3 restored): a fresh seed is IN-SYNC on the create path — the two
-    self-guard deny rules (`Edit`/`Write` on the policy file) ride with the floor, so nobody has to
-    remember the compiler; `--check` exits 0 and the doctor says `policy in-sync` immediately."""
+    """AC-PSC-3, v1.18.0 (AC-V118A-4): a fresh seed is IN-SYNC on the create path with NO self-guard
+    deny pair written (it is retired) — `--check` exits 0 and the doctor says `policy in-sync`."""
     home, target, proc = _scaffold(tmp_path)
     settings = json.loads((target / ".claude" / "settings.json").read_text(encoding="utf-8"))
-    assert "Edit(.foundry/permissions.yaml)" in settings["permissions"]["deny"]
-    assert "Write(.foundry/permissions.yaml)" in settings["permissions"]["deny"]
+    assert "Edit(.foundry/permissions.yaml)" not in settings["permissions"]["deny"]
+    assert "Write(.foundry/permissions.yaml)" not in settings["permissions"]["deny"]
     env = dict(os.environ, CLAUDE_PROJECT_DIR=str(target), HOME=str(home))
     check = subprocess.run([sys.executable, COMPILE, "--check", "--root", str(target)],
                            capture_output=True, text=True, env=env, cwd=str(target))
     assert check.returncode == 0, check.stdout + check.stderr
     doc = subprocess.run([sys.executable, DOCTOR], capture_output=True, text=True, env=env, cwd=str(target))
-    assert "policy in-sync" in doc.stdout, doc.stdout
+    assert "policy in-sync (.foundry/permissions.yaml vs .claude/settings.json)" in doc.stdout, doc.stdout
 
 
-def test_existing_reconcile_floor_converges_the_self_guard_pair(tmp_path):
-    """An older workspace (policy seeded, deny pair absent) gains the pair on `--existing
-    --reconcile-floor`, reported on one row; a second run says already present."""
+def test_existing_reconcile_floor_retires_the_self_guard_pair(tmp_path):
+    """v1.18.0 (AC-V118A-4): an older workspace carrying the self-guard pair has it RETIRED on
+    `--existing --reconcile-floor`, each rule named with its file and tier, next to an operator deny
+    rule that is never touched; a second run is silent about it and the compiler reads in-sync."""
     home, target, _ = _scaffold(tmp_path)
     sp = target / ".claude" / "settings.json"
     settings = json.loads(sp.read_text(encoding="utf-8"))
-    settings["permissions"]["deny"] = [r for r in settings["permissions"]["deny"] if "permissions.yaml" not in r]
+    settings["permissions"]["deny"] = settings["permissions"]["deny"] + [
+        "Edit(.foundry/permissions.yaml)", "Bash(rm -rf:*)", "Write(.foundry/permissions.yaml)"]
     sp.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
     again = run_cli(["--dir", str(target), "--existing", "--reconcile-floor", "--yes"], home=home, input_text="")
     assert again.returncode in (0, 2), again.stdout + again.stderr
-    assert "[permissions] self-guard deny rules added (2)" in again.stdout, again.stdout
+    assert "[retired] .claude/settings.json deny: Edit(.foundry/permissions.yaml)" in again.stdout, again.stdout
+    assert "[retired] .claude/settings.json deny: Write(.foundry/permissions.yaml)" in again.stdout, again.stdout
+    assert "self-guard deny rules added" not in again.stdout
     settings = json.loads(sp.read_text(encoding="utf-8"))
-    assert "Write(.foundry/permissions.yaml)" in settings["permissions"]["deny"]
+    assert "Edit(.foundry/permissions.yaml)" not in settings["permissions"]["deny"]
+    assert "Write(.foundry/permissions.yaml)" not in settings["permissions"]["deny"]
+    assert "Bash(rm -rf:*)" in settings["permissions"]["deny"], "an operator deny rule was removed"
     once_more = run_cli(["--dir", str(target), "--existing", "--reconcile-floor", "--yes"], home=home, input_text="")
-    assert "[permissions] self-guard deny rules already present" in once_more.stdout, once_more.stdout
+    assert "permissions.yaml" not in "".join(l for l in once_more.stdout.splitlines(True) if "[retired]" in l), once_more.stdout
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=str(target), HOME=str(home))
+    check = subprocess.run([sys.executable, COMPILE, "--check", "--root", str(target)],
+                           capture_output=True, text=True, env=env, cwd=str(target))
+    assert check.returncode == 0, check.stdout + check.stderr
 
 
 def test_absent_policy_names_the_remedy(tmp_path):
@@ -124,12 +133,14 @@ def test_absent_policy_names_the_remedy(tmp_path):
     assert "policy absent" in doc.stdout and "npx update-agentic-workspace" in doc.stdout, doc.stdout
 
 
-def test_self_guard_pair_is_the_same_text_in_the_compiler_and_the_cli():
-    """PR #233 review Risk 5: the pair is defined in the compiler (Python) and in the CLI (node);
-    a parity test stops them drifting apart."""
+def test_retired_self_guard_pair_is_the_same_text_in_the_compiler_and_the_cli():
+    """PR #233 review Risk 5, carried to v1.18.0: the retired pair is named in the compiler (Python,
+    `POLICY_SELF_DENY_RULES`, which `--write` takes back) and in the CLI (node,
+    `RETIRED_FLOOR_LITERALS.deny`, which the updater takes back); a parity test stops them drifting
+    apart. The old CLI module that WROTE the pair is gone."""
     import re
-    mjs = open(os.path.join(REPO, "cli", "src", "selfGuardDeny.mjs"), encoding="utf-8").read()
-    node_pair = subprocess.run(["node", "-e", "import('./cli/src/selfGuardDeny.mjs').then(m=>console.log(JSON.stringify(m.SELF_GUARD_DENY)))"],
+    assert not os.path.exists(os.path.join(REPO, "cli", "src", "selfGuardDeny.mjs"))
+    node_pair = subprocess.run(["node", "-e", "import('./cli/src/floorReconcile.mjs').then(m=>console.log(JSON.stringify(m.RETIRED_FLOOR_LITERALS.deny.filter(r=>r.includes('permissions.yaml')))))"],
                                capture_output=True, text=True, cwd=REPO)
     assert node_pair.returncode == 0, node_pair.stderr
     py = open(COMPILE, encoding="utf-8").read()
