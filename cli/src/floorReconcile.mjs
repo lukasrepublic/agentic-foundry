@@ -272,13 +272,25 @@ function shippedRootNames(map) {
   return set;
 }
 
+/** The `(name, sub)` keys of every wildcard-shaped `ask` row a settings object carries — what
+ * `planRetirements({ askCoveredBy })` takes for the local file (hotfix-v1.17.4). */
+export function askRootKeys(settingsObj, map) {
+  const keys = new Set();
+  const perms = (settingsObj && settingsObj.permissions) || {};
+  for (const rule of perms.ask || []) {
+    const parsed = typeof rule === 'string' ? parseFloorRootShape(rule, map.plugin_root_glob) : null;
+    if (parsed) keys.add(rootNameKey(parsed));
+  }
+  return keys;
+}
+
 /** Compute the rows the reconcile SHALL remove (AC-FRR-1), WITHOUT touching the filesystem. Every
  * `allow`/`ask` row shaped exactly like the floor's own root-glob rows, whose `(name, sub)` pair the
  * shipped map no longer declares, is queued for removal. `deny` is never a candidate (AC-FRR-2) —
  * retirement only narrows a grant or a prompt, and a deny row read back as "extra" is, if anything,
  * a reason to leave it exactly where the operator (or an earlier release) put it. Returns
  * `{ retirements: { allow: [...], ask: [...] }, total }`. */
-export function planRetirements({ settingsObj, map }) {
+export function planRetirements({ settingsObj, map, askCoveredBy = null }) {
   const shipped = shippedRootNames(map);
   const shippedAsk = new Set();
   for (const e of map.entries) {
@@ -286,6 +298,13 @@ export function planRetirements({ settingsObj, map }) {
     const parsed = parseFloorRootShape(e.rule, map.plugin_root_glob);
     if (parsed) shippedAsk.add(rootNameKey(parsed));
   }
+  // hotfix-v1.17.4 (PR #237 security review Risk 3): for a file this pass does NOT also reconcile
+  // (`.claude/settings.local.json`), "the wildcard ask row replaces it" is only true when the
+  // TRACKED file actually carries that wildcard row — so the caller passes the tracked file's ask
+  // keys (`askRootKeys`) and a pinned `ask` row is retired only when both sets hold the pair.
+  // `null` (the tracked-file call sites, where the same pass adds the wildcard row) keeps the
+  // v1.17.3 rule unchanged.
+  const askReplaced = (key) => shippedAsk.has(key) && (askCoveredBy === null || askCoveredBy.has(key));
   const retirements = { allow: [], ask: [] };
   const perms = (settingsObj && settingsObj.permissions) || {};
   for (const tier of ['allow', 'ask']) {
@@ -305,7 +324,7 @@ export function planRetirements({ settingsObj, map }) {
       const pinned = parseFloorPinnedShape(rule, map.plugin_root_glob);
       if (pinned) {
         if (tier === 'allow') retirements[tier].push(rule);
-        else if (shippedAsk.has(rootNameKey(pinned))) retirements[tier].push(rule);
+        else if (askReplaced(rootNameKey(pinned))) retirements[tier].push(rule);
       }
       // any other shape -> never touched (AC-FRR-2)
     }
@@ -438,8 +457,19 @@ export function writeTargetAtomically(targetPath, obj) {
   const dir = path.dirname(targetPath);
   const tmp = path.join(dir, `.settings.json.${process.pid}.tmp`);
   const bytes = Buffer.from(`${JSON.stringify(obj, null, 2)}\n`, 'utf-8');
+  // hotfix-v1.17.4 (PR #237 security review Risk 5): a rename-install would otherwise reset the
+  // target's mode to the umask default — an operator's 0600 `settings.local.json` (it often holds
+  // `env`) must come back 0600. The original's permission bits are copied onto the temp file
+  // before the rename; a target that does not exist yet keeps the default.
+  let mode = null;
+  try {
+    mode = fs.statSync(targetPath).mode & 0o777;
+  } catch {
+    mode = null;
+  }
   const fd = fs.openSync(tmp, 'wx');
   try {
+    if (mode !== null) fs.fchmodSync(fd, mode);
     fs.writeFileSync(fd, bytes);
     fs.fsyncSync(fd);
   } finally {

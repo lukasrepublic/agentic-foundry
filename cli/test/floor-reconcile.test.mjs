@@ -14,7 +14,7 @@ import { loadMap, classifyDrift } from '../src/permissionFloor.mjs';
 import {
   resolveTarget, readTarget, readTrackedRules, planAdditions, applyAdditions,
   planRetirements, applyRetirements, parseFloorRootShape, parseFloorPinnedShape, planReconcile,
-  writeTargetAtomically, renderPlan, classifyPin, ADDITIVE_CLASSES,
+  writeTargetAtomically, renderPlan, classifyPin, ADDITIVE_CLASSES, askRootKeys,
 } from '../src/floorReconcile.mjs';
 import { RefusalError } from '../src/util.mjs';
 
@@ -685,6 +685,27 @@ test('a_pinned_ask_row_is_retired_only_when_the_map_declares_the_same_pair_at_as
   const plan = planRetirements({ settingsObj, map });
   assert.deepEqual(plan.retirements.ask, ['Bash(~/.claude/plugins/cache/agentic-foundry/foundry/1.9.1/scripts/foundry-y.py push:*)']);
   assert.deepEqual(plan.retirements.allow, []);
+  // hotfix-v1.17.4 (PR #237 review Risk 3): with `askCoveredBy` (the local-file call), the pinned
+  // ask row goes ONLY when the tracked file really carries the replacing wildcard row.
+  const tracked = { permissions: { ask: ['Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-y.py push:*)', 'Bash(mine:*)'] } };
+  assert.deepEqual([...askRootKeys(tracked, map)], [JSON.stringify(['foundry-y.py', 'push'])]);
+  assert.deepEqual(planRetirements({ settingsObj, map, askCoveredBy: askRootKeys(tracked, map) }).retirements.ask,
+    ['Bash(~/.claude/plugins/cache/agentic-foundry/foundry/1.9.1/scripts/foundry-y.py push:*)']);
+  assert.deepEqual(planRetirements({ settingsObj, map, askCoveredBy: new Set() }).retirements.ask, [],
+    'no wildcard ask row in the tracked file -> the pinned ask row stays (a prompt never becomes a silent grant)');
+  assert.deepEqual(planRetirements({ settingsObj, map, askCoveredBy: askRootKeys({ permissions: {} }, map) }).retirements.ask, []);
+});
+
+test('writeTargetAtomically_preserves_the_target_mode_bits', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wta-mode-'));
+  const target = path.join(root, 'settings.local.json');
+  fs.writeFileSync(target, '{}\n', { mode: 0o600 });
+  fs.chmodSync(target, 0o600);
+  writeTargetAtomically(target, { permissions: { allow: [] } });
+  assert.equal(fs.statSync(target).mode & 0o777, 0o600, 'a 0600 file must come back 0600 after a rename-install');
+  // a target that does not exist yet keeps the default (no throw)
+  writeTargetAtomically(path.join(root, 'fresh.json'), { a: 1 });
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'fresh.json'), 'utf-8')).a, 1);
 });
 
 test('pinned_shape_rejects_dotted_marketplace_segments_partial_globs_and_non_semver_versions', () => {

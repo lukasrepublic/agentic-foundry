@@ -393,6 +393,7 @@ def test_the_update_package_manifest_has_no_lifecycle_scripts():
         "0.17.1": "0.1.13", # v1.17.1 -- patch: the backfill walks any basename; the report's from-version.
         "0.17.2": "0.1.14", # v1.17.2 -- patch: the report names its updater; the size ceiling ignores the ledger.
         "0.17.3": "0.1.15", # v1.17.3 -- patch: the self-guard pair converges; pinned floor rows retire.
+        "0.17.4": "0.1.16", # v1.17.4 -- patch: the retired-artifacts sweep; settings.local.json retirement.
     }
     pin = deps["create-agentic-workspace"]
     expected_update_version = CLI_UPDATE_VERSION_BY_PIN.get(pin)
@@ -546,6 +547,7 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         "1.17.1": "0.17.1",
         "1.17.2": "0.17.2",
         "1.17.3": "0.17.3",
+        "1.17.4": "0.17.4",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (
@@ -1069,7 +1071,32 @@ def test_every_runtime_asset_is_packaged():
         for f in _iter_mjs_files(CLI_DIR / "src") + _iter_mjs_files(CLI_DIR / "bin")
         if RECURSIVE_DELETE.search(f.read_text())
     ]
-    assert rm_sites == ["cleanup.mjs"], f"unexpected recursive-delete sites in cli/src: {rm_sites}"
+    # hotfix-v1.17.4 (ER #236): `retiredArtifacts.mjs` is the SECOND permitted site — the
+    # catalogue-driven workspace sweep (`--cleanup` only). Its containment is asserted structurally
+    # below, the same way cleanup.mjs's is: exactly one recursive delete, inside the apply function,
+    # behind confinedJoin + lstat + isSymbolicLink + isDirectory, and the apply function enumerates
+    # nothing — it removes ONLY the rows the plan handed it.
+    assert sorted(rm_sites) == ["cleanup.mjs", "retiredArtifacts.mjs"], (
+        f"unexpected recursive-delete sites in cli/src: {rm_sites}"
+    )
+    sweep_src = (CLI_DIR / "src" / "retiredArtifacts.mjs").read_text()
+    assert len(RECURSIVE_DELETE.findall(sweep_src)) == 1, (
+        "retiredArtifacts.mjs carries more than one recursive delete; exactly one is permitted, "
+        "inside applyRetiredArtifacts"
+    )
+    sweep_apply = _extract_function_body(sweep_src, "applyRetiredArtifacts")
+    assert sweep_apply is not None, "applyRetiredArtifacts not found in retiredArtifacts.mjs"
+    assert RECURSIVE_DELETE.search(sweep_apply), (
+        "the sweep's recursive delete is not inside applyRetiredArtifacts — planning and applying must stay split"
+    )
+    assert "readdirSync" not in sweep_apply, (
+        "applyRetiredArtifacts enumerates a directory; it must remove ONLY the rows planRetiredArtifacts handed it"
+    )
+    for guard in ("confinedJoin", "lstatSync", "isSymbolicLink", "isDirectory", "row.state !== 'stale'"):
+        assert guard in sweep_apply, (
+            f"applyRetiredArtifacts lost its {guard} guard — this is what keeps the sweep inside the "
+            f"workspace root and off links, the other kind, and un-catalogued paths"
+        )
 
     # A destructured mutator import drops the `fs.` prefix entirely and walks past any pattern
     # anchored on it. Banning the import is the outcome-level control; chasing the call sites is

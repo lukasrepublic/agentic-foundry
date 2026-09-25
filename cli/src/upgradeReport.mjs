@@ -32,6 +32,7 @@ export function versionOrNull(v) {
 export function buildUpgradeReport({
   installedBefore = null, afterEntry, toPluginVersion, phases, filePlan, amendmentsPlan, now = new Date(),
   updaterVersion = null, coreVersion = null, updaterPluginVersion = null,
+  retiredArtifacts = null, localRetired = 0,
 }) {
   const seedRow = (filePlan || []).find((f) => f.seed);
   return {
@@ -57,6 +58,11 @@ export function buildUpgradeReport({
       : { backfilled: 0, present: 0, skipped: 0, total: 0 },
     permissions_policy: seedRow ? (seedRow.action === 'create' ? 'created' : 'kept') : 'absent',
     drifted: (filePlan || []).filter((f) => f.action === 'drifted').map((f) => f.relPath),
+    // hotfix-v1.17.4: what the sweep found (paths are workspace-relative catalogue entries, never free text)
+    retired_artifacts: retiredArtifacts
+      ? { present: retiredArtifacts.present, removed: retiredArtifacts.removed, refused: retiredArtifacts.refused }
+      : { present: [], removed: 0, refused: 0 },
+    settings_local_retired: localRetired,
   };
 }
 
