@@ -103,7 +103,7 @@ const sink = () => {
   return { write: (s) => chunks.push(s), text: () => chunks.join('') };
 };
 
-async function invokeUpdate({ cwd, configDir, output = sink() }) {
+async function invokeUpdate({ cwd, configDir, output = sink(), argv = [] }) {
   const stubDir = scratch('claude-stub-');
   installClaudeStub(stubDir);
   const logPath = path.join(stubDir, 'log.jsonl');
@@ -111,7 +111,7 @@ async function invokeUpdate({ cwd, configDir, output = sink() }) {
     stubDir, logPath,
     manifestPath: path.join(configDir, 'plugins', 'marketplaces', MARKETPLACE, '.claude-plugin', 'marketplace.json'),
   });
-  const res = await runUpdate([], { cwd, configDir, homeDir: os.homedir(), pkgDir: CLI_DIR, output, spawnEnv: env });
+  const res = await runUpdate(argv, { cwd, configDir, homeDir: os.homedir(), pkgDir: CLI_DIR, output, spawnEnv: env });
   return { res, log: readLog(logPath), text: output.text ? output.text() : '' };
 }
 
@@ -419,4 +419,38 @@ test('every completed run writes .foundry/upgrade-report.json and ends with the 
   // ER #228: the report names the updater's core and the plugin it was built for
   assert.match(report.core_version, /^\d+\.\d+\.\d+$/);
   assert.equal(report.updater_plugin_version, report.to_plugin_version);
+});
+
+
+// hotfix-v1.17.4 (ER #236): the retired-artifacts sweep and the settings.local.json retirement.
+test('Phase 4 reports a retired artifact every run, removes it only under --cleanup, and retires a pinned row in settings.local.json', async () => {
+  const { cwd, configDir } = steadyStateFixture('ra-uaw-');
+  await invokeUpdate({ cwd, configDir });
+  fs.mkdirSync(path.join(cwd, '.foundry'), { recursive: true });
+  fs.writeFileSync(path.join(cwd, '.foundry', 'wiring-hash.pin'), 'stale');
+  fs.mkdirSync(path.join(cwd, '.claude', 'skills'), { recursive: true });
+  fs.writeFileSync(path.join(cwd, '.claude', 'skills', 'mine.md'), 'operator');
+  writeJson(path.join(cwd, '.claude', 'settings.local.json'), { permissions: { allow: [
+    'Bash(~/.claude/plugins/cache/agentic-foundry/foundry/1.9.1/scripts/foundry-doctor.py:*)',
+    'Bash(/opt/mine/tool:*)',
+  ] } });
+
+  const first = await invokeUpdate({ cwd, configDir });
+  assert.notEqual(first.res.exitCode, 1, first.res.output);
+  assert.match(first.text, /\[stale] \.foundry\/wiring-hash\.pin — retired in v0\.24\.0 .*; remove with --cleanup/, first.text);
+  assert.equal(fs.existsSync(path.join(cwd, '.foundry', 'wiring-hash.pin')), true, 'nothing removed without --cleanup');
+  assert.match(first.text, /\[permission-floor] \.claude\/settings\.local\.json: retired 1 version-pinned\/gone row\(s\)/, first.text);
+  const local = readJson(path.join(cwd, '.claude', 'settings.local.json'));
+  assert.deepEqual(local.permissions.allow, ['Bash(/opt/mine/tool:*)']);
+  const report = readJson(path.join(cwd, '.foundry', 'upgrade-report.json'));
+  assert.deepEqual(report.retired_artifacts, { present: ['.foundry/wiring-hash.pin'], removed: 0, refused: 0 });
+  assert.equal(report.settings_local_retired, 1);
+
+  const cleaned = await invokeUpdate({ cwd, configDir, argv: ['--cleanup'] });
+  assert.notEqual(cleaned.res.exitCode, 1, cleaned.res.output);
+  assert.match(cleaned.text, /\[removed] \.foundry\/wiring-hash\.pin — retired in v0\.24\.0/, cleaned.text);
+  assert.equal(fs.existsSync(path.join(cwd, '.foundry', 'wiring-hash.pin')), false);
+  assert.equal(fs.existsSync(path.join(cwd, '.claude', 'skills', 'mine.md')), true, 'operator files are invisible to the sweep');
+  const report2 = readJson(path.join(cwd, '.foundry', 'upgrade-report.json'));
+  assert.equal(report2.retired_artifacts.removed, 1);
 });

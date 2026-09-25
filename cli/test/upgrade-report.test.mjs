@@ -49,6 +49,8 @@ test('buildUpgradeReport: every field, from a full run', () => {
     amendments: { backfilled: 3, present: 4, skipped: 1, total: 8 },
     permissions_policy: 'created',
     drifted: ['CLAUDE.md'],
+    retired_artifacts: { present: [], removed: 0, refused: 0 },
+    settings_local_retired: 0,
   });
 });
 

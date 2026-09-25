@@ -1,6 +1,6 @@
 ---
 name: doctor
-description: Foundry health check (/foundry:doctor) — a thin, six-check probe (the v0.25.0 test-suite realignment shrank this from a 2,900-line drop-in-check registry to one file). Checks the plugin manifest loads, hooks.json parses with every referenced hook script present, every skills/*/SKILL.md frontmatter YAML-parses, the stack-profile lock (if any) resolves, the operator registry resolves, and the control-plane preflight (no dangling repos{} path, no ancestor manifest already governing this project dir). Plus four advisory-only lines never counted toward RED — permissions-policy, agent-teams, branches, and statusline (which names the first missing piece of the token-bar wiring). Fails CLOSED for an operator-invoked check (exit non-zero on any hard failure); the --session-start cadence is advisory (fail-open, never wedges a session). Trigger when the operator says "/foundry:doctor", "foundry health check", or to diagnose why a session looks unhealthy.
+description: Foundry health check (/foundry:doctor) — a thin, six-check probe (the v0.25.0 test-suite realignment shrank this from a 2,900-line drop-in-check registry to one file). Checks the plugin manifest loads, hooks.json parses with every referenced hook script present, every skills/*/SKILL.md frontmatter YAML-parses, the stack-profile lock (if any) resolves, the operator registry resolves, and the control-plane preflight (no dangling repos{} path, no ancestor manifest already governing this project dir). Plus five advisory-only lines never counted toward RED — permissions-policy, agent-teams, branches, statusline (which names the first missing piece of the token-bar wiring), and retired-artifacts (what the updater's sweep would remove under --cleanup). Fails CLOSED for an operator-invoked check (exit non-zero on any hard failure); the --session-start cadence is advisory (fail-open, never wedges a session). Trigger when the operator says "/foundry:doctor", "foundry health check", or to diagnose why a session looks unhealthy.
 ---
 
 # /foundry:doctor
@@ -61,6 +61,10 @@ lane signal — Tier B advisory) plus `hooks/foundry-git-discipline.sh`'s determ
      `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` to `"1"` (`~/.claude/settings.json`, then the
      project's `.claude/settings.json`, then `.claude/settings.local.json`, ascending precedence).
      Never RED: flipping the flag is an adopter opt-in — see `docs/how-to/agent-teams.md`.
+   - **`retired-artifacts`** (hotfix-v1.17.4, ER #236) — `retired-artifacts: none present` or `<n>
+     present (<paths>) — run `npx update-agentic-workspace --cleanup``: files an earlier release wrote
+     and no current release reads, from the catalogue the CLI ships (`cli/retired-artifacts.json`).
+     Never RED: the updater reports them every run and removes them only under `--cleanup`.
    - **`branches`** (branch-and-worktree-discipline, AC-BWD-3) — `branches: <n>
      merged-not-deleted, <m> stale worktrees`, computed by importing
      `scripts/foundry-worktree-gc.py`'s own classifier (ancestry-only, no live `gh` call — this

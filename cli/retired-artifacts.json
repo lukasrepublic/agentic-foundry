@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "_comment": "Workspace-side artifacts an earlier release wrote and no current release reads (hotfix-v1.17.4, ER #236). The updater reports every present entry as [stale] on every run and removes it only under --cleanup. `path` is relative to the workspace root; a single `*` is allowed in the LAST segment only (a basename glob). `kind` is `file` or `dir`; a path of the other kind, or a symlink, is reported and never removed. Nothing outside this list is ever touched; `.claude/skills`, `.claude/agents` and operator files are never candidates.",
+  "entries": [
+    { "path": ".foundry/wiring-hash.pin", "kind": "file", "retired_in": "0.24.0", "reason": "the wiring-hash auto-heal and its pin were removed with the live-seam merge gate" },
+    { "path": ".foundry/active-workflow.json", "kind": "file", "retired_in": "0.5.0", "reason": "the macro-workflow engine's active-workflow pointer; the engine was retired" },
+    { "path": ".foundry/context-snapshots", "kind": "dir", "retired_in": "0.25.0", "reason": "the bespoke context-lifecycle snapshots; /foundry:context wraps native /compact and --resume now" },
+    { "path": ".foundry/branch-protection-unenforced.json", "kind": "file", "retired_in": "0.24.0", "reason": "branch-protection-as-code's marker; Tier A is applied by hand and observed, never written from here" },
+    { "path": ".foundry/hasher-ref", "kind": "file", "retired_in": "0.24.0", "reason": "the retired hasher reference; no current script reads it" },
+    { "path": ".claude/settings.json.bak", "kind": "file", "retired_in": "1.7.0", "reason": "a backup an early settings migration left behind; the updater writes atomically and keeps no .bak" },
+    { "path": ".claude/dispatch-queue", "kind": "dir", "retired_in": "1.10.0", "reason": "the retired dispatch-queue's old location; the multi-repo worktree manifest lives under .foundry/dispatch-queue" },
+    { "path": ".claude/dispatcher-mode.json", "kind": "file", "retired_in": "1.10.0", "reason": "the retired dispatcher's mode file" },
+    { "path": ".claude/dispatcher-mode.json.example", "kind": "file", "retired_in": "1.10.0", "reason": "the retired dispatcher's example" },
+    { "path": ".claude/dispatcher-mode.json.lock", "kind": "file", "retired_in": "1.10.0", "reason": "the retired dispatcher's lock" },
+    { "path": ".claude/dispatch-log.jsonl.example", "kind": "file", "retired_in": "1.10.0", "reason": "the retired dispatcher's example log" },
+    { "path": ".claude/context-state", "kind": "dir", "retired_in": "0.25.0", "reason": "the bespoke context-state store; native session state replaced it" },
+    { "path": ".claude/resume", "kind": "dir", "retired_in": "0.25.0", "reason": "the bespoke resume store; native --resume replaced it" },
+    { "path": ".claude/logs", "kind": "dir", "retired_in": "1.10.0", "reason": "the retired dispatcher's logs" },
+    { "path": ".claude/session-learnings", "kind": "dir", "retired_in": "1.0.0", "reason": "the old learnings location; the partition is .foundry/session-learnings" },
+    { "path": ".claude/hooks/*-exec-guard.sh", "kind": "file", "exclude_prefix": "foundry-", "retired_in": "1.8.0", "reason": "the retired session-context framework's cloud-cli exec guard; no settings entry references it" }
+  ]
+}

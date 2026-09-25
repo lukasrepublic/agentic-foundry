@@ -19,6 +19,8 @@ import { planAmendmentsBackfill, applyAmendmentsBackfill, renderAmendmentsRow } 
 import { buildUpgradeReport, writeUpgradeReport, installedVersionBefore, versionOrNull, NEXT_LINE } from './upgradeReport.mjs';
 import { planStatuslineWiring, applyStatuslineWiring, renderStatuslineRows, statuslineChanged } from './statuslineWiring.mjs';
 import { policyPresent, missingSelfGuardDeny, applySelfGuardDeny, renderSelfGuardRow, selfGuardShapeOk } from './selfGuardDeny.mjs';
+import { loadRetiredCatalogue, planRetiredArtifacts, applyRetiredArtifacts, renderRetiredArtifactRows } from './retiredArtifacts.mjs';
+import { planRetirements, applyRetirements } from './floorReconcile.mjs';
 import {
   ALLOWED_CLAUDE_SUBCOMMANDS, resolveClaudeOnPath, runClaude,
   defaultScopes, snapshotScopes, classifyMigration, migrationActions, migrateScope,
@@ -230,6 +232,9 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     if (previewAmendmentsRow) previewLines.push(previewAmendmentsRow);
     // statusline-wiring (AC-SLW-1/-2): PREVIEW-ONLY rows; Phase 4 re-plans fresh from disk.
     previewLines.push(...renderStatuslineRows(planStatuslineWiring({ physicalRoot, templatesDir })));
+    // retired-artifacts (hotfix-v1.17.4, ER #236): PREVIEW-ONLY rows; Phase 4 re-plans fresh from disk.
+    const retiredCatalogue = loadRetiredCatalogue(pkgDir);
+    previewLines.push(...renderRetiredArtifactRows(planRetiredArtifacts({ physicalRoot, catalogue: retiredCatalogue }), { cleanup: flags.cleanup }));
     print(previewLines.join('\n'));
 
     const env = { ...spawnEnv, CLAUDE_CONFIG_DIR: configDir };
@@ -357,12 +362,44 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     print('');
     print(renderSummary(phases));
 
+    // retired-artifacts (hotfix-v1.17.4, ER #236): re-planned FRESH from disk; reported every run,
+    // removed only under --cleanup, only catalogued paths of the catalogued kind.
+    const retiredPlan = planRetiredArtifacts({ physicalRoot, catalogue: retiredCatalogue });
+    let retiredRemoved = 0;
+    if (flags.cleanup && retiredPlan.present > 0) retiredRemoved = applyRetiredArtifacts(retiredPlan, physicalRoot);
+    for (const row of renderRetiredArtifactRows(retiredPlan, { cleanup: flags.cleanup })) print(row);
+
+    // settings.local.json (hotfix-v1.17.4): the tracked-file reconcile never reads it, so a
+    // version-pinned floor row an old init left there survived every upgrade. Only RETIREMENT is
+    // applied here (never additions — the local file is the operator's), with the same planner and
+    // the same never-clobber write as the tracked file.
+    const localRel = '.claude/settings.local.json';
+    const localAbs = path.join(physicalRoot, localRel);
+    let localRetired = 0;
+    try {
+      const lst = fs.lstatSync(localAbs);
+      if (lst.isFile()) {
+        const localObj = readTarget(localAbs);
+        const lplan = planRetirements({ settingsObj: localObj, map });
+        if (lplan.total > 0) {
+          writeTargetAtomically(localAbs, applyRetirements(localObj, lplan));
+          localRetired = lplan.total;
+          for (const tier of ['allow', 'ask']) for (const r of lplan.retirements[tier]) print(`  [retired] ${localRel}: ${r}`);
+          print(`  [permission-floor] ${localRel}: retired ${localRetired} version-pinned/gone row(s)`);
+        }
+      }
+    } catch (e) {
+      if (e && e.code !== 'ENOENT') print(`  [permission-floor] ${localRel}: not reconciled (${e.message})`);
+    }
+
     // post-upgrade-skill (AC-PUS-1): the hand-off to the judgement half. Written on every
     // completed run (overwritten — a report, not a managed file; `.foundry/*` is gitignored), and
     // named in the LAST line so the operator's next step is never a guess.
     const report = buildUpgradeReport({
       installedBefore, afterEntry, toPluginVersion: pins.plugin_version, phases, filePlan, amendmentsPlan,
       updaterVersion, coreVersion: corePkg.version, updaterPluginVersion: pins.plugin_version,
+      retiredArtifacts: { present: retiredPlan.rows.filter((r) => r.state === 'stale').map((r) => r.relPath), removed: retiredRemoved, refused: retiredPlan.refused },
+      localRetired,
     });
     const reportPath = writeUpgradeReport(physicalRoot, report);
     print('');
