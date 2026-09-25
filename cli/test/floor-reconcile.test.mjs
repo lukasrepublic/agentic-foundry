@@ -643,3 +643,31 @@ test('full_pipeline_idempotence_through_the_real_entry_point_second_run_is_silen
   assert.deepEqual(fs.readFileSync(t.path), bytesAfterFirst, 'a no-op second plan changed the bytes');
   assert.equal(fs.statSync(t.path).ino, inoAfterFirst, 'a no-op second plan rewrote the file');
 });
+
+
+// hotfix-v1.17.3: version-/marketplace-pinned variants of the floor's own rows are retired.
+test('retirement_takes_back_version_pinned_variants_of_the_floors_own_rows', () => {
+  const map = { plugin_root_glob: '~/.claude/plugins/cache/*/foundry/*', entries: [
+    { rule: 'Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-doctor.py:*)', tier: 'allow' },
+  ] };
+  const settingsObj = { permissions: { allow: [
+    'Bash(~/.claude/plugins/cache/agentic-foundry/foundry/1.9.1/scripts/foundry-doctor.py:*)',   // shipped script, stale pin
+    'Bash(~/.claude/plugins/cache/agentic-foundry/foundry/1.9.1/scripts/foundry-gone.py:*)',     // gone script, stale pin
+    'Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-doctor.py:*)',                      // the floor's own row: kept
+    'Bash(/opt/foundry/scripts/foundry-doctor.py:*)',                                            // adopter shape: never touched
+  ], ask: [], deny: [
+    'Bash(~/.claude/plugins/cache/agentic-foundry/foundry/1.9.1/scripts/foundry-doctor.py:*)',   // deny is never a candidate
+  ] } };
+  const plan = planRetirements({ settingsObj, map });
+  assert.deepEqual(plan.retirements.allow, [
+    'Bash(~/.claude/plugins/cache/agentic-foundry/foundry/1.9.1/scripts/foundry-doctor.py:*)',
+    'Bash(~/.claude/plugins/cache/agentic-foundry/foundry/1.9.1/scripts/foundry-gone.py:*)',
+  ]);
+  assert.equal(plan.total, 2);
+  const next = applyRetirements(settingsObj, plan);
+  assert.deepEqual(next.permissions.allow, [
+    'Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-doctor.py:*)',
+    'Bash(/opt/foundry/scripts/foundry-doctor.py:*)',
+  ]);
+  assert.deepEqual(next.permissions.deny, settingsObj.permissions.deny);
+});

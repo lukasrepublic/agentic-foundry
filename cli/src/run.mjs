@@ -20,6 +20,7 @@ import {
 import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from './gitignoreReconcile.mjs';
 import { planAmendmentsBackfill, applyAmendmentsBackfill, renderAmendmentsRow } from './amendmentsBackfill.mjs';
 import { planStatuslineWiring, applyStatuslineWiring, renderStatuslineRows } from './statuslineWiring.mjs';
+import { policyPresent, missingSelfGuardDeny, applySelfGuardDeny, renderSelfGuardRow } from './selfGuardDeny.mjs';
 
 export { DECLARED_PATH_SET };
 
@@ -296,6 +297,16 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
       for (const line of renderPlan(floorPlan, {
         applied: true, retirementPlan: floorRetirementPlan, mapEntryCount: map.entries.length,
       })) print(line);
+    }
+    // hotfix-v1.17.3 (ER #232): under --reconcile-floor (the one opt-in that permits a narrow
+    // settings write on --existing), converge the policy file's self-guard deny pair, fresh from
+    // disk after the floor write, whenever a policy file exists.
+    if (answers.reconcileFloor && floorTarget && floorTarget.present && policyPresent(physicalRoot)) {
+      const cur = readTarget(floorTarget.path);
+      const missing = missingSelfGuardDeny(cur);
+      if (missing.length > 0) writeTargetAtomically(floorTarget.path, applySelfGuardDeny(cur));
+      const row = renderSelfGuardRow(physicalRoot, missing.length);
+      if (row) print(row);
     }
     // AFTER the floor write above: that write serialises a settings object read before this
     // point, so wiring the statusLine keys first would have been overwritten by it. The wiring

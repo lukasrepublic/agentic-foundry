@@ -18,6 +18,7 @@ import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from '
 import { planAmendmentsBackfill, applyAmendmentsBackfill, renderAmendmentsRow } from './amendmentsBackfill.mjs';
 import { buildUpgradeReport, writeUpgradeReport, installedVersionBefore, versionOrNull, NEXT_LINE } from './upgradeReport.mjs';
 import { planStatuslineWiring, applyStatuslineWiring, renderStatuslineRows, statuslineChanged } from './statuslineWiring.mjs';
+import { policyPresent, missingSelfGuardDeny, applySelfGuardDeny, renderSelfGuardRow } from './selfGuardDeny.mjs';
 import {
   ALLOWED_CLAUDE_SUBCOMMANDS, resolveClaudeOnPath, runClaude,
   defaultScopes, snapshotScopes, classifyMigration, migrationActions, migrateScope,
@@ -292,6 +293,16 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
         for (const line of renderPlan(floorPlan, {
           applied: true, retirementPlan: floorRetirementPlan, mapEntryCount: map.entries.length,
         })) print(line);
+      }
+      // hotfix-v1.17.3 (ER #232): the policy file's self-guard deny pair is framework-owned — converge
+      // it here, fresh from disk after the floor write, whenever a policy file exists (seeded above or
+      // kept). Grants stay the compiler's (operator-run) business.
+      if (policyPresent(physicalRoot)) {
+        const cur = readTarget(freshFloorTarget.path);
+        const missing = missingSelfGuardDeny(cur);
+        if (missing.length > 0) writeTargetAtomically(freshFloorTarget.path, applySelfGuardDeny(cur));
+        const row = renderSelfGuardRow(physicalRoot, missing.length);
+        if (row) print(row);
       }
     }
     // Recomputed FRESH from disk, same reasoning as floorPlan just above: never apply a plan

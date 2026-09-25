@@ -44,8 +44,9 @@ State both lists to the operator before touching anything.
    named now), PROPOSE one grant — `id`, `tool`, `pattern`, `mode`, `preconditions` from the closed
    set — and let the operator accept or edit it; anything irreversible or authorization-adjacent is
    `approval_required`. Then `foundry-permissions-compile.py --check`, `--write`, and the doctor's
-   line reads `policy in-sync`. A fresh seed is `drift` until that first `--write` (its two self-guard
-   deny rules); that is expected. `docs/how-to/standing-grants.md` is the worked example.
+   line reads `policy in-sync`. (Since v1.17.3 the updater converges the two self-guard deny rules
+   itself — `[permissions] self-guard deny rules added` — so a seed with zero grants is already in-sync;
+   the compile step is for the grants you add.) `docs/how-to/standing-grants.md` is the worked example.
 4. **`requires_capabilities` on unfrozen contracts only.** For every `acceptance-contract.yaml`
    WITHOUT a frozen `authorized:` block, add the capabilities its checkpoints shell out to (`gh`,
    cloud CLIs, network, a browser) and run `foundry-capability-preflight.py --contract <path>` on

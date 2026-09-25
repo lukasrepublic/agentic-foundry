@@ -79,24 +79,37 @@ def test_scaffold_seeds_the_policy_then_keeps_it(tmp_path):
     assert policy.stat().st_mtime_ns == before.st_mtime_ns
 
 
-def test_fresh_scaffold_compiles_in_sync_after_one_write_and_the_doctor_agrees(tmp_path):
-    """A fresh seed is `drift (2)` until the compiler's first `--write`: the two self-guard deny
-    rules (`Edit`/`Write` on the policy file) are the compiler's own, not the floor's. One
-    `--write` converges them; from then on `--check` is in-sync and the doctor says so."""
-    home, target, _ = _scaffold(tmp_path)
+def test_fresh_scaffold_compiles_in_sync_and_the_doctor_agrees(tmp_path):
+    """hotfix-v1.17.3 (AC-PSC-3 restored): a fresh seed is IN-SYNC on the create path — the two
+    self-guard deny rules (`Edit`/`Write` on the policy file) ride with the floor, so nobody has to
+    remember the compiler; `--check` exits 0 and the doctor says `policy in-sync` immediately."""
+    home, target, proc = _scaffold(tmp_path)
+    settings = json.loads((target / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    assert "Edit(.foundry/permissions.yaml)" in settings["permissions"]["deny"]
+    assert "Write(.foundry/permissions.yaml)" in settings["permissions"]["deny"]
     env = dict(os.environ, CLAUDE_PROJECT_DIR=str(target), HOME=str(home))
-    first = subprocess.run([sys.executable, COMPILE, "--check", "--root", str(target)],
-                           capture_output=True, text=True, env=env, cwd=str(target))
-    assert first.returncode == 3, first.stdout + first.stderr
-    assert "Edit(.foundry/permissions.yaml)" in first.stdout
-    write = subprocess.run([sys.executable, COMPILE, "--write", "--root", str(target)],
-                           capture_output=True, text=True, env=env, cwd=str(target))
-    assert write.returncode == 0, write.stdout + write.stderr
     check = subprocess.run([sys.executable, COMPILE, "--check", "--root", str(target)],
                            capture_output=True, text=True, env=env, cwd=str(target))
     assert check.returncode == 0, check.stdout + check.stderr
     doc = subprocess.run([sys.executable, DOCTOR], capture_output=True, text=True, env=env, cwd=str(target))
     assert "policy in-sync" in doc.stdout, doc.stdout
+
+
+def test_existing_reconcile_floor_converges_the_self_guard_pair(tmp_path):
+    """An older workspace (policy seeded, deny pair absent) gains the pair on `--existing
+    --reconcile-floor`, reported on one row; a second run says already present."""
+    home, target, _ = _scaffold(tmp_path)
+    sp = target / ".claude" / "settings.json"
+    settings = json.loads(sp.read_text(encoding="utf-8"))
+    settings["permissions"]["deny"] = [r for r in settings["permissions"]["deny"] if "permissions.yaml" not in r]
+    sp.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+    again = run_cli(["--dir", str(target), "--existing", "--reconcile-floor", "--yes"], home=home, input_text="")
+    assert again.returncode in (0, 2), again.stdout + again.stderr
+    assert "[permissions] self-guard deny rules added (2)" in again.stdout, again.stdout
+    settings = json.loads(sp.read_text(encoding="utf-8"))
+    assert "Write(.foundry/permissions.yaml)" in settings["permissions"]["deny"]
+    once_more = run_cli(["--dir", str(target), "--existing", "--reconcile-floor", "--yes"], home=home, input_text="")
+    assert "[permissions] self-guard deny rules already present" in once_more.stdout, once_more.stdout
 
 
 def test_absent_policy_names_the_remedy(tmp_path):
