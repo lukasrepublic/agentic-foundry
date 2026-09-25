@@ -74,19 +74,22 @@ EOF
 _short_reason() {
   cat <<'EOF'
 Foundry: routine learnings capture, once per session — this is not an error (the harness captions every Stop hook that way).
-Reflect briefly, then capture via /foundry:learn-capture. Turn this off with FOUNDRY_SESSION_LEARNINGS=off.
+Reflect briefly, then capture via /foundry:learn-capture. Opt-in (FOUNDRY_SESSION_LEARNINGS=on); unset it or set FOUNDRY_SESSION_LEARNINGS=off to stop.
 EOF
 }
 
-# ------------------------- the opt-out knob (AC-RUX-3) ------------------------- #
+# ------------------------- the opt-IN knob (AC-RUX-3, AC-V118B-4) ------------------------- #
 # Claude Code has NO per-hook disable — only `disableAllHooks` (which would also kill git-discipline +
-# cwd-enforce) or uninstalling the plugin. So Foundry owns this knob. Exactly three honored values;
-# ANY other value degrades to the default `gated` (never an error, never a wedge).
+# cwd-enforce) or uninstalling the plugin. So Foundry owns this knob. Since v1.18 (operator decision
+# 2026-09-25) the Stop-time capture is OFF BY DEFAULT: a Stop block interrupts the operator at every
+# session's first qualifying idle. Exactly two values opt in — `on` (the substance-gated cadence) and
+# `full` (ungated); unset, `off` and ANY other value mean off (never an error, never a wedge, never a
+# block). The PreCompact re-arm never blocks, so it is unaffected.
 _knob() {
   case "${FOUNDRY_SESSION_LEARNINGS:-}" in
-    off)  printf 'off' ;;
+    on)   printf 'gated' ;;
     full) printf 'full' ;;
-    *)    printf 'gated' ;;
+    *)    printf 'off' ;;
   esac
 }
 
@@ -201,7 +204,7 @@ except Exception:
 # ENFORCED once-per-session reflection. Guards (ALL must pass to inject), cheapest+most decisive first:
 #   (a) stop_hook_active != true   — the documented re-entrancy contract (never loop)
 #   (b) CLAUDE_CODE_ENTRYPOINT == cli — interactive only; absent/ambiguous → fail toward NO-OP
-#   (d) FOUNDRY_SESSION_LEARNINGS != off — the operator opt-out (AC-RUX-3), BEFORE any transcript I/O
+#   (d) FOUNDRY_SESSION_LEARNINGS is on/full — the operator opt-IN (AC-V118B-4), BEFORE any transcript I/O
 #   (c) per-session marker absent  — once per session
 #   (e) the session is SUBSTANTIVE unless the knob is `full` (AC-RUX-2) — placed AFTER (c) so a
 #       requested/done session never pays for a transcript parse, and BEFORE _set_marker so a
@@ -225,8 +228,9 @@ except Exception: print("")' 2>/dev/null || true)"
     cli) : ;;
     *) exit 0 ;;
   esac
-  # (d) operator opt-out (AC-RUX-3). `off` → silent no-op, and NO marker is written (so flipping the knob
-  # back on mid-session leaves the session's reflection budget intact). Evaluated before any transcript I/O.
+  # (d) operator opt-in (AC-V118B-4). Not opted in (unset/off/other) → silent exit 0, never a block, and NO
+  # marker is written (so opting in mid-session leaves the session's reflection budget intact).
+  # Evaluated before any transcript I/O.
   knob="$(_knob)"
   [ "$knob" = "off" ] && exit 0
   # (c) once-per-session marker — EXACT-match inject ALLOWLIST (AC-COMPACT-2.1): inject iff the state is
@@ -261,7 +265,7 @@ print(json.dumps({"decision":"block",
                   "reason":os.environ.get("_FOUNDRY_REASON","").strip(),
                   "hookSpecificOutput":{"hookEventName":"Stop",
                                         "additionalContext":os.environ.get("_FOUNDRY_CONTEXT","")}}))' 2>/dev/null \
-    || printf '{"decision":"block","reason":"Foundry: routine learnings capture, once per session (not an error). Capture via /foundry:learn-capture; disable with FOUNDRY_SESSION_LEARNINGS=off."}'
+    || printf '{"decision":"block","reason":"Foundry: routine learnings capture, once per session (not an error). Capture via /foundry:learn-capture; opt-in, disable with FOUNDRY_SESSION_LEARNINGS=off."}'
   exit 0
 }
 
@@ -358,6 +362,9 @@ _selftest() {
   mkdir -p "$tmp/tmp" 2>/dev/null && export TMPDIR="$tmp/tmp" || true
   date_part="$(date -u +%F)"
   local proj="$tmp/proj"; mkdir -p "$proj/.foundry"; export CLAUDE_PROJECT_DIR="$proj"
+  # AC-V118B-4: the Stop capture is opt-in; the batteries below exercise the ENABLED path, so the
+  # selftest opts in. The default-OFF behaviour is asserted explicitly in the AC-RUX-3 block.
+  export FOUNDRY_SESSION_LEARNINGS=on
   _emit() { if [ "$2" -eq 0 ]; then echo "$1: PASS${3:+ — $3}"; else echo "$1: FAIL${3:+ — $3}"; fails=$((fails+1)); fi; }
   _files() { find "$proj/.foundry/session-learnings/$date_part" -name "$1" 2>/dev/null | wc -l | tr -d ' '; }
   _recs()  { cat $(find "$proj/.foundry/session-learnings/$date_part" -name "$1" 2>/dev/null) 2>/dev/null | grep -c . || echo 0; }
@@ -673,19 +680,26 @@ print(d if isinstance(d,str) else "")' "$2" 2>/dev/null
   printf '%s' "$(_rux_stop "RUXI" "$tdir/sub_mut.jsonl")" | grep -q '"decision"' || ru2=1
   _emit "AC-RUX-2 substance-gate-suppresses-only-on-positive-proof" "$ru2" "insubstantial→no-inject+no-marker; mutation/delegation/3-turns each→inject; corrupt/absent/empty→inject (fail-toward); suppressed session can still reflect later"
 
-  # ---- AC-RUX-3: off / full / gated (+ garbage degrades to gated, never an error).
+  # ---- AC-RUX-3 / AC-V118B-4: opt-in — on (gated) / full; unset / off / garbage are OFF (never block).
   local ru3=0
   printf '%s' "$(FOUNDRY_SESSION_LEARNINGS=off _rux_stop "RUXOFF" "$tdir/sub_mut.jsonl")" | grep -q '"decision"' && ru3=1
   [ -z "$(_marker_state RUXOFF)" ] || ru3=1                                   # off writes NO marker
+  printf '%s' "$(unset FOUNDRY_SESSION_LEARNINGS; _rux_stop "RUXUNSET" "$tdir/sub_mut.jsonl")" | grep -q '"decision"' && ru3=1
+  [ -z "$(_marker_state RUXUNSET)" ] || ru3=1                                 # default (unset) is OFF, no marker
+  printf '%s' "$(FOUNDRY_SESSION_LEARNINGS= _rux_stop "RUXEMPTY" "$tdir/sub_mut.jsonl")" | grep -q '"decision"' && ru3=1
   printf '%s' "$(FOUNDRY_SESSION_LEARNINGS=full _rux_stop "RUXFULL" "$tdir/insub.jsonl")" | grep -q '"decision"' || ru3=1
+  printf '%s' "$(FOUNDRY_SESSION_LEARNINGS=on _rux_stop "RUXON" "$tdir/insub.jsonl")" | grep -q '"decision"' && ru3=1
+  printf '%s' "$(FOUNDRY_SESSION_LEARNINGS=on _rux_stop "RUXON2" "$tdir/sub_mut.jsonl")" | grep -q '"decision"' || ru3=1
   printf '%s' "$(FOUNDRY_SESSION_LEARNINGS=wat _rux_stop "RUXGB" "$tdir/insub.jsonl")" | grep -q '"decision"' && ru3=1
-  printf '%s' "$(FOUNDRY_SESSION_LEARNINGS=wat _rux_stop "RUXGB2" "$tdir/sub_mut.jsonl")" | grep -q '"decision"' || ru3=1
+  printf '%s' "$(FOUNDRY_SESSION_LEARNINGS=wat _rux_stop "RUXGB2" "$tdir/sub_mut.jsonl")" | grep -q '"decision"' && ru3=1
   [ "$(FOUNDRY_SESSION_LEARNINGS=off _knob)" = "off" ] || ru3=1
-  [ "$(FOUNDRY_SESSION_LEARNINGS=wat _knob)" = "gated" ] || ru3=1
+  [ "$(unset FOUNDRY_SESSION_LEARNINGS; _knob)" = "off" ] || ru3=1
+  [ "$(FOUNDRY_SESSION_LEARNINGS=wat _knob)" = "off" ] || ru3=1
+  [ "$(FOUNDRY_SESSION_LEARNINGS=on _knob)" = "gated" ] || ru3=1
   # the min-turns threshold is honoured (2-turn transcript is insubstantial at 3, substantive at 2)
   printf '%s' "$(FOUNDRY_SESSION_LEARNINGS_MIN_TURNS=2 _rux_stop "RUXMT" "$tdir/insub.jsonl")" | grep -q '"decision"' && ru3=1
   printf '%s' "$(FOUNDRY_SESSION_LEARNINGS_MIN_TURNS=1 _rux_stop "RUXMT2" "$tdir/insub.jsonl")" | grep -q '"decision"' || ru3=1
-  _emit "AC-RUX-3 operator-opt-out-off-full-gated" "$ru3" "off→no-inject+no-marker; full→inject on insubstantial; garbage→gated; MIN_TURNS honoured"
+  _emit "AC-RUX-3 operator-opt-out-off-full-gated" "$ru3" "unset/empty/off/garbage→no-inject+no-marker (default OFF); on→gated; full→inject on insubstantial; MIN_TURNS honoured"
 
   # ---- AC-RUX-4: anti-tautology — every guard proven load-bearing on known-bad shapes.
   local ru4=0 out_rt1 out_rt2

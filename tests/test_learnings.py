@@ -43,6 +43,40 @@ def test_session_learnings_hook_selftest():
         assert line in proc.stdout, proc.stdout
 
 
+def _stop_hook(tmp_path, knob, sid):
+    """Drive the REAL Stop entry point with a substantive (mutation-bearing) transcript."""
+    tp = tmp_path / f"{sid}.jsonl"
+    tp.write_text(json.dumps({"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "Edit", "input": {}}]}}) + "\n", encoding="utf-8")
+    proj = tmp_path / "proj"
+    (proj / ".foundry").mkdir(parents=True, exist_ok=True)
+    env = {k: v for k, v in os.environ.items() if k != "FOUNDRY_SESSION_LEARNINGS"}
+    env.update({"CLAUDE_CODE_ENTRYPOINT": "cli", "CLAUDE_PROJECT_DIR": str(proj),
+                "TMPDIR": str(tmp_path)})
+    if knob is not None:
+        env["FOUNDRY_SESSION_LEARNINGS"] = knob
+    payload = json.dumps({"session_id": sid, "stop_hook_active": False, "transcript_path": str(tp)})
+    script = os.path.join(REPO_ROOT, "hooks", "foundry-session-learnings.sh")
+    return subprocess.run(["bash", script, "stop"], input=payload, capture_output=True, text=True,
+                          env=env, timeout=60)
+
+
+def test_session_learnings_stop_is_off_by_default(tmp_path):
+    """AC-V118B-4: unset (and off / any unrecognized value) → exit 0, no block decision."""
+    for knob, sid in ((None, "V118B4-unset"), ("off", "V118B4-off"), ("", "V118B4-empty"),
+                      ("yes", "V118B4-garbage")):
+        proc = _stop_hook(tmp_path, knob, sid)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert '"decision"' not in proc.stdout, (knob, proc.stdout)
+
+
+def test_session_learnings_stop_blocks_only_when_opted_in(tmp_path):
+    for knob, sid in (("on", "V118B4-on"), ("full", "V118B4-full")):
+        proc = _stop_hook(tmp_path, knob, sid)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert json.loads(proc.stdout)["decision"] == "block", (knob, proc.stdout)
+
+
 def test_foundry_distill_own_selftest():
     script = os.path.join(REPO_ROOT, "scripts", "foundry-distill.py")
     proc = subprocess.run([sys.executable, script, "--selftest"], capture_output=True, text=True)
