@@ -193,7 +193,17 @@ def test_corpus_covers_every_drift_class():
             else:
                 silent[cls] += 1
 
-    never_fired = [c for c in RULE_NAMING_CLASSES if fired[c] == 0]
+    # v1.18.0 (AC-V118A-2): the shipped map's only non-ceremony ask entry (`Bash(claude plugin
+    # tag:*)`) was dropped, so plain `ask-shadowed` is UNREACHABLE against the shipped map — every
+    # remaining ask entry is a ceremony entry. The exemption is conditional: it lapses (and the class
+    # must be exercised again) the moment a non-ceremony ask entry returns to the map.
+    with open(MAP_PATH, encoding="utf-8") as fh:
+        ask_entries = [e for e in json.load(fh)["entries"] if e["tier"] == "ask"]
+    unreachable = set()
+    if ask_entries and all(pf.is_ceremony_entry(e) for e in ask_entries):
+        unreachable.add("ask-shadowed")
+        assert fired["ask-shadowed"] == 0, "ask-shadowed fired with no non-ceremony ask entry in the map"
+    never_fired = [c for c in RULE_NAMING_CLASSES if fired[c] == 0 and c not in unreachable]
     assert not never_fired, f"corpus never exercises: {never_fired}"
 
     for cls in ("allow-absent", "ask-absent", "deny-missing", "tier-conflict"):

@@ -1,21 +1,22 @@
 # .foundry/permissions.yaml — this workspace's STANDING GRANTS as policy.
 #
-# The operator edits this file; the agent never does (`Edit`/`Write` on it are refused by the
-# compiled floor). `foundry-permissions-compile.py --write` turns every grant into one native
-# Claude Code rule `<tool>(<pattern>)` in .claude/settings.json; `--check` reports drift; the
-# doctor's `permissions-policy` line says `policy in-sync (<n>)` when the two agree. A contract's
-# `requires_capabilities` is checked against these grants by the capability preflight before an
-# atom is dispatched, so a denial surfaces before the work starts, not in the middle of it.
+# Operator-owned (the agent writes it only when you ask). Grants only ever WIDEN: an `automatic`
+# grant compiles (`foundry-permissions-compile.py --write`) to one native allow rule
+# `<tool>(<pattern>)` in .claude/settings.json; an `approval_required` grant compiles to NOTHING — the
+# command keeps the session's normal permission mode, and the agent's own loop stops to ask you.
+# Nothing here can add a prompt or a refusal. `--check` reports drift; the doctor's
+# `permissions-policy` line says `policy in-sync` when the two agree. The plugin's own scripts need
+# no grant (a PreToolUse hook allows them).
 #
-# Seeded EMPTY by `npx update-agentic-workspace` / `create-agentic-workspace --existing` and never
-# reconciled again (operator-owned). Schema: <plugin>/schema/permissions.schema.json.
+# Seeded EMPTY by the updater / `create-agentic-workspace --existing` and never reconciled again.
+# Schema: <plugin>/schema/permissions.schema.json.
 #
 # Each grant:
 #   id             a slug; surfaced in report and blocker lines
 #   tool           Bash | Edit | Write | Read | WebFetch | Agent
 #   pattern        the native rule's parenthesised body — the compiled rule is exactly <tool>(<pattern>)
 #   mode           automatic         — proceed once every listed precondition has been verified by command
-#                  approval_required — one blocker line naming this grant's id; the operator decides
+#                  approval_required — writes no rule; the agent stops with one line naming this id, you decide
 #   preconditions  closed set: ci-green, security-reviewed-label, spec-authorized, charter-committed,
 #                  worktree-clean, branch-up-to-date
 #

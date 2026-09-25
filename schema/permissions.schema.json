@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/lukasrepublic/agentic-foundry/schema/permissions.schema.json",
   "title": "Foundry standing-grants policy (.foundry/permissions.yaml)",
-  "description": "feat-foundry-authorization-standing-grants-as-policy (AC-SGP-1). One workspace-owned file the operator edits and the agent never does (`foundry-permissions-compile.py --write` places native `Edit`/`Write` deny rules on this path in `.claude/settings.json` `permissions.deny`, AC-SGP-4): each grant is `automatic` (proceed once its preconditions are verified) or `approval_required` (surface one blocker line naming the grant). `scripts/foundry-permissions-compile.py` compiles this into the native `permissions.allow`/`permissions.ask`/`permissions.deny` rule sets `.claude/settings.json` already enforces -- no policy engine of our own.",
+  "description": "feat-foundry-authorization-standing-grants-as-policy (AC-SGP-1). One operator-owned file (the agent writes it only when asked; the AC-SGP-4 self-guard deny rules are retired in v1.18.0). Grants only widen \u2014 `automatic` compiles to one allow rule, `approval_required` compiles to no rule: each grant is `automatic` (proceed once its preconditions are verified) or `approval_required` (surface one blocker line naming the grant). `scripts/foundry-permissions-compile.py` compiles this into the native `permissions.allow`/`permissions.ask`/`permissions.deny` rule sets `.claude/settings.json` already enforces -- no policy engine of our own.",
   "type": "object",
   "required": ["schema_version", "grants"],
   "additionalProperties": false,
@@ -40,7 +40,7 @@
           "mode": {
             "type": "string",
             "enum": ["automatic", "approval_required"],
-            "description": "`automatic`: proceed once every listed precondition has been verified by command. `approval_required`: one blocker line naming this grant's `id`."
+            "description": "`automatic`: compiles to one allow rule; proceed once every listed precondition has been verified by command. `approval_required`: compiles to NO rule (the command keeps the session's permission mode); the agent's loop stops with one line naming this grant's `id`."
           },
           "preconditions": {
             "type": "array",

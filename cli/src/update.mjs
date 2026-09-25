@@ -18,7 +18,6 @@ import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from '
 import { planAmendmentsBackfill, applyAmendmentsBackfill, renderAmendmentsRow } from './amendmentsBackfill.mjs';
 import { buildUpgradeReport, writeUpgradeReport, installedVersionBefore, versionOrNull, NEXT_LINE } from './upgradeReport.mjs';
 import { planStatuslineWiring, applyStatuslineWiring, renderStatuslineRows, statuslineChanged } from './statuslineWiring.mjs';
-import { policyPresent, missingSelfGuardDeny, applySelfGuardDeny, renderSelfGuardRow, selfGuardShapeOk } from './selfGuardDeny.mjs';
 import { loadRetiredCatalogue, planRetiredArtifacts, applyRetiredArtifacts, renderRetiredArtifactRows } from './retiredArtifacts.mjs';
 import { planRetirements, applyRetirements, askRootKeys } from './floorReconcile.mjs';
 import {
@@ -233,16 +232,10 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     previewLines.push('The following workspace paths will be reconciled (never-clobber):');
     for (const f of filePlan) previewLines.push(`  [${f.action}] ${f.relPath}`);
     if (previewFloorPlan) {
-      previewLines.push(`  [permission-floor] would add allow=${previewFloorPlan.additions.allow.length}, ask=${previewFloorPlan.additions.ask.length}, deny=${previewFloorPlan.additions.deny.length}`);
+      previewLines.push(`  [permission-floor] .claude/settings.json: would add deny=${previewFloorPlan.additions.deny.length} (the floor writes only deny rows; foundry scripts are allowed by the plugin's PreToolUse hook)`);
       if (previewRetirementPlan && previewRetirementPlan.total > 0) {
-        previewLines.push(`  [permission-floor] would retire allow=${previewRetirementPlan.retirements.allow.length}, ask=${previewRetirementPlan.retirements.ask.length}`);
-      }
-      // hotfix-v1.17.3 (PR #233 review Risk 4): the self-guard pair is previewed like the floor.
-      if (policyPresent(physicalRoot) || filePlan.some((f) => f.seed && f.action === 'create')) {
-        const cur0 = readTarget(floorTarget.path);
-        const prow = renderSelfGuardRow(physicalRoot, missingSelfGuardDeny(cur0).length, { shapeOk: selfGuardShapeOk(cur0), applied: false });
-        if (prow) previewLines.push(prow);
-        else previewLines.push('  [permissions] would add self-guard deny rules (2): Edit/Write on .foundry/permissions.yaml (with the seed)');
+        const r = previewRetirementPlan.retirements;
+        previewLines.push(`  [permission-floor] .claude/settings.json: would retire allow=${r.allow.length}, ask=${r.ask.length}, deny=${(r.deny || []).length}`);
       }
     } else {
       previewLines.push('  [permission-floor] .claude/settings.json absent — left to the create path');
@@ -264,7 +257,7 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
       const lp = planLocalRetirement({
         physicalRoot, map, trackedSettingsObj: floorTarget.present ? readTarget(floorTarget.path) : null,
       });
-      if (lp.plan && lp.plan.total > 0) previewLines.push(`  [permission-floor] ${lp.rel}: would retire allow=${lp.plan.retirements.allow.length}, ask=${lp.plan.retirements.ask.length} (never adds)`);
+      if (lp.plan && lp.plan.total > 0) previewLines.push(`  [permission-floor] ${lp.rel}: would retire allow=${lp.plan.retirements.allow.length}, ask=${lp.plan.retirements.ask.length}, deny=${(lp.plan.retirements.deny || []).length} (never adds)`);
       else if (lp.error) previewLines.push(`  [permission-floor] ${lp.rel}: would not be reconciled (${lp.error})`);
     }
     print(previewLines.join('\n'));
@@ -338,17 +331,6 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
           applied: true, retirementPlan: floorRetirementPlan, mapEntryCount: map.entries.length,
         })) print(line);
       }
-      // hotfix-v1.17.3 (ER #232): the policy file's self-guard deny pair is framework-owned — converge
-      // it here, fresh from disk after the floor write, whenever a policy file exists (seeded above or
-      // kept). Grants stay the compiler's (operator-run) business.
-      if (policyPresent(physicalRoot)) {
-        const cur = readTarget(freshFloorTarget.path);
-        const shapeOk = selfGuardShapeOk(cur);
-        const missing = missingSelfGuardDeny(cur);
-        if (shapeOk && missing.length > 0) writeTargetAtomically(freshFloorTarget.path, applySelfGuardDeny(cur));
-        const row = renderSelfGuardRow(physicalRoot, missing.length, { shapeOk });
-        if (row) print(row);
-      }
     }
     // Recomputed FRESH from disk, same reasoning as floorPlan just above: never apply a plan
     // captured before Phases 1-3 ran, even though `.gitignore` is not itself a migration target.
@@ -408,7 +390,7 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
       if (lp.plan && lp.plan.total > 0) {
         writeTargetAtomically(lp.abs, applyRetirements(lp.settingsObj, lp.plan));
         localRetired = lp.plan.total;
-        for (const tier of ['allow', 'ask']) for (const r of lp.plan.retirements[tier]) print(`  [retired] ${lp.rel}: ${r}`);
+        for (const tier of ['allow', 'ask', 'deny']) for (const r of lp.plan.retirements[tier] || []) print(`  [retired] ${lp.rel} ${tier}: ${r}`);
         print(`  [permission-floor] ${lp.rel}: retired ${localRetired} version-pinned/gone row(s)`);
       } else if (lp.error) {
         print(`  [permission-floor] ${lp.rel}: not reconciled (${lp.error})`);

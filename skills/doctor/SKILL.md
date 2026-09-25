@@ -44,18 +44,21 @@ lane signal — Tier B advisory) plus `hooks/foundry-git-discipline.sh`'s determ
       repo — a mistake-catcher, not a floor.
 
    The standalone `permission-floor` drift probe (feat-foundry-doctor-permission-floor-check,
-   AC-DPF-1..8) was retired by subtraction-wave (autonomy-continuation R4, AC-SUB-1c) — the
-   `permissions-policy` advisory line below carries the drift signal it used to render on its own
-   line (feat-foundry-authorization-capability-preflight-at-dispatch, AC-CPD-4).
+   AC-DPF-1..8) was retired by subtraction-wave (autonomy-continuation R4, AC-SUB-1c). Nothing
+   replaces it, and nothing needs to: since v1.18.0 the floor writes only its deny rows, and the
+   plugin's own scripts run through the `foundry-plugin-scripts-allow.py` PreToolUse hook (Bash
+   rules naming a script path never matched a real invocation — measured).
 
    Plus advisory-only lines, rendered the same way but never counted toward `DOCTOR-RED`:
    - **`permissions-policy`** (feat-foundry-authorization-capability-preflight-at-dispatch,
      AC-CPD-4 — replaces the R1 drift-only advisory, feat-foundry-authorization-standing-grants-
      as-policy AC-SGP-6) — runs `scripts/foundry-capability-preflight.py` over every atom of every
-     ACTIVE release under `.foundry/releases/*/release.yaml`, printing `preflight ok (<n> atoms)`
-     or `preflight: <n> missing rule(s)`, followed by the R1 drift state on the SAME line —
-     `; policy absent|in-sync|drift (<k>)`, the same derivation `foundry-permissions-compile.py
-     --check` runs. Never RED: a stale-permission workspace must never wedge a session.
+     ACTIVE release under `.foundry/releases/*/release.yaml`, printing `preflight over <n> active
+     atom(s): <d> denied[, <c> not pre-granted]` — only a capability a DENY rule would refuse is a
+     blocker; not pre-granted means the session's permission mode decides at run time — followed by
+     `; policy absent|in-sync|drift (<k>) (.foundry/permissions.yaml vs .claude/settings.json)`, the
+     same derivation `foundry-permissions-compile.py --check` runs, naming the two files compared.
+     ADVISORY only on a denial or drift. Never RED.
    - **`agent-teams`** (feat-agent-teams-enablement, AC-ATE-4) — `agent-teams: on (settings env)`
      or `agent-teams: off`, derived from whether the effective settings files' `env` block sets
      `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` to `"1"` (`~/.claude/settings.json`, then the
