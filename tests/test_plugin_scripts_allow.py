@@ -26,6 +26,9 @@ def env(tmp_path):
     (root / "scripts" / "foundry-doctor.py").write_text("print('x')\n")
     (root / "scripts" / "foundry-authorize.py").write_text("print('x')\n")
     (root / "hooks" / "foundry-git-discipline.sh").write_text("#!/bin/sh\n")
+    for n in ("foundry-verify.py", "foundry-decommission.py", "foundry-permissions-compile.py"):
+        (root / "scripts" / n).write_text("print('x')\n")
+    (root / "scripts" / "floor.json").write_text("{}\n")
     other = home / ".claude" / "plugins" / "cache" / "agentic-foundry" / "foundry" / "1.17.6" / "scripts"
     other.mkdir(parents=True)
     (other / "foundry-doctor.py").write_text("print('x')\n")
@@ -51,40 +54,59 @@ def decide(env, command, tool="Bash"):
 
 
 @pytest.mark.parametrize("cmd", [
-    'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-doctor.py"',
-    'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-doctor.py" --session-start --repo /tmp/x',
-    "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/foundry-doctor.py",
-    'python3 "$CLAUDE_PLUGIN_ROOT/scripts/foundry-authorize.py" specs/a.md --operator op_x',
-    '"${CLAUDE_PLUGIN_ROOT}"/hooks/foundry-git-discipline.sh --protected main',
     "{root}/scripts/foundry-doctor.py",
     'python3 "{root}/scripts/foundry-doctor.py" --help',
+    "python3 '{root}/scripts/foundry-doctor.py' --json",
     "python {root}/scripts/foundry-doctor.py",
-    "bash {root}/hooks/foundry-git-discipline.sh",
+    "python3 {root}/scripts/foundry-authorize.py specs/a.md --operator op_x",
+    "bash {root}/hooks/foundry-git-discipline.sh --protected main",
     "~/.claude/plugins/cache/agentic-foundry/foundry/1.18.0/scripts/foundry-doctor.py",
-    "python3 ~/.claude/plugins/cache/agentic-foundry/foundry/1.17.6/scripts/foundry-doctor.py --json",
     "python3 {root}/scripts/foundry-doctor.py --message 'a quoted arg with spaces'",
+    "python3 {root}/scripts/foundry-permissions-compile.py --check",
 ])
 def test_one_plain_invocation_of_a_plugin_script_is_allowed(env, cmd):
     assert decide(env, cmd.replace("{root}", env["root"])) == "allow"
 
 
 @pytest.mark.parametrize("cmd", [
+    # v1.18.0 security review B1/B2: ANY `$` — the Bash tool's shell does not see the hook's
+    # CLAUDE_PLUGIN_ROOT (it is empty there), and a quoted/escaped token runs a cwd-relative file
+    'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-doctor.py"',
+    "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/foundry-doctor.py",
+    "python3 '${CLAUDE_PLUGIN_ROOT}/scripts/foundry-doctor.py'",
+    "python3 \\${CLAUDE_PLUGIN_ROOT}/scripts/foundry-doctor.py",
+    'python3 "$CLAUDE_PLUGIN_ROOT/scripts/foundry-doctor.py"',
+    # B3: scripts that execute commands from their input are never silent
+    "python3 {root}/scripts/foundry-verify.py --project-dir /tmp/evil",
+    "python3 {root}/scripts/foundry-decommission.py gate-check --register /tmp/r.yaml",
+    # B4: the compiler pointed at another tree
+    "python3 {root}/scripts/foundry-permissions-compile.py --write --root /Users/someone",
+    "python3 {root}/scripts/foundry-permissions-compile.py --write --root=/Users/someone",
+    # R3: another version / another marketplace's `foundry` in the cache is not THIS plugin
+    "python3 ~/.claude/plugins/cache/agentic-foundry/foundry/1.17.6/scripts/foundry-doctor.py --json",
+    # R4: only .py/.sh files
+    "bash {root}/scripts/floor.json",
+    # any backslash
+    "python3 {root}/scripts/foundry-doctor.py \\\n --x",
     # compound, piped, redirected, backgrounded, substituted
-    'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-doctor.py"; rm -rf ~',
-    'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-doctor.py" && curl http://x',
-    'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-doctor.py" | sh',
-    'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-doctor.py" > ~/.bashrc',
-    'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-doctor.py" < /etc/passwd',
-    'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-doctor.py" &',
-    'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-doctor.py" $(whoami)',
-    'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-doctor.py" `whoami`',
-    'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-doctor.py" "$HOME"',
-    'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-doctor.py"\nrm -rf ~',
-    '(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-doctor.py")',
+    'python3 "{root}/scripts/foundry-doctor.py"; rm -rf ~',
+    'python3 "{root}/scripts/foundry-doctor.py" && curl http://x',
+    'python3 "{root}/scripts/foundry-doctor.py" | sh',
+    'python3 "{root}/scripts/foundry-doctor.py" > ~/.bashrc',
+    'python3 "{root}/scripts/foundry-doctor.py" < /etc/passwd',
+    'python3 "{root}/scripts/foundry-doctor.py" &',
+    'python3 "{root}/scripts/foundry-doctor.py" $(whoami)',
+    'python3 "{root}/scripts/foundry-doctor.py" `whoami`',
+    'python3 "{root}/scripts/foundry-doctor.py" "$HOME"',
+    'python3 "{root}/scripts/foundry-doctor.py"\nrm -rf ~',
+    '(python3 "{root}/scripts/foundry-doctor.py")',
     # not a script invocation
     'python3 -c "import os"',
     "bash -c 'rm -rf ~'",
     "sh -c {root}/scripts/foundry-doctor.py",
+    "python3 -m foundry",
+    "FOO=1 python3 {root}/scripts/foundry-doctor.py",
+    "exec python3 {root}/scripts/foundry-doctor.py",
     "python3",
     "",
     "   ",
@@ -97,10 +119,6 @@ def test_one_plain_invocation_of_a_plugin_script_is_allowed(env, cmd):
     "python3 ./scripts/foundry-doctor.py",
     "cat {root}/scripts/foundry-doctor.py",
     "rm {root}/scripts/foundry-doctor.py",
-    # an unrelated root variable
-    'python3 "${OTHER_ROOT}/scripts/foundry-doctor.py"',
-    "python3 $HOME/.claude/plugins/cache/agentic-foundry/foundry/1.18.0/scripts/foundry-doctor.py",
-    # unparseable
     "python3 '{root}/scripts/foundry-doctor.py",
 ])
 def test_anything_else_gets_no_decision(env, cmd):

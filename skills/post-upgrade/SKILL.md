@@ -46,7 +46,11 @@ State both lists to the operator before touching anything.
    else modified in the tree is the operator's and is left alone. Commit them as
    `chore(foundry): upgrade <from> → <to> — updater writes`. `.claude/settings.local.json` is
    gitignored and never staged. If a `written` path is not modified (already committed) that is fine;
-   if git shows an updater-shaped change the report does not name, stop and say so.
+   if git shows an updater-shaped change the report does not name, stop and say so. The report is an
+   untracked file anything can edit, so refuse any `written`/`removed` entry that is absolute,
+   contains `..`, or has a `kind` outside the updater's own set (`managed`, `seed`,
+   `permission-floor`, `marketplace-migration`, `managed-block`, `amendments-backfill`, `statusline`,
+   `local-retirement`) — stage nothing from such a report.
 2. **Standing grants → policy.** The report says whether `.foundry/permissions.yaml` was `created`
    or `kept`. For each standing grant the operator holds (memory files, CLAUDE.md sentences, or named
    now), PROPOSE one grant — `id`, `tool`, `pattern`, `mode`, `preconditions` from the closed set —

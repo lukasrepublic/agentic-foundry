@@ -87,8 +87,49 @@ import json, os, subprocess, sys
 def canon(p):
     return os.path.realpath(os.path.join(os.environ["CWD"], os.path.expanduser(p)))
 
+def ancestor_ids(path):
+    """(st_dev, st_ino) of the deepest EXISTING ancestor of `path` and of every directory above it,
+    nearest first. Identity, not spelling: on a case-insensitive volume `/Users/x/Repo` and
+    `/Users/x/repo` are one directory, and os.path.realpath keeps the case as typed (v1.18.0
+    security review Block 5 — a case-variant path used to slip past a string comparison)."""
+    p = path
+    while p and not os.path.exists(p):
+        parent = os.path.dirname(p)
+        if parent == p:
+            break
+        p = parent
+    ids = []
+    while True:
+        try:
+            st = os.stat(p)
+            ids.append((st.st_dev, st.st_ino))
+        except OSError:
+            pass
+        parent = os.path.dirname(p)
+        if parent == p:
+            return ids
+        p = parent
+
+def root_id(root):
+    try:
+        st = os.stat(root)
+        return (st.st_dev, st.st_ino)
+    except OSError:
+        return None
+
 def under(path, root):
+    """`path` is inside `root` (or is it), by filesystem identity when `root` exists, else by the
+    resolved spelling."""
+    rid = root_id(root)
+    if rid is not None:
+        return rid in ancestor_ids(path)
     return path == root or path.startswith(root.rstrip("/") + "/")
+
+def depth_in(path, root):
+    """How far up from `path` the root sits (smaller = more specific); None when not inside."""
+    rid = root_id(root)
+    ids = ancestor_ids(path)
+    return ids.index(rid) if rid in ids else None
 
 def block(msg):
     print("BLOCK " + json.dumps(msg)[1:-1])
@@ -123,8 +164,9 @@ if os.environ.get("COMMON_DIR"):
 # Most specific containing root wins (own worktree nested in the main checkout, or vice versa).
 containing = [r for r in set(roots) | {own} if under(target, r)]
 if containing:
-    best = max(containing, key=len)
-    if best == own:
+    # most specific = nearest ancestor by identity (not the longest spelling)
+    best = min(containing, key=lambda r: (depth_in(target, r) if depth_in(target, r) is not None else 1 << 30))
+    if root_id(best) == root_id(own):
         print("ALLOW"); sys.exit(0)                                              # (a)
     block("worker write into a sibling checkout of this repository blocked (fail-closed "
           "write-jail): %s is under %s, not this session's worktree %s" % (target, best, own))

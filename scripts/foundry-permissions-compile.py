@@ -478,6 +478,20 @@ def _project_dir(root):
     return root or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
 
 
+def _write_target_refusal(project_dir):
+    """A refusal message, or None. `--write` edits `<root>/.claude/settings.json`; it may never land
+    in USER-scope settings (`~/.claude/settings.json`, which reaches every session on the machine) —
+    v1.18.0 security review Block 4: `--root $HOME` let an agent-written policy grant itself anything,
+    everywhere, without a prompt. Checked by resolved path, so a symlinked `.claude` cannot route it."""
+    home = os.path.realpath(os.path.expanduser("~"))
+    real = os.path.realpath(project_dir)
+    user_settings = os.path.realpath(os.path.join(home, ".claude", "settings.json"))
+    target = os.path.realpath(os.path.join(real, ".claude", "settings.json"))
+    if real == home or target == user_settings:
+        return "refusing --write: the target is user-scope ~/.claude/settings.json (it reaches every session)"
+    return None
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="foundry-permissions-compile — compile .foundry/permissions.yaml into "
@@ -494,6 +508,13 @@ def main(argv=None):
     if args.check:
         code, message = run_check(project_dir)
     else:
+        # v1.18.0 security review Block 4: `--write` edits a settings file, so it never targets the
+        # operator's home (that is USER-scope `~/.claude/settings.json`, reaching every session) nor
+        # a tree other than the session's project when one is set.
+        refusal = _write_target_refusal(project_dir)
+        if refusal:
+            print(refusal)
+            return EXIT_MISSING_OR_INVALID
         code, message = run_write(project_dir)
 
     print(message)

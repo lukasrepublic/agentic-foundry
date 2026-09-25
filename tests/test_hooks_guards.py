@@ -988,3 +988,34 @@ def test_v118b1_main_clone_session_unjailed(repo_with_worktrees):
     r = repo_with_worktrees
     p = _cwd_enforce(r["sib"] / "x.txt", cwd=r["main"])
     assert p.returncode == 0, p.stdout + p.stderr
+
+
+def test_v118_review_b5_case_variant_path_into_the_main_checkout_is_blocked(repo_with_worktrees):
+    """v1.18.0 security review Block 5: on a case-insensitive volume a case-variant spelling of the
+    main checkout is the SAME directory; containment is by (st_dev, st_ino), not by spelling."""
+    r = repo_with_worktrees
+    main = str(r["main"])
+    variant = main[:-len("main-checkout")] + "MAIN-CHECKOUT"
+    if not os.path.exists(variant):
+        pytest.skip("case-sensitive filesystem: the variant is a different path")
+    p = _cwd_enforce(os.path.join(variant, "README.md"), cwd=str(r["wt"]))
+    assert p.returncode == 2, p.stdout + p.stderr
+
+
+@pytest.mark.parametrize("cmd", [
+    'bash -c "git checkout main" && git push --force-with-lease',
+    "./x.sh; git push -f",
+    "make release && git push --force",
+    "git stash branch main && git push --force",
+])
+def test_v118_review_r1_an_earlier_non_git_or_branch_changing_clause_keeps_the_push_refused(tmp_path, cmd):
+    """v1.18.0 security review R1: only branch-preserving git clauses may precede a bare force-push."""
+    repo = _make_repo(tmp_path / "r", branch="feature/x")
+    p = _discipline(cmd, cwd=repo)
+    assert p.returncode == 2, p.stdout + p.stderr
+
+
+def test_v118_review_r1_a_mirror_remote_keeps_the_push_refused(tmp_path):
+    repo = _make_repo(tmp_path / "r", branch="feature/x", config={"remote.origin.mirror": "true"})
+    p = _discipline("git push --force", cwd=repo)
+    assert p.returncode == 2, p.stdout + p.stderr
