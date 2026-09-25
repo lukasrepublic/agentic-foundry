@@ -71,51 +71,85 @@ const PIN = {
 // The defect: the advisory report contradicting the write it follows
 // ============================================================================================ //
 
-test('advisory_report_never_names_a_rule_the_same_run_just_added', async () => {
+const reEsc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const DENY = MAP.entries.filter((e) => e.tier === 'deny').map((e) => e.rule);
+const ALLOW = MAP.entries.filter((e) => e.tier === 'allow').map((e) => e.rule);
+const ASK = MAP.entries.filter((e) => e.tier === 'ask').map((e) => e.rule);
+const SELF_GUARD_PAIR = ['Edit(.foundry/permissions.yaml)', 'Write(.foundry/permissions.yaml)'];
+const OPERATOR = { allow: ['Bash(/opt/mine/tool:*)', 'Bash(mine:*)'], ask: ['Bash(mine-ask:*)'], deny: ['Bash(rm -rf:*)'] };
+// v1.18.0 (AC-V118A-2): the drift report still classifies the map's allow/ask registry rows, which
+// the floor no longer writes — see the two `todo` tests below (a SOURCE defect, reported, not patched).
+const SOURCE_BUG_REGISTRY_ABSENT = 'SOURCE DEFECT (v1.18.0): run.mjs\'s advisory report classifies the map\'s allow/ask registry rows, which buildSettings no longer writes, so every run lists them all as allow-absent/ask-absent';
+
+test('advisory_report_never_names_a_deny_rule_the_same_run_just_added', async () => {
   const dir = scratch();
   fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
-  // A workspace that is pinned (so nothing is withheld) and carries the deny tier already, so the
-  // run's whole job is the allow+ask tiers. Deny rules come from the map, never restated here.
+  // pinned (nothing withheld), no deny rows yet: the run's whole additive job is the deny tier
   fs.writeFileSync(
     path.join(dir, '.claude', 'settings.json'),
-    `${JSON.stringify({
-      extraKnownMarketplaces: PIN,
-      permissions: { allow: [], ask: [], deny: MAP.entries.filter((e) => e.tier === 'deny').map((e) => e.rule) },
-    }, null, 2)}\n`,
+    `${JSON.stringify({ extraKnownMarketplaces: PIN, permissions: { ...OPERATOR } }, null, 2)}\n`,
   );
 
   const { text } = await invoke(dir, ['--existing']);
 
-  const added = text.match(/permission-floor reconcile: added allow=(\d+), ask=(\d+)/);
-  assert.ok(added, 'the run did not report a completed reconcile');
-  assert.ok(Number(added[1]) > 0, 'fixture added no allow rules — it proves nothing');
+  const added = text.match(/permission-floor reconcile \(\.claude\/settings\.json\): added allow=(\d+), ask=(\d+), deny=(\d+)/);
+  assert.ok(added, `the run did not report a completed reconcile:\n${text}`);
+  assert.equal(Number(added[1]), 0, 'the floor added an allow row');
+  assert.equal(Number(added[2]), 0, 'the floor added an ask row');
+  assert.equal(Number(added[3]), DENY.length);
+  for (const r of DENY) assert.ok(text.includes(`  [added] .claude/settings.json deny: ${r}`), `${r} not named with file and tier`);
 
   const r = reported(text);
-  assert.deepEqual(r['allow-absent'] ?? [], [],
-    'the report names allow rules this same run added — it contradicts the write above it');
-  assert.deepEqual(r['ask-absent'] ?? [], [],
-    'the report names ask rules this same run added — it contradicts the write above it');
+  assert.deepEqual(r['deny-missing'] ?? [], [],
+    'the report names deny rules this same run added — it contradicts the write above it');
 
-  // and the file really does carry them, so the assertions above are not passing vacuously
   const written = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf-8'));
-  assert.equal(written.permissions.allow.length, MAP.entries.filter((e) => e.tier === 'allow').length);
+  assert.deepEqual(written.permissions.deny, [...OPERATOR.deny, ...DENY]);
+  assert.deepEqual(written.permissions.allow, OPERATOR.allow, 'operator allow rows changed or a floor row was added');
+  assert.deepEqual(written.permissions.ask, OPERATOR.ask, 'operator ask rows changed or a floor row was added');
 });
 
-test('create_path_report_reflects_the_settings_it_just_wrote', async () => {
-  // The same defect reached the create path: applyPlan writes the full floor for a workspace with
-  // no settings.json, and a report classified beforehand called every one of those rules absent.
+test('advisory_report_never_names_a_registry_row_the_floor_does_not_write', async () => {
+  const dir = scratch();
+  fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, '.claude', 'settings.json'),
+    `${JSON.stringify({ extraKnownMarketplaces: PIN, permissions: { allow: [], ask: [], deny: [] } }, null, 2)}\n`,
+  );
+  const { text } = await invoke(dir, ['--existing']);
+  const r = reported(text);
+  assert.deepEqual(r['allow-absent'] ?? [], [], 'the report asks for allow rows the floor deliberately never writes');
+  assert.deepEqual(r['ask-absent'] ?? [], [], 'the report asks for ask rows the floor deliberately never writes');
+});
+
+test('create_path_writes_only_the_deny_floor_and_its_report_reflects_it', async () => {
+  // applyPlan writes the floor for a workspace with no settings.json; a report classified
+  // beforehand called every one of those rules absent.
   const dir = path.join(scratch(), 'fresh');
   const { text } = await invoke(dir);
 
-  assert.ok(fs.existsSync(path.join(dir, '.claude', 'settings.json')), 'create path wrote no settings');
+  const p = path.join(dir, '.claude', 'settings.json');
+  assert.ok(fs.existsSync(p), 'create path wrote no settings');
+  const written = JSON.parse(fs.readFileSync(p, 'utf-8'));
+  assert.deepEqual(written.permissions, { allow: [], ask: [], deny: DENY });
+  for (const x of SELF_GUARD_PAIR) assert.ok(!written.permissions.deny.includes(x), `self-guard ${x} written on create`);
+  const r = reported(text);
+  assert.deepEqual(r['deny-missing'] ?? [], [], 'report calls the deny floor it just created missing');
+});
+
+test('create_path_report_names_no_registry_row_absent', async () => {
+  const dir = path.join(scratch(), 'fresh');
+  const { text } = await invoke(dir);
   const r = reported(text);
   assert.deepEqual(r['allow-absent'] ?? [], [], 'report calls the floor it just created absent');
   assert.deepEqual(r['ask-absent'] ?? [], [], 'report calls the floor it just created absent');
+  // and the preview must not claim allow/ask rules are being declared
+  assert.doesNotMatch(text, /\[allow\] \([1-9]\d* rules\)/);
+  assert.doesNotMatch(text, /\[ask\] \([1-9]\d* rules\)/);
 });
 
 test('dry_run_still_reports_the_pre_write_state_and_writes_nothing', async () => {
-  // The counterpart guard: --dry-run returns above the write, so its plan must still describe what
-  // WOULD be added. Re-deriving the report post-write must not have moved that.
+  // --dry-run returns above the write, so its plan must still describe what WOULD be added.
   const dir = scratch();
   fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
   fs.writeFileSync(
@@ -126,18 +160,19 @@ test('dry_run_still_reports_the_pre_write_state_and_writes_nothing', async () =>
 
   const { text } = await invoke(dir, ['--existing', '--dry-run']);
 
-  assert.match(text, /permission-floor reconcile: would add allow=\d+/);
-  assert.doesNotMatch(text, /permission-floor reconcile: added /);
+  assert.match(text, new RegExp(`permission-floor reconcile \\(\\.claude/settings\\.json\\): would add allow=0, ask=0, deny=${DENY.length}`));
+  assert.ok(text.includes(`  [would add] .claude/settings.json deny: ${DENY[0]}`));
+  assert.doesNotMatch(text, /permission-floor reconcile \(\.claude\/settings\.json\): added /);
   assert.equal(fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf-8'), before,
     'dry run mutated the target');
 });
 
 // ============================================================================================ //
-// floor-retires-rows (AC-FRR-1/-5, ER #199) — the --existing reconcile drives the real runCli path
+// floor-retires-rows (AC-FRR-1/-5, ER #199; v1.18.0 AC-V118A-2/-4) — the --existing reconcile
+// drives the real runCli path
 // ============================================================================================ //
 
-test('existing_reconcile_retires_a_stale_root_glob_row_end_to_end', async () => {
-  const dir = scratch();
+function legacyWorkspace(dir) {
   fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
   const staleRow = `Bash(${MAP.plugin_root_glob}/scripts/foundry-fleet-doctor.py:*)`;
   fs.writeFileSync(
@@ -145,40 +180,53 @@ test('existing_reconcile_retires_a_stale_root_glob_row_end_to_end', async () => 
     `${JSON.stringify({
       extraKnownMarketplaces: PIN,
       permissions: {
-        allow: [staleRow, ...MAP.entries.filter((e) => e.tier === 'allow').map((e) => e.rule)],
-        ask: MAP.entries.filter((e) => e.tier === 'ask').map((e) => e.rule),
-        deny: MAP.entries.filter((e) => e.tier === 'deny').map((e) => e.rule),
+        allow: [staleRow, ...ALLOW, ...OPERATOR.allow],
+        ask: [...ASK, 'Bash(claude plugin tag:*)', ...OPERATOR.ask],
+        deny: [...DENY, 'Bash(git push --force:*)', ...SELF_GUARD_PAIR, ...OPERATOR.deny],
       },
     }, null, 2)}\n`,
   );
+  return staleRow;
+}
+
+test('existing_reconcile_retires_every_floor_script_row_the_retired_literals_and_the_self_guard_pair_end_to_end', async () => {
+  const dir = scratch();
+  const staleRow = legacyWorkspace(dir);
 
   const { text } = await invoke(dir, ['--existing']);
-  assert.match(text, new RegExp(`\\[retired\\] ${staleRow.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
-  assert.match(text, /— 0 added, 1 retired, \d+ unchanged/);
+  assert.match(text, new RegExp(`\\[retired\\] \\.claude/settings\\.json allow: ${reEsc(staleRow)}`));
+  assert.match(text, new RegExp(`\\[retired\\] \\.claude/settings\\.json ask: ${reEsc(ASK[0])}`));
+  assert.match(text, /\[retired\] \.claude\/settings\.json ask: Bash\(claude plugin tag:\*\)/);
+  assert.match(text, /\[retired\] \.claude\/settings\.json deny: Bash\(git push --force:\*\)/);
+  assert.match(text, /\[retired\] \.claude\/settings\.json deny: Edit\(\.foundry\/permissions\.yaml\)/);
+  assert.match(text, new RegExp(
+    `permission-floor reconcile \\(\\.claude/settings\\.json\\): added allow=0, ask=0, deny=0; retired allow=\\d+, ask=${ASK.length + 1}, deny=3`));
 
   const written = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf-8'));
   assert.ok(!written.permissions.allow.includes(staleRow), 'the stale row survived the real reconcile path');
+  // what survives: exactly the operator's rows, plus the map's deny tier (and the bare doctor row —
+  // see the report: a non-`:*` floor row is not recognized by the retirement parser)
+  assert.deepEqual(written.permissions.allow.filter((x) => !ALLOW.includes(x)), OPERATOR.allow);
+  assert.deepEqual(written.permissions.ask, OPERATOR.ask);
+  assert.deepEqual(written.permissions.deny, [...DENY, ...OPERATOR.deny]);
+});
+
+test('existing_reconcile_leaves_no_floor_row_in_the_allow_tier', async () => {
+  const dir = scratch();
+  legacyWorkspace(dir);
+  await invoke(dir, ['--existing']);
+  const written = JSON.parse(fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf-8'));
+  assert.deepEqual(written.permissions.allow, OPERATOR.allow);
 });
 
 test('dry_run_reports_retirement_and_writes_nothing', async () => {
   const dir = scratch();
-  fs.mkdirSync(path.join(dir, '.claude'), { recursive: true });
-  const staleRow = `Bash(${MAP.plugin_root_glob}/scripts/foundry-fleet-doctor.py:*)`;
-  fs.writeFileSync(
-    path.join(dir, '.claude', 'settings.json'),
-    `${JSON.stringify({
-      extraKnownMarketplaces: PIN,
-      permissions: {
-        allow: [staleRow, ...MAP.entries.filter((e) => e.tier === 'allow').map((e) => e.rule)],
-        ask: MAP.entries.filter((e) => e.tier === 'ask').map((e) => e.rule),
-        deny: MAP.entries.filter((e) => e.tier === 'deny').map((e) => e.rule),
-      },
-    }, null, 2)}\n`,
-  );
+  const staleRow = legacyWorkspace(dir);
   const before = fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf-8');
 
   const { text } = await invoke(dir, ['--existing', '--dry-run']);
-  assert.match(text, new RegExp(`\\[retired\\] ${staleRow.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  assert.match(text, new RegExp(`\\[would retire\\] \\.claude/settings\\.json allow: ${reEsc(staleRow)}`));
+  assert.match(text, /\[would retire\] \.claude\/settings\.json deny: Write\(\.foundry\/permissions\.yaml\)/);
   assert.equal(fs.readFileSync(path.join(dir, '.claude', 'settings.json'), 'utf-8'), before,
     'dry run retired a row on disk');
 });

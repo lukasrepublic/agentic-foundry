@@ -80,7 +80,7 @@ grants before dispatch:
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/foundry-capability-preflight.py" --contract specs/.../acceptance-contract.yaml
 ```
 
-Only a capability a **deny** rule would refuse blocks the atom (`missing`, exit 3). A capability
+Only a capability a **deny** rule would refuse blocks the atom (`missing`, `exit 3`). A capability
 that is simply not pre-granted is listed under `classifier` — the session's permission mode decides
 at run time — and never blocks. Do not edit a contract that carries a frozen `authorized:` block to
 add the field — that moves its hash; use `/foundry:amend`.

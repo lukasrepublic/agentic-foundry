@@ -4,7 +4,6 @@
 // negative controls). Run via `node --test cli/test/` (package.json's own `test` script; the
 // pytest shim runs the same command as a subprocess — AC-BCL-10).
 import { test } from 'node:test';
-import { SELF_GUARD_DENY } from '../src/selfGuardDeny.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -52,17 +51,22 @@ test('AC-BCL-2: an out-of-choices value refuses, naming the record and its permi
   );
 });
 
-test('AC-BCL-4: buildSettings is a set bijection onto the bundled map by tier', () => {
+test('AC-BCL-4 / AC-V118A-2: buildSettings is a set bijection onto the map\'s deny rows only; allow/ask are empty', () => {
   const map = loadMap(path.join(CLI_DIR, 'permission-floor.json'));
   const pins = { marketplace_name: 'agentic-foundry', marketplace_repo: 'lukasrepublic/agentic-foundry', plugin_name: 'foundry' };
   const settings = buildSettings(map, pins);
-  for (const tier of ['allow', 'ask', 'deny']) {
-    const expected = new Set(map.entries.filter((e) => e.tier === tier).map((e) => e.rule));
-    // hotfix-v1.17.3: the policy file's two self-guard deny rules ride with the floor on create
-    if (tier === 'deny') for (const r of SELF_GUARD_DENY) expected.add(r);
-    const actual = new Set(settings.permissions[tier]);
-    assert.equal(actual.size, expected.size);
-    for (const r of expected) assert.ok(actual.has(r), `missing ${tier} rule ${r}`);
+  // v1.18.0: the map's allow/ask script rows are the closed-world registry, never projected
+  assert.ok(map.entries.some((e) => e.tier === 'allow') && map.entries.some((e) => e.tier === 'ask'));
+  assert.deepEqual(settings.permissions.allow, []);
+  assert.deepEqual(settings.permissions.ask, []);
+  const expected = new Set(map.entries.filter((e) => e.tier === 'deny').map((e) => e.rule));
+  const actual = new Set(settings.permissions.deny);
+  assert.equal(actual.size, expected.size);
+  assert.equal(settings.permissions.deny.length, expected.size);
+  for (const r of expected) assert.ok(actual.has(r), `missing deny rule ${r}`);
+  // the retired rows are neither in the map nor written: no self-guard pair, no broad force-push deny
+  for (const r of ['Edit(.foundry/permissions.yaml)', 'Write(.foundry/permissions.yaml)', 'Bash(git push --force:*)']) {
+    assert.ok(!actual.has(r), `retired deny rule ${r} was written`);
   }
   assert.deepEqual(Object.keys(settings).sort(), ['enabledPlugins', 'extraKnownMarketplaces', 'permissions']);
   // SUPERSEDED (feat-foundry-installer-unpinning, AC-IUP-3; out-of-band fix, necessitated by that

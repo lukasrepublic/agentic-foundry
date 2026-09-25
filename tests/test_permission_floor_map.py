@@ -373,14 +373,17 @@ def test_ceremony_and_denial_rules_are_pinned():
         f"Bash({G}/scripts/foundry-doctor.py --heal:*)",
         f"Bash({G}/scripts/foundry-stack-profile.py --relock:*)",
         f"Bash({G}/scripts/foundry-bootstrap.sh:*)",
-        "Bash(claude plugin tag:*)",
     ]
+    # v1.18.0 (AC-V118A-2): exactly these three deny rows remain; the broad force-push deny is
+    # removed (the git-discipline hook is the floor) and the release-ceremony ask row is gone.
     deny_pins = [
         "Bash(gh pr merge --admin:*)",
-        "Bash(git push --force:*)",
         "Bash(tofu destroy -auto-approve:*)",
         "Bash(docker system prune:*)",
     ]
+    assert sorted(r for r, t in rule_tier.items() if t == "deny") == sorted(deny_pins)
+    for retired in ("Bash(claude plugin tag:*)", "Bash(git push --force:*)"):
+        assert retired not in rule_tier, f"retired row still in the map: {retired!r}"
     for pin in ask_pins:
         assert pin in rule_tier, f"missing pinned ask rule: {pin!r}"
         assert rule_tier[pin] == "ask", f"pinned rule not ask: {pin!r} is {rule_tier[pin]!r}"
@@ -574,7 +577,9 @@ def test_doctor_green_regression(tmp_path):
 # the SAME digest and regex-search THIS file (not the deleted one) for MERGE_BASE_ENTRIES_DIGEST --
 # see their own R8 comments; a re-pin here must land in the same diff as any of the three.
 # --------------------------------------------------------------------------------------------- #
-MERGE_BASE_ENTRIES_DIGEST = "da41ecd64ce86c1cbf672cea1c9e1a3c6afad5cb1ece1a88c861ce5450e3436e"
+# v1.18.0 (AC-V118A-2): re-pinned for the two dropped rows (deny `Bash(git push --force:*)`, ask
+# `Bash(claude plugin tag:*)`).
+MERGE_BASE_ENTRIES_DIGEST = "c1d324bab7fdb49a443b3d4988c30e291c0b3d64f2718b75f31820a821642c03"
 
 
 def _entries_digest(entries):

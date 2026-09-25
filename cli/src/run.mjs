@@ -9,7 +9,7 @@ import { QUESTION_TABLE } from './questions.mjs';
 import { parseArgv, renderHelp } from './argv.mjs';
 import { resolveAnswers, isYesMode } from './answers.mjs';
 import { RefusalError, physicalResolve, isNonEmptyDir } from './util.mjs';
-import { loadMap, buildSettings, classifyDrift } from './permissionFloor.mjs';
+import { PROJECTED_TIERS, loadMap, buildSettings, classifyDrift } from './permissionFloor.mjs';
 import { buildManagedFiles, DECLARED_PATH_SET } from './scaffold.mjs';
 import { planManagedFiles, applyPlan, exitCodeForPlan } from './reconcile.mjs';
 import { renderPreview, TRUST_HANDOFF_TEXT } from './preview.mjs';
@@ -335,7 +335,10 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
     // classification stays above the write and over the tracked file alone — consent has to be
     // informed by what WILL be written, which is a different question from what remains after.
     const { effective, unreadable } = readEffectiveRules(physicalRoot);
-    const findings = classifyDrift(map, effective, {
+    // v1.18.0: classify only the projected tier (deny) — the map's script rows are a registry the
+    // floor never writes, so reporting them absent would read as a failed write.
+    const projectedMap = { ...map, entries: map.entries.filter((e) => PROJECTED_TIERS.includes(e.tier)) };
+    const findings = classifyDrift(projectedMap, effective, {
       pluginRootExpansion, unreadableOrigins: unreadable, home: homeDir,
     });
     if (findings.length > 0) {

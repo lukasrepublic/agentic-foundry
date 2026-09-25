@@ -423,42 +423,54 @@ test('every completed run writes .foundry/upgrade-report.json and ends with the 
 
 
 // hotfix-v1.17.4 (ER #236): the retired-artifacts sweep and the settings.local.json retirement.
-test('Phase 4 reports a retired artifact every run, removes it only under --cleanup, and retires a pinned row in settings.local.json', async () => {
+test('Phase 4 reports a retired artifact every run, removes it only under --cleanup, and retires floor rows (never operator rows) in settings.local.json', async () => {
   const { cwd, configDir } = steadyStateFixture('ra-uaw-');
   await invokeUpdate({ cwd, configDir });
   fs.mkdirSync(path.join(cwd, '.foundry'), { recursive: true });
   fs.writeFileSync(path.join(cwd, '.foundry', 'wiring-hash.pin'), 'stale');
   fs.mkdirSync(path.join(cwd, '.claude', 'skills'), { recursive: true });
   fs.writeFileSync(path.join(cwd, '.claude', 'skills', 'mine.md'), 'operator');
-  // a pinned `ask` row for a pair the tracked file's wildcard ask row covers (retired), and one for
-  // a pair the map declares at ask but the tracked file does NOT carry (kept — Risk 3)
-  const trackedAsk = readJson(path.join(cwd, '.claude', 'settings.json')).permissions.ask
-    .filter((r) => /^Bash\(~\/\.claude\/plugins\/cache\/\*\/foundry\/\*\/scripts\//.test(r));
-  assert.ok(trackedAsk.length >= 1, 'fixture: the tracked file carries at least one wildcard ask row');
-  const pinnedAsk = trackedAsk[0].replace('~/.claude/plugins/cache/*/foundry/*/', '~/.claude/plugins/cache/agentic-foundry/foundry/1.9.1/');
+  // v1.18.0 (AC-V118A-2/-4): the tracked file the updater leaves carries only the deny floor — no
+  // script rows, no self-guard pair, no broad force-push deny
+  const tracked = readJson(path.join(cwd, '.claude', 'settings.json')).permissions;
+  const floorShaped = (r) => /^Bash\(~\/\.claude\/plugins\/cache\/[^/]+\/foundry\/[^/]+\/scripts\//.test(r);
+  assert.deepEqual((tracked.allow || []).filter(floorShaped).filter((r) => r.endsWith(':*)')), [], 'a floor allow row is in the tracked file');
+  assert.deepEqual((tracked.ask || []).filter(floorShaped), [], 'a floor ask row is in the tracked file');
+  for (const r of ['Edit(.foundry/permissions.yaml)', 'Write(.foundry/permissions.yaml)', 'Bash(git push --force:*)']) {
+    assert.ok(!(tracked.deny || []).includes(r), `retired deny ${r} is in the tracked file`);
+  }
+  // the local file: a pinned allow row and a pinned ask row of the floor's shape (both retired —
+  // the ask row regardless of what the tracked file carries), the three retired deny literals
+  // (retired), and operator rows in every tier (never touched)
+  const pinnedAsk = 'Bash(~/.claude/plugins/cache/agentic-foundry/foundry/1.9.1/scripts/foundry-authorize.py:*)';
   writeJson(path.join(cwd, '.claude', 'settings.local.json'), { permissions: { allow: [
     'Bash(~/.claude/plugins/cache/agentic-foundry/foundry/1.9.1/scripts/foundry-doctor.py:*)',
     'Bash(/opt/mine/tool:*)',
-  ], ask: [pinnedAsk, 'Bash(/opt/mine/dangerous:*)'] } });
+  ], ask: [pinnedAsk, 'Bash(/opt/mine/dangerous:*)'], deny: [
+    'Edit(.foundry/permissions.yaml)', 'Bash(rm -rf:*)', 'Write(.foundry/permissions.yaml)', 'Bash(git push --force:*)',
+  ] } });
   fs.chmodSync(path.join(cwd, '.claude', 'settings.local.json'), 0o600);
 
   const first = await invokeUpdate({ cwd, configDir });
   assert.notEqual(first.res.exitCode, 1, first.res.output);
   // Risk 2: the preview announces the local-file write BEFORE the first write happens
-  const previewIdx = first.text.indexOf('[permission-floor] .claude/settings.local.json: would retire allow=1, ask=1 (never adds)');
-  const writeIdx = first.text.indexOf('[permission-floor] .claude/settings.local.json: retired 2');
+  const previewIdx = first.text.indexOf('[permission-floor] .claude/settings.local.json: would retire allow=1, ask=1, deny=3 (never adds)');
+  const writeIdx = first.text.indexOf('[permission-floor] .claude/settings.local.json: retired 5');
   assert.ok(previewIdx !== -1 && writeIdx !== -1 && previewIdx < writeIdx, `preview row precedes the write row:\n${first.text}`);
   assert.match(first.text, /\[stale] \.foundry\/wiring-hash\.pin — retired in v0\.24\.0 .*; remove with --cleanup/, first.text);
   assert.equal(fs.existsSync(path.join(cwd, '.foundry', 'wiring-hash.pin')), true, 'nothing removed without --cleanup');
-  assert.match(first.text, /\[permission-floor] \.claude\/settings\.local\.json: retired 2 version-pinned\/gone row\(s\)/, first.text);
+  assert.match(first.text, /\[permission-floor] \.claude\/settings\.local\.json: retired 5 version-pinned\/gone row\(s\)/, first.text);
+  assert.ok(first.text.includes(`  [retired] .claude/settings.local.json ask: ${pinnedAsk}`), first.text);
+  assert.ok(first.text.includes('  [retired] .claude/settings.local.json deny: Write(.foundry/permissions.yaml)'), first.text);
   assert.match(first.text, /\[reinitialization] changed/, 'the local retirement counts toward the phase verdict');
   const local = readJson(path.join(cwd, '.claude', 'settings.local.json'));
   assert.deepEqual(local.permissions.allow, ['Bash(/opt/mine/tool:*)']);
   assert.deepEqual(local.permissions.ask, ['Bash(/opt/mine/dangerous:*)']);
+  assert.deepEqual(local.permissions.deny, ['Bash(rm -rf:*)'], 'an operator deny row was touched or a retired literal survived');
   assert.equal(fs.statSync(path.join(cwd, '.claude', 'settings.local.json')).mode & 0o777, 0o600, 'Risk 5: mode preserved');
   const report = readJson(path.join(cwd, '.foundry', 'upgrade-report.json'));
   assert.deepEqual(report.retired_artifacts, { present: ['.foundry/wiring-hash.pin'], removed: 0, refused: 0 });
-  assert.equal(report.settings_local_retired, 2);
+  assert.equal(report.settings_local_retired, 5);
 
   const cleaned = await invokeUpdate({ cwd, configDir, argv: ['--cleanup'] });
   assert.notEqual(cleaned.res.exitCode, 1, cleaned.res.output);

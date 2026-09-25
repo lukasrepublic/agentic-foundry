@@ -199,7 +199,9 @@ function escapeLiteral(s) {
  * a second hardcoded copy of it — the same one-source-of-truth reasoning foldRegexFromGlob already
  * documents for the addition side. */
 function floorRootShapeRe(pluginRootGlob) {
-  return new RegExp(`^Bash\\(${escapeLiteral(pluginRootGlob)}/scripts/(${ROOT_SHAPE_NAME_RE})(?: (.+))?:\\*\\)$`);
+  // v1.18.0: the `:*` suffix is optional — earlier releases also wrote a bare row (the doctor's
+  // `Bash(<glob>/scripts/foundry-doctor.py)`), and retirement must take that back too.
+  return new RegExp(`^Bash\\(${escapeLiteral(pluginRootGlob)}/scripts/(${ROOT_SHAPE_NAME_RE})(?: (.+?))?(?::\\*)?\\)$`);
 }
 
 /** Parse `rule` against the floor's own root-glob shape (the same shape `buildSettings` writes).
@@ -236,7 +238,7 @@ function floorPinnedShapeRe(pluginRootGlob) {
     seen += 1;
     return seen === stars ? '(\\*|\\d+\\.\\d+\\.\\d+[A-Za-z0-9.+-]*)' : '(\\*|[A-Za-z0-9_-]+)';
   });
-  return new RegExp(`^Bash\\(${src}/scripts/(${ROOT_SHAPE_NAME_RE})(?: (.+))?:\\*\\)$`);
+  return new RegExp(`^Bash\\(${src}/scripts/(${ROOT_SHAPE_NAME_RE})(?: (.+?))?(?::\\*)?\\)$`);
 }
 
 /** Parse `rule` as a version-/marketplace-PINNED variant of the floor's own row shape. Returns
