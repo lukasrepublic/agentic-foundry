@@ -51,6 +51,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -178,11 +179,25 @@ def _structural_check(data):
     return errors
 
 
+def _updater_cmd():
+    """The updater pinned to the version this plugin ships with (ER #228: a bare `npx <pkg>` can run
+    a stale cached copy). Falls back to `@latest`, which still forces a registry check."""
+    try:
+        pkg = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cli-update", "package.json")
+        with open(pkg, encoding="utf-8") as fh:
+            v = json.load(fh).get("version")
+        if isinstance(v, str) and re.fullmatch(r"\d+\.\d+\.\d+", v):
+            return f"npx update-agentic-workspace@{v}"
+    except (OSError, ValueError):
+        pass
+    return "npx update-agentic-workspace@latest"
+
+
 def _with_remedy(msg):
     """permissions-scaffold (ER #215, AC-PSC-4): an absent policy names its remedy at the CLI
     boundary, so the exception text foundry-capability-preflight.py classifies on stays exact."""
     if msg.rstrip().endswith("is missing"):
-        return msg + (" — seed it: `npx update-agentic-workspace` writes a starter, or copy "
+        return msg + (f" — seed it: `{_updater_cmd()}` writes a starter, or copy "
                       "context/permissions-template.yaml from the plugin")
     return msg
 

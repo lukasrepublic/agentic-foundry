@@ -113,7 +113,7 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
    > *previous* dependency baked in, so bumping only the pin leaves the registry serving an upgrader
    > that installs the previous shared modules — a fully green release delivering the fix to nobody.
    > On a release that first introduces a shared module it is worse: the published pin resolves to a
-   > version that does not contain it, and `npx update-agentic-workspace` installs and then crashes
+   > version that does not contain it, and `npx update-agentic-workspace@latest` installs and then crashes
    > on import.
    >
    > Both tables live in `tests/test_bootstrap_cli.py` and both **refuse an unrecorded pin**, so the
@@ -230,7 +230,7 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
    **Or, since v1.9.0, the shipped tool that does this and the checking around it:**
 
    ```
-   npx update-agentic-workspace
+   npx update-agentic-workspace@latest
    ```
 
    Run it **from inside the workspace directory**. Prefer it over the bare `plugin update` whenever
@@ -311,7 +311,7 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
 
    Verify by READING the refreshed cache — `~/.claude/plugins/marketplaces/<marketplace>/.claude-plugin/marketplace.json`
    must show the new `version` AND the new `source.sha`; the CLI's own "success" line does not prove
-   the ref moved. **`npx update-agentic-workspace` does NOT do this for you.** Its read-back covers the
+   the ref moved. **`npx update-agentic-workspace@latest` does NOT do this for you.** Its read-back covers the
    marketplace catalogue only, in Phase 1; nothing reads back per-scope install state, so the
    both-scopes check in this paragraph is still yours to run. This is the v1.4.1 scar, and it is
    exactly the shape that produced it: a stale project row shadows a fresh user one, the tool prints

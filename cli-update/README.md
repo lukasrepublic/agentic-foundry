@@ -6,7 +6,7 @@ one is found, update the plugin in every scope that enables it, and re-run the w
 permission-floor reconcile.
 
 ```bash
-npx update-agentic-workspace
+npx update-agentic-workspace@latest
 ```
 
 Run it **from inside** the workspace directory you scaffolded with `npx create-agentic-workspace`
@@ -51,7 +51,7 @@ and want it to stay that way, disable it again after the update, or migrate that
    previewed.
 4. **Reinitialization** — the same never-clobber managed-file reconcile and permission-floor
    reconcile `create-agentic-workspace --existing` already implements: an operator-edited file is
-   reported drifted and left byte-identical, never overwritten. The permission-floor reconcile is
+   reported `[kept]` and left byte-identical, never overwritten (`.claude/settings.json` and `.gitignore` are reported `[reconciled]`: each has its own reconciler below, so they are never whole-file "drifted"). The permission-floor reconcile is
    additive with one narrow exception — a row shaped exactly like the floor's own root-glob rows,
    whose `(name, sub)` PAIR — not the script name alone — the shipped floor no longer declares, is
    retired from `allow`/`ask` (printed `[retired] <row>`): retiring one dropped subcommand of a
@@ -103,6 +103,8 @@ happens, and ends with a per-phase summary (`changed` / `already current` / `ski
 
 ## Flags
 
+- `--dry-run` — plan and print everything the run would do, write nothing and run no `claude`
+  command; exits `0`/`2` exactly as the real run would.
 - `--cleanup` — also perform the destructive cache-prune, stale-registration removal and the
   retired-artifacts removal previewed above. Off by default; a flagless run removes nothing and
   prunes nothing.
@@ -114,19 +116,15 @@ Same convention as the sibling package, and worth reading before you wire this i
 
 | code | meaning |
 |------|---------|
-| `0`  | the run completed and no managed workspace file was found drifted |
-| `2`  | the run completed and at least one managed workspace file was drifted |
+| `0`  | the run completed |
+| `2`  | the run completed, but `.gitignore`'s managed block could not be reconciled (malformed sentinels — reported, left alone) |
 | `1`  | the run refused, or an invocation failed |
 
-**`2` is a success, not an error.** It reports one specific thing: a managed file in your workspace
-has diverged from what the current template would write. That is a normal finding on a workspace
-that predates a template change, and it is the expected result of a first run against a pre-v1.7.0
-workspace.
-
-Read the codes precisely, because `2` is narrower than "something happened": it is computed *only*
-from the managed-file drift check, so a run that migrates a tag-pinned registration and updates the
-plugin in every scope — real, visible changes — still exits `0` if no managed file drifted. Use the
-printed phase summary, not the exit code, to see what the run actually did.
+**`2` is a success, not an error.** Since v1.18.0 a file that already exists is never "drifted" on
+the update path: operator-owned files are `[kept]`, and `.claude/settings.json` / `.gitignore` are
+`[reconciled]` by their own reconcilers. Before v1.18.0 every run exited `2`, because
+`settings.json` was compared whole-file against bytes that could never match. Use the printed phase
+summary and the report's `written` list, not the exit code, to see what the run actually did.
 
 Only `1` means something went wrong. A `set -e` script or a CI step that treats any non-zero as
 failure will read a perfectly good update as broken; test for `1` specifically.

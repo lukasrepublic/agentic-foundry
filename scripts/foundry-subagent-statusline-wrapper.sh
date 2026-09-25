@@ -17,7 +17,9 @@ RENDERER="foundry-subagent-statusline.sh"
 
 selected=""
 if [ -r "${CFG}/plugins/installed_plugins.json" ] && command -v jq >/dev/null 2>&1; then
-  ip="$(jq -r '(.plugins."foundry@agentic-foundry" // ."foundry@agentic-foundry" // []) | (if type=="array" then .[0] else . end) | (.installPath // empty)' "${CFG}/plugins/installed_plugins.json" 2>/dev/null)"
+  # v1.18.0: THIS project's record first, then the user-scope record, then any — never simply the
+  # first record, which may be another project's install at another version.
+  ip="$(jq -r --arg p "${CLAUDE_PROJECT_DIR:-$PWD}" '(.plugins."foundry@agentic-foundry" // ."foundry@agentic-foundry" // []) | (if type=="array" then . else [.] end) | ((map(select(.projectPath == $p)) + map(select(.projectPath == null)) + .)[0] // {}) | (.installPath // empty)' "${CFG}/plugins/installed_plugins.json" 2>/dev/null)"
   [ -n "$ip" ] && [ -r "${ip}/scripts/${RENDERER}" ] && selected="${ip}/scripts/${RENDERER}"
 fi
 if [ -z "$selected" ]; then

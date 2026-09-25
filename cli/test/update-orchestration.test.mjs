@@ -204,15 +204,19 @@ test('no mutation is attempted before the preview is emitted', async () => {
 // AC-UAW-8 — never-clobber, inherited from cli/src/reconcile.mjs
 // ================================================================================================
 
-test('an operator edited managed file is reported drifted and left byte identical', async () => {
+test('an operator edited managed file is reported kept, left byte identical, and does not turn the exit code to 2', async () => {
+  // v1.18.0 (AC-V118C-3): on the update path an existing file is the operator's — `[kept]`, never
+  // "drifted" — so a clean upgraded workspace exits 0 (every pre-v1.18 run exited 2).
   const { root, cwd, configDir } = steadyStateFixture('uaw8-');
   const claudeMdPath = path.join(cwd, 'CLAUDE.md');
   const editedBytes = Buffer.from('# an operator wrote something completely different here\n');
   fs.writeFileSync(claudeMdPath, editedBytes);
   const { res, text } = await invokeUpdate({ cwd, configDir, output: sink() });
-  assert.equal(res.exitCode, 2, `expected the drift exit code; got ${res.exitCode}: ${res.output}`);
+  assert.equal(res.exitCode, 0, `expected exit 0; got ${res.exitCode}: ${res.output}`);
   assert.deepEqual(fs.readFileSync(claudeMdPath), editedBytes, 'the operator-edited file was overwritten');
-  assert.match(text, /\[drifted] CLAUDE\.md/);
+  assert.match(text, /\[kept] CLAUDE\.md/);
+  assert.match(text, /\[reconciled] \.claude\/settings\.json/);
+  assert.doesNotMatch(text, /\[drifted]/);
   fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -414,7 +418,7 @@ test('every completed run writes .foundry/upgrade-report.json and ends with the 
   assert.equal(report.to_plugin_version, PINS.plugin_version);
   assert.ok(Array.isArray(report.phases) && report.phases.some((p) => p.name === 'reinitialization'));
   assert.ok(['created', 'kept'].includes(report.permissions_policy), report.permissions_policy);
-  assert.deepEqual(Object.keys(report.amendments).sort(), ['backfilled', 'present', 'skipped', 'total']);
+  assert.deepEqual(Object.keys(report.amendments).sort(), ['backfilled', 'failed', 'present', 'skipped', 'total']);
   assert.equal(report.amendments.backfilled + report.amendments.present + report.amendments.skipped, report.amendments.total);
   // ER #228: the report names the updater's core and the plugin it was built for
   assert.match(report.core_version, /^\d+\.\d+\.\d+$/);
@@ -483,4 +487,59 @@ test('Phase 4 reports a retired artifact every run, removes it only under --clea
   assert.equal(fs.existsSync(path.join(cwd, '.claude', 'skills', 'mine.md')), true, 'operator files are invisible to the sweep');
   const report2 = readJson(path.join(cwd, '.foundry', 'upgrade-report.json'));
   assert.equal(report2.retired_artifacts.removed, 1);
+});
+
+// ================================================================================================
+// v1.18.0 (friction-and-delivery) — AC-V118C-1/-3/-4
+// ================================================================================================
+
+function treeSnapshot(dir) {
+  const out = {};
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else out[path.relative(dir, p)] = fs.readFileSync(p).toString('base64');
+    }
+  };
+  walk(dir);
+  return out;
+}
+
+test('--dry-run prints the plan, writes nothing and runs no claude command', async () => {
+  const { root, cwd, configDir } = steadyStateFixture('v118dry-');
+  const before = treeSnapshot(cwd);
+  const { res, log, text } = await invokeUpdate({ cwd, configDir, argv: ['--dry-run'] });
+  assert.notEqual(res.exitCode, 1, res.output);
+  assert.match(text, /^DRY RUN — the plan below is printed; nothing will be written/m);
+  assert.match(text, /dry run: nothing was written and no claude command was run\./);
+  assert.deepEqual(log, [], 'a claude invocation ran under --dry-run');
+  assert.deepEqual(treeSnapshot(cwd), before, 'the workspace changed under --dry-run');
+  assert.equal(fs.existsSync(path.join(cwd, '.foundry', 'upgrade-report.json')), false);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('the report lists every path the run wrote, and a second run over the result exits 0 and writes nothing', async () => {
+  const { root, cwd, configDir } = steadyStateFixture('v118written-');
+  const first = await invokeUpdate({ cwd, configDir });
+  assert.notEqual(first.res.exitCode, 1, first.res.output);
+  const report = readJson(path.join(cwd, '.foundry', 'upgrade-report.json'));
+  const written = report.written.map((w) => w.path);
+  // everything the first run created or reconciled is named — the post-upgrade skill commits these
+  for (const rel of ['.foundry/permissions.yaml', '.claude/hooks/foundry-statusline.sh', '.claude/settings.json']) {
+    assert.ok(written.includes(rel), `${rel} missing from report.written: ${JSON.stringify(report.written)}`);
+    assert.ok(fs.existsSync(path.join(cwd, rel)), `${rel} named but absent`);
+  }
+  assert.deepEqual(report.removed, []);
+  assert.equal(report.config_dir, configDir);
+  assert.equal(typeof report.hostname, 'string');
+  const between = treeSnapshot(cwd);
+  const second = await invokeUpdate({ cwd, configDir });
+  assert.equal(second.res.exitCode, 0, `a converged workspace must exit 0; got ${second.res.exitCode}: ${second.res.output}`);
+  const report2 = readJson(path.join(cwd, '.foundry', 'upgrade-report.json'));
+  assert.deepEqual(report2.written, [], `the second run wrote: ${JSON.stringify(report2.written)}`);
+  const after = treeSnapshot(cwd);
+  delete between['.foundry/upgrade-report.json']; delete after['.foundry/upgrade-report.json'];
+  assert.deepEqual(after, between, 'the second run changed a file');
+  fs.rmSync(root, { recursive: true, force: true });
 });

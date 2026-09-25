@@ -7,6 +7,7 @@
 // machinery run.mjs's create path already uses (cli/src/reconcile.mjs, cli/src/floorReconcile.mjs).
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { RefusalError, physicalResolve, confinedJoin } from './util.mjs';
 import { loadMap, buildSettings } from './permissionFloor.mjs';
 import { buildManagedFiles } from './scaffold.mjs';
@@ -31,14 +32,18 @@ import { runCleanupPhase } from './cleanup.mjs';
 
 export { ALLOWED_CLAUDE_SUBCOMMANDS };
 
+/** v1.18.0 (AC-V118C-3): managed paths with their own reconciler on the update path. */
+const SEPARATELY_RECONCILED = new Set(['.claude/settings.json', '.gitignore']);
+
 /** The update entry point's OWN small flag table (Clarifications: "the update entry point carries
  * its own small flag table, disjoint from the wizard's") — deliberately NOT cli/src/argv.mjs +
  * QUESTION_TABLE, which is denied to the sibling cleanup atom and whose flag set is derived from
  * the wizard's prompts, not this command's. `--cleanup` is the cleanup atom's own opt-in. */
 export function parseUpdateArgv(argv) {
-  const values = { cleanup: false, help: false };
+  const values = { cleanup: false, help: false, dryRun: false };
   for (const tok of argv) {
     if (tok === '--cleanup') values.cleanup = true;
+    else if (tok === '--dry-run') values.dryRun = true;
     else if (tok === '--help') values.help = true;
     else throw new RefusalError(`unknown flag: ${tok}`, tok);
   }
@@ -118,11 +123,13 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
 
     if (flags.help) {
       print([
-        'Usage: update-agentic-workspace [--cleanup] [--help]',
+        'Usage: update-agentic-workspace [--dry-run] [--cleanup] [--help]',
         '',
         '  --cleanup   Also prune superseded plugin-cache versions and remove a stale or',
         '              duplicate marketplace registration (previewed either way; only',
         '              removed under this flag). Off by default.',
+        '  --dry-run   Plan and print everything; write nothing and run no claude command.',
+        '              Exits 0 or 2 exactly as the real run would.',
         '  --help      Show this help and exit.',
       ].join('\n'));
       return { exitCode: 0, output: lines.join('\n') };
@@ -181,6 +188,15 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
       settingsBytes,
     });
     const filePlan = planManagedFiles(managedFiles);
+    // v1.18.0 (AC-V118C-3): on the UPDATE path, a present file is never "drifted" just because it
+    // is not byte-identical to a fresh scaffold. `.claude/settings.json` and `.gitignore` each have
+    // their own reconciler below (the whole-file compare could never pass: it has no statusLine key
+    // and no operator rows, so every run exited 2); CLAUDE.md and foundry-project.json are
+    // operator-owned after creation; the framework READMEs are create-only and reported `kept`.
+    for (const f of filePlan) {
+      if (f.action !== 'drifted') continue;
+      f.action = SEPARATELY_RECONCILED.has(f.relPath) ? 'reconciled' : 'kept';
+    }
 
     // This is a PREVIEW-ONLY computation: `.claude/settings.json` is also `project` scope's
     // settings file, and Phase 1's migration (below) may write to that SAME path. Applying THIS
@@ -207,7 +223,11 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     const previewGitignorePlan = reconcileGitignorePlan({ physicalRoot, templatesDir });
 
     // ── AC-UAW-7: the preview, before the first `claude` invocation and the first write ─────────
-    const previewLines = ['The following claude invocations will be made:'];
+    const previewLines = [
+      flags.dryRun ? 'DRY RUN — the plan below is printed; nothing will be written and no claude command will run.'
+        : 'PLAN — printed before anything is written (rows below describe what the run will do):',
+      'The following claude invocations will be made:',
+    ];
     for (const { scopeSnap, trigger } of migrations) {
       for (const args of migrationActions(trigger, {
         scope: scopeSnap.name, marketplaceName, marketplaceRepo, pluginKey,
@@ -261,8 +281,19 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
       else if (lp.error) previewLines.push(`  [permission-floor] ${lp.rel}: would not be reconciled (${lp.error})`);
     }
     print(previewLines.join('\n'));
+    if (flags.dryRun) {
+      print('');
+      print('dry run: nothing was written and no claude command was run.');
+      const gitignoreRefusedPreview = previewGitignorePlan && previewGitignorePlan.action === 'refused';
+      return { exitCode: filePlan.some((f) => f.action === 'drifted') || gitignoreRefusedPreview ? 2 : 0, output: lines.join('\n') };
+    }
 
     const env = { ...spawnEnv, CLAUDE_CONFIG_DIR: configDir };
+    // v1.18.0 (AC-V118C-1): every tracked path this run writes or removes, for the report — the
+    // post-upgrade skill commits exactly these (nothing the updater writes may stay uncommitted).
+    const written = [];
+    const removed = [];
+    const wrote = (relPath, kind) => { if (!written.some((w) => w.path === relPath)) written.push({ path: relPath, kind }); };
     const phases = [];
 
     // ── Phase 1: marketplace refresh ─────────────────────────────────────────────────────────────
@@ -270,6 +301,7 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     for (const { scopeSnap, trigger } of migrations) {
       migrateScope({ scopeSnap, trigger, marketplaceName, marketplaceRepo, pluginKey, env, cwd, claudeBin });
       anyMigrated = true;
+      if (scopeSnap.name === 'project') wrote('.claude/settings.json', 'marketplace-migration');
     }
     const manifestBefore = readMarketplaceManifest(configDir, marketplaceName);
     const beforeEntry = manifestBefore.present ? pluginEntryOf(manifestBefore.doc, pins.plugin_name) : null;
@@ -295,7 +327,15 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     for (const scopeName of enabledScopes) {
       runPluginUpdate({ scope: scopeName, pluginKey, env, cwd, claudeBin });
     }
-    phases.push({ name: 'plugin-update', verdict: refreshed ? 'changed' : 'already current' });
+    // v1.18.0 (AC-V118C-5): the verdict is what THIS workspace has installed, read back from the
+    // platform's own registry — never whether the marketplace clone moved in this run (a machine's
+    // second workspace read "already current" whatever it installed).
+    const installedAfter = installedVersionBefore(readInstalledPluginsRegistry(configDir), pluginKey, cwd);
+    phases.push({
+      name: 'plugin-update',
+      verdict: installedAfter && installedAfter !== installedBefore ? 'changed' : 'already current',
+      ...(installedAfter ? {} : { reason: 'installed version unreadable from installed_plugins.json' }),
+    });
 
     // ── Phase 3: cleanup (sibling atom; always previewed, only acts under --cleanup) ────────────
     const cleanupScopeDescriptors = scopes; // same {name, settingsPath} pairs, unresolved-required
@@ -308,6 +348,7 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
 
     // ── Phase 4: reinitialization — managed files, then the additive floor reconcile ───────────
     applyPlan(filePlan);
+    for (const f of filePlan) if (f.action === 'create') wrote(f.relPath, f.seed ? 'seed' : 'managed');
     // Recomputed FRESH from disk — never the preview-time `previewFloorPlan` — because Phase 1's
     // migration may have just rewritten this exact file (project scope's settings.json IS the
     // floor-reconcile target). Applying a stale pre-migration plan here would silently clobber it.
@@ -327,6 +368,7 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
       floorRetirementPlan = retirementPlan;
       if (floorPlan.total > 0 || floorRetirementPlan.total > 0) {
         writeTargetAtomically(freshFloorTarget.path, applyAdditions(floorPlan.settingsObj, floorPlan, { map, pins }));
+        wrote('.claude/settings.json', 'permission-floor');
         for (const line of renderPlan(floorPlan, {
           applied: true, retirementPlan: floorRetirementPlan, mapEntryCount: map.entries.length,
         })) print(line);
@@ -343,6 +385,7 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     if (gitignoreFileAction !== 'create') {
       freshGitignorePlan = reconcileGitignorePlan({ physicalRoot, templatesDir });
       applyGitignorePlan(freshGitignorePlan);
+      if (freshGitignorePlan.action === 'converged' || freshGitignorePlan.action === 'appended') wrote('.gitignore', 'managed-block');
       const gitignoreRow = renderGitignoreRow(freshGitignorePlan);
       if (gitignoreRow) print(gitignoreRow);
     }
@@ -351,6 +394,7 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     // above, applied with the module's own re-classify-before-append guard.
     const amendmentsPlan = planAmendmentsBackfill({ physicalRoot });
     applyAmendmentsBackfill(amendmentsPlan);
+    for (const rel of amendmentsPlan.writtenPaths || []) wrote(rel, 'amendments-backfill');
     const amendmentsRow = renderAmendmentsRow(amendmentsPlan);
     if (amendmentsRow) print(amendmentsRow);
 
@@ -366,6 +410,8 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     // here, after the floor write above, so the settings read is the current one.
     const statuslinePlan = planStatuslineWiring({ physicalRoot, templatesDir });
     applyStatuslineWiring(statuslinePlan);
+    for (const f of statuslinePlan.files || []) if (f.action === 'create' || f.action === 'converged') wrote(f.rel, 'statusline');
+    if ((statuslinePlan.keys || []).some((k) => k.action === 'wired')) wrote('.claude/settings.json', 'statusline');
     for (const row of renderStatuslineRows(statuslinePlan)) print(row);
     // retired-artifacts (hotfix-v1.17.4, ER #236): re-planned FRESH from disk; reported every run,
     // removed only under --cleanup, only catalogued paths of the catalogued kind, never a hook a
@@ -373,6 +419,7 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     const retiredPlan = planRetiredArtifacts({ physicalRoot, catalogue: retiredCatalogue });
     let retiredRemoved = 0;
     if (flags.cleanup && retiredPlan.present > 0) retiredRemoved = applyRetiredArtifacts(retiredPlan, physicalRoot);
+    for (const r of retiredPlan.rows) if (r.state === 'removed') removed.push(r.relPath);
     for (const row of renderRetiredArtifactRows(retiredPlan, { cleanup: flags.cleanup })) print(row);
 
     // settings.local.json (hotfix-v1.17.4): the tracked-file reconcile never reads it, so a
@@ -389,6 +436,7 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
       });
       if (lp.plan && lp.plan.total > 0) {
         writeTargetAtomically(lp.abs, applyRetirements(lp.settingsObj, lp.plan));
+        wrote(lp.rel, 'local-retirement');
         localRetired = lp.plan.total;
         for (const tier of ['allow', 'ask', 'deny']) for (const r of lp.plan.retirements[tier] || []) print(`  [retired] ${lp.rel} ${tier}: ${r}`);
         print(`  [permission-floor] ${lp.rel}: retired ${localRetired} version-pinned/gone row(s)`);
@@ -410,7 +458,8 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     // completed run (overwritten — a report, not a managed file; `.foundry/*` is gitignored), and
     // named in the LAST line so the operator's next step is never a guess.
     const report = buildUpgradeReport({
-      installedBefore, afterEntry, toPluginVersion: pins.plugin_version, phases, filePlan, amendmentsPlan,
+      installedBefore, installedAfter, afterEntry, toPluginVersion: pins.plugin_version, phases, filePlan, amendmentsPlan,
+      written, removed, configDir, hostname: os.hostname(),
       updaterVersion, coreVersion: corePkg.version, updaterPluginVersion: pins.plugin_version,
       retiredArtifacts: { present: retiredPlan.rows.filter((r) => r.state === 'stale').map((r) => r.relPath), removed: retiredRemoved, refused: retiredPlan.refused },
       localRetired,

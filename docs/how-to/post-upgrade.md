@@ -6,7 +6,7 @@ An upgrade is two commands, in this order, and they do different halves of the w
 
 ```bash
 cd <workspace>
-npx update-agentic-workspace
+npx update-agentic-workspace@latest
 ```
 
 It refreshes the marketplace, updates the plugin in every scope that enables it, reconciles the
@@ -27,15 +27,19 @@ gitignored, so it stays local.
 Open a session in the workspace and run `/foundry:post-upgrade`. It refuses without a fresh report,
 then walks, in order:
 
-1. the CHANGELOG sections between the two versions, as an inventory of what was retired and added;
-2. standing grants into `.foundry/permissions.yaml`, compiled, until the doctor reads `policy in-sync`;
-3. `requires_capabilities` on contracts that are not frozen (frozen ones are listed for `/foundry:amend`);
-4. a truth pass over `CLAUDE.md`, `docs/`, the prose under `.claude/` and your memory directory against
-   the inventory — never `settings.json` or the operator registry, and out-of-repo deletions are
-   quoted in the PR body because the diff cannot show them;
-5. branch garbage collection, dry-run first, then `--apply` on the merged class;
-6. verification: doctor green, policy in-sync, branches clean, an amend dry-run passing;
-7. one PR to `main` with a before/after table and the list of deletions.
+1. a commit of exactly what the updater wrote (the report lists every path), first on the PR branch —
+   so the workspace's `main` matches what its sessions run;
+2. the CHANGELOG sections between the two versions, as an inventory of what was retired and added;
+3. standing grants into `.foundry/permissions.yaml` (grants only widen), compiled, until the doctor
+   reads `policy in-sync`;
+4. `requires_capabilities` on contracts that are not frozen (frozen ones are listed for `/foundry:amend`);
+5. a relock when the stack-profile lock is behind the profile version the plugin ships;
+6. a truth pass over `CLAUDE.md`, `docs/`, the prose under `.claude/` and your memory directory against
+   the inventory — out-of-repo deletions are quoted in the PR body because the diff cannot show them;
+7. retired-artifact cleanup (`--cleanup`), which removes only what the reference scan cleared;
+8. branch garbage collection, dry-run first, then `--apply` on the merged class;
+9. verification: doctor green with no mechanical advisory left;
+10. one PR to `main` with a before/after table and the list of deletions.
 
 It never edits a frozen contract, never deletes a branch the gc did not classify as merged, and never
 writes the agent-teams flag into a settings file.
