@@ -30,9 +30,9 @@ export function versionOrNull(v) {
  * the refresh (or null); `filePlan` is the managed-file plan;
  * `amendmentsPlan` is the applied backfill plan (or null); `phases` is what renderSummary got. */
 export function buildUpgradeReport({
-  installedBefore = null, afterEntry, toPluginVersion, phases, filePlan, amendmentsPlan, now = new Date(),
+  installedBefore = null, installedAfter = null, afterEntry, toPluginVersion, phases, filePlan, amendmentsPlan, now = new Date(),
   updaterVersion = null, coreVersion = null, updaterPluginVersion = null,
-  retiredArtifacts = null, localRetired = 0,
+  retiredArtifacts = null, localRetired = 0, written = [], removed = [], configDir = null, hostname = null,
 }) {
   const seedRow = (filePlan || []).find((f) => f.seed);
   return {
@@ -43,7 +43,9 @@ export function buildUpgradeReport({
     // and already moved by the time Phase 1 reads it. null (no record, unreadable registry, a
     // first install) makes the skill list only the current version's CHANGELOG section.
     from_plugin_version: versionOrNull(installedBefore),
-    to_plugin_version: (afterEntry && versionOrNull(afterEntry.version)) || versionOrNull(toPluginVersion),
+    // v1.18.0 (AC-V118C-5): what this workspace has INSTALLED after the run, from the platform's own
+    // registry; the marketplace's advertised version only when the registry could not be read.
+    to_plugin_version: versionOrNull(installedAfter) || (afterEntry && versionOrNull(afterEntry.version)) || versionOrNull(toPluginVersion),
     // ER #228 (v1.17.2): WHICH updater ran. A stale npx-cached updater was indistinguishable from a
     // broken walk; the skill refuses a report whose updater was built for another plugin version.
     updater_version: versionOrNull(updaterVersion),
@@ -54,8 +56,9 @@ export function buildUpgradeReport({
     // walk that never opened a file cannot read as a clean pass.
     amendments: amendmentsPlan
       ? { backfilled: amendmentsPlan.written ?? 0, present: amendmentsPlan.present, skipped: amendmentsPlan.skipped,
+          failed: amendmentsPlan.failed ?? 0,
           total: amendmentsPlan.total ?? ((amendmentsPlan.written ?? 0) + amendmentsPlan.present + amendmentsPlan.skipped) }
-      : { backfilled: 0, present: 0, skipped: 0, total: 0 },
+      : { backfilled: 0, present: 0, skipped: 0, failed: 0, total: 0 },
     permissions_policy: seedRow ? (seedRow.action === 'create' ? 'created' : 'kept') : 'absent',
     drifted: (filePlan || []).filter((f) => f.action === 'drifted').map((f) => f.relPath),
     // hotfix-v1.17.4: what the sweep found (paths are workspace-relative catalogue entries, never free text)
@@ -63,6 +66,14 @@ export function buildUpgradeReport({
       ? { present: retiredArtifacts.present, removed: retiredArtifacts.removed, refused: retiredArtifacts.refused }
       : { present: [], removed: 0, refused: 0 },
     settings_local_retired: localRetired,
+    // v1.18.0 (AC-V118C-1/-2): every path this run wrote or removed — `/foundry:post-upgrade`
+    // commits exactly the tracked ones as the first commit of its PR, so nothing the updater writes
+    // stays uncommitted; `config_dir`/`hostname` say WHICH environment the versions describe (a
+    // container's ~/.claude is its own volume), so a report from another environment is refused.
+    written: (written || []).map((w) => ({ path: String(w.path), kind: String(w.kind) })),
+    removed: (removed || []).map(String),
+    config_dir: typeof configDir === 'string' ? configDir : null,
+    hostname: typeof hostname === 'string' ? hostname : null,
   };
 }
 

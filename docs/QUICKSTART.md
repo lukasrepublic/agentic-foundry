@@ -108,7 +108,7 @@ Already installed from an earlier release? Bring it current with one command, ru
 workspace directory:
 
 ```bash
-npx update-agentic-workspace
+npx update-agentic-workspace@latest
 ```
 
 It refreshes the marketplace (migrating a pre-v1.7.0 tag-pinned registration if it finds one),
