@@ -257,7 +257,7 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     previewLines.push(...renderStatuslineRows(planStatuslineWiring({ physicalRoot, templatesDir })));
     // retired-artifacts (hotfix-v1.17.4, ER #236): PREVIEW-ONLY rows; Phase 4 re-plans fresh from disk.
     const retiredCatalogue = loadRetiredCatalogue(pkgDir);
-    previewLines.push(...renderRetiredArtifactRows(planRetiredArtifacts({ physicalRoot, catalogue: retiredCatalogue }), { cleanup: flags.cleanup }));
+    previewLines.push(...renderRetiredArtifactRows(planRetiredArtifacts({ physicalRoot, catalogue: retiredCatalogue }), { cleanup: flags.cleanup, phase: 'preview' }));
     // settings.local.json retirement (hotfix-v1.17.4): PREVIEW-ONLY row (PR #237 review Risk 2 —
     // every Phase 4 write is announced before the first write happens); Phase 4 re-plans fresh.
     {
