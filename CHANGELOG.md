@@ -8,6 +8,41 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.17.4 — 2026-09-25
+
+### The updater sweeps what retired releases left behind
+
+Patch from ER #236 — after v1.17.3 an operator asked what else the updater was missing. A survey of
+eleven upgraded workspaces answered: every one still carried files from retired machinery, and
+`settings.local.json` kept stale grants forever. `create-agentic-workspace` 0.17.4 and
+`update-agentic-workspace` 0.1.16 are published together.
+
+- **Retired-artifacts sweep** (#237, closes ER #236; `cli/retired-artifacts.json`,
+  `cli/src/retiredArtifacts.mjs`, `cli/src/update.mjs`). A shipped catalogue names every workspace file an
+  earlier release wrote and no current release reads — `wiring-hash.pin`, `active-workflow.json`,
+  `context-snapshots/`, `branch-protection-unenforced.json`, the old `.claude/` dispatcher files, a
+  retired exec-guard hook, `settings.json.bak` — with the release that retired it and why. Every run
+  reports each present entry (`[stale] <path> — retired in vX (<why>); remove with --cleanup`);
+  `--cleanup` removes exactly those, only when the path is the catalogued kind and confined to the
+  workspace (a link, the other kind, or an escaping path is `[refused]` and left alone; so is a hook a
+  hook command in `.claude/settings*.json` still names — a wired guard is never taken; a directory row
+  names its entry count). Nothing outside the catalogue is ever a candidate: `.claude/skills`,
+  `.claude/agents` and operator files are invisible to it. The report carries
+  `retired_artifacts: {present, removed, refused}`.
+- **`settings.local.json` retirement** (#237; `cli/src/update.mjs`). The floor reconcile classifies
+  against the tracked file alone, so a version-pinned or gone floor row an old init left in the local
+  file survived every upgrade. The updater now runs the same retirement planner over it — retirement
+  only, never additions; a pinned `ask` row only when the tracked file carries the replacing wildcard
+  row — previewed before the first write, counted in the phase verdict, written by a rename-install
+  that keeps the file's mode bits, reporting each `[retired]` row and `settings_local_retired`.
+- **Doctor: `retired-artifacts` advisory line** (#237; `scripts/foundry-doctor.py`). `none present`, or
+  `<n> present (<first paths>) — run npx update-agentic-workspace --cleanup`. Advisory, never RED; the
+  doctor skill now counts five advisory lines.
+- **Security review** (#237): zero Blocks, six Risks, all applied in the same PR — a hook a settings
+  hook command still names is refused (a wired guard is never taken); the local-file write is
+  previewed, verdict-counted, path-confined and mode-preserving; a pinned `ask` row retires only when
+  the tracked file carries its replacement.
+
 ## v1.17.3 — 2026-09-25
 
 ### The updater resolves its own chores

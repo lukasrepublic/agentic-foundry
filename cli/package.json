@@ -1,6 +1,6 @@
 {
   "name": "create-agentic-workspace",
-  "version": "0.17.3",
+  "version": "0.17.4",
   "description": "The pre-session bootstrap wizard for an Agentic Foundry workspace: declares (never grants) the permission floor, absorbs foundry-bootstrap.sh's out-of-session identity wiring, and scaffolds a seven-file schema-valid workspace. Zero dependencies, no lifecycle scripts, no telemetry.",
   "license": "MIT",
   "type": "module",
@@ -35,7 +35,7 @@
     "marketplace_name": "agentic-foundry",
     "marketplace_repo": "lukasrepublic/agentic-foundry",
     "plugin_name": "foundry",
-    "plugin_version": "1.17.3",
+    "plugin_version": "1.17.4",
     "pins_researched": "2026-08-02"
   }
 }
