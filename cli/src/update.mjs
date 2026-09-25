@@ -16,7 +16,7 @@ import {
 } from './floorReconcile.mjs';
 import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from './gitignoreReconcile.mjs';
 import { planAmendmentsBackfill, applyAmendmentsBackfill, renderAmendmentsRow } from './amendmentsBackfill.mjs';
-import { buildUpgradeReport, writeUpgradeReport, installedVersionBefore, NEXT_LINE } from './upgradeReport.mjs';
+import { buildUpgradeReport, writeUpgradeReport, installedVersionBefore, versionOrNull, NEXT_LINE } from './upgradeReport.mjs';
 import { planStatuslineWiring, applyStatuslineWiring, renderStatuslineRows, statuslineChanged } from './statuslineWiring.mjs';
 import {
   ALLOWED_CLAUDE_SUBCOMMANDS, resolveClaudeOnPath, runClaude,
@@ -107,7 +107,7 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     const pins = corePkg.foundry;
     // ER #228: say WHICH updater this is, first, every run — a stale npx-cached updater looked
     // exactly like a broken backfill until the report and the log carried the version.
-    print(`update-agentic-workspace ${updaterVersion || 'unknown'} (core create-agentic-workspace ${corePkg.version}, built for plugin ${pins.plugin_version})`);
+    print(`update-agentic-workspace ${versionOrNull(updaterVersion) || 'unknown'} (core create-agentic-workspace ${versionOrNull(corePkg.version) || 'unknown'}, built for plugin ${versionOrNull(pins.plugin_version) || 'unknown'})`);
     const marketplaceName = pins.marketplace_name;
     const marketplaceRepo = pins.marketplace_repo;
     const pluginKey = `${pins.plugin_name}@${pins.marketplace_name}`;

@@ -123,22 +123,26 @@ _FENCE_RE = re.compile(r"```[\s\S]*?```")
 
 
 def strip_amendments_section(spec_text):
-    """The spec text without its `## Amendments` section — the bookkeeping table `/foundry:amend`
-    appends after the LAST normative close marker (outside any fenced block), up to the next `## `
-    heading or EOF. ER #228 (v1.17.2): the size ceiling must not count it — the updater's backfill
-    adds ~16 words to every spec and tipped near-ceiling specs over a gate they had no other reason
-    to fail. Detection mirrors foundry-amend.py's amendments_section_ok so both agree on which
-    heading is THE section. Text without the section is returned unchanged."""
+    """The spec text without its `## Amendments` LEDGER — the table rows under an exact
+    `## Amendments` heading line that follows the LAST normative close marker (outside any fenced
+    block), up to the next `## ` heading or EOF. ER #228 (v1.17.2): the size ceiling must not count
+    the ledger the updater's backfill appends (~16 words) — it tipped near-ceiling specs over a gate
+    they had no other reason to fail. Only TABLE ROWS (`|`-led lines) and the heading itself are
+    removed; any prose under the heading still counts, so the exclusion cannot smuggle text past the
+    binding ceiling (PR #229 security review, Risk 1). Text without the ledger is returned unchanged."""
     close = spec_text.rfind(_NORMATIVE_CLOSE_MARK)
     if close == -1:
         return spec_text
     masked = _FENCE_RE.sub(lambda m: "\0" * len(m.group(0)), spec_text)
-    start = masked.find(_AMENDMENTS_HEADING, close)
-    if start == -1:
+    heading = re.compile(r"^## Amendments[ \t]*$", re.M).search(masked, close)
+    if heading is None:
         return spec_text
-    nxt = re.compile(r"^## ", re.M).search(masked, start + len(_AMENDMENTS_HEADING))
+    nxt = re.compile(r"^## ", re.M).search(masked, heading.end())
     end = nxt.start() if nxt else len(spec_text)
-    return spec_text[:start] + spec_text[end:]
+    section = spec_text[heading.start():end]
+    kept = [ln for ln in section.splitlines(keepends=True)
+            if not (ln.startswith("|") or ln.startswith("## Amendments"))]
+    return spec_text[:heading.start()] + "".join(kept) + spec_text[end:]
 
 
 def spec_size_metrics(spec_text):

@@ -319,3 +319,23 @@ def test_size_ceiling_excludes_the_amendments_ledger(tmp_path):
     spec.write_text(body + ledger + "\n## Notes\n\n" + ("more " * 20), encoding="utf-8")
     ok, findings = sl.lint_spec(str(spec), project_dir=str(tmp_path))
     assert not ok and any("OVERSIZE" in f for f in findings)
+
+
+def test_size_ceiling_exclusion_cannot_smuggle_prose(tmp_path):
+    """PR #229 security review Risk 1: only the ledger's table rows under an exact `## Amendments`
+    line are excluded — prose under the heading, a `### Amendments` sub-heading, an in-sentence
+    mention, or text to EOF all still count."""
+    body = "# feat-x\n\n<!-- normative -->\n- **AC-X-1**: one.\n<!-- /normative -->\n"
+    base = prep.spec_size_metrics(body)[1]
+    ledger = "\n## Amendments\n\n| date | what changed | why reality required it | auth_seq |\n|---|---|---|---|\n"
+    assert prep.spec_size_metrics(body + ledger)[1] == base
+    # prose under the heading counts
+    assert prep.spec_size_metrics(body + ledger + "\nhidden prose here\n")[1] == base + 3
+    # a sub-heading is not the ledger
+    assert prep.spec_size_metrics(body + "\n### Amendments\n\nsome words\n")[1] == len((body + "\n### Amendments\n\nsome words\n").split())
+    # an in-sentence mention is not the ledger
+    t = body + "\nsee ## Amendments below\n"
+    assert prep.spec_size_metrics(t)[1] == len(t.split())
+    # a fenced `## Foo` inside the section does not extend the exclusion over prose
+    t = body + ledger + "\n```\n## Foo\n```\nafter fence\n"
+    assert prep.spec_size_metrics(t)[1] >= base + 2

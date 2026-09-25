@@ -39,9 +39,14 @@ const pkgDir = path.dirname(
 );
 
 // This wrapper's OWN version, for the run's first line and the report (ER #228).
-const updaterVersion = JSON.parse(
-  fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf-8'),
-).version;
+let updaterVersion = null;
+try {
+  updaterVersion = JSON.parse(
+    fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf-8'),
+  ).version;
+} catch {
+  updaterVersion = null; // reported as 'unknown'; never a stack trace outside runUpdate's contract
+}
 
 const { exitCode } = await runUpdate(rawArgv, {
   updaterVersion,

@@ -19,7 +19,7 @@ matches the release that was just installed instead of being a prompt someone wr
    differs from the installed plugin** (`claude plugin list`, or the doctor's header) → stop the same
    way; the report is stale. **`updater_version` absent, or `updater_plugin_version` differs from
    `to_plugin_version`** → stop: *"the report was written by an updater built for another plugin
-   version (a stale npx cache) — run `npx update-agentic-workspace@latest` and come back."* An older
+   version (a stale npx cache) — run `npx update-agentic-workspace@<the version this release's CHANGELOG section pairs with it>` (or `@latest`) and come back."* An older
    updater walks less than this release expects (ER #228: it never opened the delivery specs), so its
    report cannot be trusted to say what was done. Check the walk's arithmetic too:
    `amendments.backfilled + present + skipped` must equal `amendments.total`.
