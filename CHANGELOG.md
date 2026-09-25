@@ -8,6 +8,30 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.17.3 — 2026-09-25
+
+### The updater resolves its own chores
+
+Patch from ER #232 — an operator asked, on a doctor report after v1.17.2, why its "action items" were
+not already done by the installer/updater. They should have been. `create-agentic-workspace` 0.17.3 and
+`update-agentic-workspace` 0.1.15 are published together.
+
+- **The policy file's self-guard deny pair is framework-owned** (#233, closes ER #232;
+  `cli/src/selfGuardDeny.mjs`, `cli/src/permissionFloor.mjs`, `cli/src/update.mjs`, `cli/src/run.mjs`).
+  v1.17.0 seeded `.foundry/permissions.yaml` but left its two protecting rules (`Edit`/`Write` denied on
+  the file) to the compiler's `--write`, so every fresh seed read `policy drift (2)` until someone ran it.
+  The scaffold now writes the pair with the floor; the updater's Phase 4 and `--existing
+  --reconcile-floor` converge it fresh from disk after the floor write whenever a policy file exists —
+  one row, `[permissions] self-guard deny rules added (N)` or `already present`. A fresh workspace is
+  `policy in-sync`; the compile step is for the grants you add.
+- **Version-pinned floor rows are retired** (#233; `cli/src/floorReconcile.mjs`). An init before
+  installer-unpinning wrote allow rows with the marketplace directory and the plugin version spelled
+  out (`…/cache/agentic-foundry/foundry/1.9.1/scripts/…`). Retirement recognized only the floor's exact
+  wildcard shape, so those rows survived every upgrade. `parseFloorPinnedShape` lets each `*` of the
+  floor's root glob be a concrete segment; every such `allow`/`ask` row is retired whether or not the
+  script still ships (the wildcard row covers a shipped one and is added in the same pass). `deny` and
+  every other shape stay untouched.
+
 ## v1.17.2 — 2026-09-24
 
 ### The report says which updater ran; the size ceiling ignores the ledger
