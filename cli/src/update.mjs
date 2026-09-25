@@ -16,7 +16,7 @@ import {
 } from './floorReconcile.mjs';
 import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from './gitignoreReconcile.mjs';
 import { planAmendmentsBackfill, applyAmendmentsBackfill, renderAmendmentsRow } from './amendmentsBackfill.mjs';
-import { buildUpgradeReport, writeUpgradeReport, installedVersionBefore, NEXT_LINE } from './upgradeReport.mjs';
+import { buildUpgradeReport, writeUpgradeReport, installedVersionBefore, versionOrNull, NEXT_LINE } from './upgradeReport.mjs';
 import { planStatuslineWiring, applyStatuslineWiring, renderStatuslineRows, statuslineChanged } from './statuslineWiring.mjs';
 import {
   ALLOWED_CLAUDE_SUBCOMMANDS, resolveClaudeOnPath, runClaude,
@@ -72,7 +72,7 @@ function isInstalledInScopeFactory(registry, pluginKey, cwd) {
 /** Run the update command end to end. Never throws — every failure path is caught and turned into
  * a refusal-shaped exit 1 (or, for a bug, exit 1 with the error message), matching run.mjs's own
  * contract. */
-export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output, spawnEnv = process.env }) {
+export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output, spawnEnv = process.env, updaterVersion = null }) {
   const lines = [];
   const print = (s) => {
     lines.push(s);
@@ -103,7 +103,11 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
       return { exitCode: 0, output: lines.join('\n') };
     }
 
-    const pins = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf-8')).foundry;
+    const corePkg = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf-8'));
+    const pins = corePkg.foundry;
+    // ER #228: say WHICH updater this is, first, every run — a stale npx-cached updater looked
+    // exactly like a broken backfill until the report and the log carried the version.
+    print(`update-agentic-workspace ${versionOrNull(updaterVersion) || 'unknown'} (core create-agentic-workspace ${versionOrNull(corePkg.version) || 'unknown'}, built for plugin ${versionOrNull(pins.plugin_version) || 'unknown'})`);
     const marketplaceName = pins.marketplace_name;
     const marketplaceRepo = pins.marketplace_repo;
     const pluginKey = `${pins.plugin_name}@${pins.marketplace_name}`;
@@ -339,6 +343,7 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     // named in the LAST line so the operator's next step is never a guess.
     const report = buildUpgradeReport({
       installedBefore, afterEntry, toPluginVersion: pins.plugin_version, phases, filePlan, amendmentsPlan,
+      updaterVersion, coreVersion: corePkg.version, updaterPluginVersion: pins.plugin_version,
     });
     const reportPath = writeUpgradeReport(physicalRoot, report);
     print('');

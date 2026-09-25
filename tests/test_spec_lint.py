@@ -292,3 +292,50 @@ class TestNonconformingAcIdWarning:
         for token in shapes:
             text = _fenced(token)
             assert prep.nonconforming_ac_id_tokens(text) == [token], token
+
+
+def test_size_ceiling_excludes_the_amendments_ledger(tmp_path):
+    """ER #228 (v1.17.2): the `## Amendments` table is bookkeeping outside the normative region; the
+    updater's backfill adds it to every spec and must never tip a spec over the word ceiling."""
+    body = "# feat-big\n\n<!-- normative -->\n- **AC-BIG-1**: " + ("word " * 7990) + "\n<!-- /normative -->\n"
+    ledger = ("\n## Amendments\n\n| date | what changed | why reality required it | auth_seq |\n"
+              "|---|---|---|---|\n| 2026-09-24 | a b c d e f | g h i j k l | 1 |\n")
+    ac, words_plain = prep.spec_size_metrics(body)
+    ac2, words_with = prep.spec_size_metrics(body + ledger)
+    assert ac == ac2 == 1
+    assert words_with == words_plain, "the ledger must not count"
+    assert words_plain <= 8000 < len((body + ledger).split()), "the fixture sits at the ceiling only because of the ledger"
+    # the section is detected only AFTER the last normative close, outside fences — a fenced example is prose
+    fenced = body + "\n## Notes\n\n```\n## Amendments\n| x |\n```\n"
+    assert prep.spec_size_metrics(fenced)[1] == len(fenced.split())
+    # a later heading ends the section
+    tail = body + ledger + "\n## Notes\n\nfour five six\n"
+    assert prep.spec_size_metrics(tail)[1] == words_plain + 5
+    # end to end through the lint: the same spec passes with the ledger and fails once real prose crosses the line
+    spec = tmp_path / "feat-big.md"
+    spec.write_text(body + ledger, encoding="utf-8")
+    ok, findings = sl.lint_spec(str(spec), project_dir=str(tmp_path))
+    assert ok, findings
+    spec.write_text(body + ledger + "\n## Notes\n\n" + ("more " * 20), encoding="utf-8")
+    ok, findings = sl.lint_spec(str(spec), project_dir=str(tmp_path))
+    assert not ok and any("OVERSIZE" in f for f in findings)
+
+
+def test_size_ceiling_exclusion_cannot_smuggle_prose(tmp_path):
+    """PR #229 security review Risk 1: only the ledger's table rows under an exact `## Amendments`
+    line are excluded — prose under the heading, a `### Amendments` sub-heading, an in-sentence
+    mention, or text to EOF all still count."""
+    body = "# feat-x\n\n<!-- normative -->\n- **AC-X-1**: one.\n<!-- /normative -->\n"
+    base = prep.spec_size_metrics(body)[1]
+    ledger = "\n## Amendments\n\n| date | what changed | why reality required it | auth_seq |\n|---|---|---|---|\n"
+    assert prep.spec_size_metrics(body + ledger)[1] == base
+    # prose under the heading counts
+    assert prep.spec_size_metrics(body + ledger + "\nhidden prose here\n")[1] == base + 3
+    # a sub-heading is not the ledger
+    assert prep.spec_size_metrics(body + "\n### Amendments\n\nsome words\n")[1] == len((body + "\n### Amendments\n\nsome words\n").split())
+    # an in-sentence mention is not the ledger
+    t = body + "\nsee ## Amendments below\n"
+    assert prep.spec_size_metrics(t)[1] == len(t.split())
+    # a fenced `## Foo` inside the section does not extend the exclusion over prose
+    t = body + ledger + "\n```\n## Foo\n```\nafter fence\n"
+    assert prep.spec_size_metrics(t)[1] >= base + 2

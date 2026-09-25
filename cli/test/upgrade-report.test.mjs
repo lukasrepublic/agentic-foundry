@@ -30,19 +30,23 @@ test('buildUpgradeReport: every field, from a full run', () => {
       { relPath: 'CLAUDE.md', action: 'drifted' },
       { relPath: '.foundry/permissions.yaml', action: 'create', seed: true },
     ],
-    amendmentsPlan: { written: 3, present: 4, skipped: 1, applied: true },
+    amendmentsPlan: { written: 3, present: 4, skipped: 1, total: 8, applied: true },
     now: NOW,
+    updaterVersion: '0.1.14', coreVersion: '0.17.2', updaterPluginVersion: '1.17.2',
   });
   assert.deepEqual(report, {
     schema_version: REPORT_SCHEMA_VERSION,
     ran_at: '2026-09-23T12:00:00.000Z',
     from_plugin_version: '1.16.1',
     to_plugin_version: '1.17.0',
+    updater_version: '0.1.14',
+    core_version: '0.17.2',
+    updater_plugin_version: '1.17.2',
     phases: [
       { name: 'marketplace-refresh', verdict: 'changed' },
       { name: 'cleanup', verdict: 'skipped', reason: 'report-only' },
     ],
-    amendments: { backfilled: 3, present: 4, skipped: 1 },
+    amendments: { backfilled: 3, present: 4, skipped: 1, total: 8 },
     permissions_policy: 'created',
     drifted: ['CLAUDE.md'],
   });
@@ -57,7 +61,10 @@ test('buildUpgradeReport: a first install has no from-version; a kept seed repor
   assert.equal(report.from_plugin_version, null);
   assert.equal(report.to_plugin_version, '1.17.0');
   assert.equal(report.permissions_policy, 'kept');
-  assert.deepEqual(report.amendments, { backfilled: 0, present: 0, skipped: 0 });
+  assert.deepEqual(report.amendments, { backfilled: 0, present: 0, skipped: 0, total: 0 });
+  // ER #228: no updater identity given → null, never a guess
+  assert.equal(report.updater_version, null);
+  assert.equal(report.updater_plugin_version, null);
   assert.deepEqual(report.drifted, []);
 });
 

@@ -325,7 +325,7 @@ def _load_release_module_at_rev(rev):
     return mod
 
 
-BASE_REV = "f7cfa25"   # the commit release-loader-vocabulary's worktree branched from
+BASE_REV = "01fefad"   # the commit release-loader-vocabulary's worktree branched from (was f7cfa25 before the 2026-09-23 history rewrite)
 
 
 class TestReleaseLoaderVocabulary:
