@@ -60,6 +60,8 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import errno
+import stat
 import os
 import re
 import sys
@@ -637,6 +639,83 @@ def _hook_command_text(pdir):
     return "\n".join(parts)
 
 
+_SCAN_SKIP_DIRS = {".git", "node_modules"}
+_SCAN_ABSENT = {errno.ENOENT, errno.ENOTDIR}
+
+
+def _reference_texts(pdir, rs):
+    """ER #241 mirror of cli/src/retiredArtifacts.mjs `scanReferenceTexts` — same set, same budgets,
+    same fail-closed rules: a symlink, a path escaping the workspace, a non-ENOENT stat error, an
+    unreadable entry or any budget exceeded → incomplete. Text is decoded with replacement, as node's
+    utf-8 read does. Returns (list of (rel, text), incomplete-reason-or-None)."""
+    texts = []
+    n = {"files": 0, "dirs": 0, "bytes": 0}
+    root_real = os.path.realpath(pdir)
+
+    def stat_of(rel):
+        fp = os.path.join(pdir, rel)
+        parent = os.path.realpath(os.path.dirname(fp))
+        if parent != root_real and not parent.startswith(root_real + os.sep):
+            return None, f"{rel} resolves outside the workspace"
+        try:
+            return (fp, os.lstat(fp)), None
+        except OSError as e:
+            return None, (None if e.errno in _SCAN_ABSENT else f"{rel} unreadable ({type(e).__name__})")
+
+    def visit(rel, tree_root):
+        hit, why = stat_of(rel)
+        if why or not hit:
+            return [], why
+        fp, st = hit
+        if stat.S_ISLNK(st.st_mode):
+            return [], f"{rel} is a symlink (not followed)"
+        if stat.S_ISREG(st.st_mode):
+            n["files"] += 1
+            if n["files"] > rs["max_files"]:
+                return [], f"more than {rs['max_files']} files to scan"
+            if st.st_size > rs["max_bytes"]:
+                return [], f"{rel} is larger than {rs['max_bytes']} bytes"
+            n["bytes"] += st.st_size
+            if n["bytes"] > rs["max_total_bytes"]:
+                return [], f"more than {rs['max_total_bytes']} bytes to scan"
+            try:
+                with open(fp, encoding="utf-8", errors="replace") as fh:
+                    texts.append((rel, fh.read()))
+            except OSError as e:
+                return [], f"{rel} unreadable ({type(e).__name__})"
+            return [], None
+        if not stat.S_ISDIR(st.st_mode) or not tree_root:
+            return [], None
+        n["dirs"] += 1
+        if n["dirs"] > rs["max_dirs"]:
+            return [], f"more than {rs['max_dirs']} directories to scan"
+        try:
+            names = sorted(os.listdir(fp))
+        except OSError as e:
+            return [], f"{rel} unreadable ({type(e).__name__})"
+        return [f"{rel}/{x}" for x in names if x not in _SCAN_SKIP_DIRS], None
+
+    for f in rs["files"]:
+        _, why = visit(f, False)
+        if why:
+            return texts, why
+    for d in rs["dirs"]:
+        stack = [d]
+        while stack:
+            kids, why = visit(stack.pop(), True)
+            if why:
+                return texts, why
+            stack.extend(reversed(kids))
+    explicit = set(rs["files"])
+    for name in sorted(os.listdir(pdir)):
+        if name in explicit or not any(name.endswith(suf) for suf in rs["root_suffixes"]):
+            continue
+        _, why = visit(name, False)
+        if why:
+            return texts, why
+    return texts, None
+
+
 def check_retired_artifacts(plugin_root=None, project_dir=None):
     """hotfix-v1.17.4 (ER #236): `retired-artifacts: none present` or `<n> present — run
     `npx update-agentic-workspace --cleanup`` (the first few paths named). Reads the catalogue the CLI
@@ -645,7 +724,8 @@ def check_retired_artifacts(plugin_root=None, project_dir=None):
     pdir = project_dir or _project_dir()
     try:
         with open(os.path.join(root, "cli", "retired-artifacts.json"), encoding="utf-8") as fh:
-            entries = json.load(fh).get("entries", [])
+            doc = json.load(fh)
+        entries = doc.get("entries", [])
         present = []
         hook_text = _hook_command_text(pdir)  # None when a settings file does not parse (fail-closed)
         for e in entries:
@@ -669,8 +749,25 @@ def check_retired_artifacts(plugin_root=None, project_dir=None):
                         present.append(cand)
             elif os.path.lexists(os.path.join(pdir, rel)):
                 present.append(rel)
+        # ER #241: a path a workspace wiring file still names is NOT stale (the updater refuses it);
+        # a scan that cannot finish calls nothing stale (fail-closed, like the updater)
+        kept = []
+        if present:
+            if not isinstance(doc.get("reference_scan"), dict):
+                return ADVISORY, "unknown (catalogue has no reference_scan — the updater refuses it too)"
+            texts, incomplete = _reference_texts(pdir, doc["reference_scan"])
+            if incomplete:
+                return True, _sanitize_detail(f"{len(present)} catalogued, none removable (reference scan incomplete: {incomplete})")
+            else:
+                def wired(p):
+                    base = os.path.basename(p) if p.startswith(".claude/hooks/") else None
+                    return any(rel != p and (p in text or (base and rel.startswith(".claude/hooks/") and base in text))
+                               for rel, text in texts)
+                still = [p for p in present if wired(p)]
+                kept = still
+                present = [p for p in present if p not in still]
         if not present:
-            return True, "none present"
+            return True, "none present" + (f" ({len(kept)} retired path(s) still referenced by the workspace — kept)" if kept else "")
         shown = ", ".join(present[:3]) + (" …" if len(present) > 3 else "")
         return ADVISORY, _sanitize_detail(f"{len(present)} present ({shown}) — run `npx update-agentic-workspace --cleanup`")
     except Exception as e:  # noqa: BLE001 -- NEVER-RED contract
