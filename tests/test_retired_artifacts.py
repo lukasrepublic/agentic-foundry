@@ -59,3 +59,36 @@ def test_doctor_names_present_leftovers_and_is_advisory_only(tmp_path):
     (ws / ".claude" / "settings.local.json").write_text("{ not json", encoding="utf-8")
     line = _doctor_line(ws)
     assert "1 present" in line and "exec-guard" not in line
+
+
+def test_doctor_keeps_a_retired_path_a_workflow_still_names(tmp_path):
+    """ER #241: the advisory must not suggest --cleanup for a path the workspace's CI still reads."""
+    ws = tmp_path / "ws"
+    (ws / ".claude").mkdir(parents=True)
+    (ws / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+    (ws / ".foundry").mkdir()
+    (ws / ".foundry" / "hasher-ref").write_text("v1.2.3\n", encoding="utf-8")
+    (ws / ".github" / "workflows").mkdir(parents=True)
+    (ws / ".github" / "workflows" / "drift.yml").write_text("run: test -f .foundry/hasher-ref\n", encoding="utf-8")
+    line = _doctor_line(ws)
+    assert "none present" in line and "1 retired path(s) still referenced" in line
+    assert "--cleanup" not in line
+
+
+def test_doctor_scan_parity_nested_build_symlink_and_hook_basename(tmp_path):
+    """PR #242 review: the doctor reads nested build/ dirs, refuses on a symlinked wiring file, and
+    keeps a hook another hook sources by basename — the same answers as the updater."""
+    ws = tmp_path / "ws"
+    (ws / ".claude" / "hooks").mkdir(parents=True)
+    (ws / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+    (ws / ".foundry").mkdir()
+    (ws / ".foundry" / "hasher-ref").write_text("x", encoding="utf-8")
+    (ws / "scripts" / "build").mkdir(parents=True)
+    (ws / "scripts" / "build" / "ci.sh").write_text("cat ./.foundry/hasher-ref\n", encoding="utf-8")
+    (ws / ".claude" / "hooks" / "zeta-exec-guard.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    (ws / ".claude" / "hooks" / "live.sh").write_text('. "$(dirname "$0")/zeta-exec-guard.sh"\n', encoding="utf-8")
+    line = _doctor_line(ws)
+    assert "none present" in line and "2 retired path(s) still referenced" in line
+    (ws / "Makefile").symlink_to("/etc/hosts")
+    line = _doctor_line(ws)
+    assert "none removable (reference scan incomplete: Makefile is a symlink" in line

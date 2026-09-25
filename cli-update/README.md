@@ -74,8 +74,17 @@ and want it to stay that way, disable it again after the update, or migrate that
    (<why>); remove with --cleanup` on every run and removed only under `--cleanup`, only for
    catalogued paths of the catalogued kind (a link or the other kind is `[refused]`, left alone;
    so is a hook under `.claude/hooks/` that a hook command in `.claude/settings*.json` still
-   names, and every hook when a settings file does not parse; a directory row shows its entry
-   count). `.claude/skills`, `.claude/agents` and files outside the catalogue are invisible to it.
+   names, and every hook when a settings file does not parse; so is **any catalogued path a
+   workspace wiring file still names by its full relative path** (and any retired hook another hook
+   script names by basename), printed `[refused] <path> — still referenced by <file>`, because a path
+   the framework retired may be one you adopted for your own tooling. The scanned set is declared in
+   the catalogue's `reference_scan`: CI dirs (`.github/`, `.gitlab/`, `.circleci/`, `.buildkite/`,
+   `.gitea/`, `.forgejo/`), `scripts/`, `bin/`, `tools/`, `.githooks/`, `.husky/`, `.claude/hooks|
+   commands|skills|agents/`, named config files (`.claude/settings*.json`, `.mcp.json`, `Makefile`,
+   `package.json`, `pyproject.toml`, `Dockerfile`, `Jenkinsfile`, …) and the root's
+   `*.md`/`*.sh`/`*.yml`. It is a substring heuristic, so a path assembled at run time is not seen;
+   it fails closed — a symlink, an unreadable entry or an exceeded budget refuses every row; a
+   directory row shows its entry count). `.claude/skills`, `.claude/agents` and files outside the catalogue are invisible to it.
    Finally `.claude/settings.local.json`, which the tracked-file reconcile never reads, has its
    version-pinned or gone floor rows **retired** (never anything added; a pinned `ask` row only
    when the tracked file carries the wildcard `ask` row that replaces it), written by the same
