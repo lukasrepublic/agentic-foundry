@@ -8,6 +8,39 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.17.5 — 2026-09-25
+
+### `--cleanup` never takes a path your workspace still wires; the preview says what it will do
+
+Patch. `create-agentic-workspace` 0.17.5 and `update-agentic-workspace` 0.1.17 are published together.
+
+- **Reference scan before any removal** (#242, closes ER #241; `cli/retired-artifacts.json`,
+  `cli/src/retiredArtifacts.mjs`, `scripts/foundry-doctor.py`). The v1.17.4 "still wired" refusal reached
+  only `.claude/hooks/`; every other catalogued path went `stale` on the framework's word alone — and an
+  adopter had re-adopted `.foundry/hasher-ref` as a fail-closed input to a required CI check, so
+  `--cleanup` would have deleted it and reddened every later pull request. Now a catalogued path is
+  `stale` only when no workspace wiring file names its full relative path, and a retired hook only when
+  no other hook script names its basename. The search set is declared once in the catalogue
+  (`reference_scan`: CI dirs, `scripts/`, `bin/`, `tools/`, git-hook dirs, `.claude/` hooks, commands,
+  skills and agents, named config files, root `*.md`/`*.sh`/`*.yml`), read by the updater and the doctor
+  alike; a hit prints `[refused] <path> — still referenced by <file>`. It fails closed: a symlink, an
+  unreadable entry or any budget exceeded (files, directories, bytes per file, total bytes) refuses
+  every row. The hasher entry's reason now says *no current foundry
+  script* reads it — whose scripts the claim is about.
+- **Preview wording under `--cleanup`** (#240; `cli/src/retiredArtifacts.mjs`, `cli/src/update.mjs`). The
+  preview and the post-apply report share one row renderer, and under `--cleanup` a stale retired artifact
+  rendered `— NOT removed` in both — so the preview contradicted the `[removed]` row the same run printed a
+  few lines later. The preview now reads `[stale] <path> — retired in vX (<why>); will be removed`; after
+  apply, `— NOT removed (changed since the plan)` is kept only for a row apply skipped because it changed
+  between plan and apply, and a removal that throws reads `[refused] <path> — removal failed (<code>) — left
+  in place` instead of the link/other-kind wording. Wording only: what is removed, when, and every refusal
+  rule are unchanged.
+- **Security review** (#240, #242): zero Blocks. #240's failed-removal wording and all six of #242's
+  Risks (skip list, silent link skips, hook-body basenames, wiring coverage, scan budgets, doctor parity)
+  applied before merge. Its other note —
+  the preview and the removal are planned separately, so a catalogued path that appears between them is
+  removed with only its `[removed]` row — predates this release and is unchanged.
+
 ## v1.17.4 — 2026-09-25
 
 ### The updater sweeps what retired releases left behind

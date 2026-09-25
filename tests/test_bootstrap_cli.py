@@ -394,6 +394,7 @@ def test_the_update_package_manifest_has_no_lifecycle_scripts():
         "0.17.2": "0.1.14", # v1.17.2 -- patch: the report names its updater; the size ceiling ignores the ledger.
         "0.17.3": "0.1.15", # v1.17.3 -- patch: the self-guard pair converges; pinned floor rows retire.
         "0.17.4": "0.1.16", # v1.17.4 -- patch: the retired-artifacts sweep; settings.local.json retirement.
+        "0.17.5": "0.1.17", # v1.17.5 -- patch: --cleanup reference scan; preview wording.
     }
     pin = deps["create-agentic-workspace"]
     expected_update_version = CLI_UPDATE_VERSION_BY_PIN.get(pin)
@@ -548,6 +549,7 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         "1.17.2": "0.17.2",
         "1.17.3": "0.17.3",
         "1.17.4": "0.17.4",
+        "1.17.5": "0.17.5",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (
