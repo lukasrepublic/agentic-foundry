@@ -240,9 +240,17 @@ FORBIDDEN_SETTINGS_KEYS = {
 #    control exercises the SAME logic the primary check runs — never a second, tautological copy) ─
 
 
+# hotfix-v1.17.3 (ER #232): the policy file's two self-guard deny rules ride with the floor on the
+# create path (cli/src/selfGuardDeny.mjs is their one home); the deny tier is the map's deny rows
+# plus exactly this pair.
+SELF_GUARD_DENY = {"Edit(.foundry/permissions.yaml)", "Write(.foundry/permissions.yaml)"}
+
+
 def _assert_settings_bijection(settings, map_data):
     for tier in ("allow", "ask", "deny"):
         expected = {e["rule"] for e in map_data["entries"] if e["tier"] == tier}
+        if tier == "deny":
+            expected |= SELF_GUARD_DENY
         actual = set(settings["permissions"][tier])
         assert actual == expected, (tier, actual ^ expected)
 
@@ -1565,7 +1573,9 @@ console.log(JSON.stringify({refused}));
     # (the one test_settings_permissions_are_a_bijection_onto_the_map itself calls) fires.
     m2 = load_map()
     real_settings = {
-        "permissions": {tier: [e["rule"] for e in m2["entries"] if e["tier"] == tier] for tier in ("allow", "ask", "deny")}
+        "permissions": {tier: [e["rule"] for e in m2["entries"] if e["tier"] == tier]
+                        + (sorted(SELF_GUARD_DENY) if tier == "deny" else [])
+                        for tier in ("allow", "ask", "deny")}
     }
     # re-tier: move one `ask` rule into the written `allow` list, as a bad plugin build might.
     retiered = json.loads(json.dumps(real_settings))

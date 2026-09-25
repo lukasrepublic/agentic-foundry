@@ -4,6 +4,7 @@
 // negative controls). Run via `node --test cli/test/` (package.json's own `test` script; the
 // pytest shim runs the same command as a subprocess — AC-BCL-10).
 import { test } from 'node:test';
+import { SELF_GUARD_DENY } from '../src/selfGuardDeny.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -57,6 +58,8 @@ test('AC-BCL-4: buildSettings is a set bijection onto the bundled map by tier', 
   const settings = buildSettings(map, pins);
   for (const tier of ['allow', 'ask', 'deny']) {
     const expected = new Set(map.entries.filter((e) => e.tier === tier).map((e) => e.rule));
+    // hotfix-v1.17.3: the policy file's two self-guard deny rules ride with the floor on create
+    if (tier === 'deny') for (const r of SELF_GUARD_DENY) expected.add(r);
     const actual = new Set(settings.permissions[tier]);
     assert.equal(actual.size, expected.size);
     for (const r of expected) assert.ok(actual.has(r), `missing ${tier} rule ${r}`);

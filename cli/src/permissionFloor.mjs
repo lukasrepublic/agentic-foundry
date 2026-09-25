@@ -4,6 +4,7 @@
 // (AC-BCL-8). `covers()` agrees with tests/test_permission_floor_map.py::_subsumes on the shared
 // 8-row table by construction (same prefix-subsumption rule).
 import fs from 'node:fs';
+import { SELF_GUARD_DENY } from './selfGuardDeny.mjs';
 import os from 'node:os';
 
 /** The one map schema_version this build understands. A map declaring anything else is refused
@@ -214,6 +215,10 @@ export function buildSettings(map, pins) {
   for (const e of map.entries) {
     byTier[e.tier].push(e.rule);
   }
+  // hotfix-v1.17.3: the policy file's own self-guard pair rides with the floor on the create path
+  // (the scaffold seeds .foundry/permissions.yaml in the same run), so a fresh workspace is in-sync
+  // instead of `policy drift (2)` until someone runs the compiler.
+  for (const r of SELF_GUARD_DENY) if (!byTier.deny.includes(r)) byTier.deny.push(r);
   // THE PINNED LITERAL — SUPERSEDED (feat-foundry-installer-unpinning, AC-IUP-3). This block used
   // to read (AC-BCL-4(b), contract v1.2 — PR #61 security review Block 1), verbatim:
   //
