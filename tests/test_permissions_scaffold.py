@@ -122,3 +122,16 @@ def test_absent_policy_names_the_remedy(tmp_path):
     assert "npx update-agentic-workspace" in check.stdout + check.stderr
     doc = subprocess.run([sys.executable, DOCTOR], capture_output=True, text=True, env=env, cwd=str(target))
     assert "policy absent" in doc.stdout and "npx update-agentic-workspace" in doc.stdout, doc.stdout
+
+
+def test_self_guard_pair_is_the_same_text_in_the_compiler_and_the_cli():
+    """PR #233 review Risk 5: the pair is defined in the compiler (Python) and in the CLI (node);
+    a parity test stops them drifting apart."""
+    import re
+    mjs = open(os.path.join(REPO, "cli", "src", "selfGuardDeny.mjs"), encoding="utf-8").read()
+    node_pair = subprocess.run(["node", "-e", "import('./cli/src/selfGuardDeny.mjs').then(m=>console.log(JSON.stringify(m.SELF_GUARD_DENY)))"],
+                               capture_output=True, text=True, cwd=REPO)
+    assert node_pair.returncode == 0, node_pair.stderr
+    py = open(COMPILE, encoding="utf-8").read()
+    py_pair = re.findall(r'"((?:Edit|Write)\(\.foundry/permissions\.yaml\))"', py)
+    assert sorted(json.loads(node_pair.stdout)) == sorted(py_pair) == ["Edit(.foundry/permissions.yaml)", "Write(.foundry/permissions.yaml)"]

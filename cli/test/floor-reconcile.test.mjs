@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { loadMap, classifyDrift } from '../src/permissionFloor.mjs';
 import {
   resolveTarget, readTarget, readTrackedRules, planAdditions, applyAdditions,
-  planRetirements, applyRetirements, parseFloorRootShape, planReconcile,
+  planRetirements, applyRetirements, parseFloorRootShape, parseFloorPinnedShape, planReconcile,
   writeTargetAtomically, renderPlan, classifyPin, ADDITIVE_CLASSES,
 } from '../src/floorReconcile.mjs';
 import { RefusalError } from '../src/util.mjs';
@@ -670,4 +670,27 @@ test('retirement_takes_back_version_pinned_variants_of_the_floors_own_rows', () 
     'Bash(/opt/foundry/scripts/foundry-doctor.py:*)',
   ]);
   assert.deepEqual(next.permissions.deny, settingsObj.permissions.deny);
+});
+
+
+test('a_pinned_ask_row_is_retired_only_when_the_map_declares_the_same_pair_at_ask', () => {
+  const map = { plugin_root_glob: '~/.claude/plugins/cache/*/foundry/*', entries: [
+    { rule: 'Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-x.py:*)', tier: 'allow' },
+    { rule: 'Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-y.py push:*)', tier: 'ask' },
+  ] };
+  const settingsObj = { permissions: { allow: [], ask: [
+    'Bash(~/.claude/plugins/cache/agentic-foundry/foundry/1.17.3/scripts/foundry-x.py push:*)', // operator prompt under a broader allow: KEPT
+    'Bash(~/.claude/plugins/cache/agentic-foundry/foundry/1.9.1/scripts/foundry-y.py push:*)',  // the map's own ask pair, pinned: retired
+  ], deny: [] } };
+  const plan = planRetirements({ settingsObj, map });
+  assert.deepEqual(plan.retirements.ask, ['Bash(~/.claude/plugins/cache/agentic-foundry/foundry/1.9.1/scripts/foundry-y.py push:*)']);
+  assert.deepEqual(plan.retirements.allow, []);
+});
+
+test('pinned_shape_rejects_dotted_marketplace_segments_partial_globs_and_non_semver_versions', () => {
+  const g = '~/.claude/plugins/cache/*/foundry/*';
+  assert.equal(parseFloorPinnedShape('Bash(~/.claude/plugins/cache/../foundry/1.9.1/scripts/x.py:*)', g), null);
+  assert.equal(parseFloorPinnedShape('Bash(~/.claude/plugins/cache/agentic-foundry/foundry/1.*/scripts/x.py:*)', g), null);
+  assert.equal(parseFloorPinnedShape('Bash(~/.claude/plugins/cache/agentic-foundry/foundry/latest/scripts/x.py:*)', g), null);
+  assert.deepEqual(parseFloorPinnedShape('Bash(~/.claude/plugins/cache/*/foundry/1.9.1/scripts/x.py:*)', g), { name: 'x.py', sub: null, pinned: true });
 });

@@ -223,7 +223,17 @@ export function parseFloorRootShape(rule, pluginRootGlob) {
  * `([^/]+)`; a row whose captured segments are ALL literal `*` is the exact shape (handled above),
  * so this parser reports `pinned: true` only when at least one segment is concrete. */
 function floorPinnedShapeRe(pluginRootGlob) {
-  const src = escapeLiteral(pluginRootGlob).replace(/\\\*/g, '([^/]+)');
+  // PR #233 security review Risk 2: every `*` but the last (the marketplace directory) may be a
+  // plain name (no dots — so `..` and an operator's partial glob like `1.*` never qualify) or the
+  // literal `*`; the LAST `*` (the plugin version) may be a semver-shaped segment or `*`. A rule
+  // from a foreign marketplace still matches by shape (the name is not the floor's to know here),
+  // but only for the tiers and conditions planRetirements allows.
+  const stars = (pluginRootGlob.match(/\*/g) || []).length;
+  let seen = 0;
+  const src = escapeLiteral(pluginRootGlob).replace(/\\\*/g, () => {
+    seen += 1;
+    return seen === stars ? '(\\*|\\d+\\.\\d+\\.\\d+[A-Za-z0-9.+-]*)' : '(\\*|[A-Za-z0-9_-]+)';
+  });
   return new RegExp(`^Bash\\(${src}/scripts/(${ROOT_SHAPE_NAME_RE})(?: (.+))?:\\*\\)$`);
 }
 
@@ -270,6 +280,12 @@ function shippedRootNames(map) {
  * `{ retirements: { allow: [...], ask: [...] }, total }`. */
 export function planRetirements({ settingsObj, map }) {
   const shipped = shippedRootNames(map);
+  const shippedAsk = new Set();
+  for (const e of map.entries) {
+    if (e.tier !== 'ask') continue;
+    const parsed = parseFloorRootShape(e.rule, map.plugin_root_glob);
+    if (parsed) shippedAsk.add(rootNameKey(parsed));
+  }
   const retirements = { allow: [], ask: [] };
   const perms = (settingsObj && settingsObj.permissions) || {};
   for (const tier of ['allow', 'ask']) {
@@ -279,10 +295,18 @@ export function planRetirements({ settingsObj, map }) {
         if (!shipped.has(rootNameKey(parsed))) retirements[tier].push(rule);
         continue;
       }
-      // hotfix-v1.17.3: a version-/marketplace-pinned variant of the floor's own shape is retired
-      // whether or not the script still ships — the wildcard row covers a shipped script (added in
-      // this same pass when absent), and a pinned row for a gone script is exactly the ER #199 class.
-      if (parseFloorPinnedShape(rule, map.plugin_root_glob)) retirements[tier].push(rule);
+      // hotfix-v1.17.3: a version-/marketplace-pinned variant of the floor's own shape. An `allow`
+      // row is retired whether or not the script still ships — the wildcard row covers a shipped
+      // script (added in this same pass when absent), and a pinned row for a gone script is exactly
+      // the ER #199 class. An `ask` row is retired ONLY when the shipped map declares the same
+      // (name, sub) at `ask`, so the wildcard `ask` row replaces it (PR #233 security review Risk 1:
+      // `ask` beats `allow`, so dropping an ask row under a broader allow would turn a prompt into a
+      // silent grant — a widening this pass must never perform).
+      const pinned = parseFloorPinnedShape(rule, map.plugin_root_glob);
+      if (pinned) {
+        if (tier === 'allow') retirements[tier].push(rule);
+        else if (shippedAsk.has(rootNameKey(pinned))) retirements[tier].push(rule);
+      }
       // any other shape -> never touched (AC-FRR-2)
     }
   }

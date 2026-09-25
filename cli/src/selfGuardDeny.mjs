@@ -17,18 +17,35 @@ export const SELF_GUARD_DENY = Object.freeze([
   `Write(${POLICY_REL})`,
 ]);
 
-/** Which of the two rules `settingsObj` still lacks. Pure. */
+const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+/** `true` when `settingsObj.permissions` is absent or a plain object whose `deny`, if present, is an
+ * array — the only shapes this module will write into. Anything else is refused rather than
+ * guessed (PR #233 security review Risk 3: a string `deny` would otherwise be spread into
+ * characters and written back). */
+export function selfGuardShapeOk(settingsObj) {
+  if (!isPlainObject(settingsObj)) return false;
+  const perms = settingsObj.permissions;
+  if (perms === undefined) return true;
+  if (!isPlainObject(perms)) return false;
+  return perms.deny === undefined || Array.isArray(perms.deny);
+}
+
+/** Which of the two rules `settingsObj` still lacks. Pure. Returns [] for a shape this module will
+ * not write into (see selfGuardShapeOk) — the caller reports that separately. */
 export function missingSelfGuardDeny(settingsObj) {
-  const deny = (settingsObj && settingsObj.permissions && Array.isArray(settingsObj.permissions.deny))
-    ? settingsObj.permissions.deny : [];
+  if (!selfGuardShapeOk(settingsObj)) return [];
+  const deny = (settingsObj.permissions && settingsObj.permissions.deny) || [];
   return SELF_GUARD_DENY.filter((r) => !deny.includes(r));
 }
 
-/** A NEW settings object with the missing rules appended to `permissions.deny`. Pure. */
+/** A NEW settings object with the missing rules appended to `permissions.deny`. Pure; returns the
+ * input unchanged for a shape it will not write into. */
 export function applySelfGuardDeny(settingsObj) {
+  if (!selfGuardShapeOk(settingsObj)) return settingsObj;
   const missing = missingSelfGuardDeny(settingsObj);
   if (missing.length === 0) return settingsObj;
-  const next = { ...(settingsObj || {}) };
+  const next = { ...settingsObj };
   next.permissions = { ...(next.permissions || {}) };
   next.permissions.deny = [...(next.permissions.deny || []), ...missing];
   return next;
@@ -46,9 +63,13 @@ export function policyPresent(physicalRoot) {
 
 /** The one row every writer prints: `[permissions] self-guard deny rules added (N)` or
  * `already present`. `null` when there is no policy file to guard (nothing to say). */
-export function renderSelfGuardRow(physicalRoot, addedCount) {
+export function renderSelfGuardRow(physicalRoot, addedCount, { shapeOk = true, applied = true } = {}) {
   if (!policyPresent(physicalRoot)) return null;
-  return addedCount > 0
-    ? `  [permissions] self-guard deny rules added (${addedCount}): Edit/Write on ${POLICY_REL}`
-    : `  [permissions] self-guard deny rules already present`;
+  if (!shapeOk) return '  [permissions] settings.permissions is not the shape expected (object with an array deny) — self-guard deny rules NOT written';
+  if (addedCount > 0) {
+    return applied
+      ? `  [permissions] self-guard deny rules added (${addedCount}): Edit/Write on ${POLICY_REL}`
+      : `  [permissions] would add self-guard deny rules (${addedCount}): Edit/Write on ${POLICY_REL}`;
+  }
+  return '  [permissions] self-guard deny rules already present';
 }
