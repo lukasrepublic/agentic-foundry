@@ -8,8 +8,10 @@ already granted (including the operator's own `CronCreate`), another 192, a thir
 operator, different `settings.json`. Every one surfaced hundreds of tool calls into a drive. This
 CLI reads the declared `requires_capabilities` (R1's `standing-grants-as-policy` field, each a
 native rule string `Tool(pattern)`) and checks each one is covered by an `allow` rule in the
-effective settings, or an `automatic` grant in `.foundry/permissions.yaml` — fails fast, naming the
-exact missing rule. It NEVER edits settings or the policy (read-only, the same posture
+effective settings, or an `automatic` grant in `.foundry/permissions.yaml`. Since v1.18.0 only a DENY
+that would refuse a declared capability is a blocker (`missing`, exit 3); a capability that is simply
+not pre-granted is listed under `classifier` (the session's permission mode decides at run time) and
+never blocks. It NEVER edits settings or the policy (read-only, the same posture
 `foundry-permissions-compile.py --check` and `foundry_permission_floor.py` already carry).
 
 Two mutually exclusive input modes:
@@ -39,7 +41,7 @@ permission-FLOOR comparison, which would make `Bash(python3:*)` read as covering
 capability here — a real defect a security review caught (PR #176). `foundry_permission_floor` is
 still reused for `load_settings_file` and the render-floor `sanitize` helper, never for coverage.
 
-An `ask` rule never grants. A `deny` rule subtracts an otherwise-covering `allow`/`automatic` grant
+An `ask` rule never grants (such a capability reads `classifier`). A `deny` rule subtracts an otherwise-covering `allow`/`automatic` grant
 in EITHER direction: the deny covers the capability (broad-or-equal), OR the capability covers the
 deny (a narrower deny nested inside a broader requested capability, e.g. deny
 `Bash(git push --force:*)` under capability `Bash(git push:*)` — the operator carved a sub-case out
@@ -52,7 +54,8 @@ every string this CLI DOES echo into the verdict (`capability`, `rule_to_add`, `
 precondition) is passed through `foundry_permission_floor.sanitize` first, so a render-hostile
 byte sequence that slips past that refusal still cannot reach a terminal/handoff unmangled.
 
-Exit codes (AC-CPD-1): 0 nothing missing; 3 something missing (verdict still printed); 2 an
+Exit codes (AC-CPD-1): 0 nothing denied (classifier entries are advisory); 3 a declared capability is
+DENIED (verdict still printed); 2 an
 unreadable input (a missing/malformed/out-of-bounds contract or charter, a malformed settings
 file, `.foundry/permissions.yaml`, or a forbidden-character rule/capability string), naming it on
 stdout as a JSON error object.
@@ -396,6 +399,7 @@ def preflight(capabilities, project_dir, home=None):
     automatic = _automatic_grants(project_dir)
 
     missing = []
+    classifier = []
     preconditions_unverified = []
 
     for cap in capabilities:
@@ -412,10 +416,13 @@ def preflight(capabilities, project_dir, home=None):
             continue
 
         if not granting:
-            missing.append({
+            # v1.18.0 (AC-V118A-5): not pre-granted is NOT a blocker — the session's normal
+            # permission mode (auto mode's classifier, or a prompt) decides at run time. Reported so
+            # the operator can widen a grant if they want, never as `missing` with a rule to add
+            # (that pushed operators toward writing grants, and toward `ask` rows).
+            classifier.append({
                 "capability": _sanitize(cap),
-                "rule_to_add": _sanitize(cap),
-                "where": _sanitize(WORKSPACE_SETTINGS_LABEL),
+                "note": "not pre-granted: the session's permission mode decides at run time",
             })
             continue
 
@@ -428,7 +435,8 @@ def preflight(capabilities, project_dir, home=None):
                 })
 
     status = "missing" if missing else "ok"
-    return {"status": status, "missing": missing, "preconditions_unverified": preconditions_unverified}
+    return {"status": status, "missing": missing, "classifier": classifier,
+            "preconditions_unverified": preconditions_unverified}
 
 
 # --------------------------------------------------------------------------------------------- #

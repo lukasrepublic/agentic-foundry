@@ -37,17 +37,18 @@ never RED by design — a stale-permission workspace must never wedge a session.
 parts:
 
 - **Capability preflight**, over every atom (contract or charter) of every active release:
-  `preflight ok (<n> atoms)` when every capability the release needs resolves, or
-  `preflight: <n> missing rule(s)` when it doesn't.
-- **Policy drift**, the same derivation `foundry-permissions-compile.py --check` runs:
-  `policy absent` (no `.foundry/permissions.yaml` yet), `policy in-sync`, or
-  `policy drift (<k>)` (the compiled `.claude/settings.json` no longer matches the policy source).
+  `preflight over <n> active atom(s): <d> denied[, <c> not pre-granted]`. Only `denied` — a
+  declared capability a deny rule would refuse — is a problem. `not pre-granted` means the
+  session's permission mode (auto mode's classifier, or a prompt) decides at run time; it is
+  information, never a blocker.
+- **Policy drift**, the same derivation `foundry-permissions-compile.py --check` runs, naming the
+  two files it compares: `policy absent`, `policy in-sync`, or `policy drift (<k>)`, each followed by
+  `(.foundry/permissions.yaml vs .claude/settings.json)`.
 
 Remedies:
 
-- **`preflight: <n> missing rule(s)`** — run the preflight directly to see which rule(s) are
-  missing and paste the reported `/permissions` addition yourself; never self-grant by editing
-  `.claude/settings.json` directly:
+- **`<d> denied`** — run the preflight directly to see which deny rule refuses which capability;
+  whether to lift the deny is your call:
 
   ```bash
   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-capability-preflight.py" --contract <path-to-acceptance-contract.yaml>
@@ -67,7 +68,7 @@ Remedies:
   ```
 
 - **`policy absent`** — no `.foundry/permissions.yaml` yet; not itself a problem. The line names
-  the remedy: `npx update-agentic-workspace` seeds an empty, commented starter (operator-owned
+  the remedy: the updater seeds an empty, commented starter (operator-owned
   from then on, never reconciled), or copy the plugin's `context/permissions-template.yaml`. See
   [how-to/standing-grants.md](how-to/standing-grants.md) for writing and compiling a grant.
 

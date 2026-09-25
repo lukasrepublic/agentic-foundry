@@ -416,6 +416,7 @@ def check_permissions_policy(plugin_root=None, project_dir=None):
 
         atoms = _active_release_atoms(pdir)
         missing_total = 0
+        classifier_total = 0
         for _release_id, atom in atoms:
             try:
                 # AC-CPD-1 (auth_seq 2): the same path-confinement floor the CLI's own --contract/
@@ -432,17 +433,21 @@ def check_permissions_policy(plugin_root=None, project_dir=None):
                 # surface for that.
                 continue
             missing_total += len(verdict.get("missing", []))
+            classifier_total += len(verdict.get("classifier", []))
 
+        # v1.18.0 (AC-V118A-7): say exactly what was compared. `denied` = a declared capability a
+        # deny rule would refuse (the only blocker); `not pre-granted` = the session's permission
+        # mode decides at run time (advisory, never a blocker).
         preflight_part = (
-            f"preflight ok ({len(atoms)} atoms)" if missing_total == 0
-            else f"preflight: {missing_total} missing rule(s)"
+            f"preflight over {len(atoms)} active atom(s): {missing_total} denied"
+            + (f", {classifier_total} not pre-granted" if classifier_total else "")
         )
         drift_state, drift_ok = _policy_drift_state(pc, pdir)
-        detail = f"{preflight_part}; policy {drift_state}"
+        detail = f"{preflight_part}; policy {drift_state} (.foundry/permissions.yaml vs .claude/settings.json)"
         # permissions-scaffold (ER #215, AC-PSC-4): an absent policy names its remedy in one clause.
         if str(drift_state).startswith("absent"):
-            detail += (" — seed it: `npx update-agentic-workspace` writes a starter "
-                       ".foundry/permissions.yaml, or copy context/permissions-template.yaml")
+            detail += (" — seed it: the updater writes a starter .foundry/permissions.yaml, "
+                       "or copy context/permissions-template.yaml")
         if missing_total == 0 and drift_ok:
             return True, detail
         return ADVISORY, detail
