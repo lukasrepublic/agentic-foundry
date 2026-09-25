@@ -33,6 +33,8 @@ test('buildUpgradeReport: every field, from a full run', () => {
     amendmentsPlan: { written: 3, present: 4, skipped: 1, total: 8, applied: true },
     now: NOW,
     updaterVersion: '0.1.14', coreVersion: '0.17.2', updaterPluginVersion: '1.17.2',
+    written: [{ path: '.claude/settings.json', kind: 'permission-floor' }, { path: 'specs/a.md', kind: 'amendments-backfill' }],
+    removed: ['.foundry/wiring-hash.pin'], configDir: '/home/op/.claude', hostname: 'box',
   });
   assert.deepEqual(report, {
     schema_version: REPORT_SCHEMA_VERSION,
@@ -46,11 +48,16 @@ test('buildUpgradeReport: every field, from a full run', () => {
       { name: 'marketplace-refresh', verdict: 'changed' },
       { name: 'cleanup', verdict: 'skipped', reason: 'report-only' },
     ],
-    amendments: { backfilled: 3, present: 4, skipped: 1, total: 8 },
+    amendments: { backfilled: 3, present: 4, skipped: 1, failed: 0, total: 8 },
     permissions_policy: 'created',
     drifted: ['CLAUDE.md'],
     retired_artifacts: { present: [], removed: 0, refused: 0 },
     settings_local_retired: 0,
+    // v1.18.0 (AC-V118C-1): every write and removal, and which environment the report describes
+    written: [{ path: '.claude/settings.json', kind: 'permission-floor' }, { path: 'specs/a.md', kind: 'amendments-backfill' }],
+    removed: ['.foundry/wiring-hash.pin'],
+    config_dir: '/home/op/.claude',
+    hostname: 'box',
   });
 });
 
@@ -63,7 +70,7 @@ test('buildUpgradeReport: a first install has no from-version; a kept seed repor
   assert.equal(report.from_plugin_version, null);
   assert.equal(report.to_plugin_version, '1.17.0');
   assert.equal(report.permissions_policy, 'kept');
-  assert.deepEqual(report.amendments, { backfilled: 0, present: 0, skipped: 0, total: 0 });
+  assert.deepEqual(report.amendments, { backfilled: 0, present: 0, skipped: 0, failed: 0, total: 0 });
   // ER #228: no updater identity given → null, never a guess
   assert.equal(report.updater_version, null);
   assert.equal(report.updater_plugin_version, null);

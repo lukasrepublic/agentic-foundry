@@ -11,7 +11,7 @@ lifting; foundry adds only the deltas.
 | action | native does | foundry delta |
 |---|---|---|
 | **init** | `Agent isolation:worktree` creates the worktree + sets cwd | nothing to build — use native dispatch (`/foundry:dispatch`). MULTI-REPO redirect additionally **stages the atom's spec + acceptance-contract into the worktree** and **preflights** them before the worker proceeds — see *Spec-staged-and-preflighted jail* below. |
-| **validate** | native confines cwd to the worktree | `foundry-cwd-enforce.sh` write-jail: blocks Edit/Write resolving OUTSIDE the worktree (Q2 — native is cwd-isolation, not a write-jail). Worker detected via linked-worktree git check (no assignment.json needed). |
+| **validate** | native confines cwd to the worktree | `foundry-cwd-enforce.sh` write-jail: blocks Edit/Write resolving into the main checkout or another worktree of the same repo (Q2 — native is cwd-isolation, not a write-jail); `~/.claude/`, the temp dirs and paths outside every checkout are admitted. Worker detected via linked-worktree git check (no assignment.json needed). |
 | **complete** | — | the worker cuts its PR (`gh pr create`); the merge floor decides. |
 | **cleanup** | auto-cleans an UNCHANGED worktree | `foundry-work-isolation.sh cleanup <repo> <branch>` removes a MERGED worktree + local branch (post-merge, the bit native doesn't auto-do). **Worker-learnings harvest runs first** — see below. **SUPERSEDED for the whole-repo sweep** (branch-and-worktree-discipline, v1.16.0) by `scripts/foundry-worktree-gc.py --apply` — see `context/branch-discipline.md`; this script stays (not deleted) for the one still-live case: cleaning up ONE just-merged worker's worktree+branch inline, mid-session, the instant its PR merges, without waiting for a repo-wide sweep. |
 | **learnings** | — | **Primary:** the worker returns `learnings[]`; `/foundry:dispatch` captures them in the parent (durable, survives teardown). **Defense-in-depth:** `foundry-harvest-learnings.sh` forwards a worker's `.agent/learnings.jsonl` sidecar into `.foundry/session-learnings/` (the `/foundry:learn-distill` partition) **before** an explicit `git worktree remove` — PreToolUse(Bash) seam + the cleanup script. Fail-open; durable loss-log. |
@@ -20,7 +20,7 @@ lifting; foundry adds only the deltas.
 ## Procedure
 
 - **Worker spawn / init:** use `/foundry:dispatch` (native `Agent isolation:worktree`). No `wt claim`, no queue.
-- **Write-jail (automatic):** `foundry-cwd-enforce.sh` fires PreToolUse on Edit/Write/MultiEdit; in a linked worktree it fail-closes any write outside the worktree root. No action needed — it's wired in `hooks.json`.
+- **Write-jail (automatic):** `foundry-cwd-enforce.sh` fires PreToolUse on Edit/Write/MultiEdit; in a linked worktree it fail-closes any write into a sibling checkout of the same repository (the main checkout, another linked worktree, the shared git dir); writes outside every checkout of the repository are admitted. No action needed — it's wired in `hooks.json`.
 - **Post-merge cleanup:** after a worker PR merges, run `foundry-work-isolation.sh cleanup <repo> <branch>`. It harvests the worker's learnings sidecar before removing the worktree.
 - **Worker-learnings harvest (automatic):** `foundry-harvest-learnings.sh` fires on the teardown seam — PreToolUse(Bash) on any `git worktree remove`, and in-script before the cleanup removal — forwarding `.agent/learnings.jsonl` (UNVALIDATED; the distiller validates) into `.foundry/session-learnings/<date>/<session_id>__<task-id>.jsonl`. Fail-open; WARNs when a sidecar is absent for a worker that reported success. No action needed.
 - **Break-glass:** before a deliberate main-clone product-path edit, append a `break-glass` record (operator-reason) to `.foundry/security-audit.jsonl` (audit-only; v1 does not hard-block).
@@ -78,4 +78,4 @@ controls over the real hook).
   `/foundry:dispatch` → *Multi-repo dispatch*. The write-jail (`foundry-cwd-enforce`) is
   unchanged and jails to whatever worktree the worker is in, product or workspace.)
 - **Relying on cwd-isolation as a write-jail** — it isn't; `foundry-cwd-enforce` is the jail.
-- **Hand-resolving a worker that wrote outside its worktree** — the jail fail-closes; fix the worker prompt.
+- **Hand-resolving a worker that wrote into a sibling checkout** — the jail fail-closes; fix the worker prompt.

@@ -32,7 +32,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { confinedJoin, RefusalError } from './util.mjs';
-import { buildSettings, classifyDrift } from './permissionFloor.mjs';
+import { PROJECTED_TIERS, buildSettings, classifyDrift } from './permissionFloor.mjs';
 
 /** The drift classes whose findings name a rule this module may ADD. Everything else the
  * classifier can emit is report-only: blanket-allow, ask-shadowed, ask-shadowed-ceremony and
@@ -147,6 +147,8 @@ export function planAdditions({ findings, map, settingsObj, pins }) {
   for (const f of findings) {
     if (!ADDITIVE_CLASSES.includes(f.class)) continue;
     const tier = tierOfRule.get(f.rule);
+    // v1.18.0: only the projected tier (deny) is ever written; script rows are a registry
+    if (!PROJECTED_TIERS.includes(tier)) continue;
     // the tier comes from the map; a finding naming a rule the map does not declare is not ours
     if (tier === undefined || tier !== TIER_OF_CLASS[f.class]) continue;
     if (tier === 'allow' && withheldAllow) continue;
@@ -197,7 +199,9 @@ function escapeLiteral(s) {
  * a second hardcoded copy of it — the same one-source-of-truth reasoning foldRegexFromGlob already
  * documents for the addition side. */
 function floorRootShapeRe(pluginRootGlob) {
-  return new RegExp(`^Bash\\(${escapeLiteral(pluginRootGlob)}/scripts/(${ROOT_SHAPE_NAME_RE})(?: (.+))?:\\*\\)$`);
+  // v1.18.0: the `:*` suffix is optional — earlier releases also wrote a bare row (the doctor's
+  // `Bash(<glob>/scripts/foundry-doctor.py)`), and retirement must take that back too.
+  return new RegExp(`^Bash\\(${escapeLiteral(pluginRootGlob)}/scripts/(${ROOT_SHAPE_NAME_RE})(?: (.+?))?(?::\\*)?\\)$`);
 }
 
 /** Parse `rule` against the floor's own root-glob shape (the same shape `buildSettings` writes).
@@ -234,7 +238,7 @@ function floorPinnedShapeRe(pluginRootGlob) {
     seen += 1;
     return seen === stars ? '(\\*|\\d+\\.\\d+\\.\\d+[A-Za-z0-9.+-]*)' : '(\\*|[A-Za-z0-9_-]+)';
   });
-  return new RegExp(`^Bash\\(${src}/scripts/(${ROOT_SHAPE_NAME_RE})(?: (.+))?:\\*\\)$`);
+  return new RegExp(`^Bash\\(${src}/scripts/(${ROOT_SHAPE_NAME_RE})(?: (.+?))?(?::\\*)?\\)$`);
 }
 
 /** Parse `rule` as a version-/marketplace-PINNED variant of the floor's own row shape. Returns
@@ -290,46 +294,45 @@ export function askRootKeys(settingsObj, map) {
  * retirement only narrows a grant or a prompt, and a deny row read back as "extra" is, if anything,
  * a reason to leave it exactly where the operator (or an earlier release) put it. Returns
  * `{ retirements: { allow: [...], ask: [...] }, total }`. */
-export function planRetirements({ settingsObj, map, askCoveredBy = null }) {
-  const shipped = shippedRootNames(map);
-  const shippedAsk = new Set();
-  for (const e of map.entries) {
-    if (e.tier !== 'ask') continue;
-    const parsed = parseFloorRootShape(e.rule, map.plugin_root_glob);
-    if (parsed) shippedAsk.add(rootNameKey(parsed));
-  }
-  // hotfix-v1.17.4 (PR #237 security review Risk 3): for a file this pass does NOT also reconcile
-  // (`.claude/settings.local.json`), "the wildcard ask row replaces it" is only true when the
-  // TRACKED file actually carries that wildcard row — so the caller passes the tracked file's ask
-  // keys (`askRootKeys`) and a pinned `ask` row is retired only when both sets hold the pair.
-  // `null` (the tracked-file call sites, where the same pass adds the wildcard row) keeps the
-  // v1.17.3 rule unchanged.
-  const askReplaced = (key) => shippedAsk.has(key) && (askCoveredBy === null || askCoveredBy.has(key));
-  const retirements = { allow: [], ask: [] };
+/** Rows an earlier release of the floor wrote verbatim and v1.18.0 takes back (AC-V118A-2/-4): the
+ * broad force-push deny (the git-discipline hook is the floor — it refuses protected targets and
+ * allows feature branches, which this row wrongly refused), the release-ceremony ask row, and the
+ * policy file's self-guard deny pair (operator decision 2026-09-25). Literal text only. */
+export const RETIRED_FLOOR_LITERALS = Object.freeze({
+  allow: Object.freeze([]),
+  ask: Object.freeze(['Bash(claude plugin tag:*)']),
+  deny: Object.freeze([
+    'Bash(git push --force:*)',
+    'Edit(.foundry/permissions.yaml)',
+    'Write(.foundry/permissions.yaml)',
+  ]),
+});
+
+/** v1.18.0 (AC-V118A-2): every `allow`/`ask` row shaped exactly like the floor's own script rows —
+ * wildcard (`<plugin_root_glob>/scripts/<x>`) or version-/marketplace-pinned — is retired, whether
+ * or not the script still ships: those rows never matched a real invocation (measured), and the
+ * plugin's scripts are allowed by the PreToolUse hook instead. Plus the RETIRED_FLOOR_LITERALS.
+ * Any other shape — an operator's own rule, a different prefix, a hand-written bare path — is never
+ * touched (AC-FRR-2). Retiring an `ask` row cannot turn a prompt into a grant the operator did not
+ * choose: the scripts it named are allowed by design (operator decision: no foundry script prompts).
+ * `askCoveredBy` is accepted for call-site compatibility and ignored. */
+export function planRetirements({ settingsObj, map, askCoveredBy = null }) { // eslint-disable-line no-unused-vars
+  const retirements = { allow: [], ask: [], deny: [] };
   const perms = (settingsObj && settingsObj.permissions) || {};
   for (const tier of ['allow', 'ask']) {
     for (const rule of perms[tier] || []) {
-      const parsed = parseFloorRootShape(rule, map.plugin_root_glob);
-      if (parsed) {
-        if (!shipped.has(rootNameKey(parsed))) retirements[tier].push(rule);
-        continue;
+      if (typeof rule !== 'string') continue;
+      if (parseFloorRootShape(rule, map.plugin_root_glob) || parseFloorPinnedShape(rule, map.plugin_root_glob)) {
+        retirements[tier].push(rule);
       }
-      // hotfix-v1.17.3: a version-/marketplace-pinned variant of the floor's own shape. An `allow`
-      // row is retired whether or not the script still ships — the wildcard row covers a shipped
-      // script (added in this same pass when absent), and a pinned row for a gone script is exactly
-      // the ER #199 class. An `ask` row is retired ONLY when the shipped map declares the same
-      // (name, sub) at `ask`, so the wildcard `ask` row replaces it (PR #233 security review Risk 1:
-      // `ask` beats `allow`, so dropping an ask row under a broader allow would turn a prompt into a
-      // silent grant — a widening this pass must never perform).
-      const pinned = parseFloorPinnedShape(rule, map.plugin_root_glob);
-      if (pinned) {
-        if (tier === 'allow') retirements[tier].push(rule);
-        else if (askReplaced(rootNameKey(pinned))) retirements[tier].push(rule);
-      }
-      // any other shape -> never touched (AC-FRR-2)
     }
   }
-  const total = retirements.allow.length + retirements.ask.length;
+  for (const tier of ['allow', 'ask', 'deny']) {
+    for (const rule of perms[tier] || []) {
+      if (RETIRED_FLOOR_LITERALS[tier].includes(rule) && !retirements[tier].includes(rule)) retirements[tier].push(rule);
+    }
+  }
+  const total = retirements.allow.length + retirements.ask.length + retirements.deny.length;
   return { retirements, total };
 }
 
@@ -342,8 +345,8 @@ export function planRetirements({ settingsObj, map, askCoveredBy = null }) {
 export function applyRetirements(settingsObj, retirementPlan) {
   const next = { ...settingsObj };
   const perms = { ...(settingsObj.permissions || {}) };
-  for (const tier of ['allow', 'ask']) {
-    const toRemove = new Set(retirementPlan.retirements[tier]);
+  for (const tier of ['allow', 'ask', 'deny']) {
+    const toRemove = new Set(retirementPlan.retirements[tier] || []);
     if (toRemove.size === 0) continue;
     const existing = Array.isArray(perms[tier]) ? perms[tier] : [];
     perms[tier] = existing.filter((rule) => !toRemove.has(rule));
@@ -497,18 +500,21 @@ export function writeTargetAtomically(targetPath, obj) {
 export function renderPlan(plan, { applied, retirementPlan = null, mapEntryCount = null }) {
   const lines = [];
   const verb = applied ? 'added' : 'would add';
+  const rverb = applied ? 'retired' : 'would retire';
+  // v1.18.0 (AC-V118A-7): every row names its file and its tier, so no reader can mistake which
+  // file holds which tier (the 2026-09-25 misread: an ask row relayed as a deny).
   for (const tier of ['allow', 'ask', 'deny']) {
-    for (const rule of plan.additions[tier]) lines.push(`  [${tier}] ${rule}`);
+    for (const rule of plan.additions[tier]) lines.push(`  [${applied ? 'added' : 'would add'}] .claude/settings.json ${tier}: ${rule}`);
   }
   if (retirementPlan) {
-    for (const tier of ['allow', 'ask']) {
-      for (const rule of retirementPlan.retirements[tier]) lines.push(`  [retired] ${rule}`);
+    for (const tier of ['allow', 'ask', 'deny']) {
+      for (const rule of retirementPlan.retirements[tier] || []) lines.push(`  [${rverb}] .claude/settings.json ${tier}: ${rule}`);
     }
   }
-  let summary = `permission-floor reconcile: ${verb} ` +
+  let summary = `permission-floor reconcile (.claude/settings.json): ${verb} ` +
       ['allow', 'ask', 'deny'].map((t) => `${t}=${plan.additions[t].length}`).join(', ');
-  if (retirementPlan && typeof mapEntryCount === 'number') {
-    summary += ` — ${plan.total} added, ${retirementPlan.total} retired, ${mapEntryCount - plan.total} unchanged`;
+  if (retirementPlan) {
+    summary += `; ${rverb} ` + ['allow', 'ask', 'deny'].map((t) => `${t}=${(retirementPlan.retirements[t] || []).length}`).join(', ');
   }
   lines.push(summary);
   if (plan.pin.state === 'absent') {

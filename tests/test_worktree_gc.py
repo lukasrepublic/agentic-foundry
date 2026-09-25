@@ -332,6 +332,20 @@ def test_doctor_branches_advisory_line_over_a_real_repo(fixture_repo):
     assert "1 stale worktrees" in detail
 
 
+def test_doctor_branches_line_is_advisory_when_merged_branches_remain(fixture_repo):
+    """v1.18.0 (audit, delivery lens): N merged-not-deleted > 0 is ADVISORY (never RED) and names
+    the sweep; once the sweep deletes them the line is ok again."""
+    work, home = fixture_repo
+    ok, detail = doctor.check_branches_advisory(project_dir=str(work))
+    assert ok is doctor.ADVISORY, detail
+    assert "--dry-run" in detail and "--apply" in detail
+    doc = json.loads(_run_gc(work, home, "--apply", "--no-gh").stdout)
+    assert doc["status"] == "ok", doc
+    ok, detail = doctor.check_branches_advisory(project_dir=str(work))
+    assert ok is True, detail
+    assert detail.startswith("0 merged-not-deleted"), detail
+
+
 def test_doctor_branches_advisory_never_red_on_a_non_git_directory(tmp_path):
     ok, detail = doctor.check_branches_advisory(project_dir=str(tmp_path))
     assert ok is True or ok is doctor.ADVISORY
@@ -452,6 +466,35 @@ def test_tip_matched_merged_pr_counts_as_merged_even_without_ancestry(squash_fix
     rows = {r["name"]: r for r in doc["branches"]}
     assert rows["atom/squash-one"]["class"] == "merged"
     assert rows["atom/squash-one"]["pr_number"] == 99
+
+
+def test_pr_merged_into_another_base_is_not_merged(squash_fixture_repo, tmp_path):
+    """audit D8 (AC-V118C-8): a tip-matched PR merged into a NON-default base (e.g. a release/*
+    integration branch) must never make the branch `merged` -- the gh query carries `--base main`
+    and the stub drops the other-base row exactly as real gh would."""
+    work, home = squash_fixture_repo
+    tip = _tip_sha(work, "atom/squash-one")
+    by_branch = json.dumps({"atom/squash-one": {"merged": [
+        {"number": 77, "headRefOid": tip, "baseRefName": "release/v9.9.9"}]}})
+    log = tmp_path / "gh.log"
+    p = _run_gc(work, home, "--dry-run", GH_STUB_PR_LIST_BY_BRANCH=by_branch, GH_STUB_LOG=log)
+    assert p.returncode == 0, p.stdout + p.stderr
+    rows = {r["name"]: r for r in json.loads(p.stdout)["branches"]}
+    assert rows["atom/squash-one"]["class"] == "unmerged-no-pr"
+    assert rows["atom/squash-one"]["pr_number"] is None
+    calls = [c for c in log.read_text().splitlines() if c.startswith("pr list")]
+    assert calls and all("--base main" in c for c in calls), calls
+
+
+def test_pr_merged_into_the_default_base_still_counts(squash_fixture_repo):
+    work, home = squash_fixture_repo
+    tip = _tip_sha(work, "atom/squash-one")
+    by_branch = json.dumps({"atom/squash-one": {"merged": [
+        {"number": 78, "headRefOid": tip, "baseRefName": "main"}]}})
+    p = _run_gc(work, home, "--dry-run", GH_STUB_PR_LIST_BY_BRANCH=by_branch)
+    rows = {r["name"]: r for r in json.loads(p.stdout)["branches"]}
+    assert rows["atom/squash-one"]["class"] == "merged"
+    assert rows["atom/squash-one"]["pr_number"] == 78
 
 
 def test_squash_merged_branch_falls_back_to_force_delete_and_narrates_the_pr(squash_fixture_repo):

@@ -240,19 +240,22 @@ FORBIDDEN_SETTINGS_KEYS = {
 #    control exercises the SAME logic the primary check runs — never a second, tautological copy) ─
 
 
-# hotfix-v1.17.3 (ER #232): the policy file's two self-guard deny rules ride with the floor on the
-# create path (cli/src/selfGuardDeny.mjs is their one home); the deny tier is the map's deny rows
-# plus exactly this pair.
+# v1.18.0 (AC-V118A-2/-4): the settings the CLI writes carry ONLY the map's deny rows — the map's
+# allow/ask script rows are the closed-world registry, never projected — and never the retired
+# self-guard pair (cli/src/selfGuardDeny.mjs, its former home, is deleted).
 SELF_GUARD_DENY = {"Edit(.foundry/permissions.yaml)", "Write(.foundry/permissions.yaml)"}
+PROJECTED_TIERS = ("deny",)
 
 
 def _assert_settings_bijection(settings, map_data):
     for tier in ("allow", "ask", "deny"):
-        expected = {e["rule"] for e in map_data["entries"] if e["tier"] == tier}
-        if tier == "deny":
-            expected |= SELF_GUARD_DENY
+        expected = (
+            {e["rule"] for e in map_data["entries"] if e["tier"] == tier}
+            if tier in PROJECTED_TIERS else set()
+        )
         actual = set(settings["permissions"][tier])
         assert actual == expected, (tier, actual ^ expected)
+    assert not (SELF_GUARD_DENY & set(settings["permissions"]["deny"])), "the retired self-guard pair was written"
 
 
 def _assert_marketplace_pinned_literal(entry, marketplace_repo):
@@ -396,6 +399,7 @@ def test_the_update_package_manifest_has_no_lifecycle_scripts():
         "0.17.4": "0.1.16", # v1.17.4 -- patch: the retired-artifacts sweep; settings.local.json retirement.
         "0.17.5": "0.1.17", # v1.17.5 -- patch: --cleanup reference scan; preview wording.
         "0.17.6": "0.1.18", # v1.17.6 -- patch: branch gc honesty; publish poll window.
+        "0.18.0": "0.2.0",  # v1.18.0 -- minor: friction removed; upgrades land in git.
     }
     pin = deps["create-agentic-workspace"]
     expected_update_version = CLI_UPDATE_VERSION_BY_PIN.get(pin)
@@ -552,6 +556,7 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         "1.17.4": "0.17.4",
         "1.17.5": "0.17.5",
         "1.17.6": "0.17.6",
+        "1.18.0": "0.18.0",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (
@@ -619,11 +624,16 @@ def test_preview_lists_every_file_and_every_capability(tmp_path):
     proc = run_cli(["--dir", str(target), "--yes", "--dry-run"], home=home)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     _assert_preview_covers_declared_set(proc.stdout, DECLARED_PATH_SET)
-    assert "[allow]" in proc.stdout and "[ask]" in proc.stdout and "[deny]" in proc.stdout
+    # v1.18.0: the capability block names the one tier written (deny, each rule with its rationale)
+    # and says the plugin's own scripts are allowed by the PreToolUse hook — never the registry's
+    # allow/ask rows, which are not written
+    assert "[allow] the plugin's own scripts" in proc.stdout and "[deny]" in proc.stdout
+    assert "[ask]" not in proc.stdout
     map_data = load_map()
-    sample = map_data["entries"][0]
-    assert sample["rule"] in proc.stdout
-    assert sample["rationale"] in proc.stdout
+    deny = [e for e in map_data["entries"] if e["tier"] == "deny"]
+    assert deny and all(e["rule"] in proc.stdout and e["rationale"] in proc.stdout for e in deny)
+    script_row = next(e for e in map_data["entries"] if e["tier"] == "allow")
+    assert script_row["rule"] not in proc.stdout
 
 
 def test_dry_run_writes_nothing_and_spawns_nothing(tmp_path):
@@ -665,7 +675,7 @@ def _scaffold(tmp_path, extra_args=None, home_name="home", target_name="ws"):
     return proc, home, target
 
 
-def test_settings_permissions_are_a_bijection_onto_the_map(tmp_path):
+def test_settings_permissions_are_a_bijection_onto_the_maps_deny_rows(tmp_path):
     proc, home, target = _scaffold(tmp_path)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     settings = json.loads((target / ".claude" / "settings.json").read_text())
@@ -766,10 +776,11 @@ def test_cli_registers_with_auto_update_false(tmp_path):
     assert entry["autoUpdate"] is False
 
 
-def test_no_ref_autoupdate_false_entry_classifies_pinned_and_grants_allow():
+def test_no_ref_autoupdate_false_entry_classifies_pinned_and_does_not_withhold_allow():
     """NEW (AC-IUP-5): the tagless, autoUpdate:false shape AC-IUP-3 now composes must classify
     PINNED under floorReconcile.mjs's predicate and must NOT withhold the allow tier — proven
-    against the SAME classifyPin/planAdditions the reconcile path runs, not a re-implementation."""
+    against the SAME classifyPin/planAdditions the reconcile path runs, not a re-implementation.
+    v1.18.0 (AC-V118A-2): not withheld, yet no allow row is ever added — only the deny tier."""
     pkg = load_pkg()
     pins = pkg["foundry"]
     js = """
@@ -790,6 +801,8 @@ const plan = planAdditions({ findings, map, settingsObj, pins });
 console.log(JSON.stringify({
   pinState: pin.state, pinRef: pin.ref, pinSkew: pin.skew,
   withheldAllow: plan.withheldAllow, allowCount: plan.additions.allow.length,
+  askCount: plan.additions.ask.length, denyCount: plan.additions.deny.length,
+  mapDeny: map.entries.filter((e) => e.tier === 'deny').length,
 }));
 """ % json.dumps(pins)
     data = json.loads(_node_eval(js))
@@ -797,7 +810,9 @@ console.log(JSON.stringify({
     assert data["pinRef"] is None, data
     assert data["pinSkew"] is False, data
     assert data["withheldAllow"] is False, data
-    assert data["allowCount"] > 0, data
+    assert data["allowCount"] == 0, data
+    assert data["askCount"] == 0, data
+    assert data["denyCount"] == data["mapDeny"] > 0, data
 
 
 def _walk_forbidden_keys(obj, forbidden, path=""):
@@ -1603,14 +1618,14 @@ console.log(JSON.stringify({refused}));
     )
 
     # (f) one written rule re-tiered relative to the bundled map -> the REAL bijection helper
-    # (the one test_settings_permissions_are_a_bijection_onto_the_map itself calls) fires.
+    # (the one test_settings_permissions_are_a_bijection_onto_the_maps_deny_rows itself calls) fires.
     m2 = load_map()
     real_settings = {
-        "permissions": {tier: [e["rule"] for e in m2["entries"] if e["tier"] == tier]
-                        + (sorted(SELF_GUARD_DENY) if tier == "deny" else [])
+        "permissions": {tier: ([e["rule"] for e in m2["entries"] if e["tier"] == tier]
+                               if tier in PROJECTED_TIERS else [])
                         for tier in ("allow", "ask", "deny")}
     }
-    # re-tier: move one `ask` rule into the written `allow` list, as a bad plugin build might.
+    # re-tier: write one registry `ask` rule into the `allow` list, as a bad plugin build might.
     retiered = json.loads(json.dumps(real_settings))
     moved_rule = next(e["rule"] for e in m2["entries"] if e["tier"] == "ask")
     retiered["permissions"]["allow"].append(moved_rule)

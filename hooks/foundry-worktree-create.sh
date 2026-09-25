@@ -437,9 +437,11 @@ PY
   if [ -d "$out2" ]; then
     local rc_in rc_out
     ( cd "$out2" && printf '{"tool_name":"Write","tool_input":{"file_path":"%s/in.txt"}}' "$out2" | bash "$JAIL" >/dev/null 2>&1 ); rc_in=$?
-    ( cd "$out2" && printf '{"tool_name":"Write","tool_input":{"file_path":"%s/outside.txt"}}' "$wsP" | bash "$JAIL" >/dev/null 2>&1 ); rc_out=$?
+    # v1.18 (AC-V118B-1): the jail blocks a write into a SIBLING checkout of the same repository —
+    # here the product repo's main checkout — and admits paths outside every checkout of it.
+    ( cd "$out2" && printf '{"tool_name":"Write","tool_input":{"file_path":"%s/app/outside.txt"}}' "$wsP" | bash "$JAIL" >/dev/null 2>&1 ); rc_out=$?
     [ "$rc_in" -eq 0 ]  || { echo "  AC-3: in-worktree write blocked (rc=$rc_in, want 0)" >&2; r3=0; }
-    [ "$rc_out" -eq 2 ] || { echo "  AC-3: out-of-worktree write allowed (rc=$rc_out, want 2)" >&2; r3=0; }
+    [ "$rc_out" -eq 2 ] || { echo "  AC-3: write into the product repo's main checkout allowed (rc=$rc_out, want 2)" >&2; r3=0; }
   else r3=0; fi
   if [ "$r3" -eq 1 ]; then echo "AC-MRDISPATCH-3 write-jail-and-denied-binding: PASS"; else echo "AC-MRDISPATCH-3 write-jail-and-denied-binding: FAIL"; ok=0; fi
 

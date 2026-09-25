@@ -192,8 +192,11 @@ def test_compact_reinject_emits_preserved(tmp_path):
 
 
 # ---------------------------------------------------------------- git-discipline
-def _discipline(cmd, extra_env=None):
-    payload = json.dumps({"tool_input": {"command": cmd}})
+def _discipline(cmd, extra_env=None, cwd=None):
+    body = {"tool_input": {"command": cmd}}
+    if cwd is not None:
+        body["cwd"] = str(cwd)          # the harness-reported session cwd (AC-V118B-3 resolves in it)
+    payload = json.dumps(body)
     return _run_hook("foundry-git-discipline.sh", stdin_text=payload,
                      extra_env=extra_env, args=("--protected", "main"))
 
@@ -267,8 +270,11 @@ def test_discipline_blocks_admin_merge_outright():
     "git push --force $(cat remote)",
     "git push --force origin 'feat-*'",
 ])
-def test_discipline_convicts_compound_and_grouped_shapes(cmd):
-    p = _discipline(cmd)
+def test_discipline_convicts_compound_and_grouped_shapes(cmd, git_repo_on_main):
+    # Run in a repo whose current branch is `main`: since AC-V118B-3 a no-refspec force-push
+    # RESOLVES its destination, so the wrapped no-refspec rows convict because the branch they
+    # resolve to is protected — the property those rows pin (wrapping must never loosen it).
+    p = _discipline(cmd, cwd=git_repo_on_main)
     assert p.returncode == 2, p.stdout + p.stderr
 
 
@@ -691,3 +697,325 @@ def test_worktree_remove_selftest_green():
 def test_harvest_learnings_selftest_green():
     p = _run_hook("foundry-harvest-learnings.sh", args=("--selftest",))
     assert p.returncode == 0, p.stdout + p.stderr
+
+
+# ==================================================================== v1.18 fixtures ============
+_GIT_ID = ["-c", "user.name=Foundry Test", "-c", "user.email=test@example.invalid",
+           "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main"]
+
+
+def _git(repo, *args):
+    return subprocess.run(["git", *_GIT_ID, "-C", str(repo), *args], capture_output=True,
+                          text=True, check=True)
+
+
+def _make_repo(path, branch="main", upstream_merge=None, config=None):
+    """A real repo with one commit, checked out on `branch`, optionally tracking an upstream whose
+    merge ref is `refs/heads/<upstream_merge>`, plus any extra `config` key/values."""
+    path.mkdir(parents=True, exist_ok=True)
+    _git(path, "init", "-q")
+    _git(path, "commit", "-q", "--allow-empty", "-m", "init")
+    _git(path, "branch", "-M", "main")
+    if branch != "main":
+        _git(path, "checkout", "-q", "-b", branch)
+    _git(path, "remote", "add", "origin", "https://example.invalid/o/r.git")
+    if upstream_merge:
+        _git(path, "config", f"branch.{branch}.remote", "origin")
+        _git(path, "config", f"branch.{branch}.merge", f"refs/heads/{upstream_merge}")
+    for k, v in (config or {}).items():
+        _git(path, "config", k, v)
+    return path
+
+
+@pytest.fixture
+def git_repo_on_main(tmp_path):
+    return _make_repo(tmp_path / "repo-main", branch="main")
+
+
+@pytest.fixture
+def git_repo_on_feat(tmp_path):
+    return _make_repo(tmp_path / "repo-feat", branch="feat-x", upstream_merge="feat-x")
+
+
+# ==================================================================== AC-V118B-3 ================
+# A force-push naming NO refspec resolves its destination (current branch / its upstream merge
+# ref) in the repository it runs in; refused only when that is protected, and fail-closed when
+# anything could make the branch at execution time differ from the one read now.
+
+@pytest.mark.parametrize("cmd", [
+    "git push --force-with-lease",
+    "git push --force",
+    "git push -f origin",
+    "git push --force-with-lease origin",
+    "git push --force-with-lease=feat-x origin",
+    "git rebase origin/main && git push --force-with-lease",
+    "git add -A && git commit -m wip && git push -f",
+    "(git push --force origin)",
+])
+def test_v118b3_no_refspec_force_push_of_feature_branch_admitted(cmd, git_repo_on_feat):
+    p = _discipline(cmd, cwd=git_repo_on_feat)
+    assert p.returncode == 0, p.stdout + p.stderr
+
+
+@pytest.mark.parametrize("cmd", [
+    "git push --force-with-lease",
+    "git push -f origin",
+    "(git push --force origin)",
+])
+def test_v118b3_no_refspec_force_push_of_protected_branch_refused(cmd, git_repo_on_main):
+    p = _discipline(cmd, cwd=git_repo_on_main)
+    assert p.returncode == 2, p.stdout + p.stderr
+    assert "PROTECTED branch 'main'" in p.stdout, p.stdout
+
+
+def test_v118b3_upstream_merge_ref_protected_is_refused(tmp_path):
+    # feature branch tracking origin/main: push.default=upstream would land on main.
+    repo = _make_repo(tmp_path / "r", branch="feat-y", upstream_merge="main")
+    p = _discipline("git push --force-with-lease", cwd=repo)
+    assert p.returncode == 2, p.stdout + p.stderr
+
+
+def test_v118b3_widened_protected_list_applies(tmp_path):
+    repo = _make_repo(tmp_path / "r", branch="release")
+    payload = json.dumps({"tool_input": {"command": "git push -f"}, "cwd": str(repo)})
+    p = _run_hook("foundry-git-discipline.sh", stdin_text=payload, args=("--protected", "release"))
+    assert p.returncode == 2, p.stdout + p.stderr
+    p = _discipline("git push -f", cwd=repo)          # `release` not protected by default
+    assert p.returncode == 0, p.stdout + p.stderr
+
+
+@pytest.mark.parametrize("cmd", [
+    "git push --force --all",
+    "git push --force --mirror origin",
+    "git push --force --tags",
+    "git checkout main && git push -f",
+    "git switch main; git push -f",
+    "gh pr checkout 7 && git push -f",
+    "git rebase origin/main main && git push -f",
+    "git branch -u origin/main && git push -f",
+    "git config push.default upstream && git push -f",
+    "cd /tmp && git push -f",
+    "GIT_DIR=/tmp/x git push -f",
+    "HOME=/tmp git push -f",
+    "git -c push.default=matching push -f",
+    "git --git-dir=/tmp/x push -f",
+    "git -C $DIR push -f",
+])
+def test_v118b3_unresolvable_no_refspec_force_push_stays_refused(cmd, git_repo_on_feat):
+    p = _discipline(cmd, cwd=git_repo_on_feat)
+    assert p.returncode == 2, p.stdout + p.stderr
+
+
+def test_v118b3_repo_state_that_hides_the_destination_is_refused(tmp_path):
+    detached = _make_repo(tmp_path / "det", branch="feat-x")
+    _git(detached, "checkout", "-q", "--detach")
+    matching = _make_repo(tmp_path / "match", branch="feat-x", config={"push.default": "matching"})
+    pushref = _make_repo(tmp_path / "pref", branch="feat-x",
+                         config={"remote.origin.push": "refs/heads/*:refs/heads/main"})
+    notrepo = tmp_path / "not-a-repo"
+    notrepo.mkdir()
+    for d in (detached, matching, pushref, notrepo):
+        p = _discipline("git push --force-with-lease", cwd=d)
+        assert p.returncode == 2, (d, p.stdout + p.stderr)
+
+
+def test_v118b3_dash_C_resolves_in_the_named_repo(git_repo_on_main, git_repo_on_feat):
+    p = _discipline(f"git -C {git_repo_on_main} push -f", cwd=git_repo_on_feat)
+    assert p.returncode == 2, p.stdout + p.stderr
+    p = _discipline(f"git -C {git_repo_on_feat} push -f", cwd=git_repo_on_main)
+    assert p.returncode == 0, p.stdout + p.stderr
+
+
+# ==================================================================== AC-V118B-5 ================
+# Every other refusal is unchanged — asserted from a NON-protected feature-branch cwd, so no row
+# can pass merely because the current branch happens to be protected.
+@pytest.mark.parametrize("cmd", [
+    "git push --force origin main",
+    "git push -f origin HEAD",
+    "git push origin +main",
+    "git push --force-with-lease origin feat:main",
+    "git branch -D main",
+    "git filter-repo --force",
+    "git filter-branch --tree-filter true",
+    "rm -rf .git",
+    "git commit -n -m x",
+    "gh pr merge 42 --admin --squash",
+])
+def test_v118b5_other_refusals_unchanged(cmd, git_repo_on_feat):
+    p = _discipline(cmd, cwd=git_repo_on_feat)
+    assert p.returncode == 2, p.stdout + p.stderr
+
+
+# ==================================================================== AC-V118B-2 ================
+# `gh pr merge --auto` is admitted WITHOUT the live checks query (the platform's required checks
+# enforce the wait); `--admin` stays refused; a non-auto merge still needs green checks.
+_PENDING = dict(GH_STUB_CHECKS_EXIT=8, GH_STUB_CHECKS_OUTPUT="check-a\tpending\t1s\turl")
+
+
+@pytest.mark.parametrize("cmd", [
+    "gh pr merge 42 --auto --squash",
+    "gh pr merge 42 --auto --merge",
+    "gh pr merge 42 --auto --rebase",
+    "gh pr merge 42 --auto",
+    "gh pr merge --auto=true -s 42",
+    "gh pr merge https://github.com/o/r/pull/42 --auto -d",
+])
+def test_v118b2_auto_merge_admitted_without_checks_query(cmd, tmp_path):
+    log = tmp_path / "gh.log"
+    p = _discipline(cmd, extra_env=_gh_stub_env(GH_STUB_LOG=log, **_PENDING))
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert not log.exists() or "checks" not in log.read_text(), "the live query must not run"
+
+
+@pytest.mark.parametrize("cmd", [
+    "gh pr merge 42 --auto --admin --squash",
+    "gh pr merge 42 --admin=true --auto",
+])
+def test_v118b2_auto_with_admin_still_refused(cmd):
+    p = _discipline(cmd, extra_env=_gh_stub_env(GH_STUB_CHECKS_EXIT=0,
+                                                GH_STUB_CHECKS_OUTPUT="check-a\tpass\t1s\turl"))
+    assert p.returncode == 2, p.stdout + p.stderr
+
+
+@pytest.mark.parametrize("cmd", [
+    "gh pr merge 42 --squash",
+    "gh pr merge 42 --auto=false --squash",
+    "gh pr merge 42 --disable-auto",
+])
+def test_v118b2_non_auto_merge_still_queries_and_refuses_pending(cmd):
+    p = _discipline(cmd, extra_env=_gh_stub_env(**_PENDING))
+    assert p.returncode == 2, p.stdout + p.stderr
+
+
+# ==================================================================== AC-V118B-1 ================
+# The write-jail blocks a linked-worktree session's write into a SIBLING checkout of the same
+# repository and admits everything else (own worktree, ~/.claude, the temp dirs, unrelated paths).
+
+def _cwd_enforce(target, cwd, tool="Write", extra_env=None):
+    env = dict(os.environ)
+    if extra_env:
+        env.update(extra_env)
+    key = "notebook_path" if tool == "NotebookEdit" else "file_path"
+    payload = json.dumps({"tool_name": tool, "tool_input": {key: str(target)}})
+    return subprocess.run([str(HOOKS / "foundry-cwd-enforce.sh")], input=payload,
+                          capture_output=True, text=True, env=env, cwd=str(cwd), timeout=60)
+
+
+@pytest.fixture
+def repo_with_worktrees(tmp_path):
+    main = _make_repo(tmp_path / "main-checkout", branch="main")
+    wt = tmp_path / "wt-a"
+    sib = tmp_path / "wt-b"
+    nested = main / ".wt" / "nested"
+    _git(main, "worktree", "add", "-q", "-b", "a", str(wt))
+    _git(main, "worktree", "add", "-q", "-b", "b", str(sib))
+    _git(main, "worktree", "add", "-q", "-b", "n", str(nested))
+    return {"main": main, "wt": wt, "sib": sib, "nested": nested, "tmp": tmp_path}
+
+
+def test_v118b1_own_worktree_admitted(repo_with_worktrees):
+    r = repo_with_worktrees
+    for t in (r["wt"] / "a.txt", r["wt"] / "new" / "deep" / "b.txt"):
+        p = _cwd_enforce(t, cwd=r["wt"])
+        assert p.returncode == 0, p.stdout + p.stderr
+
+
+@pytest.mark.parametrize("which", ["main", "sib", "nested"])
+def test_v118b1_sibling_checkout_blocked(repo_with_worktrees, which):
+    r = repo_with_worktrees
+    for t in (r[which] / "README.md", r[which] / "brand" / "new" / "file.py"):
+        p = _cwd_enforce(t, cwd=r["wt"])
+        assert p.returncode == 2, (t, p.stdout + p.stderr)
+        assert '"decision":"block"' in p.stdout
+
+
+def test_v118b1_shared_git_dir_and_traversal_blocked(repo_with_worktrees):
+    r = repo_with_worktrees
+    for t in (r["main"] / ".git" / "config",
+              r["wt"] / ".." / "main-checkout" / "x.txt",
+              r["wt"] / "sub" / ".." / ".." / "wt-b" / "y.txt"):
+        p = _cwd_enforce(t, cwd=r["wt"])
+        assert p.returncode == 2, (t, p.stdout + p.stderr)
+
+
+def test_v118b1_symlink_into_sibling_resolved_physically(repo_with_worktrees):
+    r = repo_with_worktrees
+    link = r["tmp"] / "innocent-link"
+    link.symlink_to(r["main"], target_is_directory=True)
+    p = _cwd_enforce(link / "not-yet-existing.txt", cwd=r["wt"])
+    assert p.returncode == 2, p.stdout + p.stderr
+    # ...and a symlink INTO the own worktree is the own worktree.
+    own_link = r["tmp"] / "own-link"
+    own_link.symlink_to(r["wt"], target_is_directory=True)
+    p = _cwd_enforce(own_link / "ok.txt", cwd=r["wt"])
+    assert p.returncode == 0, p.stdout + p.stderr
+
+
+def test_v118b1_nested_own_worktree_inside_main_admitted(repo_with_worktrees):
+    r = repo_with_worktrees
+    p = _cwd_enforce(r["nested"] / "mine.txt", cwd=r["nested"])
+    assert p.returncode == 0, p.stdout + p.stderr
+    p = _cwd_enforce(r["main"] / ".wt" / "not-a-worktree.txt", cwd=r["nested"])
+    assert p.returncode == 2, p.stdout + p.stderr
+
+
+def test_v118b1_home_claude_temp_and_unrelated_paths_admitted(repo_with_worktrees, tmp_path):
+    r = repo_with_worktrees
+    targets = [
+        Path.home() / ".claude" / "projects" / "x" / "memory" / "new-note.md",   # (b)
+        Path("/tmp") / "foundry-v118b1" / "scratch.txt",                          # (c)
+        tmp_path / "unrelated" / "file.txt",                                      # (c) $TMPDIR / pytest tmp
+        Path("/opt/foundry-v118b1-nonexistent/elsewhere.txt"),                    # (d)
+    ]
+    other_repo = _make_repo(tmp_path / "other-repo")                              # (d) a DIFFERENT repo
+    targets.append(other_repo / "README.md")
+    for t in targets:
+        p = _cwd_enforce(t, cwd=r["wt"])
+        assert p.returncode == 0, (t, p.stdout + p.stderr)
+    p = _cwd_enforce(Path.home() / ".claude" / "plans" / "p.md", cwd=r["wt"], tool="Edit")
+    assert p.returncode == 0, p.stdout + p.stderr
+
+
+def test_v118b1_notebook_and_non_write_tools(repo_with_worktrees):
+    r = repo_with_worktrees
+    p = _cwd_enforce(r["main"] / "n.ipynb", cwd=r["wt"], tool="NotebookEdit")
+    assert p.returncode == 2, p.stdout + p.stderr
+    p = _cwd_enforce(r["main"] / "README.md", cwd=r["wt"], tool="Read")
+    assert p.returncode == 0, p.stdout + p.stderr
+
+
+def test_v118b1_main_clone_session_unjailed(repo_with_worktrees):
+    r = repo_with_worktrees
+    p = _cwd_enforce(r["sib"] / "x.txt", cwd=r["main"])
+    assert p.returncode == 0, p.stdout + p.stderr
+
+
+def test_v118_review_b5_case_variant_path_into_the_main_checkout_is_blocked(repo_with_worktrees):
+    """v1.18.0 security review Block 5: on a case-insensitive volume a case-variant spelling of the
+    main checkout is the SAME directory; containment is by (st_dev, st_ino), not by spelling."""
+    r = repo_with_worktrees
+    main = str(r["main"])
+    variant = main[:-len("main-checkout")] + "MAIN-CHECKOUT"
+    if not os.path.exists(variant):
+        pytest.skip("case-sensitive filesystem: the variant is a different path")
+    p = _cwd_enforce(os.path.join(variant, "README.md"), cwd=str(r["wt"]))
+    assert p.returncode == 2, p.stdout + p.stderr
+
+
+@pytest.mark.parametrize("cmd", [
+    'bash -c "git checkout main" && git push --force-with-lease',
+    "./x.sh; git push -f",
+    "make release && git push --force",
+    "git stash branch main && git push --force",
+])
+def test_v118_review_r1_an_earlier_non_git_or_branch_changing_clause_keeps_the_push_refused(tmp_path, cmd):
+    """v1.18.0 security review R1: only branch-preserving git clauses may precede a bare force-push."""
+    repo = _make_repo(tmp_path / "r", branch="feature/x")
+    p = _discipline(cmd, cwd=repo)
+    assert p.returncode == 2, p.stdout + p.stderr
+
+
+def test_v118_review_r1_a_mirror_remote_keeps_the_push_refused(tmp_path):
+    repo = _make_repo(tmp_path / "r", branch="feature/x", config={"remote.origin.mirror": "true"})
+    p = _discipline("git push --force", cwd=repo)
+    assert p.returncode == 2, p.stdout + p.stderr

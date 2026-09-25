@@ -77,7 +77,8 @@ test('AC-AMB-1: append to every absent spec under specs/, count present and skip
   assert.equal(plan.total, 5);
   assert.equal(
     renderAmendmentsRow(plan),
-    '  [amendments] backfilled 2 of 5 specs (1 already present, 2 skipped: no normative region)',
+    // v1.18.0: a plan not yet applied says what it WOULD do
+    '  [amendments] would backfill 2 of 5 specs (1 already present, 2 skipped: no normative region)',
   );
   assert.equal(applyAmendmentsBackfill(plan), 2);
   assert.equal(fs.readFileSync(a, 'utf-8'), `${NORMATIVE}\n${AMENDMENTS_BLOCK}`);
@@ -105,7 +106,7 @@ test('AC-AMB-2: dry-run (plan without apply) writes nothing and reports the woul
   const root = scratch();
   const a = writeSpec(root, 'specs/f/feat-a.md', NORMATIVE);
   const plan = planAmendmentsBackfill({ physicalRoot: root });
-  assert.equal(renderAmendmentsRow(plan), '  [amendments] backfilled 1 of 1 specs (0 already present, 0 skipped: no normative region)');
+  assert.equal(renderAmendmentsRow(plan), '  [amendments] would backfill 1 of 1 specs (0 already present, 0 skipped: no normative region)');
   assert.equal(fs.readFileSync(a, 'utf-8'), NORMATIVE);
 });
 

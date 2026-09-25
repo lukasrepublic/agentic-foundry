@@ -88,7 +88,8 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-worktree-gc.py" --apply --repo /p
 
 It classifies every linked worktree and every local/remote branch matching `atom/*`, `release/*`,
 `hotfix/*`, `fix/*`, `feat/*`, `docs/*` by real git ancestry against `origin/<default-branch>`
-(falling back to `gh pr list --state merged --head <branch>` for a squash/rebase merge whose tip is
+(falling back to `gh pr list --state merged --head <branch> --base <default-branch>` — a PR merged
+into any other base never counts — for a squash/rebase merge whose tip is
 not a literal ancestor — accepted ONLY when the PR's own `headRefOid` equals the branch's current
 tip, so a stale merged-PR record left over from an earlier, different push at a REUSED branch name
 can never mark today's unmerged commits as merged) into four classes:

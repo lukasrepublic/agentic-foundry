@@ -103,7 +103,7 @@ export function planAmendmentsBackfill({ physicalRoot }) {
     else if (verdict === 'no-marker') skipped += 1;
     else toAppend.push(abs);
   }
-  return { toAppend, present, skipped, symlinks, total: files.length, applied: false };
+  return { physicalRoot, toAppend, present, skipped, symlinks, total: files.length, applied: false };
 }
 
 /** The bytes to append for a given current text: the block, preceded by one newline when the text
@@ -119,32 +119,43 @@ export function appendBytesFor(text) {
  * gained the section between plan and apply is left alone. Returns the count actually written. */
 export function applyAmendmentsBackfill(plan) {
   let written = 0;
+  // v1.18.0 (AC-V118C-8): every planned spec lands in exactly one bucket — written, gained the
+  // section since the plan (present), or failed — so backfilled + present + skipped + failed ==
+  // total and the post-upgrade arithmetic check can never refuse on an uncounted file.
+  let failed = 0;
+  const writtenPaths = [];
   for (const abs of plan.toAppend) {
     let text;
     try {
       text = fs.readFileSync(abs, 'utf-8');
     } catch {
+      failed += 1;
       continue;
     }
-    if (classifySpec(text) !== 'absent') continue;
+    if (classifySpec(text) !== 'absent') { plan.present += 1; continue; }
     const tmp = `${abs}.amendments-backfill.tmp`;
     // v1.17.1 security review Risk 2: `wx` refuses to write through a planted sibling — a symlink
     // or a leftover file at the temp path means this spec is skipped, never written elsewhere.
     try {
       fs.writeFileSync(tmp, text + appendBytesFor(text), { encoding: 'utf-8', flag: 'wx' });
     } catch {
+      failed += 1;
       continue;
     }
     try {
       fs.renameSync(tmp, abs);
     } catch {
       fs.rmSync(tmp, { force: true });
+      failed += 1;
       continue;
     }
     written += 1;
+    if (plan.physicalRoot) writtenPaths.push(path.relative(plan.physicalRoot, abs).split(path.sep).join('/'));
   }
   plan.applied = true;
   plan.written = written;
+  plan.failed = failed;
+  plan.writtenPaths = writtenPaths;
   return written;
 }
 
@@ -154,7 +165,8 @@ export function applyAmendmentsBackfill(plan) {
 export function renderAmendmentsRow(plan) {
   if (!plan || (plan.total === 0 && plan.symlinks.length === 0)) return null;
   const n = plan.applied ? plan.written : plan.toAppend.length;
-  let row = `  [amendments] backfilled ${n} of ${plan.total} specs (${plan.present} already present, ${plan.skipped} skipped: no normative region)`;
+  const verb = plan.applied ? 'backfilled' : 'would backfill';
+  let row = `  [amendments] ${verb} ${n} of ${plan.total} specs (${plan.present} already present, ${plan.skipped} skipped: no normative region${plan.failed ? `, ${plan.failed} FAILED to write` : ''})`;
   if (plan.symlinks.length > 0) {
     row += `; ${plan.symlinks.length} symlinked spec file(s) not touched: ${plan.symlinks.map((p) => path.basename(p)).join(', ')}`;
   }

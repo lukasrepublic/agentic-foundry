@@ -204,15 +204,19 @@ test('no mutation is attempted before the preview is emitted', async () => {
 // AC-UAW-8 — never-clobber, inherited from cli/src/reconcile.mjs
 // ================================================================================================
 
-test('an operator edited managed file is reported drifted and left byte identical', async () => {
+test('an operator edited managed file is reported kept, left byte identical, and does not turn the exit code to 2', async () => {
+  // v1.18.0 (AC-V118C-3): on the update path an existing file is the operator's — `[kept]`, never
+  // "drifted" — so a clean upgraded workspace exits 0 (every pre-v1.18 run exited 2).
   const { root, cwd, configDir } = steadyStateFixture('uaw8-');
   const claudeMdPath = path.join(cwd, 'CLAUDE.md');
   const editedBytes = Buffer.from('# an operator wrote something completely different here\n');
   fs.writeFileSync(claudeMdPath, editedBytes);
   const { res, text } = await invokeUpdate({ cwd, configDir, output: sink() });
-  assert.equal(res.exitCode, 2, `expected the drift exit code; got ${res.exitCode}: ${res.output}`);
+  assert.equal(res.exitCode, 0, `expected exit 0; got ${res.exitCode}: ${res.output}`);
   assert.deepEqual(fs.readFileSync(claudeMdPath), editedBytes, 'the operator-edited file was overwritten');
-  assert.match(text, /\[drifted] CLAUDE\.md/);
+  assert.match(text, /\[kept] CLAUDE\.md/);
+  assert.match(text, /\[reconciled] \.claude\/settings\.json/);
+  assert.doesNotMatch(text, /\[drifted]/);
   fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -414,7 +418,7 @@ test('every completed run writes .foundry/upgrade-report.json and ends with the 
   assert.equal(report.to_plugin_version, PINS.plugin_version);
   assert.ok(Array.isArray(report.phases) && report.phases.some((p) => p.name === 'reinitialization'));
   assert.ok(['created', 'kept'].includes(report.permissions_policy), report.permissions_policy);
-  assert.deepEqual(Object.keys(report.amendments).sort(), ['backfilled', 'present', 'skipped', 'total']);
+  assert.deepEqual(Object.keys(report.amendments).sort(), ['backfilled', 'failed', 'present', 'skipped', 'total']);
   assert.equal(report.amendments.backfilled + report.amendments.present + report.amendments.skipped, report.amendments.total);
   // ER #228: the report names the updater's core and the plugin it was built for
   assert.match(report.core_version, /^\d+\.\d+\.\d+$/);
@@ -423,42 +427,54 @@ test('every completed run writes .foundry/upgrade-report.json and ends with the 
 
 
 // hotfix-v1.17.4 (ER #236): the retired-artifacts sweep and the settings.local.json retirement.
-test('Phase 4 reports a retired artifact every run, removes it only under --cleanup, and retires a pinned row in settings.local.json', async () => {
+test('Phase 4 reports a retired artifact every run, removes it only under --cleanup, and retires floor rows (never operator rows) in settings.local.json', async () => {
   const { cwd, configDir } = steadyStateFixture('ra-uaw-');
   await invokeUpdate({ cwd, configDir });
   fs.mkdirSync(path.join(cwd, '.foundry'), { recursive: true });
   fs.writeFileSync(path.join(cwd, '.foundry', 'wiring-hash.pin'), 'stale');
   fs.mkdirSync(path.join(cwd, '.claude', 'skills'), { recursive: true });
   fs.writeFileSync(path.join(cwd, '.claude', 'skills', 'mine.md'), 'operator');
-  // a pinned `ask` row for a pair the tracked file's wildcard ask row covers (retired), and one for
-  // a pair the map declares at ask but the tracked file does NOT carry (kept — Risk 3)
-  const trackedAsk = readJson(path.join(cwd, '.claude', 'settings.json')).permissions.ask
-    .filter((r) => /^Bash\(~\/\.claude\/plugins\/cache\/\*\/foundry\/\*\/scripts\//.test(r));
-  assert.ok(trackedAsk.length >= 1, 'fixture: the tracked file carries at least one wildcard ask row');
-  const pinnedAsk = trackedAsk[0].replace('~/.claude/plugins/cache/*/foundry/*/', '~/.claude/plugins/cache/agentic-foundry/foundry/1.9.1/');
+  // v1.18.0 (AC-V118A-2/-4): the tracked file the updater leaves carries only the deny floor — no
+  // script rows, no self-guard pair, no broad force-push deny
+  const tracked = readJson(path.join(cwd, '.claude', 'settings.json')).permissions;
+  const floorShaped = (r) => /^Bash\(~\/\.claude\/plugins\/cache\/[^/]+\/foundry\/[^/]+\/scripts\//.test(r);
+  assert.deepEqual((tracked.allow || []).filter(floorShaped).filter((r) => r.endsWith(':*)')), [], 'a floor allow row is in the tracked file');
+  assert.deepEqual((tracked.ask || []).filter(floorShaped), [], 'a floor ask row is in the tracked file');
+  for (const r of ['Edit(.foundry/permissions.yaml)', 'Write(.foundry/permissions.yaml)', 'Bash(git push --force:*)']) {
+    assert.ok(!(tracked.deny || []).includes(r), `retired deny ${r} is in the tracked file`);
+  }
+  // the local file: a pinned allow row and a pinned ask row of the floor's shape (both retired —
+  // the ask row regardless of what the tracked file carries), the three retired deny literals
+  // (retired), and operator rows in every tier (never touched)
+  const pinnedAsk = 'Bash(~/.claude/plugins/cache/agentic-foundry/foundry/1.9.1/scripts/foundry-authorize.py:*)';
   writeJson(path.join(cwd, '.claude', 'settings.local.json'), { permissions: { allow: [
     'Bash(~/.claude/plugins/cache/agentic-foundry/foundry/1.9.1/scripts/foundry-doctor.py:*)',
     'Bash(/opt/mine/tool:*)',
-  ], ask: [pinnedAsk, 'Bash(/opt/mine/dangerous:*)'] } });
+  ], ask: [pinnedAsk, 'Bash(/opt/mine/dangerous:*)'], deny: [
+    'Edit(.foundry/permissions.yaml)', 'Bash(rm -rf:*)', 'Write(.foundry/permissions.yaml)', 'Bash(git push --force:*)',
+  ] } });
   fs.chmodSync(path.join(cwd, '.claude', 'settings.local.json'), 0o600);
 
   const first = await invokeUpdate({ cwd, configDir });
   assert.notEqual(first.res.exitCode, 1, first.res.output);
   // Risk 2: the preview announces the local-file write BEFORE the first write happens
-  const previewIdx = first.text.indexOf('[permission-floor] .claude/settings.local.json: would retire allow=1, ask=1 (never adds)');
-  const writeIdx = first.text.indexOf('[permission-floor] .claude/settings.local.json: retired 2');
+  const previewIdx = first.text.indexOf('[permission-floor] .claude/settings.local.json: would retire allow=1, ask=1, deny=3 (never adds)');
+  const writeIdx = first.text.indexOf('[permission-floor] .claude/settings.local.json: retired 5');
   assert.ok(previewIdx !== -1 && writeIdx !== -1 && previewIdx < writeIdx, `preview row precedes the write row:\n${first.text}`);
   assert.match(first.text, /\[stale] \.foundry\/wiring-hash\.pin — retired in v0\.24\.0 .*; remove with --cleanup/, first.text);
   assert.equal(fs.existsSync(path.join(cwd, '.foundry', 'wiring-hash.pin')), true, 'nothing removed without --cleanup');
-  assert.match(first.text, /\[permission-floor] \.claude\/settings\.local\.json: retired 2 version-pinned\/gone row\(s\)/, first.text);
+  assert.match(first.text, /\[permission-floor] \.claude\/settings\.local\.json: retired 5 version-pinned\/gone row\(s\)/, first.text);
+  assert.ok(first.text.includes(`  [retired] .claude/settings.local.json ask: ${pinnedAsk}`), first.text);
+  assert.ok(first.text.includes('  [retired] .claude/settings.local.json deny: Write(.foundry/permissions.yaml)'), first.text);
   assert.match(first.text, /\[reinitialization] changed/, 'the local retirement counts toward the phase verdict');
   const local = readJson(path.join(cwd, '.claude', 'settings.local.json'));
   assert.deepEqual(local.permissions.allow, ['Bash(/opt/mine/tool:*)']);
   assert.deepEqual(local.permissions.ask, ['Bash(/opt/mine/dangerous:*)']);
+  assert.deepEqual(local.permissions.deny, ['Bash(rm -rf:*)'], 'an operator deny row was touched or a retired literal survived');
   assert.equal(fs.statSync(path.join(cwd, '.claude', 'settings.local.json')).mode & 0o777, 0o600, 'Risk 5: mode preserved');
   const report = readJson(path.join(cwd, '.foundry', 'upgrade-report.json'));
   assert.deepEqual(report.retired_artifacts, { present: ['.foundry/wiring-hash.pin'], removed: 0, refused: 0 });
-  assert.equal(report.settings_local_retired, 2);
+  assert.equal(report.settings_local_retired, 5);
 
   const cleaned = await invokeUpdate({ cwd, configDir, argv: ['--cleanup'] });
   assert.notEqual(cleaned.res.exitCode, 1, cleaned.res.output);
@@ -471,4 +487,59 @@ test('Phase 4 reports a retired artifact every run, removes it only under --clea
   assert.equal(fs.existsSync(path.join(cwd, '.claude', 'skills', 'mine.md')), true, 'operator files are invisible to the sweep');
   const report2 = readJson(path.join(cwd, '.foundry', 'upgrade-report.json'));
   assert.equal(report2.retired_artifacts.removed, 1);
+});
+
+// ================================================================================================
+// v1.18.0 (friction-and-delivery) — AC-V118C-1/-3/-4
+// ================================================================================================
+
+function treeSnapshot(dir) {
+  const out = {};
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else out[path.relative(dir, p)] = fs.readFileSync(p).toString('base64');
+    }
+  };
+  walk(dir);
+  return out;
+}
+
+test('--dry-run prints the plan, writes nothing and runs no claude command', async () => {
+  const { root, cwd, configDir } = steadyStateFixture('v118dry-');
+  const before = treeSnapshot(cwd);
+  const { res, log, text } = await invokeUpdate({ cwd, configDir, argv: ['--dry-run'] });
+  assert.notEqual(res.exitCode, 1, res.output);
+  assert.match(text, /^DRY RUN — the plan below is printed; nothing will be written/m);
+  assert.match(text, /dry run: nothing was written and no claude command was run\./);
+  assert.deepEqual(log, [], 'a claude invocation ran under --dry-run');
+  assert.deepEqual(treeSnapshot(cwd), before, 'the workspace changed under --dry-run');
+  assert.equal(fs.existsSync(path.join(cwd, '.foundry', 'upgrade-report.json')), false);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('the report lists every path the run wrote, and a second run over the result exits 0 and writes nothing', async () => {
+  const { root, cwd, configDir } = steadyStateFixture('v118written-');
+  const first = await invokeUpdate({ cwd, configDir });
+  assert.notEqual(first.res.exitCode, 1, first.res.output);
+  const report = readJson(path.join(cwd, '.foundry', 'upgrade-report.json'));
+  const written = report.written.map((w) => w.path);
+  // everything the first run created or reconciled is named — the post-upgrade skill commits these
+  for (const rel of ['.foundry/permissions.yaml', '.claude/hooks/foundry-statusline.sh', '.claude/settings.json']) {
+    assert.ok(written.includes(rel), `${rel} missing from report.written: ${JSON.stringify(report.written)}`);
+    assert.ok(fs.existsSync(path.join(cwd, rel)), `${rel} named but absent`);
+  }
+  assert.deepEqual(report.removed, []);
+  assert.equal(report.config_dir, configDir);
+  assert.equal(typeof report.hostname, 'string');
+  const between = treeSnapshot(cwd);
+  const second = await invokeUpdate({ cwd, configDir });
+  assert.equal(second.res.exitCode, 0, `a converged workspace must exit 0; got ${second.res.exitCode}: ${second.res.output}`);
+  const report2 = readJson(path.join(cwd, '.foundry', 'upgrade-report.json'));
+  assert.deepEqual(report2.written, [], `the second run wrote: ${JSON.stringify(report2.written)}`);
+  const after = treeSnapshot(cwd);
+  delete between['.foundry/upgrade-report.json']; delete after['.foundry/upgrade-report.json'];
+  assert.deepEqual(after, between, 'the second run changed a file');
+  fs.rmSync(root, { recursive: true, force: true });
 });

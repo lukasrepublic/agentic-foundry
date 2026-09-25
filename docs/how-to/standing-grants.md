@@ -7,32 +7,42 @@ session re-reads it and re-decides whether it applies. `.foundry/permissions.yam
 grant becomes one native Claude Code rule the platform enforces, one line the doctor reports, and
 one thing the capability preflight can check a contract against before an atom is dispatched.
 
+**Grants only ever widen.** A grant can make a command run without a prompt. Nothing in this file
+can add a prompt or a refusal: an `ask` rule outranks `allow` and auto mode in Claude Code, so
+compiling anything to `ask` would turn a grant into friction (it did, on an adopter workspace,
+until v1.18.0).
+
+The plugin's own scripts need no grant: from v1.18.0 a PreToolUse hook
+(`hooks/foundry-plugin-scripts-allow.py`) lets any single invocation of a script under the plugin
+root run without a prompt. (Bash permission rules that name a script path never matched a real
+invocation — measured — which is why this is a hook and not a rule.)
+
 ## 0. The file exists
 
-`npx update-agentic-workspace` (and `create-agentic-workspace --existing`) seed an empty
-`.foundry/permissions.yaml` when there is none: `schema_version: 1`, `grants: []`, and two
-worked grants in comments. It is **operator-owned** from that moment — the seed is written once and
-never reconciled, so your edits are never reported drifted and never overwritten. The plugin keeps
-the identical starter at `context/permissions-template.yaml`; the schema is
-`schema/permissions.schema.json`.
+`npx update-agentic-workspace@<version>` (and `create-agentic-workspace --existing`) seed an empty
+`.foundry/permissions.yaml` when there is none: `schema_version: 1`, `grants: []`, and two worked
+grants in comments. It is **operator-owned** from that moment — the seed is written once and never
+reconciled, so your edits are never reported drifted and never overwritten. The agent may write it
+when you ask (the self-guard deny rules earlier releases placed on it are retired in v1.18.0);
+changes show in git review like any other file. The plugin keeps the identical starter at
+`context/permissions-template.yaml`; the schema is `schema/permissions.schema.json`.
 
-Before the seed, the doctor's line reads `policy absent — seed it: …`. Right after it, it reads
-`policy in-sync`: the two self-guard rules (`Edit` and `Write` denied on the policy file) are
-written together with the seed by the scaffold's create path, by the updater, and by
-`create-agentic-workspace --existing --reconcile-floor` (`[permissions] self-guard deny rules added`;
-a plain `--existing` seeds the file but never writes settings, so it still reads `policy drift` until
-the updater or the compile step runs), so a workspace with zero grants never needs the compile step
-just to be in sync.
-The compile step below is for your grants.
+A workspace with zero grants reads `policy in-sync` right after the seed — there is nothing to
+compile. The compile step below is for your grants.
 
 ## 1. Write the grant
 
 One entry per grant. `id` is a slug, `tool` is one of `Bash | Edit | Write | Read | WebFetch |
 Agent`, `pattern` is exactly what goes inside the native rule's parentheses, `mode` is either
-`automatic` (proceed once every precondition has been verified by command) or `approval_required`
-(one blocker line naming the grant; the operator decides), and `preconditions` come from the closed
-set `ci-green, security-reviewed-label, spec-authorized, charter-committed, worktree-clean,
-branch-up-to-date`.
+`automatic` or `approval_required`, and `preconditions` come from the closed set `ci-green,
+security-reviewed-label, spec-authorized, charter-committed, worktree-clean, branch-up-to-date`.
+
+- **`automatic`** compiles to one `permissions.allow` rule: the command runs without a prompt. The
+  preconditions are verified by the agent by command and recorded, not machine-enforced, so
+  `automatic` is a statement of trust in that verification.
+- **`approval_required`** compiles to **nothing**. It records, for the agent's own loop, that you
+  want to decide this one yourself; the command keeps the session's normal permission mode (auto
+  mode's classifier, or a prompt). It never writes an `ask` rule.
 
 ```yaml
 schema_version: 1
@@ -44,9 +54,8 @@ grants:
     preconditions: [ci-green, branch-up-to-date]
 ```
 
-Anything irreversible, security-adjacent or authorization-adjacent belongs in `approval_required`,
-whatever the operator's appetite: the preconditions are verified by the agent by command and
-recorded, not machine-enforced, so `automatic` is a statement of trust in that verification.
+If you are unsure, leave a command out of the file: an unlisted command behaves exactly as it
+does today.
 
 ## 2. Compile it
 
@@ -55,28 +64,30 @@ python3 "$CLAUDE_PLUGIN_ROOT/scripts/foundry-permissions-compile.py" --check   #
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/foundry-permissions-compile.py" --write   # reconciles .claude/settings.json + the sidecar
 ```
 
-`--write` composes the derived rules into `permissions.allow` (or `ask`, for `approval_required`)
-and leaves every rule it did not derive alone. The doctor now reads `policy in-sync (1)`; a later
-hand edit to the settings file shows as `policy drift (1)` until the next `--write`.
+`--write` composes the derived `allow` rules into `.claude/settings.json` and leaves every rule it
+did not derive alone. It also takes back what earlier releases compiled and v1.18.0 no longer
+derives — `ask` rules from `approval_required` grants and the two self-guard deny rules. The doctor
+then reads `policy in-sync (.foundry/permissions.yaml vs .claude/settings.json)`; a later hand edit
+to the settings file shows as `policy drift (<k>)` until the next `--write`.
 
 ## 3. Let a contract name what it needs
 
 An acceptance contract can declare `requires_capabilities:` — the tools its checkpoints shell out
-to (`gh`, a cloud CLI, network). The capability preflight checks those against the grants above
-before dispatch:
+to (`gh`, a cloud CLI, network). The capability preflight checks those against your settings and
+grants before dispatch:
 
 ```bash
 python3 "$CLAUDE_PLUGIN_ROOT/scripts/foundry-capability-preflight.py" --contract specs/.../acceptance-contract.yaml
 ```
 
-A capability with no grant is reported before the atom starts, which is the whole point: a
-classifier denial mid-run is the failure this replaces. Do not edit a contract that carries a
-frozen `authorized:` block to add the field — that moves its hash; use `/foundry:amend`.
+Only a capability a **deny** rule would refuse blocks the atom (`missing`, `exit 3`). A capability
+that is simply not pre-granted is listed under `classifier` — the session's permission mode decides
+at run time — and never blocks. Do not edit a contract that carries a frozen `authorized:` block to
+add the field — that moves its hash; use `/foundry:amend`.
 
 ## What this does not do
 
 - It does not grant anything the trust dialog has not: the compiled rules land in
   `.claude/settings.json` and take effect through the platform's own mechanism.
 - It does not verify preconditions by machine (recorded in the schema as out of scope).
-- It does not replace the never-relaxed floor: a grant cannot admit a force-push to `main` or an
-  admin merge; the git-discipline hook refuses those regardless of policy.
+- It never adds a prompt or a refusal.

@@ -5,13 +5,14 @@
 
 The operator's standing grants ("proceed on green CI", "drive this forward", ...) live today in
 transcripts and memory files, so every session re-asks. This atom gives them ONE file the operator
-edits and the agent never does (`.foundry/permissions.yaml`): each grant is `automatic` (compiles
-to one `permissions.allow` rule) or `approval_required` (compiles to one `permissions.ask` rule).
-`--write` ALSO places two fixed, grant-independent `permissions.deny` rules on the policy file
-itself, `Edit(.foundry/permissions.yaml)` and `Write(.foundry/permissions.yaml)` (AC-SGP-4 v2,
-auth_seq 2 — retargeted from the Bash-only `cli/permission-floor.json` script-invocation floor to
-the platform's own `.claude/settings.json` `permissions.deny`, since that floor's shape is
-`Bash(...)`-only by construction and this is a path deny, not a script tier). The compiler writes
+edits: each grant is `automatic` (compiles to one `permissions.allow` rule) or `approval_required`
+(compiles to NO settings rule — v1.18.0, AC-V118A-3). Grants only ever WIDEN: an `ask` rule outranks
+`allow` and auto mode in Claude Code, so compiling `approval_required` to `ask` turned a grant into a
+prompt the operator never asked for (measured on an adopter workspace, 2026-09-25). An
+`approval_required` grant is documentation for the agent's own loop — the command keeps the
+session's normal permission mode. The two self-guard deny rules this compiler used to place on the
+policy file (AC-SGP-4) are retired (operator decision 2026-09-25): `--write` removes them and every
+`ask` rule it previously compiled. The compiler writes
 NO policy engine of our own — it derives the native rule set and reconciles it into
 `.claude/settings.json`, recording exactly what it added in a sidecar
 (`.claude/foundry-permissions.compiled.json`) so a later `--write` can remove exactly what it
@@ -50,6 +51,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -177,11 +179,25 @@ def _structural_check(data):
     return errors
 
 
+def _updater_cmd():
+    """The updater pinned to the version this plugin ships with (ER #228: a bare `npx <pkg>` can run
+    a stale cached copy). Falls back to `@latest`, which still forces a registry check."""
+    try:
+        pkg = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cli-update", "package.json")
+        with open(pkg, encoding="utf-8") as fh:
+            v = json.load(fh).get("version")
+        if isinstance(v, str) and re.fullmatch(r"\d+\.\d+\.\d+", v):
+            return f"npx update-agentic-workspace@{v}"
+    except (OSError, ValueError):
+        pass
+    return "npx update-agentic-workspace@latest"
+
+
 def _with_remedy(msg):
     """permissions-scaffold (ER #215, AC-PSC-4): an absent policy names its remedy at the CLI
     boundary, so the exception text foundry-capability-preflight.py classifies on stays exact."""
     if msg.rstrip().endswith("is missing"):
-        return msg + (" — seed it: `npx update-agentic-workspace` writes a starter, or copy "
+        return msg + (f" — seed it: `{_updater_cmd()}` writes a starter, or copy "
                       "context/permissions-template.yaml from the plugin")
     return msg
 
@@ -219,13 +235,9 @@ def load_policy(project_dir):
 # --------------------------------------------------------------------------------------------- #
 
 
-# AC-SGP-4 (v2, auth_seq 2): the agent never edits the policy. Fixed, grant-independent —
-# `--write` places these two native deny rules in `.claude/settings.json` `permissions.deny`
-# every run, `--check` counts either one's absence as drift, exactly like every other rule this
-# compiler owns (recorded in the sidecar, removed only if this compiler itself no longer derives
-# it). Retargeted here (not the Bash-only `cli/permission-floor.json` script-invocation floor,
-# which `tests/test_permission_floor_map.py` asserts is `Bash(...)`-shaped only) per the spec's
-# 2026-09-19 amendment — see that spec's `## Amendments` table.
+# RETIRED in v1.18.0 (operator decision 2026-09-25): the two self-guard deny rules an earlier
+# `--write` placed on the policy file. Kept as a constant only so `--write` can take them back (a deny
+# rule is otherwise never removed: an operator's own deny is sacrosanct, PR #165).
 POLICY_SELF_DENY_RULES = (
     "Edit(.foundry/permissions.yaml)",
     "Write(.foundry/permissions.yaml)",
@@ -233,22 +245,11 @@ POLICY_SELF_DENY_RULES = (
 
 
 def derive_rules(grants):
-    """Every `automatic` grant -> one allow rule; every `approval_required` grant -> one ask
-    rule; plus the two fixed AC-SGP-4 deny rules on the policy file itself. Sorted so the derived
-    set (and everything downstream of it) is deterministic regardless of grant-declaration order
-    -- required for --write's idempotency (AC-SGP-3)."""
-    allow, ask = [], []
-    for g in grants:
-        rule = f"{g['tool']}({g['pattern']})"
-        if g["mode"] == "automatic":
-            allow.append(rule)
-        else:
-            ask.append(rule)
-    return {
-        "allow": sorted(set(allow)),
-        "ask": sorted(set(ask)),
-        "deny": sorted(POLICY_SELF_DENY_RULES),
-    }
+    """Every `automatic` grant -> one allow rule; an `approval_required` grant -> NOTHING (v1.18.0,
+    AC-V118A-3: a grant never adds a prompt). No deny rules. Sorted so the derived set is
+    deterministic regardless of grant-declaration order -- required for --write's idempotency."""
+    allow = [f"{g['tool']}({g['pattern']})" for g in grants if g["mode"] == "automatic"]
+    return {"allow": sorted(set(allow)), "ask": [], "deny": []}
 
 
 # --------------------------------------------------------------------------------------------- #
@@ -362,6 +363,12 @@ def compute_drift(derived, settings_rules, sidecar):
                     findings.append(
                         f"extra {tier} rule (previously compiled, no longer derived): {rule!r}"
                     )
+    # v1.18.0: the retired self-guard pair still in settings.json is drift `--write` takes back
+    for rule in POLICY_SELF_DENY_RULES:
+        if rule in settings_rules["deny"]:
+            f = f"extra deny rule (previously compiled, no longer derived): {rule!r}"
+            if f not in findings:
+                findings.append(f)
     return sorted(findings)
 
 
@@ -422,8 +429,9 @@ def run_write(project_dir):
         to_remove = owned_before[tier] - set(derived[tier])
         if tier == "deny":
             # PR #165 security review: an operator's own deny rule is never removed, whatever the
-            # sidecar claims -- only the compiler's two self-protection rules are ever retired.
-            to_remove &= set(POLICY_SELF_DENY_RULES)
+            # sidecar claims -- only the compiler's two retired self-protection rules are taken back,
+            # owned or not (v1.18.0: an earlier updater also placed them).
+            to_remove = set(POLICY_SELF_DENY_RULES)
         kept = [r for r in existing if r not in to_remove]
         to_add = [r for r in derived[tier] if r not in kept]
         perms[tier] = kept + to_add
@@ -470,6 +478,20 @@ def _project_dir(root):
     return root or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
 
 
+def _write_target_refusal(project_dir):
+    """A refusal message, or None. `--write` edits `<root>/.claude/settings.json`; it may never land
+    in USER-scope settings (`~/.claude/settings.json`, which reaches every session on the machine) —
+    v1.18.0 security review Block 4: `--root $HOME` let an agent-written policy grant itself anything,
+    everywhere, without a prompt. Checked by resolved path, so a symlinked `.claude` cannot route it."""
+    home = os.path.realpath(os.path.expanduser("~"))
+    real = os.path.realpath(project_dir)
+    user_settings = os.path.realpath(os.path.join(home, ".claude", "settings.json"))
+    target = os.path.realpath(os.path.join(real, ".claude", "settings.json"))
+    if real == home or target == user_settings:
+        return "refusing --write: the target is user-scope ~/.claude/settings.json (it reaches every session)"
+    return None
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="foundry-permissions-compile — compile .foundry/permissions.yaml into "
@@ -486,6 +508,13 @@ def main(argv=None):
     if args.check:
         code, message = run_check(project_dir)
     else:
+        # v1.18.0 security review Block 4: `--write` edits a settings file, so it never targets the
+        # operator's home (that is USER-scope `~/.claude/settings.json`, reaching every session) nor
+        # a tree other than the session's project when one is set.
+        refusal = _write_target_refusal(project_dir)
+        if refusal:
+            print(refusal)
+            return EXIT_MISSING_OR_INVALID
         code, message = run_write(project_dir)
 
     print(message)

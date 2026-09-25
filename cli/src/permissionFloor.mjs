@@ -4,7 +4,6 @@
 // (AC-BCL-8). `covers()` agrees with tests/test_permission_floor_map.py::_subsumes on the shared
 // 8-row table by construction (same prefix-subsumption rule).
 import fs from 'node:fs';
-import { SELF_GUARD_DENY } from './selfGuardDeny.mjs';
 import os from 'node:os';
 
 /** The one map schema_version this build understands. A map declaring anything else is refused
@@ -210,15 +209,19 @@ export const DRIFT_CLASSES = Object.freeze([
 
 /** Build the settings.json object the CLI writes, verbatim from the bundled map plus the
  * marketplace/plugin pins (AC-BCL-4). */
+/** v1.18.0 (AC-V118A-2): the ONLY tier the floor writes into settings. Measured 2026-09-25 with live
+ * `claude -p` runs: no Bash rule naming a script path matches (not the floor's
+ * plugin-cache glob shape, not even an exact absolute path), so the
+ * allow rows granted nothing and the ask rows gated nothing. The plugin's own scripts are allowed by
+ * the `foundry-plugin-scripts-allow.py` PreToolUse hook instead, and the map's script rows stay as the
+ * closed-world REGISTRY of every script (AC-PFM-2), never projected. */
+export const PROJECTED_TIERS = Object.freeze(['deny']);
+
 export function buildSettings(map, pins) {
   const byTier = { allow: [], ask: [], deny: [] };
   for (const e of map.entries) {
-    byTier[e.tier].push(e.rule);
+    if (PROJECTED_TIERS.includes(e.tier)) byTier[e.tier].push(e.rule);
   }
-  // hotfix-v1.17.3: the policy file's own self-guard pair rides with the floor on the create path
-  // (the scaffold seeds .foundry/permissions.yaml in the same run), so a fresh workspace is in-sync
-  // instead of `policy drift (2)` until someone runs the compiler.
-  for (const r of SELF_GUARD_DENY) if (!byTier.deny.includes(r)) byTier.deny.push(r);
   // THE PINNED LITERAL — SUPERSEDED (feat-foundry-installer-unpinning, AC-IUP-3). This block used
   // to read (AC-BCL-4(b), contract v1.2 — PR #61 security review Block 1), verbatim:
   //
@@ -278,7 +281,8 @@ export function buildSettings(map, pins) {
  * rationale (AC-BCL-3). */
 export function renderCapabilityLines(map) {
   const lines = [];
-  for (const tier of ['allow', 'ask', 'deny']) {
+  lines.push("  [allow] the plugin's own scripts — by the plugin's PreToolUse hook, not by settings rules");
+  for (const tier of PROJECTED_TIERS) {
     const entries = map.entries.filter((e) => e.tier === tier);
     if (entries.length === 0) continue;
     lines.push(`  [${tier}] (${entries.length} rules)`);

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "plugin_root_glob": "~/.claude/plugins/cache/*/foundry/*",
-  "generated_for_plugin_version": "1.17.6",
+  "generated_for_plugin_version": "1.18.0",
   "entries": [
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-acceptance-contract-validate.py:*)",
@@ -234,11 +234,6 @@
       "rationale": "routine-wake (autonomy-continuation R3, AC-RWK-1): validates <programme>/--deck-name as [a-z0-9-]+ slugs and prints the self-contained Routine prompt plus the /schedule recipe and prerequisites; reads no corpus state and writes nothing"
     },
     {
-      "rule": "Bash(claude plugin tag:*)",
-      "tier": "ask",
-      "rationale": "a tree path arrives between the verb and --push, not prefix-keyable at finer grain; a dry-run also prompts"
-    },
-    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-authorize.py:*)",
       "tier": "ask",
       "rationale": "ceremony: front-authorization; --yes/--skip-audit-reason arrive after other args, not prefix-keyable, so the whole script is ask"
@@ -357,11 +352,6 @@
       "rule": "Bash(gh pr merge --admin:*)",
       "tier": "deny",
       "rationale": "absolute anti-pattern: bypasses required reviews/checks on the merge floor"
-    },
-    {
-      "rule": "Bash(git push --force:*)",
-      "tier": "deny",
-      "rationale": "absolute anti-pattern: force-push; belt-and-braces behind the hook-enforced floor (R3)"
     },
     {
       "rule": "Bash(tofu destroy -auto-approve:*)",

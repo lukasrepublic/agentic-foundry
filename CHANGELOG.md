@@ -8,6 +8,74 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.18.0 — 2026-09-25
+
+### Friction removed, upgrades that land: one consolidated fix for the upgrade and permissions surface
+
+v1.17.1–v1.17.6 each patched one reported symptom. This release is the result of one audit of the
+whole surface instead: a read-only measurement of every workspace an operator runs, a live
+permission-matching test, and three separate review lenses. Everything the audit found is fixed here.
+`create-agentic-workspace` 0.18.0 and `update-agentic-workspace` 0.2.0 are published together.
+
+**Permissions — nothing the framework writes adds a prompt any more** (#249, #253).
+- **Foundry's own scripts run without a prompt**, through a new PreToolUse hook,
+  `hooks/foundry-plugin-scripts-allow.py`. A live `claude -p` test showed that no Bash permission
+  rule naming a script path ever matched a real invocation — not the floor's
+  `~/.claude/plugins/cache/*/foundry/*/scripts/…` rows, not even an exact absolute path — so the
+  floor's 48 allow rows granted nothing and its 21 ask rows gated nothing. The hook allows exactly one
+  plain invocation of a file under the plugin's own `scripts/` or `hooks/` (optionally after
+  `python3`/`bash`/`sh`); a compound command, redirection, substitution, any other `$` expansion or a
+  path outside the plugin root gets no decision, and the normal permission mode applies.
+- **The floor writes only its deny rows** (`gh pr merge --admin`, `docker system prune`,
+  `tofu destroy -auto-approve`). The updater retires every floor-shaped script row from
+  `.claude/settings.json` and `.claude/settings.local.json` — wildcard, version-pinned or bare — plus
+  the broad `git push --force` deny (the git-discipline hook is the floor: it still refuses protected
+  targets), the `claude plugin tag` ask row, and the self-guard deny pair on
+  `.foundry/permissions.yaml`. Operator rows of any other shape are never touched.
+- **`approval_required` grants compile to nothing.** They used to compile to `ask` rows, which
+  outrank `allow` and auto mode — a "grant" that added prompts. `--write` takes those rows back.
+  Grants only ever widen.
+- **The capability preflight blocks only on a deny.** A capability that is simply not pre-granted is
+  listed under `classifier` (the session's mode decides) and never blocks dispatch.
+- Every printed floor row names its file and tier; the doctor's `permissions-policy` line names the
+  two files it compared.
+
+**Hooks stop blocking ordinary work** (#251, #253).
+- `foundry-cwd-enforce.sh` allows writes to `~/.claude/` (memory, plans), the temp dirs, and anything
+  outside the repository's worktrees; it still blocks writes into the main checkout or another
+  worktree from a linked-worktree session.
+- The git-discipline hook admits `gh pr merge --auto` (the platform's required checks enforce the
+  wait; `--admin` stays refused) and resolves a bare `git push --force-with-lease` to the current
+  branch's destination, refusing only when that is protected or unknown.
+- The session-learnings Stop hook is off unless `FOUNDRY_SESSION_LEARNINGS=on`.
+
+**Upgrades land in git and tell the truth** (#250, #252, #253).
+- The upgrade report lists every path the updater `written`/`removed`, plus `config_dir` and
+  `hostname`; `/foundry:post-upgrade` commits exactly those as the first commit of its one PR, so a
+  workspace's `main` matches what its sessions run (measured: `.claude/settings.json` differed from
+  `main` in 9 of 11 workspaces). The skill refuses a report from another environment (an agent
+  container's `~/.claude` is its own volume), relocks a stack profile the plugin advanced, and runs
+  the reference-scanned `--cleanup`.
+- An existing file is never "drifted" on the update path any more: operator-owned files are `[kept]`,
+  `.claude/settings.json` and `.gitignore` are `[reconciled]` by their own reconcilers. A converged
+  workspace exits 0 — before, every run exited 2.
+- `update-agentic-workspace --dry-run` prints the plan and writes nothing; the preview is labelled a
+  plan. The `plugin-update` verdict and `to_plugin_version` come from the installed registry, not from
+  whether the marketplace moved. Backfill write failures are counted.
+- The doctor: a stack-profile lock one version behind the profile the plugin ships is ADVISORY with
+  the relock command (it turned workspaces RED after every upgrade); `branches` is ADVISORY when
+  merged branches remain; remedies name the pinned updater; the statusline renderer is looked up for
+  this project, then the user scope.
+- The branch gc's `gh` fallback passes `--base <default>`, so a PR merged into another branch is not
+  counted as merged.
+
+**Release gate.** Each release is now rehearsed before it is cut: the candidate updater runs against a
+copy-on-write clone of every real workspace and the result is diffed for added prompts or refusals,
+lost operator rows and writes the report would not commit; and permission claims are measured with a
+live `claude -p` run, not read from code.
+
+- **Security review** (#253): a separate-context review of the combined diff found 5 Blocks and 6 Risks, all fixed before the cut — the allow hook now refuses any `$` (the Bash tool's shell does not see `CLAUDE_PLUGIN_ROOT`, measured), backslashes, non-`.py`/`.sh` files, other plugin versions, scripts that execute commands from their input and `compile --root`; `compile --write` never targets user-scope settings; the worktree guard compares by device/inode (a case-variant path slipped past a string compare); a bare force-push resolves only after branch-preserving git clauses; a settings deny still wins over the hook's allow (measured).
+
 ## v1.17.6 — 2026-09-25
 
 ### The branch gc tells the truth; publish waits long enough

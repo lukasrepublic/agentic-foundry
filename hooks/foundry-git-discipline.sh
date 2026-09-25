@@ -9,7 +9,9 @@
 # DEFAULT (wired-on) active set = the IRREVERSIBLE tier, exactly:
 #   (a) force-push to a PROTECTED branch  — `git push` with force intent (a --force/-f/
 #       --force-with-lease flag OR a leading-`+` refspec) whose RESOLVED destination is —
-#       or cannot be PROVEN not to be — a protected branch (refspec-aware; see below).
+#       or cannot be PROVEN not to be — a protected branch (refspec-aware; see below). A push
+#       naming NO refspec resolves its destination from the current branch / its upstream in
+#       the repository it runs in, and is refused only when that is protected or unresolvable.
 #   (d) `git branch -D` / `--delete --force` of a protected branch
 #   (e) `git filter-repo`
 #   (f) `git filter-branch`
@@ -17,7 +19,9 @@
 #   (h) `git commit --no-verify` / `-n`  (other-hook bypass)
 #   (i) `gh pr merge` — (floor-#3 review B2) the outcome-level replacement for
 #       the deleted merge-gate PreToolUse hook's block: `--admin` (server-side-check bypass)
-#       anywhere in the argv is refused OUTRIGHT; a plain `gh pr merge` is admitted ONLY when
+#       anywhere in the argv is refused OUTRIGHT; `gh pr merge --auto` (any merge method) is
+#       admitted WITHOUT a query — it hands the merge to the platform, whose required checks
+#       enforce the wait server-side (AC-V118B-2); any other `gh pr merge` is admitted ONLY when
 #       a live `gh pr checks` query reports every check passing (non-zero exit, a fail/pending
 #       row, or a query error/timeout all BLOCK, fail-closed). This is the ONE clause in this
 #       hook that executes anything beyond a static token scan — see its own comment below.
@@ -116,6 +120,15 @@ except Exception:
 # No command recoverable (empty / unparseable / absent / non-string) => admit.
 [ -z "$cmd" ] && exit 0
 
+# The session's working directory as the harness reports it (the hook payload's `cwd`), used ONLY
+# to resolve the destination of a no-refspec force-push (AC-V118B-3). Absent => this process's cwd.
+payload_cwd="$(printf '%s' "$payload" | python3 -c 'import sys,json
+try:
+    c = json.load(sys.stdin).get("cwd", "")
+    print(c if isinstance(c, str) else "")
+except Exception:
+    print("")' 2>/dev/null || true)"
+
 # ----------------------------------------------------------------------------------------
 # The decision is delegated to a single python3 evaluator over the recovered command. It is
 # a PURE token scan (no shell execution of the command). Force intent is refspec-aware. The
@@ -126,7 +139,8 @@ except Exception:
 # bash 3.2's command-substitution scanner mis-tracks backquotes/quotes across heredoc content
 # (feat-foundry-bash32-parse-guard), so the substitution below contains only the function call.
 _git_discipline_eval() {
-  PROTECTED="$PROTECTED" STRICT_HISTORY="$STRICT_HISTORY" CMD="$cmd" PLUGIN_ROOT="$PLUGIN_ROOT" python3 - <<'PY'
+  PROTECTED="$PROTECTED" STRICT_HISTORY="$STRICT_HISTORY" CMD="$cmd" PLUGIN_ROOT="$PLUGIN_ROOT" \
+    PAYLOAD_CWD="$payload_cwd" python3 - <<'PY'
 import json, os, re, shlex, subprocess, sys
 
 sys.path.insert(0, os.path.join(os.environ.get("PLUGIN_ROOT", ""), "scripts"))
@@ -322,6 +336,125 @@ def clause_args(start):
         i += 1
     return out
 
+# --- AC-V118B-3: the destination of a force-push that names NO refspec. Refusing every such push
+# as "destination unknown" blocked the everyday `git push --force-with-lease` of an agent's own
+# feature branch after a rebase. The destination IS knowable: it is the current branch (push.default
+# simple/current) or its upstream's merge ref (push.default upstream), read from the repository
+# the command will run in. Resolution is deliberately narrow and FAIL-CLOSED — any construct that
+# could make the branch at execution time differ from the branch read now, or make the push carry
+# more than one branch, returns an "unresolvable" reason and the push stays refused:
+#   * a flag that pushes more than the current branch (--all/--mirror/--branches/--tags/--prune);
+#   * a git global option other than a literal `-C <dir>` (-c, --git-dir, --work-tree, …);
+#   * an inline VAR=value assignment in the clause (GIT_DIR=, HOME=, … can redirect repo/config);
+#   * anything EARLIER in the command that can change directory or branch: cd/pushd/popd, a
+#     `checkout`/`switch` token (git or gh), or an earlier git subcommand outside a small allowlist
+#     of branch-preserving ones (a two-argument `rebase <upstream> <branch>` checks out <branch>);
+#   * a detached HEAD, push.default=matching, a configured remote.<name>.push refspec, a non-branch
+#     upstream merge ref, or ANY git query failure/timeout.
+# The candidates are {current branch, upstream merge branch}; the push is refused if EITHER is
+# protected. Every refusal for a push that DOES name a refspec is unchanged.
+_BRANCH_PRESERVING_GIT = {"add", "commit", "status", "fetch", "log", "diff", "show", "rev-parse",
+                          "pull", "stash", "tag", "restore", "rm", "mv", "merge", "cherry-pick",
+                          "revert", "reset", "am", "apply", "describe", "ls-files", "grep", "blame",
+                          "gc", "rebase"}
+
+
+def _git_sub_of(args_):
+    """First bare token of a git clause's args (its subcommand) and the tokens after it."""
+    k = 0
+    while k < len(args_):
+        if args_[k].startswith("-"):
+            k += 2 if args_[k] in ("-c", "--git-dir", "--work-tree", "-C", "--namespace") else 1
+            continue
+        return args_[k].lower(), args_[k + 1:]
+    return None, []
+
+
+def _resolve_no_refspec_push(git_idx, globals_, lrest_):
+    """(candidate_destination_branches, None) or (None, unresolvable_reason)."""
+    # v1.18.0 security review R1: every EARLIER clause must itself be a branch-preserving `git`
+    # command — anything else (`bash -c "git checkout main"`, `./x.sh`, `make`, `sh …`) could change
+    # the branch between this read and the push and cannot be enumerated; `git stash branch …`
+    # checks a branch out. The everyday `git rebase origin/main && git push -f` and
+    # `git add … && git commit … && git push -f` stay admitted.
+    starts = [0] + [k + 1 for k in range(git_idx) if toks[k] in SEPARATORS]
+    for st in starts:
+        # grouping tokens (`(`, `{`, `!`) open a clause without being its command
+        while st < git_idx and (toks[st] in ("(", "{", "!", "((", ")", "}") or toks[st] in SEPARATORS):
+            st += 1
+        if st >= git_idx:
+            continue
+        if not _is_verb(low[st], "git"):
+            return None, "an earlier clause (%s) is not a git command" % toks[st]
+        psub, prest = _git_sub_of(clause_args(st))
+        if psub == "stash" and prest[:1] and prest[0].lower() == "branch":
+            return None, "an earlier `git stash branch`, which checks out a branch"
+    for flag in ("--all", "--mirror", "--branches", "--tags", "--prune"):
+        if flag in lrest_:
+            return None, "%s pushes more than the current branch" % flag
+    # Clause prefix (inline env assignments / wrappers bound to THIS git clause).
+    cs = git_idx
+    while cs > 0 and toks[cs - 1] not in SEPARATORS:
+        cs -= 1
+    for tk in toks[cs:git_idx]:
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tk):
+            return None, "an inline assignment (%s) can redirect the repository or its config" % tk
+    # Anything earlier in the command that can change directory or branch.
+    for k in range(git_idx):
+        lk = low[k]
+        if lk in ("cd", "pushd", "popd"):
+            return None, "an earlier directory change (%s)" % toks[k]
+        if lk in ("checkout", "switch"):
+            return None, "an earlier branch change (%s)" % toks[k]
+        if _is_verb(lk, "git"):
+            psub, prest = _git_sub_of(clause_args(k))
+            if psub is None:
+                continue
+            if psub not in _BRANCH_PRESERVING_GIT:
+                return None, "an earlier `git %s`, which may change the branch or its config" % psub
+            if psub == "rebase" and len([r for r in prest if not r.startswith("-")]) >= 2:
+                return None, "an earlier `git rebase <upstream> <branch>`, which checks out <branch>"
+    # The directory the push runs in.
+    pc = os.environ.get("PAYLOAD_CWD", "")
+    base = pc if (pc and os.path.isabs(pc) and os.path.isdir(pc)) else os.getcwd()
+    for opt, val in globals_:
+        if opt != "-C" or val is None:
+            return None, "the git global option %s" % opt
+        if any(c in val for c in ("$", "`", "*", "?")):
+            return None, "a non-literal `-C` directory (%s)" % val
+        base = os.path.join(base, os.path.expanduser(val))
+    if not os.path.isdir(base):
+        return None, "the directory %s does not exist" % base
+
+    def _git(*a):
+        return subprocess.run(["git", "-C", base] + list(a), capture_output=True, text=True,
+                              timeout=10)
+    try:
+        head = _git("symbolic-ref", "--quiet", "--short", "HEAD")
+        if head.returncode != 0 or not head.stdout.strip():
+            return None, "HEAD is detached or the repository could not be read"
+        branch = head.stdout.strip()
+        pdef = _git("config", "--get", "push.default").stdout.strip().lower()
+        if pdef == "matching":
+            return None, "push.default=matching pushes every matching branch"
+        pushcfg = _git("config", "--get-regexp", r"^remote\..*\.push$")
+        if pushcfg.returncode == 0 and pushcfg.stdout.strip():
+            return None, "a configured remote.<name>.push refspec decides the destination"
+        mirror = _git("config", "--get-regexp", r"^remote\..*\.mirror$")
+        if mirror.returncode == 0 and "true" in mirror.stdout.lower():
+            return None, "a remote configured as a mirror pushes every ref"
+        cands = {branch}
+        merge = _git("config", "--get", "branch.%s.merge" % branch)
+        mref = merge.stdout.strip() if merge.returncode == 0 else ""
+        if mref:
+            if not mref.startswith("refs/heads/") or len(mref) == len("refs/heads/"):
+                return None, "the upstream merge ref %r is not a branch" % mref
+            cands.add(mref[len("refs/heads/"):])
+    except Exception as e:
+        return None, "the branch query failed (%s)" % type(e).__name__
+    return sorted(cands), None
+
+
 # Iterate every `git` token (position-independent — env-prefix/wrapper/compound all fall
 # out of scanning all indices).
 for i, t in enumerate(low):
@@ -337,6 +470,7 @@ for i, t in enumerate(low):
     sub = None
     sub_idx = None
     j = 0
+    git_globals = []            # (option, value) pairs before the subcommand — AC-V118B-3 reads them
     while j < len(args):
         a = args[j]
         if a.startswith("-"):
@@ -344,8 +478,10 @@ for i, t in enumerate(low):
             # mis-reading it as the subcommand we skip ONE following bare token for the
             # known value-taking globals.)
             if a in ("-c", "--git-dir", "--work-tree", "-C", "--namespace") and j + 1 < len(args):
+                git_globals.append((a, args[j + 1]))
                 j += 2
                 continue
+            git_globals.append((a, None))
             j += 1
             continue
         sub = a.lower()
@@ -382,8 +518,18 @@ for i, t in enumerate(low):
             block("force-push with a non-literal remote/refspec (destination unknown to a "
                   "string scan) => assumed protected (fail-closed). Command: " + cmd)
         if not refspecs:
-            block("force-push with no refspec (destination = current branch, unknown to a "
-                  "string scan) => assumed protected (fail-closed). Command: " + cmd)
+            # AC-V118B-3: resolve the current branch / its upstream; refuse only if protected.
+            dsts, why = _resolve_no_refspec_push(i, git_globals, lrest)
+            if why:
+                block("force-push with no refspec whose destination cannot be resolved (%s) => "
+                      "assumed protected (fail-closed). Command: %s" % (why, cmd),
+                      remediation="Name the destination explicitly (git push --force-with-lease "
+                                  "origin <branch>); a non-protected branch is admitted.")
+            for dst in dsts:
+                if dst in protected:
+                    block("force-push with no refspec resolves to PROTECTED branch %r (the "
+                          "current branch or its upstream). Command: %s" % (dst, cmd))
+            continue                                    # resolved, every candidate non-protected
         for rs in refspecs:
             dst = strip_dst_ref(rs)
             if dst == "":                               # HEAD / unparseable => unknown
@@ -490,8 +636,11 @@ for i, t in enumerate(low):
                    "--subject", "--repo"}
 
     def _parse_merge_args(argv):
-        """(bare_positionals, repo_selectors, help_requested) or raises _AmbiguousFlag."""
+        """(bare_positionals, repo_selectors, help_requested, auto_requested) or raises
+        _AmbiguousFlag. `auto_requested` follows pflag bool semantics: `--auto`, or `--auto=<v>`
+        with a true value; the LAST occurrence wins (as pflag does)."""
         bare_, repos_, want_help, k_, end_of_flags = [], [], False, 0, False
+        want_auto = False
         while k_ < len(argv):
             a_ = argv[k_]
             # Redirection operators are not arguments. The `&` connector normalization splits
@@ -529,6 +678,8 @@ for i, t in enumerate(low):
                 if name_ in _BOOL_LONG:
                     if name_ == "--help":
                         want_help = True
+                    if name_ == "--auto":
+                        want_auto = ("=" not in a_) or inline_ in ("1", "t", "T", "true", "TRUE", "True")
                     k_ += 1
                     continue
                 raise _AmbiguousFlag(f"unrecognized flag {name_!r} for `gh pr merge`")
@@ -559,15 +710,15 @@ for i, t in enumerate(low):
                 raise _AmbiguousFlag(f"unrecognized short flag -{ch_} for `gh pr merge`")
             else:
                 k_ += 1                                    # cluster was all booleans
-        return bare_, repos_, want_help
+        return bare_, repos_, want_help, want_auto
 
     class _AmbiguousFlag(Exception):
         pass
 
     try:
-        bare, _repo_sels_parsed, _want_help = _parse_merge_args(args)
+        bare, _repo_sels_parsed, _want_help, _want_auto = _parse_merge_args(args)
     except _AmbiguousFlag as e:
-        bare, _repo_sels_parsed, _want_help = [], [], False
+        bare, _repo_sels_parsed, _want_help, _want_auto = [], [], False, False
         _flag_error = str(e)
     else:
         _flag_error = None
@@ -592,6 +743,15 @@ for i, t in enumerate(low):
               remediation=f"/foundry:merge-when-green {_pr_hint} — wait for checks, then merge "
                            "without --admin.",
               retryable=False)
+
+    # AC-V118B-2: `gh pr merge --auto` (any merge method) hands the merge to the platform: GitHub
+    # merges only once the branch's required checks pass, so the platform itself enforces the wait
+    # this clause's live query exists to enforce. Querying here refused exactly the command whose
+    # purpose is to wait for pending checks. `--admin` was refused above, so it cannot ride along.
+    # (On a repo with NO required checks the platform merges at once — the floor there is the
+    # repo's own branch protection, per docs/merge-floor.md, not this clause.)
+    if _want_auto:
+        continue
 
     # --- CONTEXT BINDING (feat-foundry-merge-verify-context, AC-MVC-1..8) -------------------
     # The verification MUST grade THE PR BEING MERGED. `gh` resolves a PR from ambient state —

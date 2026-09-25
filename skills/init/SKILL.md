@@ -207,7 +207,7 @@ standalone plugin repo) so the gates are live + fail-closed.
 
    <!-- foundry:init-verify-only:statusline v1 -->
    VERIFY-ONLY. init does not write the `statusLine`/`subagentStatusLine` wiring. The shipped
-   writer (since v1.17.0, statusline-wiring) is **`npx update-agentic-workspace`** — and
+   writer (since v1.17.0, statusline-wiring) is **`npx update-agentic-workspace@latest`** — and
    `create-agentic-workspace --existing --reconcile-floor` on a workspace that already carries
    `.claude/settings.json` — which installs the two wrappers under `.claude/hooks/` (framework-owned:
    converged when they carry the marker, kept when they do not; a kept or refused wrapper is never
@@ -294,7 +294,7 @@ only verifies and reports on all five, and names the real owner for each.
 
 - **status lines** — verifies: whether `statusLine`/`subagentStatusLine` are wired, and to what.
   no longer does: install the wrapper scripts or set the `.claude/settings.json` keys. owner:
-  `npx update-agentic-workspace` (since v1.17.0; also `create-agentic-workspace --existing
+  `npx update-agentic-workspace@latest` (since v1.17.0; also `create-agentic-workspace --existing
   --reconcile-floor` on a trusted workspace) — or by hand, see QUICKSTART's "Before your first session".
 - **native Bash sandbox** — verifies: whether `sandbox.enabled` is set, and its value.
   no longer does: enable the sandbox. owner: no shipped writer — enable it by hand, see

@@ -36,7 +36,12 @@ lane signal — Tier B advisory) plus `hooks/foundry-git-discipline.sh`'s determ
    3. **`skills-frontmatter`** — every shipped `skills/*/SKILL.md` frontmatter YAML-parses (a
       colon-in-a-plain-scalar defect class that is cheap to catch here, expensive live).
    4. **`stack-profile-lock`** — `.foundry/stack-profile.lock` (if present) resolves against the
-      shipped `packs/` tree; absent lock is `ok` ("not applicable"), not a failure.
+      shipped `packs/` tree; absent lock is `ok` ("not applicable"), not a failure. A lock whose
+      ONLY difference is an OLDER version of the same profile id this installed plugin ships (the
+      normal state right after a plugin update) is **ADVISORY** — `lock behind the profile version
+      this plugin ships (<id> <old>→<new>) — run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-stack-profile.py" --relock``
+      (AC-V118C-6). Any other mismatch — an id the plugin does not ship, a downgrade, a same-version
+      content change, an unreadable lock — stays RED.
    5. **`operator-registry`** — `.claude/foundry-operators.json` resolves via `foundry_authz`.
    6. **`control-plane`** (feat-foundry-control-plane-preflight, AC-CPP-1/-2/-3/-3b) — no dangling
       `repos{}` path in this project's own manifest, and no ancestor
@@ -44,27 +49,34 @@ lane signal — Tier B advisory) plus `hooks/foundry-git-discipline.sh`'s determ
       repo — a mistake-catcher, not a floor.
 
    The standalone `permission-floor` drift probe (feat-foundry-doctor-permission-floor-check,
-   AC-DPF-1..8) was retired by subtraction-wave (autonomy-continuation R4, AC-SUB-1c) — the
-   `permissions-policy` advisory line below carries the drift signal it used to render on its own
-   line (feat-foundry-authorization-capability-preflight-at-dispatch, AC-CPD-4).
+   AC-DPF-1..8) was retired by subtraction-wave (autonomy-continuation R4, AC-SUB-1c). Nothing
+   replaces it, and nothing needs to: since v1.18.0 the floor writes only its deny rows, and the
+   plugin's own scripts run through the `foundry-plugin-scripts-allow.py` PreToolUse hook (Bash
+   rules naming a script path never matched a real invocation — measured).
 
    Plus advisory-only lines, rendered the same way but never counted toward `DOCTOR-RED`:
    - **`permissions-policy`** (feat-foundry-authorization-capability-preflight-at-dispatch,
      AC-CPD-4 — replaces the R1 drift-only advisory, feat-foundry-authorization-standing-grants-
      as-policy AC-SGP-6) — runs `scripts/foundry-capability-preflight.py` over every atom of every
-     ACTIVE release under `.foundry/releases/*/release.yaml`, printing `preflight ok (<n> atoms)`
-     or `preflight: <n> missing rule(s)`, followed by the R1 drift state on the SAME line —
-     `; policy absent|in-sync|drift (<k>)`, the same derivation `foundry-permissions-compile.py
-     --check` runs. Never RED: a stale-permission workspace must never wedge a session.
+     ACTIVE release under `.foundry/releases/*/release.yaml`, printing `preflight over <n> active
+     atom(s): <d> denied[, <c> not pre-granted]` — only a capability a DENY rule would refuse is a
+     blocker; not pre-granted means the session's permission mode decides at run time — followed by
+     `; policy absent|in-sync|drift (<k>) (.foundry/permissions.yaml vs .claude/settings.json)`, the
+     same derivation `foundry-permissions-compile.py --check` runs, naming the two files compared.
+     ADVISORY only on a denial or drift. Never RED.
    - **`agent-teams`** (feat-agent-teams-enablement, AC-ATE-4) — `agent-teams: on (settings env)`
      or `agent-teams: off`, derived from whether the effective settings files' `env` block sets
      `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` to `"1"` (`~/.claude/settings.json`, then the
      project's `.claude/settings.json`, then `.claude/settings.local.json`, ascending precedence).
      Never RED: flipping the flag is an adopter opt-in — see `docs/how-to/agent-teams.md`.
    - **`retired-artifacts`** (hotfix-v1.17.4, ER #236) — `retired-artifacts: none present` or `<n>
-     present (<paths>) — run `npx update-agentic-workspace --cleanup``: files an earlier release wrote
+     present (<paths>) — run `npx update-agentic-workspace@<v> --cleanup``: files an earlier release wrote
      and no current release reads, from the catalogue the CLI ships (`cli/retired-artifacts.json`).
      Never RED: the updater reports them every run and removes them only under `--cleanup`.
+     Every updater remedy the doctor prints names `npx update-agentic-workspace@<v>`, where `<v>` is
+     this plugin's own `cli-update/package.json` version — never the bare name, which can run a
+     stale npx cache (AC-V118C-8). The `statusline` line reads the `installed_plugins.json` record
+     whose `projectPath` is this project, then the user-scope record — never another project's.
    - **`branches`** (branch-and-worktree-discipline, AC-BWD-3) — `branches: <n>
      merged-not-deleted, <m> stale worktrees`, computed by importing
      `scripts/foundry-worktree-gc.py`'s own classifier (ancestry-only, no live `gh` call — this
@@ -72,7 +84,8 @@ lane signal — Tier B advisory) plus `hooks/foundry-git-discipline.sh`'s determ
      what it measured (ER #244): `(ancestry only; squash-merged branches need the gc's gh check)`,
      plus `; <n> ref(s) outside the glob set — widen with --include` when the built-in prefixes
      dropped any — on a squash-merge repo ancestry alone reads 0, so run the gc itself for a live
-     count. Reads `n/a (not a git checkout)` when it is not one. Never RED: a repo-wide sweep is an operator/agent action
+     count. Reads `n/a (not a git checkout)` when it is not one. **ADVISORY** when `<n>` > 0 (it
+     names the gc's `--dry-run` then `--apply`); `ok` at 0. Never RED: a repo-wide sweep is an operator/agent action
      (`--apply`, `ask`-tiered), never a doctor-enforced one — see
      `docs/how-to/branching-and-cleanup.md`.
 

@@ -21,7 +21,7 @@ The output names the failing probe. The six probes and their usual causes:
 That's expected, not a bug. `/foundry:init` only **verifies and reports** on the
 `statusLine`/`subagentStatusLine` wiring, the native Bash sandbox enable, the `gh` jail's
 authentication, and the `GH_CONFIG_DIR` session-env carrier — it never writes any of them.
-The status-line wiring has a shipped writer since v1.17.0: `npx update-agentic-workspace` (and
+The status-line wiring has a shipped writer since v1.17.0: `npx update-agentic-workspace@latest` (and
 `create-agentic-workspace --existing --reconcile-floor` on a trusted workspace) installs the
 wrappers and adds the keys when absent. The other three still have **no shipped writer** (a
 plugin cannot edit its own session's confinement), so init's job there is to name what it found
@@ -37,17 +37,18 @@ never RED by design — a stale-permission workspace must never wedge a session.
 parts:
 
 - **Capability preflight**, over every atom (contract or charter) of every active release:
-  `preflight ok (<n> atoms)` when every capability the release needs resolves, or
-  `preflight: <n> missing rule(s)` when it doesn't.
-- **Policy drift**, the same derivation `foundry-permissions-compile.py --check` runs:
-  `policy absent` (no `.foundry/permissions.yaml` yet), `policy in-sync`, or
-  `policy drift (<k>)` (the compiled `.claude/settings.json` no longer matches the policy source).
+  `preflight over <n> active atom(s): <d> denied[, <c> not pre-granted]`. Only `denied` — a
+  declared capability a deny rule would refuse — is a problem. `not pre-granted` means the
+  session's permission mode (auto mode's classifier, or a prompt) decides at run time; it is
+  information, never a blocker.
+- **Policy drift**, the same derivation `foundry-permissions-compile.py --check` runs, naming the
+  two files it compares: `policy absent`, `policy in-sync`, or `policy drift (<k>)`, each followed by
+  `(.foundry/permissions.yaml vs .claude/settings.json)`.
 
 Remedies:
 
-- **`preflight: <n> missing rule(s)`** — run the preflight directly to see which rule(s) are
-  missing and paste the reported `/permissions` addition yourself; never self-grant by editing
-  `.claude/settings.json` directly:
+- **`<d> denied`** — run the preflight directly to see which deny rule refuses which capability;
+  whether to lift the deny is your call:
 
   ```bash
   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-capability-preflight.py" --contract <path-to-acceptance-contract.yaml>
@@ -67,7 +68,7 @@ Remedies:
   ```
 
 - **`policy absent`** — no `.foundry/permissions.yaml` yet; not itself a problem. The line names
-  the remedy: `npx update-agentic-workspace` seeds an empty, commented starter (operator-owned
+  the remedy: the updater seeds an empty, commented starter (operator-owned
   from then on, never reconciled), or copy the plugin's `context/permissions-template.yaml`. See
   [how-to/standing-grants.md](how-to/standing-grants.md) for writing and compiling a grant.
 
@@ -78,7 +79,7 @@ wrapper at `.claude/hooks/foundry-statusline.sh` and a `statusLine` key in `.cla
 Run `/foundry:doctor` and read its `statusline:` advisory line: it names the FIRST missing piece —
 no `statusLine` key, wrapper absent, wrapper without the framework marker (yours, never touched),
 or no renderer resolvable from this machine (with the config root it looked under). The first two
-are fixed by `npx update-agentic-workspace`, which wires both on a trusted workspace and refreshes a
+are fixed by `npx update-agentic-workspace@latest`, which wires both on a trusted workspace and refreshes a
 framework-owned wrapper. Even with no renderer the wrapper now prints `⌂ <dir>:<branch> · tok <bar> NN%`
 itself, so a plainer line means "renderer not found", never "nothing configured".
 
@@ -263,7 +264,7 @@ claude plugin install foundry@agentic-foundry --scope project
 discards every version of every plugin from every marketplace, which is right when nothing on disk
 can be trusted. If the install itself is fine and you just want the disk residue back (a superseded
 plugin-cache version left beside the current one after each update, or a stale/duplicate
-marketplace registration), `npx update-agentic-workspace --cleanup` is the surgical alternative: it
+marketplace registration), `npx update-agentic-workspace@latest --cleanup` is the surgical alternative: it
 prunes only cache versions the platform's own state no longer names as live, and removes only a
 registration no scope still enables — never the blunt `rm -rf` above. Run it without `--cleanup`
 first to preview what it would remove; nothing is deleted until you pass the flag.
