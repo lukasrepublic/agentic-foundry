@@ -101,6 +101,21 @@ def _project_dir():
     return os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
 
 
+def _updater_cmd(plugin_root=None):
+    """AC-V118C-8 (audit D4): the updater a printed remedy names, PINNED to the version this plugin
+    was released with — an unpinned `npx update-agentic-workspace` can run a stale npx cache (the
+    ER #228 trap). The source of truth is the plugin's own `cli-update/package.json` (the package
+    the release publishes, bumped in the same cut). Unreadable → the bare name, never a guessed pin."""
+    try:
+        with open(os.path.join(plugin_root or PLUGIN_ROOT, "cli-update", "package.json"), encoding="utf-8") as fh:
+            ver = (json.load(fh) or {}).get("version")
+        if isinstance(ver, str) and re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", ver):
+            return f"npx update-agentic-workspace@{ver}"
+    except Exception:  # noqa: BLE001 -- a remedy string never crashes a probe
+        pass
+    return "npx update-agentic-workspace"
+
+
 # --------------------------------------------------------------------------------------- #
 # 1. plugin manifest
 # --------------------------------------------------------------------------------------- #
@@ -224,6 +239,9 @@ def _load_stack_profile_module(plugin_root):
     return mod
 
 
+_RELOCK_CMD = 'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-stack-profile.py" --relock'
+
+
 def check_stack_profile_lock(plugin_root=None, project_dir=None):
     root = plugin_root or PLUGIN_ROOT
     try:
@@ -238,6 +256,19 @@ def check_stack_profile_lock(plugin_root=None, project_dir=None):
     try:
         resolved = sp.resolve_lock(project_dir, root=root, plugin_root=root)
     except sp.StackProfileError as e:
+        # AC-V118C-6 (audit C1): a lock whose ONLY difference is a newer version of the SAME
+        # profile id that this installed plugin itself ships is the normal state right after a
+        # plugin update — ADVISORY with the exact relock command, not RED. Anything else (an id
+        # the plugin does not ship, a downgrade, same-version drift, a probe that cannot decide)
+        # keeps the fail-closed RED below.
+        try:
+            advances = sp.shipped_version_advances(project_dir, root=root, plugin_root=root)
+        except Exception:  # noqa: BLE001 — undecidable is never downgraded from RED
+            advances = None
+        if advances:
+            moved = ", ".join(f"{pid} {old}→{new}" for pid, old, new in advances)
+            return ADVISORY, (f"lock behind the profile version this plugin ships ({moved}) — run "
+                              f"`{_RELOCK_CMD}` (or /foundry:relock)")
         return False, (f"active stack-profile.lock does not resolve: {e} — run "
                        "`/foundry:relock` if this is a trusted profile-version advance")
     return True, f"stack-profile lock resolves ({len(resolved)} profile(s) pinned)"
@@ -524,7 +555,13 @@ def check_branches_advisory(plugin_root=None, project_dir=None):
         scope = "ancestry only; squash-merged branches need the gc's gh check"
         if filtered:
             scope += f"; {filtered} ref(s) outside the glob set — widen with --include"
-        return True, f"{len(merged)} merged-not-deleted, {len(stale_worktrees)} stale worktrees ({scope})"
+        detail = f"{len(merged)} merged-not-deleted, {len(stale_worktrees)} stale worktrees ({scope})"
+        # v1.18.0 (audit, delivery lens): a merged-not-deleted branch is work the operator has to
+        # clean up, so N > 0 is ADVISORY (still never RED) and names the sweep; 0 stays ok.
+        if merged:
+            return ADVISORY, detail + (' — review then delete: python3 "${CLAUDE_PLUGIN_ROOT}/scripts/'
+                                       'foundry-worktree-gc.py" --dry-run, then --apply')
+        return True, detail
     except Exception as e:  # noqa: BLE001 -- deliberate: AC-BWD-3 must never redden or crash the run
         return ADVISORY, _sanitize_detail(f"unknown (probe error: {type(e).__name__}: {e})")
 
@@ -564,17 +601,39 @@ _STATUSLINE_MARKER = "feat-foundry-init-statusline-wrapper"
 _STATUSLINE_WRAPPER_REL = os.path.join(".claude", "hooks", "foundry-statusline.sh")
 
 
-def _statusline_renderer_path(config_root):
+def _registry_record_for(entry, project_dir):
+    """AC-V118C-8 (audit D9): installed_plugins.json carries ONE record per scope. Pick the
+    project-scope record whose `projectPath` is THIS project dir, else the user-scope record (no
+    `projectPath`), else none — never merely the first record, which can be another project's
+    install of a different version (the same order cli/src/upgradeReport.mjs uses)."""
+    if isinstance(entry, dict):
+        entry = [entry]
+    if not isinstance(entry, list):
+        return None
+    records = [r for r in entry if isinstance(r, dict)]
+    want = os.path.realpath(project_dir) if project_dir else None
+    if want:
+        for r in records:
+            pp = r.get("projectPath")
+            if isinstance(pp, str) and pp and os.path.realpath(pp) == want:
+                return r
+    for r in records:
+        if not r.get("projectPath"):
+            return r
+    return None
+
+
+def _statusline_renderer_path(config_root, project_dir=None):
     """The renderer the wrapper would resolve from THIS machine: installed_plugins.json's
-    installPath first, then the cache newest by version segment. Returns (path, version) or
-    (None, None). Mirrors cli/templates/foundry-statusline.sh's resolution order (AC-SLW-3)."""
+    installPath first (the record for this project, then the user-scope record), then the cache
+    newest by version segment. Returns (path, version) or (None, None). Mirrors
+    cli/templates/foundry-statusline.sh's resolution order (AC-SLW-3)."""
     ip = os.path.join(config_root, "plugins", "installed_plugins.json")
     try:
         with open(ip, encoding="utf-8") as fh:
             doc = json.load(fh)
         entry = (doc.get("plugins") or {}).get("foundry@agentic-foundry") or doc.get("foundry@agentic-foundry")
-        if isinstance(entry, list):
-            entry = entry[0] if entry else None
+        entry = _registry_record_for(entry, project_dir)
         install = entry.get("installPath") if isinstance(entry, dict) else None
         if install and os.path.isfile(os.path.join(install, "scripts", "foundry-statusline.sh")):
             return os.path.join(install, "scripts", "foundry-statusline.sh"), os.path.basename(install.rstrip("/"))
@@ -605,15 +664,15 @@ def check_statusline(plugin_root=None, project_dir=None):
         except Exception:  # noqa: BLE001
             key = None
         if not key:
-            return ADVISORY, "no `statusLine` key in .claude/settings.json — run `npx update-agentic-workspace` (it wires it)"
+            return ADVISORY, f"no `statusLine` key in .claude/settings.json — run `{_updater_cmd(plugin_root)}` (it wires it)"
         wrapper = os.path.join(pdir, _STATUSLINE_WRAPPER_REL)
         if not os.path.isfile(wrapper):
-            return ADVISORY, f"wrapper absent at {_STATUSLINE_WRAPPER_REL} — run `npx update-agentic-workspace`"
+            return ADVISORY, f"wrapper absent at {_STATUSLINE_WRAPPER_REL} — run `{_updater_cmd(plugin_root)}`"
         with open(wrapper, encoding="utf-8", errors="replace") as fh:
             if _STATUSLINE_MARKER not in fh.read():
                 return ADVISORY, f"{_STATUSLINE_WRAPPER_REL} carries no framework marker (operator-owned; not reconciled)"
         config_root = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
-        renderer, ver = _statusline_renderer_path(config_root)
+        renderer, ver = _statusline_renderer_path(config_root, pdir)
         if renderer is None:
             return ADVISORY, _sanitize_detail(f"no renderer resolvable from this machine (looked under {config_root}/plugins) — the wrapper falls back to an inline bar")
         return True, _sanitize_detail(f"wired (renderer {ver})")
@@ -728,7 +787,7 @@ def _reference_texts(pdir, rs):
 
 def check_retired_artifacts(plugin_root=None, project_dir=None):
     """hotfix-v1.17.4 (ER #236): `retired-artifacts: none present` or `<n> present — run
-    `npx update-agentic-workspace --cleanup`` (the first few paths named). Reads the catalogue the CLI
+    `npx update-agentic-workspace@<pinned> --cleanup`` (the first few paths named). Reads the catalogue the CLI
     ships (`cli/retired-artifacts.json` under the plugin root); NEVER RED, never writes."""
     root = plugin_root or PLUGIN_ROOT
     pdir = project_dir or _project_dir()
@@ -779,7 +838,7 @@ def check_retired_artifacts(plugin_root=None, project_dir=None):
         if not present:
             return True, "none present" + (f" ({len(kept)} retired path(s) still referenced by the workspace — kept)" if kept else "")
         shown = ", ".join(present[:3]) + (" …" if len(present) > 3 else "")
-        return ADVISORY, _sanitize_detail(f"{len(present)} present ({shown}) — run `npx update-agentic-workspace --cleanup`")
+        return ADVISORY, _sanitize_detail(f"{len(present)} present ({shown}) — run `{_updater_cmd(root)} --cleanup`", cap=300)
     except Exception as e:  # noqa: BLE001 -- NEVER-RED contract
         return ADVISORY, _sanitize_detail(f"unknown (probe error: {type(e).__name__}: {e})")
 

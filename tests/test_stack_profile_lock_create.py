@@ -352,3 +352,66 @@ class TestLocklessWorkspaceStaysGreen:
         ok, detail = doctor.check_stack_profile_lock(plugin_root=REPO_ROOT, project_dir=str(proj))
         assert ok is True
         assert "not applicable" in detail
+
+
+# ═════════ AC-V118C-6 (audit C1) — a lock behind the version the plugin ships is ADVISORY ═════════ #
+
+class TestShippedVersionAdvanceIsAdvisory:
+    """The plugin ships node-web at its current version; a lock at an OLDER version of the SAME id is
+    the normal post-plugin-update state -> ADVISORY naming the relock command. Every other mismatch
+    stays RED."""
+
+    def _lock(self, tmp_path, **override):
+        proj = _proj(tmp_path)
+        sp.create_lock(["node-web"], project_dir=str(proj), root=REPO_ROOT, plugin_root=REPO_ROOT)
+        lock = sp.read_lock(str(proj))
+        lock["profiles"][0].update(override)
+        sp.write_lock(lock, str(proj))
+        return proj
+
+    def _check(self, proj):
+        return doctor.check_stack_profile_lock(plugin_root=REPO_ROOT, project_dir=str(proj))
+
+    def test_older_locked_version_of_a_shipped_profile_is_advisory_with_the_relock_command(self, tmp_path):
+        shipped = sp.load_profile("node-web", root=REPO_ROOT, plugin_root=REPO_ROOT)[0]["version"]
+        proj = self._lock(tmp_path, version="0.0.1", sha256="0" * 64)
+        ok, detail = self._check(proj)
+        assert ok is doctor.ADVISORY, detail
+        assert f"node-web 0.0.1→{shipped}" in detail
+        assert "foundry-stack-profile.py\" --relock" in detail
+        # the named remedy clears it
+        sp.relock_lock(str(proj), root=REPO_ROOT, plugin_root=REPO_ROOT)
+        ok, detail = self._check(proj)
+        assert ok is True, detail
+
+    def test_same_version_content_drift_stays_red(self, tmp_path):
+        proj = self._lock(tmp_path, sha256="0" * 64)
+        ok, detail = self._check(proj)
+        assert ok is False and "does not resolve" in detail, detail
+
+    def test_locked_version_newer_than_shipped_stays_red(self, tmp_path):
+        proj = self._lock(tmp_path, version="99.0.0", sha256="0" * 64)
+        ok, detail = self._check(proj)
+        assert ok is False, detail
+
+    def test_a_profile_the_plugin_does_not_ship_stays_red(self, tmp_path):
+        proj = self._lock(tmp_path, id="not-shipped-profile", version="0.0.1")
+        ok, detail = self._check(proj)
+        assert ok is False, detail
+
+    def test_an_advance_beside_a_tampered_entry_stays_red(self, tmp_path):
+        proj = _proj(tmp_path)
+        sp.create_lock(["node-web", "python-uv-lib"], project_dir=str(proj), root=REPO_ROOT, plugin_root=REPO_ROOT)
+        lock = sp.read_lock(str(proj))
+        by_id = {e["id"]: e for e in lock["profiles"]}
+        by_id["node-web"].update(version="0.0.1", sha256="0" * 64)
+        by_id["python-uv-lib"]["sha256"] = "f" * 64
+        sp.write_lock(lock, str(proj))
+        ok, detail = self._check(proj)
+        assert ok is False, detail
+
+    def test_classifier_never_writes(self, tmp_path):
+        proj = self._lock(tmp_path, version="0.0.1", sha256="0" * 64)
+        before = open(sp.lock_path(str(proj)), "rb").read()
+        assert sp.shipped_version_advances(str(proj), root=REPO_ROOT, plugin_root=REPO_ROOT)
+        assert open(sp.lock_path(str(proj)), "rb").read() == before

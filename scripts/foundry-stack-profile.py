@@ -611,6 +611,52 @@ def relock_lock(project_dir=None, *, root=None, plugin_root=None):
     return deltas
 
 
+_DIGEST_KEYS = ("sha256", "blueprints_sha256", "standing_versions_sha256")
+
+
+def shipped_version_advances(project_dir=None, *, root=None, plugin_root=None):
+    """v1.18.0 (AC-V118C-6, audit C1): classify a lock that does NOT resolve. Returns the
+    (id, locked_version, shipped_version) advances when the lock's ONLY difference from the trusted
+    packs/ tree is that the plugin now ships a NEWER version of the SAME locked profile id(s) — the
+    state every workspace is in right after a plugin update that bumped a profile, which
+    `relock_lock()` would adopt. NEVER writes.
+
+    Raises StackProfileError (so the caller keeps its fail-closed RED) for anything else: an
+    unreadable/malformed lock, a locked id the plugin does not ship (absent/invalid/core-
+    incompatible/bundle-leaking — `_resolve_profile_entry`'s own guardrails), a downgrade, an
+    unparseable version, a SAME-version content change (drift/tamper is not an advance), or a lock
+    with no advance at all. An entry at the shipped version must match every locked digest."""
+    lock = read_lock(project_dir)
+    if lock is None:
+        raise StackProfileError(f"no {LOCK_NAME} at {lock_path(project_dir)}")
+    entries = lock.get("profiles")
+    if not isinstance(entries, list) or not entries:
+        raise StackProfileError("stack-profile.lock has no `profiles` list")
+    advances = []
+    for ent in entries:
+        if not isinstance(ent, dict):
+            raise StackProfileError(f"lock entry not a mapping: {ent!r}")
+        pid, locked_ver = ent.get("id"), ent.get("version")
+        if not pid or not isinstance(locked_ver, str) or not ent.get("sha256"):
+            raise StackProfileError(f"lock entry missing id/version/sha256: {ent!r}")
+        shipped, new_ver = _resolve_profile_entry(pid, root=root, plugin_root=plugin_root, base_entry=ent)
+        try:
+            new_t, old_t = _pad(new_ver), _pad(locked_ver)
+        except (ValueError, AttributeError) as e:
+            raise StackProfileError(f"profile {pid!r}: unparseable version: {e}")
+        if new_t == old_t:
+            if new_ver != locked_ver or any(shipped.get(k) != ent.get(k) for k in _DIGEST_KEYS):
+                raise StackProfileError(
+                    f"profile {pid!r}: content differs at the same version {locked_ver} (drift/tamper, not an advance)")
+            continue
+        if new_t < old_t:
+            raise StackProfileError(f"profile {pid!r}: shipped version {new_ver} < locked {locked_ver} (downgrade)")
+        advances.append((pid, locked_ver, new_ver))
+    if not advances:
+        raise StackProfileError("lock differs from packs/ but no locked profile advanced a version")
+    return advances
+
+
 def _existing_lock_state(project_dir=None):
     """Classify what is at `.foundry/stack-profile.lock` for `create_lock()`'s AC-SPLC-4 / AC-SPLC-4b
     guard. Returns one of `'absent'`, `'corrupt'`, `'valid'`. `'corrupt'` covers BOTH malformed JSON

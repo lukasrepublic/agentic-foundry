@@ -19,7 +19,7 @@ Classification is a PURE function of three git-plumbing primitives, each invoked
     base)? The primary, offline signal.
   * `git worktree list --porcelain` -- every linked worktree + the branch it has checked out.
 
-`gh pr list --head <branch> --state merged|open --json number,headRefOid` is a SECONDARY,
+`gh pr list --head <branch> --base <default> --state merged|open --json number,headRefOid` is a SECONDARY,
 best-effort signal (AC-BWD-2's own text: "...or whose PR is MERGED per `gh pr list --state merged
 --head`") for the case a squash/rebase merge left the branch tip NOT a literal ancestor of
 `origin/main` even though its content landed -- and for telling `open-pr` apart from
@@ -253,11 +253,17 @@ def is_ancestor(repo, sha, base):
 # ----------------------------------------------------------------------------------------------- #
 
 
-def gh_pr_info(branch, tip_sha):
+def gh_pr_info(branch, tip_sha, base_branch=None, repo=None):
     """Returns {"state": "merged"|"open", "number": <int|None>} or None. Two separate literal
-    calls -- `gh pr list --head <branch> --state merged --json number,headRefOid` then (only if
-    that found no TIP-MATCHING row) `--state open` -- mirroring AC-BWD-2's own literal text so a
-    test can assert on the exact argv shape.
+    calls -- `gh pr list --head <branch> --base <default> --state merged --json number,headRefOid`
+    then (only if that found no TIP-MATCHING row) `--state open` -- mirroring AC-BWD-2's own
+    literal text so a test can assert on the exact argv shape.
+
+    v1.18.0 (audit D8, AC-V118C-8): `--base <default branch>` is passed whenever the caller knows
+    it (classify_repo always does). Without it a PR merged into ANY base -- a release/* integration
+    branch, another atom -- counted as `merged`, and `--apply` could delete a branch whose content
+    never reached the default branch. `repo` is the gh query's cwd, so the query asks about the
+    repo under classification rather than whatever repo the process happens to run in.
 
     Round-2 review finding 1: a branch NAME is not unique over a repo's history (this repo reuses
     `release/*-repin`, `fix/*`, `docs/*`) -- a `merged` PR record for a name that was later reused
@@ -268,8 +274,11 @@ def gh_pr_info(branch, tip_sha):
     `gh` missing/erroring/timing out on EITHER call, or every row's `headRefOid` mismatching,
     degrades to None (never raises, never guesses)."""
     for state in ("merged", "open"):
-        p = _run(["gh", "pr", "list", "--head", branch, "--state", state,
-                  "--json", "number,headRefOid"], timeout=_GH_TIMEOUT_SEC)
+        argv = ["gh", "pr", "list", "--head", branch]
+        if base_branch:
+            argv += ["--base", base_branch]
+        argv += ["--state", state, "--json", "number,headRefOid"]
+        p = _run(argv, cwd=repo, timeout=_GH_TIMEOUT_SEC)
         if p.returncode != 0 or not (p.stdout or "").strip():
             continue
         try:
@@ -319,8 +328,9 @@ def classify_repo(repo, *, protected_names=None, use_gh=True, base=None, pattern
     """Orchestrates the primitives above into one row per candidate branch. Returns
     (rows, worktrees). `base` defaults to `origin/<default_branch>`. `patterns` is the include glob
     set (GLOB_PATTERNS plus any `--include`); `stats`, when given, receives the ref counts."""
-    base = base or f"origin/{default_branch(repo)}"
-    protected = set(protected_names or []) | {default_branch(repo)} | ALWAYS_PROTECTED
+    default = default_branch(repo)
+    base = base or f"origin/{default}"
+    protected = set(protected_names or []) | {default} | ALWAYS_PROTECTED
     local, remote = list_branch_refs(repo, patterns=patterns, include_names=protected, stats=stats)
     # a dry-run prune's findings (ER #244): a remote-tracking ref for a branch already gone upstream
     # is classified as if pruned, without the dry run changing any ref
@@ -336,7 +346,8 @@ def classify_repo(repo, *, protected_names=None, use_gh=True, base=None, pattern
         ancestor_merged = is_ancestor(repo, primary["sha"], base)
         pr_info = None
         if use_gh and name not in protected and not ancestor_merged:
-            pr_info = gh_pr_info(name, primary["sha"])
+            # audit D8: only a PR merged into the DEFAULT branch counts (the gh `--base`)
+            pr_info = gh_pr_info(name, primary["sha"], base_branch=default, repo=repo)
         pr_state = pr_info["state"] if pr_info else None
         cls = classify_branch(name, protected_names=protected, ancestor_merged=ancestor_merged,
                               pr_state=pr_state)
