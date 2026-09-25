@@ -230,16 +230,18 @@ environment variable, no config flag, and no reduced-ceremony install that turns
 minimum, three guards are wired:
 
 - **`hooks/foundry-git-discipline.sh`** — a `PreToolUse` guard on `gh pr merge`: refuses
-  `--admin` (a server-side-check bypass) outright, and admits a plain merge only after a live
-  `gh pr checks` query returns all-green. Fail-closed on any error, pending row, or unknown
-  state.
+  `--admin` (a server-side-check bypass) outright, admits `--auto` (the platform's required
+  checks enforce the wait), and admits any other merge only after a live `gh pr checks` query
+  returns all-green. Fail-closed on any error, pending row, or unknown state.
 - **`hooks/foundry-cloud-cli-exec-guard.sh`** — blocks a bare invocation of a guarded cloud/IaC
   CLI (`aws`, `kubectl`, `tofu`, `terraform`, `helm`, `argocd`) at any command position unless
   it's routed through a configured wrapper; it activates once you set one in
   `.claude/foundry-project.json` and stays inert (never blocks) until you do.
 - **`hooks/foundry-cwd-enforce.sh`** — inside a dispatched worktree, canonicalizes every
-  write-tool target and hard-stops (fail-closed) any write resolving outside that worktree's
-  root, closing the gap native worktree isolation leaves open.
+  write-tool target and hard-stops (fail-closed) any write resolving into the main checkout or
+  another worktree of the same repository, closing the gap native worktree isolation leaves
+  open. Writes outside every checkout of the repository (`~/.claude/`, the temp dirs, unrelated
+  paths) are ordinary work and are admitted.
 
 An environment-gated off-switch for this layer has been proposed and is **parked pending an
 operator decision** — it does not ship today, and this document promises nothing about it.

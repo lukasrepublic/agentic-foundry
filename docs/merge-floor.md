@@ -127,6 +127,10 @@ the light lane from your copy of the workflow — it is four lines of shell.
    command yourself outside the agent" sentence.
    - `gh pr merge --admin` (a server-side-check bypass) → **refused outright**, no
      network call.
+   - `gh pr merge --auto` (any merge method) → **admitted without a query** (v1.18): it hands
+     the merge to the platform, which merges only once the branch's **required** checks pass.
+     On a Tier B repo with no required checks the platform merges at once — there, `--auto` is
+     no stronger than the repo's own protection, so apply Tier A.
    - plain `gh pr merge` → admitted **only** after a live `gh pr checks` query returns
      all-green; a failing row, a pending row, a nonexistent PR, an API error, or an
      unrecognized verdict all **block**.

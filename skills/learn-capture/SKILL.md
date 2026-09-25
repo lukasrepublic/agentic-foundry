@@ -1,6 +1,6 @@
 ---
 name: learn-capture
-description: The direct/lean interactive-session learnings PRODUCER (/foundry:learn-capture). Normally automatic — an enforced once-per-session Stop hook injects a reflection turn that distills the session and emits records via the capture CLI into the .foundry/session-learnings partition /foundry:learn-distill consumes. This skill documents that mechanism + the manual capture escape hatch. Trigger to capture the current session's learnings on demand, or to understand the Stop-reflection producer.
+description: The direct/lean interactive-session learnings PRODUCER (/foundry:learn-capture). Opt-in since v1.18 (FOUNDRY_SESSION_LEARNINGS=on) — when enabled, a once-per-session Stop hook injects a reflection turn that distills the session and emits records via the capture CLI into the .foundry/session-learnings partition /foundry:learn-distill consumes. This skill documents that mechanism + the manual capture escape hatch. Trigger to capture the current session's learnings on demand, or to understand the Stop-reflection producer.
 ---
 
 # /foundry:learn-capture
@@ -10,9 +10,12 @@ direct/lean session that returns no value, spawns no worker, and leaves no workt
 worker structured-return + worktree-sidecar producers (`foundry-harvest-learnings.sh`). Consumer:
 `/foundry:learn-distill` (unchanged; the schema authority).
 
-## How it works (normally automatic)
+## How it works (opt-in: `FOUNDRY_SESSION_LEARNINGS=on`)
 
-- An **enforced `Stop` hook** (`hooks/foundry-session-learnings.sh stop`, wired in `hooks.json`) fires
+- **Off by default since v1.18** (operator decision 2026-09-25): the Stop-time block interrupted
+  ordinary sessions, so it now fires only when `FOUNDRY_SESSION_LEARNINGS` is `on` or `full` (see the
+  knob below). Unset, it exits 0 and never blocks; `/foundry:learn-capture` still works on demand.
+- When enabled, a **`Stop` hook** (`hooks/foundry-session-learnings.sh stop`, wired in `hooks.json`) fires
   when the session goes idle and — **once per session**, re-entrancy-guarded by `stop_hook_active` +
   a per-session marker, **interactive sessions only**, and only for a **substantive** session (see the
   substance gate below) — injects a single **reflection turn**.
@@ -48,7 +51,7 @@ worker structured-return + worktree-sidecar producers (`foundry-harvest-learning
   **mechanical secret-scrub** (best-effort defense-in-depth — see AC-SLEARN-7), fail-open,
   with a reconciliation row in `.harvest-log.jsonl` (the per-channel doctor surfacing this line originally named was retired with the drop-in registry).
 
-## Cadence + the off switch (`FOUNDRY_SESSION_LEARNINGS`)
+## Cadence + the opt-in switch (`FOUNDRY_SESSION_LEARNINGS`)
 
 **The substance gate (AC-RUX-2).** A session that provably did nothing worth reflecting on never
 reflects. The hook reads the harness-supplied transcript and treats the session as **substantive** if
@@ -68,9 +71,9 @@ own; **reach for this, not `disableAllHooks`**:
 
 | `FOUNDRY_SESSION_LEARNINGS` | Behavior |
 |---|---|
-| `off` | Never reflect. Silent no-op; no marker written, so re-enabling mid-session loses nothing. |
+| unset / `off` / anything else | **Default (since v1.18).** Never reflect, never block. Silent no-op; no marker written, so opting in mid-session loses nothing. An unrecognized value degrades to this, never to an error. |
+| `on` | Reflect once per session when the classic guards pass and the substance gate applies. |
 | `full` | Always reflect when the classic guards pass — bypasses the substance gate (pre-v0.27 cadence). |
-| unset / `gated` / anything else | **Default.** The substance gate applies. An unrecognized value degrades to this, never to an error. |
 
 Set it per-session in your shell, or persistently via the `env` block in `.claude/settings.json`.
 

@@ -191,7 +191,16 @@ hook_comment_expectation:
   #      and the env-prefix loop skips all three. Same class as the Claude Code 2.1.275 sandbox
   #      fix (one exempt component excusing a whole compound command). Regression corpus in
   #      tests/test_hooks_guards.py::test_discipline_convicts_compound_and_grouped_shapes.
-  executable_content_sha256: 'b8b2bdf4b9e20392f742d6924397bec4b61daec82174b23849f9e4388b82181c'
+  #   9. v118-b-hooks (2026-09-25, v1.18.0, audit A6/A7): two deliberate friction removals.
+  #      (i) `gh pr merge --auto` (pflag-parsed; `--auto=false` is not auto) is admitted without
+  #      the live `gh pr checks` query — the platform's required checks enforce the wait; the
+  #      `--admin` refusal runs first and is unchanged (AC-V118B-2). (ii) a force-push naming NO
+  #      refspec resolves its destination (current branch + its upstream merge ref, read in the
+  #      payload cwd / a literal `-C`) and is refused only when protected; every construct that
+  #      could change the branch before it runs, or push more than one branch, stays refused
+  #      fail-closed (AC-V118B-3). Every other clause byte-identical. Corpus:
+  #      tests/test_hooks_guards.py::test_v118b*.
+  executable_content_sha256: '981c42ff9eb20903ef8a231a08ccd5377e10049137dbae9714ef5518455fbac4'
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
 operator_registry_shape:
