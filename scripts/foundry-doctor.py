@@ -609,6 +609,34 @@ def check_statusline(plugin_root=None, project_dir=None):
         return ADVISORY, _sanitize_detail(f"unknown (probe error: {type(e).__name__}: {e})")
 
 
+def _hook_command_text(pdir):
+    """Every hook `command` string in `.claude/settings.json` + `.claude/settings.local.json`,
+    joined; `None` when either exists but does not parse."""
+    parts = []
+    for rel in (".claude/settings.json", ".claude/settings.local.json"):
+        fp = os.path.join(pdir, rel)
+        if not os.path.isfile(fp):
+            continue
+        try:
+            with open(fp, encoding="utf-8") as fh:
+                obj = json.load(fh)
+        except (OSError, ValueError):
+            return None
+
+        def walk(v):
+            if isinstance(v, list):
+                for x in v:
+                    walk(x)
+            elif isinstance(v, dict):
+                if isinstance(v.get("command"), str):
+                    parts.append(v["command"])
+                for x in v.values():
+                    walk(x)
+        if isinstance(obj, dict):
+            walk(obj.get("hooks"))
+    return "\n".join(parts)
+
+
 def check_retired_artifacts(plugin_root=None, project_dir=None):
     """hotfix-v1.17.4 (ER #236): `retired-artifacts: none present` or `<n> present — run
     `npx update-agentic-workspace --cleanup`` (the first few paths named). Reads the catalogue the CLI
@@ -619,6 +647,7 @@ def check_retired_artifacts(plugin_root=None, project_dir=None):
         with open(os.path.join(root, "cli", "retired-artifacts.json"), encoding="utf-8") as fh:
             entries = json.load(fh).get("entries", [])
         present = []
+        hook_text = _hook_command_text(pdir)  # None when a settings file does not parse (fail-closed)
         for e in entries:
             rel = e.get("path", "")
             if "*" in rel:
@@ -631,7 +660,13 @@ def check_retired_artifacts(plugin_root=None, project_dir=None):
                 for n in names:
                     if n.startswith(pre) and n.endswith(post) and len(n) >= len(pre) + len(post) \
                             and not (e.get("exclude_prefix") and n.startswith(e["exclude_prefix"])):
-                        present.append(os.path.join(d, n))
+                        cand = os.path.join(d, n)
+                        # a hook a settings hook command still names is NOT stale (the updater
+                        # refuses it too — PR #237 security review Risk 1); unreadable settings →
+                        # no hook is called stale
+                        if cand.startswith(".claude/hooks/") and (hook_text is None or n in hook_text):
+                            continue
+                        present.append(cand)
             elif os.path.lexists(os.path.join(pdir, rel)):
                 present.append(rel)
         if not present:

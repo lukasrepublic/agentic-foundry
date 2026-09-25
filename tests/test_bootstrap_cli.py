@@ -1069,7 +1069,32 @@ def test_every_runtime_asset_is_packaged():
         for f in _iter_mjs_files(CLI_DIR / "src") + _iter_mjs_files(CLI_DIR / "bin")
         if RECURSIVE_DELETE.search(f.read_text())
     ]
-    assert rm_sites == ["cleanup.mjs"], f"unexpected recursive-delete sites in cli/src: {rm_sites}"
+    # hotfix-v1.17.4 (ER #236): `retiredArtifacts.mjs` is the SECOND permitted site — the
+    # catalogue-driven workspace sweep (`--cleanup` only). Its containment is asserted structurally
+    # below, the same way cleanup.mjs's is: exactly one recursive delete, inside the apply function,
+    # behind confinedJoin + lstat + isSymbolicLink + isDirectory, and the apply function enumerates
+    # nothing — it removes ONLY the rows the plan handed it.
+    assert sorted(rm_sites) == ["cleanup.mjs", "retiredArtifacts.mjs"], (
+        f"unexpected recursive-delete sites in cli/src: {rm_sites}"
+    )
+    sweep_src = (CLI_DIR / "src" / "retiredArtifacts.mjs").read_text()
+    assert len(RECURSIVE_DELETE.findall(sweep_src)) == 1, (
+        "retiredArtifacts.mjs carries more than one recursive delete; exactly one is permitted, "
+        "inside applyRetiredArtifacts"
+    )
+    sweep_apply = _extract_function_body(sweep_src, "applyRetiredArtifacts")
+    assert sweep_apply is not None, "applyRetiredArtifacts not found in retiredArtifacts.mjs"
+    assert RECURSIVE_DELETE.search(sweep_apply), (
+        "the sweep's recursive delete is not inside applyRetiredArtifacts — planning and applying must stay split"
+    )
+    assert "readdirSync" not in sweep_apply, (
+        "applyRetiredArtifacts enumerates a directory; it must remove ONLY the rows planRetiredArtifacts handed it"
+    )
+    for guard in ("confinedJoin", "lstatSync", "isSymbolicLink", "isDirectory", "row.state !== 'stale'"):
+        assert guard in sweep_apply, (
+            f"applyRetiredArtifacts lost its {guard} guard — this is what keeps the sweep inside the "
+            f"workspace root and off links, the other kind, and un-catalogued paths"
+        )
 
     # A destructured mutator import drops the `fs.` prefix entirely and walks past any pattern
     # anchored on it. Banning the import is the outcome-level control; chasing the call sites is

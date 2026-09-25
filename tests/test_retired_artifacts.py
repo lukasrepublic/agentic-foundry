@@ -44,8 +44,18 @@ def test_doctor_names_present_leftovers_and_is_advisory_only(tmp_path):
     (ws / ".foundry" / "wiring-hash.pin").write_text("x", encoding="utf-8")
     (ws / ".claude" / "hooks").mkdir()
     (ws / ".claude" / "hooks" / "zeta-exec-guard.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    (ws / ".claude" / "hooks" / "aws-exec-guard.sh").write_text("#!/bin/sh\n", encoding="utf-8")
     (ws / ".claude" / "hooks" / "foundry-cloud-cli-exec-guard.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+    # PR #237 security review Risk 1: a hook a settings hook command still names is not stale
+    (ws / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"PreToolUse": [
+        {"matcher": "Bash", "hooks": [{"type": "command", "command": ".claude/hooks/aws-exec-guard.sh"}]}]}}),
+        encoding="utf-8")
     line = _doctor_line(ws)
     assert "[adv ]" in line and "2 present" in line and ".foundry/wiring-hash.pin" in line
-    assert "zeta-exec-guard.sh" in line and "foundry-cloud-cli-exec-guard.sh" not in line
+    assert "zeta-exec-guard.sh" in line and "aws-exec-guard.sh" not in line
+    assert "foundry-cloud-cli-exec-guard.sh" not in line
     assert "npx update-agentic-workspace --cleanup" in line
+    # unreadable settings -> no hook is called stale (fail-closed); the pin still is
+    (ws / ".claude" / "settings.local.json").write_text("{ not json", encoding="utf-8")
+    line = _doctor_line(ws)
+    assert "1 present" in line and "exec-guard" not in line

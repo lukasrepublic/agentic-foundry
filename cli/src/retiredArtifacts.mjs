@@ -2,7 +2,8 @@
 // release reads (hotfix-v1.17.4, ER #236). Driven by the shipped catalogue `cli/retired-artifacts.json`:
 // every present entry is reported `[stale]` on every run; removal happens only under `--cleanup`,
 // only for catalogued paths, only when the path is exactly the catalogued kind (a regular file, or a
-// real directory) — a symlink or the other kind is reported `[refused]` and left alone. Nothing
+// real directory) — a symlink or the other kind is reported `[refused]` and left alone, and so is a
+// hook under `.claude/hooks/` that a hook command in `.claude/settings*.json` still names. Nothing
 // outside the catalogue is ever a candidate: `.claude/skills`, `.claude/agents` and every operator
 // file are invisible to this module by construction.
 import fs from 'node:fs';
@@ -52,11 +53,54 @@ function candidates(physicalRoot, entry) {
     .map((n) => path.posix.join(dirRel, n));
 }
 
-/** Plan: `{ rows: [{ relPath, kind, retired_in, reason, state }], present, refused }` where `state`
- * is `stale` (present and of the catalogued kind), `refused` (present but a symlink or the other
- * kind), and absent paths are omitted. Pure over the filesystem — nothing is written. */
+const HOOKS_DIR_REL = '.claude/hooks/';
+const SETTINGS_FILES = ['.claude/settings.json', '.claude/settings.local.json'];
+
+/** Every `command` string under `hooks` in the two workspace settings files, joined — the text a
+ * hook candidate's basename is checked against (PR #237 security review Risk 1: a basename glob
+ * must never take a hook the operator still wires). `unreadable` is true when a settings file
+ * exists but does not parse: then nothing under `.claude/hooks/` is planned removable (fail-closed). */
+function hookCommandText(physicalRoot) {
+  const parts = [];
+  let unreadable = false;
+  for (const rel of SETTINGS_FILES) {
+    const abs = confinedJoin(physicalRoot, rel);
+    if (!abs) continue;
+    let raw;
+    try {
+      if (!fs.lstatSync(abs).isFile()) continue;
+      raw = fs.readFileSync(abs, 'utf-8');
+    } catch {
+      continue; // absent: nothing wired there
+    }
+    let obj;
+    try {
+      obj = JSON.parse(raw);
+    } catch {
+      unreadable = true;
+      continue;
+    }
+    const walk = (v) => {
+      if (Array.isArray(v)) { for (const x of v) walk(x); return; }
+      if (v && typeof v === 'object') {
+        if (typeof v.command === 'string') parts.push(v.command);
+        for (const x of Object.values(v)) walk(x);
+      }
+    };
+    if (obj && typeof obj === 'object' && obj.hooks) walk(obj.hooks);
+  }
+  return { text: parts.join('\n'), unreadable };
+}
+
+/** Plan: `{ rows: [{ relPath, kind, retired_in, reason, state, why?, entries? }], present, refused }`
+ * where `state` is `stale` (present, of the catalogued kind, and not wired) or `refused` (present
+ * but a symlink, the other kind, escaping the root, or — for a hook — still named by a hook command
+ * in `.claude/settings*.json`, or those files unreadable); absent paths are omitted. A `dir` row
+ * carries `entries` (its direct entry count) so the operator sees what a removal takes. Pure over
+ * the filesystem — nothing is written. */
 export function planRetiredArtifacts({ physicalRoot, catalogue }) {
   const rows = [];
+  let hooks = null; // read lazily, once, only when a hook candidate is present
   for (const entry of catalogue.entries) {
     for (const relPath of candidates(physicalRoot, entry)) {
       const abs = confinedJoin(physicalRoot, relPath);
@@ -77,7 +121,16 @@ export function planRetiredArtifacts({ physicalRoot, catalogue }) {
         }
       }
       const kindOk = abs && !st.isSymbolicLink() && (entry.kind === 'dir' ? st.isDirectory() : st.isFile());
-      rows.push({ relPath, kind: entry.kind, retired_in: entry.retired_in, reason: entry.reason, state: kindOk ? 'stale' : 'refused' });
+      const row = { relPath, kind: entry.kind, retired_in: entry.retired_in, reason: entry.reason, state: kindOk ? 'stale' : 'refused', why: kindOk ? null : 'kind' };
+      if (row.state === 'stale' && relPath.startsWith(HOOKS_DIR_REL)) {
+        if (hooks === null) hooks = hookCommandText(physicalRoot);
+        if (hooks.unreadable) { row.state = 'refused'; row.why = 'settings-unreadable'; }
+        else if (hooks.text.includes(path.posix.basename(relPath))) { row.state = 'refused'; row.why = 'referenced'; }
+      }
+      if (row.state === 'stale' && entry.kind === 'dir') {
+        try { row.entries = fs.readdirSync(abs).length; } catch { row.entries = null; }
+      }
+      rows.push(row);
     }
   }
   return {
@@ -121,12 +174,17 @@ export function applyRetiredArtifacts(plan, physicalRoot) {
 export function renderRetiredArtifactRows(plan, { cleanup }) {
   const out = [];
   for (const r of plan.rows) {
+    const size = r.kind === 'dir' && typeof r.entries === 'number' ? ` [${r.entries} entr${r.entries === 1 ? 'y' : 'ies'}]` : '';
     if (r.state === 'stale') {
       out.push(cleanup
-        ? `  [stale] ${r.relPath} — retired in v${r.retired_in} (${r.reason}) — NOT removed`
-        : `  [stale] ${r.relPath} — retired in v${r.retired_in} (${r.reason}); remove with --cleanup`);
+        ? `  [stale] ${r.relPath}${size} — retired in v${r.retired_in} (${r.reason}) — NOT removed`
+        : `  [stale] ${r.relPath}${size} — retired in v${r.retired_in} (${r.reason}); remove with --cleanup`);
     } else if (r.state === 'removed') {
-      out.push(`  [removed] ${r.relPath} — retired in v${r.retired_in}`);
+      out.push(`  [removed] ${r.relPath}${size} — retired in v${r.retired_in}`);
+    } else if (r.why === 'referenced') {
+      out.push(`  [refused] ${r.relPath} — still named by a hook command in .claude/settings*.json — left alone`);
+    } else if (r.why === 'settings-unreadable') {
+      out.push(`  [refused] ${r.relPath} — .claude/settings*.json does not parse, so its hook wiring is unknown — left alone`);
     } else {
       out.push(`  [refused] ${r.relPath} — present but not a regular ${r.kind} (a link, or the other kind) — left alone`);
     }

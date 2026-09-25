@@ -17,6 +17,6 @@
     { "path": ".claude/resume", "kind": "dir", "retired_in": "0.25.0", "reason": "the bespoke resume store; native --resume replaced it" },
     { "path": ".claude/logs", "kind": "dir", "retired_in": "1.10.0", "reason": "the retired dispatcher's logs" },
     { "path": ".claude/session-learnings", "kind": "dir", "retired_in": "1.0.0", "reason": "the old learnings location; the partition is .foundry/session-learnings" },
-    { "path": ".claude/hooks/*-exec-guard.sh", "kind": "file", "exclude_prefix": "foundry-", "retired_in": "1.8.0", "reason": "the retired session-context framework's cloud-cli exec guard; no settings entry references it" }
+    { "path": ".claude/hooks/*-exec-guard.sh", "kind": "file", "exclude_prefix": "foundry-", "retired_in": "1.8.0", "reason": "the retired session-context framework's cloud-cli exec guard; a hook still named by a command in .claude/settings*.json is refused, never removed" }
   ]
 }

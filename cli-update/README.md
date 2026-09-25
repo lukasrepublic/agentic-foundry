@@ -73,9 +73,14 @@ and want it to stay that way, disable it again after the update, or migrate that
    old dispatcher files, a retired exec-guard hook, …) is reported `[stale] <path> — retired in vX
    (<why>); remove with --cleanup` on every run and removed only under `--cleanup`, only for
    catalogued paths of the catalogued kind (a link or the other kind is `[refused]`, left alone;
-   `.claude/skills`, `.claude/agents` and your own files are invisible to it). Finally
-   `.claude/settings.local.json`, which the tracked-file reconcile never reads, has its
-   version-pinned or gone floor rows **retired** (never anything added) and is otherwise untouched.
+   so is a hook under `.claude/hooks/` that a hook command in `.claude/settings*.json` still
+   names, and every hook when a settings file does not parse; a directory row shows its entry
+   count). `.claude/skills`, `.claude/agents` and files outside the catalogue are invisible to it.
+   Finally `.claude/settings.local.json`, which the tracked-file reconcile never reads, has its
+   version-pinned or gone floor rows **retired** (never anything added; a pinned `ask` row only
+   when the tracked file carries the wildcard `ask` row that replaces it), written by the same
+   rename-install that keeps the file's mode bits, previewed like every other write, and is
+   otherwise untouched.
 5. **The report and the hand-off** — every completed run writes `.foundry/upgrade-report.json`
    (`schema_version`, `ran_at`, `from_plugin_version` / `to_plugin_version`, the phase verdicts,
    what the Amendments backfill did, whether the policy file was `created` or `kept`, the drifted

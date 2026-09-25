@@ -20,14 +20,20 @@ test('the shipped catalogue loads and every entry is well-formed', () => {
   }
 });
 
-test('plan reports catalogued leftovers, refuses a link and the wrong kind, ignores operator files and the foundry- prefix', () => {
+test('plan reports catalogued leftovers, refuses a link, the wrong kind and a wired hook, ignores operator files and the foundry- prefix', () => {
   const root = scratch();
   fs.mkdirSync(path.join(root, '.foundry/context-snapshots'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.foundry/context-snapshots/one.json'), '{}');
   fs.mkdirSync(path.join(root, '.claude/hooks'), { recursive: true });
   fs.mkdirSync(path.join(root, '.claude/skills'), { recursive: true });
   fs.writeFileSync(path.join(root, '.foundry/wiring-hash.pin'), 'x');
-  fs.writeFileSync(path.join(root, '.claude/hooks/zeta-exec-guard.sh'), '#!/bin/sh\n');
+  fs.writeFileSync(path.join(root, '.claude/hooks/zeta-exec-guard.sh'), '#!/bin/sh\n');  // unwired: stale
+  fs.writeFileSync(path.join(root, '.claude/hooks/aws-exec-guard.sh'), '#!/bin/sh\n');   // WIRED below: refused
   fs.writeFileSync(path.join(root, '.claude/hooks/foundry-cloud-cli-exec-guard.sh'), '#!/bin/sh\n');
+  // PR #237 security review Risk 1: a hook a settings hook command still names is never stale
+  fs.writeFileSync(path.join(root, '.claude/settings.json'), JSON.stringify({
+    hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: '"$CLAUDE_PROJECT_DIR"/.claude/hooks/aws-exec-guard.sh' }] }] },
+  }));
   fs.writeFileSync(path.join(root, '.claude/skills/mine.md'), 'mine');
   fs.mkdirSync(path.join(root, '.claude/dispatcher-mode.json')); // catalogued as a FILE: wrong kind
   fs.symlinkSync('/etc/hosts', path.join(root, '.foundry/hasher-ref'));  // a link: refused
@@ -37,22 +43,41 @@ test('plan reports catalogued leftovers, refuses a link and the wrong kind, igno
   assert.equal(by['.foundry/wiring-hash.pin'], 'stale');
   assert.equal(by['.foundry/context-snapshots'], 'stale');
   assert.equal(by['.claude/hooks/zeta-exec-guard.sh'], 'stale');
+  assert.equal(by['.claude/hooks/aws-exec-guard.sh'], 'refused');
+  assert.equal(plan.rows.find((r) => r.relPath === '.claude/hooks/aws-exec-guard.sh').why, 'referenced');
   assert.equal(by['.claude/dispatcher-mode.json'], 'refused');
   assert.equal(by['.foundry/hasher-ref'], 'refused');
   assert.equal(by['.claude/hooks/foundry-cloud-cli-exec-guard.sh'], undefined);
   assert.equal(plan.present, 3);
-  assert.equal(plan.refused, 2);
+  assert.equal(plan.refused, 3);
+  assert.equal(plan.rows.find((r) => r.relPath === '.foundry/context-snapshots').entries, 1);
   const rows = renderRetiredArtifactRows(plan, { cleanup: false });
   assert.ok(rows.some((l) => l.startsWith('  [stale] .foundry/wiring-hash.pin') && l.endsWith('remove with --cleanup')));
+  assert.ok(rows.some((l) => l.startsWith('  [stale] .foundry/context-snapshots [1 entry]')));
   assert.ok(rows.some((l) => l.startsWith('  [refused] .foundry/hasher-ref')));
+  assert.ok(rows.some((l) => l.startsWith('  [refused] .claude/hooks/aws-exec-guard.sh — still named by a hook command')));
   // apply removes exactly the stale rows
   assert.equal(applyRetiredArtifacts(plan, root), 3);
   assert.equal(fs.existsSync(path.join(root, '.foundry/wiring-hash.pin')), false);
   assert.equal(fs.existsSync(path.join(root, '.foundry/context-snapshots')), false);
   assert.equal(fs.existsSync(path.join(root, '.claude/hooks/zeta-exec-guard.sh')), false);
+  assert.equal(fs.existsSync(path.join(root, '.claude/hooks/aws-exec-guard.sh')), true, 'a wired hook is never removed');
   assert.equal(fs.existsSync(path.join(root, '.claude/hooks/foundry-cloud-cli-exec-guard.sh')), true);
   assert.equal(fs.existsSync(path.join(root, '.claude/skills/mine.md')), true);
   assert.equal(fs.lstatSync(path.join(root, '.foundry/hasher-ref')).isSymbolicLink(), true);
   assert.equal(fs.existsSync('/etc/hosts'), true);
   assert.ok(renderRetiredArtifactRows(plan, { cleanup: true }).some((l) => l.startsWith('  [removed] .foundry/wiring-hash.pin')));
+});
+
+test('a settings file that does not parse makes every hook candidate refused (fail-closed), never stale', () => {
+  const root = scratch();
+  fs.mkdirSync(path.join(root, '.claude/hooks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude/hooks/zeta-exec-guard.sh'), '#!/bin/sh\n');
+  fs.writeFileSync(path.join(root, '.claude/settings.local.json'), '{ not json');
+  const plan = planRetiredArtifacts({ physicalRoot: root, catalogue: loadRetiredCatalogue(CLI_DIR) });
+  const row = plan.rows.find((r) => r.relPath === '.claude/hooks/zeta-exec-guard.sh');
+  assert.equal(row.state, 'refused');
+  assert.equal(row.why, 'settings-unreadable');
+  assert.equal(applyRetiredArtifacts(plan, root), 0);
+  assert.equal(fs.existsSync(path.join(root, '.claude/hooks/zeta-exec-guard.sh')), true);
 });
