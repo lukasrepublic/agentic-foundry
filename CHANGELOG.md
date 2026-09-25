@@ -8,6 +8,40 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.17.6 — 2026-09-25
+
+### The branch gc tells the truth; publish waits long enough
+
+Patch from ER #244 and ER #211. `create-agentic-workspace` 0.17.6 and `update-agentic-workspace` 0.1.18
+are published together.
+
+- **The gc never reports success for a deletion it did not perform** (#246, closes ER #244;
+  `scripts/foundry-worktree-gc.py`). Every worktree, local-branch and remote-branch call that fails
+  is recorded in `failed: [{name, op, reason}]` and turns `status` to `partial`. A remote branch that
+  is provably already gone upstream is named in `remote_already_absent` and its stale
+  remote-tracking ref removed — checked BEFORE the push, because deleting an absent ref by full
+  refname exits 0. Before classifying, `--apply` runs `git remote prune origin` and `--dry-run`
+  reads `git remote prune --dry-run origin` without changing a ref (both only under a standard fetch
+  refspec; `--no-prune` skips it), so such a ref never becomes a candidate — on the measured adopter
+  repo, 16 of 21 "merged" branches were exactly that. Callers read `status`; the exit code stays 0.
+- **Coverage is configurable and visible.** A repeatable `--include '<prefix>/*'` adds to the built-in
+  prefix set; the JSON carries `patterns`, `scanned_refs` and `filtered_out_refs`, so `merged: 0` can
+  no longer hide "looked at 8% of the refs". An `--include` glob must name a literal prefix directory
+  (`*` is refused), and the default branch, `--protected` names and a built-in long-lived set
+  (`develop`, `staging`, `production`, `gh-pages`, …) are always protected.
+- **Doctor: the `branches` line says what it measured** (`scripts/foundry-doctor.py`): `(ancestry
+  only; squash-merged branches need the gc's gh check)`, plus the count of refs outside the glob set.
+  On a squash-merge repo ancestry alone always read 0.
+- **npm publish waits for the registry** (closes ER #211; `.github/workflows/npm-publish.yml`). The
+  attestation and resolvability polls try 12 times with backoff capped at 60 s (~8.5 min) instead of
+  6 over ~150 s; propagation took up to ~5 min on the last two releases. The assertion is unchanged.
+- **Security review** (#246): one Block — the new comment line had swallowed each poll's `for … do`,
+  which would have failed every publish — fixed, and a new test parses every workflow `run:` block
+  with `bash -n`. Its six Risks applied: literal-prefix `--include`, the long-lived protected set,
+  full refnames and `--` on every delete, credentials redacted from failure reasons, prune refused
+  under a mirror-style fetch refspec, `GIT_TERMINAL_PROMPT=0` with stdin closed, and a read-only
+  dry run.
+
 ## v1.17.5 — 2026-09-25
 
 ### `--cleanup` never takes a path your workspace still wires; the preview says what it will do
