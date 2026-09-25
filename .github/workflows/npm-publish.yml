@@ -171,7 +171,9 @@ jobs:
           NPM_VERIFY_CACHE="$RUNNER_TEMP/npm-verify-cache"
           att=""
           err="$RUNNER_TEMP/npm-view-attestations.err"
-          for attempt in 1 2 3 4 5 6; do
+          # ER #211: ~150 s was not enough — registry propagation took up to ~5 min on v1.17.4/v1.17.5
+          # (both packages landed attested each time). 12 attempts, backoff capped at 60 s: ~8.5 min.
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
             # stderr is CAPTURED rather than discarded. Suppressing it meant a registry outage, a
             # DNS failure or an auth error produced six silent empty reads and then an error line
             # asserting "the publish produced none" — a claim the step had not observed. A red
@@ -185,14 +187,14 @@ jobs:
               break
             fi
             att=""
-            if [ "$attempt" -lt 6 ]; then
-              delay=$((attempt * 10))
-              echo "attestation not yet visible (attempt ${attempt}/6) — registry propagation; sleeping ${delay}s"
+            if [ "$attempt" -lt 12 ]; then
+              delay=$(( attempt * 10 > 60 ? 60 : attempt * 10 ))
+              echo "attestation not yet visible (attempt ${attempt}/12) — registry propagation; sleeping ${delay}s"
               sleep "$delay"
             fi
           done
           if [ -z "$att" ]; then
-            echo "::error::no provenance attestation on ${PKG_NAME}@${PKG_VERSION} after 6 attempts over ~150s"
+            echo "::error::no provenance attestation on ${PKG_NAME}@${PKG_VERSION} after 12 attempts over ~8.5 min"
             echo "--- last stderr from npm view (empty means the registry answered, with no attestation) ---"
             cat "$err" || true
             exit 1
@@ -249,17 +251,19 @@ jobs:
           case "$dep" in *$'\n'*) echo "::error::refusing a pinned version containing a newline"; exit 1 ;; esac
           printf '%s' "$dep" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?(\+[A-Za-z0-9.-]+)?$' \
             || { echo "::error::refusing non-exact-semver pinned version: $dep"; exit 1; }
-          for attempt in 1 2 3 4 5 6; do
+          # ER #211: ~150 s was not enough — registry propagation took up to ~5 min on v1.17.4/v1.17.5
+          # (both packages landed attested each time). 12 attempts, backoff capped at 60 s: ~8.5 min.
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
             if npm view "create-agentic-workspace@${dep}" version >/dev/null 2>&1; then
               echo "create-agentic-workspace@${dep} is resolvable on the registry."
               break
             fi
-            if [ "$attempt" -eq 6 ]; then
-              echo "::error::create-agentic-workspace@${dep} never became resolvable after 6 attempts"
+            if [ "$attempt" -eq 12 ]; then
+              echo "::error::create-agentic-workspace@${dep} never became resolvable after 12 attempts (~8.5 min)"
               exit 1
             fi
-            delay=$((attempt * 10))
-            echo "not yet resolvable (attempt ${attempt}/6); sleeping ${delay}s"
+            delay=$(( attempt * 10 > 60 ? 60 : attempt * 10 ))
+            echo "not yet resolvable (attempt ${attempt}/12); sleeping ${delay}s"
             sleep "$delay"
           done
 
@@ -324,7 +328,9 @@ jobs:
           NPM_VERIFY_CACHE="$RUNNER_TEMP/npm-verify-cache-update"
           att=""
           err="$RUNNER_TEMP/npm-view-attestations-update.err"
-          for attempt in 1 2 3 4 5 6; do
+          # ER #211: ~150 s was not enough — registry propagation took up to ~5 min on v1.17.4/v1.17.5
+          # (both packages landed attested each time). 12 attempts, backoff capped at 60 s: ~8.5 min.
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
             att="$(npm view --prefer-online --cache "$NPM_VERIFY_CACHE" \
                      "${PKG_NAME}@${PKG_VERSION}" dist.attestations 2>"$err" || true)"
             if printf '%s' "$att" | grep -q 'predicateType'; then
@@ -332,14 +338,14 @@ jobs:
               break
             fi
             att=""
-            if [ "$attempt" -lt 6 ]; then
-              delay=$((attempt * 10))
-              echo "attestation not yet visible (attempt ${attempt}/6) — registry propagation; sleeping ${delay}s"
+            if [ "$attempt" -lt 12 ]; then
+              delay=$(( attempt * 10 > 60 ? 60 : attempt * 10 ))
+              echo "attestation not yet visible (attempt ${attempt}/12) — registry propagation; sleeping ${delay}s"
               sleep "$delay"
             fi
           done
           if [ -z "$att" ]; then
-            echo "::error::no provenance attestation on ${PKG_NAME}@${PKG_VERSION} after 6 attempts over ~150s"
+            echo "::error::no provenance attestation on ${PKG_NAME}@${PKG_VERSION} after 12 attempts over ~8.5 min"
             echo "--- last stderr from npm view (empty means the registry answered, with no attestation) ---"
             cat "$err" || true
             exit 1
