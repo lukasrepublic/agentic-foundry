@@ -36,7 +36,12 @@ lane signal — Tier B advisory) plus `hooks/foundry-git-discipline.sh`'s determ
    3. **`skills-frontmatter`** — every shipped `skills/*/SKILL.md` frontmatter YAML-parses (a
       colon-in-a-plain-scalar defect class that is cheap to catch here, expensive live).
    4. **`stack-profile-lock`** — `.foundry/stack-profile.lock` (if present) resolves against the
-      shipped `packs/` tree; absent lock is `ok` ("not applicable"), not a failure.
+      shipped `packs/` tree; absent lock is `ok` ("not applicable"), not a failure. A lock whose
+      ONLY difference is an OLDER version of the same profile id this installed plugin ships (the
+      normal state right after a plugin update) is **ADVISORY** — `lock behind the profile version
+      this plugin ships (<id> <old>→<new>) — run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-stack-profile.py" --relock``
+      (AC-V118C-6). Any other mismatch — an id the plugin does not ship, a downgrade, a same-version
+      content change, an unreadable lock — stays RED.
    5. **`operator-registry`** — `.claude/foundry-operators.json` resolves via `foundry_authz`.
    6. **`control-plane`** (feat-foundry-control-plane-preflight, AC-CPP-1/-2/-3/-3b) — no dangling
       `repos{}` path in this project's own manifest, and no ancestor
@@ -65,9 +70,13 @@ lane signal — Tier B advisory) plus `hooks/foundry-git-discipline.sh`'s determ
      project's `.claude/settings.json`, then `.claude/settings.local.json`, ascending precedence).
      Never RED: flipping the flag is an adopter opt-in — see `docs/how-to/agent-teams.md`.
    - **`retired-artifacts`** (hotfix-v1.17.4, ER #236) — `retired-artifacts: none present` or `<n>
-     present (<paths>) — run `npx update-agentic-workspace --cleanup``: files an earlier release wrote
+     present (<paths>) — run `npx update-agentic-workspace@<v> --cleanup``: files an earlier release wrote
      and no current release reads, from the catalogue the CLI ships (`cli/retired-artifacts.json`).
      Never RED: the updater reports them every run and removes them only under `--cleanup`.
+     Every updater remedy the doctor prints names `npx update-agentic-workspace@<v>`, where `<v>` is
+     this plugin's own `cli-update/package.json` version — never the bare name, which can run a
+     stale npx cache (AC-V118C-8). The `statusline` line reads the `installed_plugins.json` record
+     whose `projectPath` is this project, then the user-scope record — never another project's.
    - **`branches`** (branch-and-worktree-discipline, AC-BWD-3) — `branches: <n>
      merged-not-deleted, <m> stale worktrees`, computed by importing
      `scripts/foundry-worktree-gc.py`'s own classifier (ancestry-only, no live `gh` call — this
@@ -75,7 +84,8 @@ lane signal — Tier B advisory) plus `hooks/foundry-git-discipline.sh`'s determ
      what it measured (ER #244): `(ancestry only; squash-merged branches need the gc's gh check)`,
      plus `; <n> ref(s) outside the glob set — widen with --include` when the built-in prefixes
      dropped any — on a squash-merge repo ancestry alone reads 0, so run the gc itself for a live
-     count. Reads `n/a (not a git checkout)` when it is not one. Never RED: a repo-wide sweep is an operator/agent action
+     count. Reads `n/a (not a git checkout)` when it is not one. **ADVISORY** when `<n>` > 0 (it
+     names the gc's `--dry-run` then `--apply`); `ok` at 0. Never RED: a repo-wide sweep is an operator/agent action
      (`--apply`, `ask`-tiered), never a doctor-enforced one — see
      `docs/how-to/branching-and-cleanup.md`.
 

@@ -150,3 +150,57 @@ def test_doctor_names_the_first_missing_piece_in_order(tmp_path):
     assert "no renderer resolvable" in line and str(cfg) in line, line
     _fake_renderer(str(cfg / "plugins" / "cache" / "agentic-foundry" / "foundry" / "1.17.0" / "scripts" / "foundry-statusline.sh"), "x")
     assert "wired (renderer 1.17.0)" in _doctor_line(ws, cfg)
+
+
+# ------------------------------------------ AC-V118C-8 (audit D9 + D4) — the doctor's truth fixes
+def _load_doctor():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("foundry_doctor_statusline_v118", DOCTOR)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _registry(cfg, records):
+    (cfg / "plugins").mkdir(parents=True, exist_ok=True)
+    (cfg / "plugins" / "installed_plugins.json").write_text(
+        json.dumps({"version": 2, "plugins": {"foundry@agentic-foundry": records}}), encoding="utf-8")
+
+
+def test_doctor_renderer_picks_this_projects_record_not_the_first(tmp_path):
+    doctor = _load_doctor()
+    cfg = tmp_path / "cfg"
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    other = cfg / "plugins" / "cache" / "agentic-foundry" / "foundry" / "1.1.0"
+    mine = cfg / "plugins" / "cache" / "agentic-foundry" / "foundry" / "1.2.0"
+    user = cfg / "plugins" / "cache" / "agentic-foundry" / "foundry" / "1.0.0"
+    for d in (other, mine, user):
+        _fake_renderer(str(d / "scripts" / "foundry-statusline.sh"), "x")
+    _registry(cfg, [
+        {"scope": "project", "projectPath": str(tmp_path / "another-project"), "installPath": str(other)},
+        {"scope": "user", "installPath": str(user)},
+        {"scope": "project", "projectPath": str(ws), "installPath": str(mine)},
+    ])
+    assert doctor._statusline_renderer_path(str(cfg), str(ws))[1] == "1.2.0"
+    # no record for this project -> the user-scope record, never another project's
+    assert doctor._statusline_renderer_path(str(cfg), str(tmp_path / "third"))[1] == "1.0.0"
+
+
+def test_doctor_renderer_never_takes_another_projects_record(tmp_path):
+    doctor = _load_doctor()
+    record = {"scope": "project", "projectPath": str(tmp_path / "another"), "installPath": "/x"}
+    assert doctor._registry_record_for([record], str(tmp_path / "ws")) is None
+
+
+def test_doctor_updater_remedy_is_pinned_to_the_shipped_updater_version(tmp_path):
+    with open(os.path.join(REPO, "cli-update", "package.json"), encoding="utf-8") as fh:
+        pinned = json.load(fh)["version"]
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    ws = _workspace(tmp_path)
+    assert f"`npx update-agentic-workspace@{pinned}` (it wires it)" in _doctor_line(ws, cfg)
+    ws = _workspace(tmp_path / "b", {"statusLine": {"type": "command", "command": "x"}})
+    assert f"`npx update-agentic-workspace@{pinned}`" in _doctor_line(ws, cfg)
+    doctor = _load_doctor()
+    assert doctor._updater_cmd(str(tmp_path / "no-plugin-here")) == "npx update-agentic-workspace"
