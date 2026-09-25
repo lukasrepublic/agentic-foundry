@@ -369,7 +369,7 @@ lands in the cut-release playbook specifically — for the plugin's own repo AND
   observed failure).
 - **After the tag exists** on the resulting `main` commit, the release branch itself is deleted —
   the same "delete after `origin` contains the merge, never before" rule as any atom branch. Run
-  `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-worktree-gc.py" --dry-run --repo <dir>` first
+  `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-worktree-gc.py" --dry-run --repo <dir>` (add `--include '<prefix>/*'` for any branch prefix outside the built-in set; check `filtered_out_refs`; after `--apply`, read `status` — `partial` lists every deletion that did not happen in `failed`, while the exit code stays 0) first
   (mode flag BEFORE `--repo` — the permission-floor row is an argv prefix rule), then `--apply
   --repo <dir>` to sweep every already-merged atom/release branch and its worktree in one pass
   (see `context/branch-discipline.md`'s own recipe).

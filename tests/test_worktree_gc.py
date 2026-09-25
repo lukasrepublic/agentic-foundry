@@ -520,3 +520,157 @@ def test_documented_invocations_match_the_floor_rules_argv_prefix():
                 f"an invocation that puts --repo (or anything else) first"
             )
     assert found_any, "no documented foundry-worktree-gc.py invocation found at all -- test is vacuous"
+
+
+# ── ER #244 ──────────────────────────────────────────────────────────────────────────────────────
+
+def _env(home):
+    env = dict(os.environ)
+    env["HOME"] = str(home)
+    env["GIT_AUTHOR_NAME"] = env["GIT_COMMITTER_NAME"] = "Test"
+    env["GIT_AUTHOR_EMAIL"] = env["GIT_COMMITTER_EMAIL"] = "test@example.com"
+    return env
+
+
+def _branch_with_commit(work, home, name, fname, *, merge=False, push=False):
+    env = _env(home)
+    _run_git(work, "checkout", "-q", "-b", name, "main", env=env)
+    with open(os.path.join(work, fname), "w", encoding="utf-8") as f:
+        f.write(name + "\n")
+    _run_git(work, "add", fname, env=env)
+    _run_git(work, "commit", "-q", "-m", name, env=env)
+    _run_git(work, "checkout", "-q", "main", env=env)
+    if merge:
+        _run_git(work, "merge", "-q", "--no-ff", "-m", f"merge {name}", name, env=env)
+        _run_git(work, "push", "-q", "origin", "main", env=env)
+    if push:
+        _run_git(work, "push", "-q", "-u", "origin", name, env=env)
+
+
+def test_json_reports_the_filter_and_include_widens_it(fixture_repo):
+    """(a) a ref outside the glob set is counted as filtered_out, never silently dropped; --include
+    brings its prefix into scope and it classifies like any other branch."""
+    work, home = fixture_repo
+    _branch_with_commit(work, home, "spec/merged-two", "spec.txt", merge=True)
+    doc = json.loads(_run_gc(work, home, "--dry-run", "--no-gh").stdout)
+    assert "spec/merged-two" not in {r["name"] for r in doc["branches"]}
+    assert doc["filtered_out_refs"] >= 1 and doc["scanned_refs"] > doc["filtered_out_refs"]
+    assert "spec/*" not in doc["patterns"]
+    doc2 = json.loads(_run_gc(work, home, "--dry-run", "--no-gh", "--include", "spec/*").stdout)
+    rows = {r["name"]: r for r in doc2["branches"]}
+    assert rows["spec/merged-two"]["class"] == "merged"
+    assert "spec/*" in doc2["patterns"]
+    assert doc2["filtered_out_refs"] == doc["filtered_out_refs"] - 1
+
+
+def test_prune_runs_first_so_an_upstream_deleted_branch_is_never_a_candidate(fixture_repo):
+    """(4) the 16-phantom case: the branch is gone upstream, its remote-tracking ref lingers."""
+    work, home = fixture_repo
+    bare = os.path.join(str(home), "origin.git")
+    _run_git(bare, "update-ref", "-d", "refs/heads/atom/merged-one", env=_env(home))
+    doc = json.loads(_run_gc(work, home, "--dry-run", "--no-gh").stdout)
+    # --dry-run is READ-ONLY (its floor row is `allow`): it reads the would-prune set, changes no ref
+    assert doc["prune"]["status"] == "dry-run" and doc["prune"]["would_prune"] == 1
+    row = {r["name"]: r for r in doc["branches"]}["atom/merged-one"]
+    assert row["remote"] is False, "a would-prune ref is classified as gone upstream"
+    assert _run_git(work, "rev-parse", "-q", "--verify", "refs/remotes/origin/atom/merged-one").returncode == 0, \
+        "the dry run must not delete the remote-tracking ref"
+    doc2 = json.loads(_run_gc(work, home, "--apply", "--no-gh").stdout)
+    assert doc2["prune"]["status"] == "ok" and doc2["prune"]["pruned"] == 1
+    assert "atom/merged-one" not in doc2["deleted_remote_branches"] and doc2["failed"] == []
+
+
+def test_apply_records_failures_and_reports_partial_never_ok(fixture_repo):
+    """(c) a remote delete that fails is recorded with its reason and turns status to `partial`;
+    a remote ref already gone upstream is named `remote_already_absent`, not a success."""
+    work, home = fixture_repo
+    bare = os.path.join(str(home), "origin.git")
+    env = _env(home)
+    # a merged branch whose upstream copy is gone (a phantom, kept by --no-prune)
+    _branch_with_commit(work, home, "atom/phantom", "phantom.txt", merge=True, push=True)
+    _run_git(bare, "update-ref", "-d", "refs/heads/atom/phantom", env=env)
+    # a merged branch the remote REFUSES to delete (a pre-receive hook on the bare origin)
+    _branch_with_commit(work, home, "atom/locked", "locked.txt", merge=True, push=True)
+    hook = os.path.join(bare, "hooks", "pre-receive")
+    with open(hook, "w", encoding="utf-8") as f:
+        f.write('#!/bin/sh\nwhile read o n r; do [ "$r" = "refs/heads/atom/locked" ] && { echo "locked by policy" >&2; exit 1; }; done\nexit 0\n')
+    os.chmod(hook, 0o755)
+    p = _run_gc(work, home, "--apply", "--no-gh", "--no-prune")
+    doc = json.loads(p.stdout)
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert doc["status"] == "partial"
+    failed = {f["name"]: f for f in doc["failed"]}
+    assert failed["atom/locked"]["op"] == "remote-delete"
+    assert failed["atom/locked"]["reason"]
+    assert "atom/phantom" in doc["remote_already_absent"]
+    assert "atom/phantom" not in doc["deleted_remote_branches"]
+    assert "atom/merged-one" in doc["deleted_remote_branches"]
+
+
+def test_a_clean_apply_still_reports_ok_with_an_empty_failed_list(fixture_repo):
+    work, home = fixture_repo
+    doc = json.loads(_run_gc(work, home, "--apply", "--no-gh").stdout)
+    assert doc["status"] == "ok" and doc["failed"] == [] and doc["remote_already_absent"] == []
+
+
+def test_doctor_line_says_what_it_measured(fixture_repo):
+    """(b) ancestry-only is named; refs outside the glob set are counted."""
+    work, home = fixture_repo
+    _branch_with_commit(work, home, "spec/other", "other.txt")
+    _ok, detail = doctor.check_branches_advisory(project_dir=str(work))
+    assert "ancestry only" in detail
+    assert "outside the glob set" in detail and "--include" in detail
+
+
+def test_include_refuses_a_glob_without_a_literal_prefix(fixture_repo):
+    """PR #246 review R1: `--include '*'` would make every long-lived branch a candidate."""
+    work, home = fixture_repo
+    for bad in ("*", "**", "?*", "*/x", "-x/*", "[ab]/*"):
+        p = _run_gc(work, home, "--dry-run", "--no-gh", f"--include={bad}")
+        assert p.returncode == 1 and json.loads(p.stdout)["status"] == "refused", bad
+    assert _run_gc(work, home, "--dry-run", "--no-gh", "--include", "spec/*").returncode == 0
+
+
+def test_long_lived_branches_are_always_protected(fixture_repo):
+    """PR #246 review R1: a `develop` fast-forwarded from main reads merged by ancestry — never deleted."""
+    work, home = fixture_repo
+    env = _env(home)
+    _run_git(work, "branch", "develop", "main", env=env)
+    _run_git(work, "push", "-q", "origin", "develop", env=env)
+    doc = json.loads(_run_gc(work, home, "--apply", "--no-gh").stdout)
+    assert {r["name"]: r for r in doc["branches"]}["develop"]["class"] == "protected"
+    assert "develop" not in doc["deleted_local_branches"] + doc["deleted_remote_branches"]
+    assert _run_git(work, "rev-parse", "-q", "--verify", "refs/heads/develop").returncode == 0
+
+
+def test_a_mirror_style_fetch_refspec_is_never_pruned(fixture_repo):
+    """PR #246 review R4: prune deletes the refspec's destination side — refuse a non-standard one."""
+    work, home = fixture_repo
+    env = _env(home)
+    _run_git(work, "config", "--add", "remote.origin.fetch", "+refs/heads/*:refs/heads/*", env=env)
+    doc = json.loads(_run_gc(work, home, "--apply", "--no-gh").stdout)
+    assert doc["prune"]["status"] == "skipped" and doc["prune"]["reason"] == "non-standard fetch refspec"
+
+
+def test_failure_reasons_never_carry_a_url_credential():
+    """PR #246 review R3."""
+    p = subprocess.CompletedProcess([], 128, "", "fatal: unable to access 'https://x-access-token:ghs_SECRET@github.com/o/r.git/'")
+    assert "ghs_SECRET" not in gc._why(p) and "://***@github.com" in gc._why(p)
+
+
+def test_every_workflow_run_block_parses_as_bash():
+    """PR #246 review B1: a comment joined onto a `for ... do` line commented the loop out and left a
+    bare `done` — every release would have failed. Parse every `run:` block of every workflow."""
+    import glob
+    import yaml
+    bad = []
+    for wf in sorted(glob.glob(os.path.join(REPO_ROOT, ".github", "workflows", "*.yml"))):
+        doc = yaml.safe_load(open(wf, encoding="utf-8"))
+        for jname, job in (doc.get("jobs") or {}).items():
+            for step in job.get("steps") or []:
+                if "run" not in step or job.get("defaults", {}).get("run", {}).get("shell", "bash") not in ("bash",):
+                    continue
+                r = subprocess.run(["bash", "-n"], input=step["run"], text=True, capture_output=True)
+                if r.returncode != 0:
+                    bad.append(f"{os.path.basename(wf)}:{jname}:{step.get('name')}: {r.stderr.strip()[:160]}")
+    assert not bad, "\n".join(bad)

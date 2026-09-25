@@ -511,10 +511,20 @@ def check_branches_advisory(plugin_root=None, project_dir=None):
         gc = _load_worktree_gc_module(plugin_root or PLUGIN_ROOT)
         if gc is None or not gc.is_git_repo(pdir):
             return True, "n/a (not a git checkout)"
-        rows, _worktrees = gc.classify_repo(pdir, use_gh=False)
+        stats = {}
+        try:
+            rows, _worktrees = gc.classify_repo(pdir, use_gh=False, stats=stats)
+        except TypeError:  # an older gc module without `stats`
+            rows, _worktrees = gc.classify_repo(pdir, use_gh=False)
         merged = [r for r in rows if r["class"] == "merged"]
         stale_worktrees = [r for r in merged if r.get("worktree")]
-        return True, f"{len(merged)} merged-not-deleted, {len(stale_worktrees)} stale worktrees"
+        # ER #244 (b)/(a): say what was measured. Ancestry alone cannot see a squash-merged branch,
+        # and the glob set may drop most of a repo's refs — both are named, never implied.
+        filtered = stats.get("filtered_out_refs", 0)
+        scope = "ancestry only; squash-merged branches need the gc's gh check"
+        if filtered:
+            scope += f"; {filtered} ref(s) outside the glob set — widen with --include"
+        return True, f"{len(merged)} merged-not-deleted, {len(stale_worktrees)} stale worktrees ({scope})"
     except Exception as e:  # noqa: BLE001 -- deliberate: AC-BWD-3 must never redden or crash the run
         return ADVISORY, _sanitize_detail(f"unknown (probe error: {type(e).__name__}: {e})")
 

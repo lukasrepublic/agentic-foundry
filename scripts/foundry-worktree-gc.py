@@ -65,12 +65,22 @@ what every rule, doc example, and test in this repo now uses):
 Exit codes: 0 on a completed run (dry-run OR apply, regardless of how many branches classify into
 each bucket -- an empty `merged` set is not a failure). 1 on a refusal (bad `--repo`, dirty tree).
 Prints exactly one JSON object on stdout.
+
+ER #244 (hotfix-v1.17.6): `status` is `partial` -- never `ok` -- when any requested deletion failed;
+each failure is in `failed: [{name, op, reason}]` (callers MUST read `status`; the exit code stays 0),
+and a remote branch already gone upstream is named in `remote_already_absent`. Before classifying,
+`--apply` runs `git remote prune origin` and `--dry-run` reads `git remote prune --dry-run origin`
+(changing no ref), both only under a standard fetch refspec; `--no-prune` skips it. The default
+branch plus a built-in long-lived set (`develop`, `staging`, `production`, `gh-pages`, ...) are always
+protected. `--include <glob>` (repeatable) widens the built-in
+prefix set; `patterns`, `scanned_refs` and `filtered_out_refs` say what was looked at.
 """
 from __future__ import annotations
 
 import argparse
 import fnmatch
 import json
+import re
 import os
 import subprocess
 import sys
@@ -81,6 +91,21 @@ from datetime import datetime, timezone
 # convention produces -- atom branches, release branches, hotfixes, and the conventional
 # fix/feat/docs prefixes an adopter's own workflow may use alongside them.
 GLOB_PATTERNS = ("atom/*", "release/*", "hotfix/*", "fix/*", "feat/*", "docs/*")
+
+# Always protected, whatever --include says (PR #246 review R1): long-lived branches that are often
+# fast-forwarded from the default branch and so read as "merged" by ancestry alone.
+ALWAYS_PROTECTED = frozenset({"main", "master", "develop", "development", "staging", "production",
+                              "prod", "gh-pages", "trunk"})
+
+
+def include_glob_ok(glob):
+    """An `--include` glob must name a literal prefix directory (`spec/*`, `research/2026-*`): a bare
+    `*`, `?*` or `**` would make every long-lived branch a candidate. The first path segment must be
+    non-empty, carry no glob metacharacter, and not start with `-`."""
+    if not isinstance(glob, str) or "/" not in glob:
+        return False
+    head = glob.split("/", 1)[0]
+    return bool(head) and not head.startswith("-") and not any(c in head for c in "*?[]")
 
 _GIT_TIMEOUT_SEC = 30
 _GH_TIMEOUT_SEC = 30
@@ -93,8 +118,12 @@ class GcRefused(Exception):
 def _run(argv, cwd=None, timeout=_GIT_TIMEOUT_SEC):
     """The ONE subprocess entry point every git/gh call in this module goes through -- an argv
     LIST, never a shell string, never `shell=True` (module docstring: "pure ... no shell")."""
+    # GIT_TERMINAL_PROMPT=0 (PR #246 review R5): a network call (prune, ls-remote, push) must fail
+    # rather than wait on a credential prompt on /dev/tty; stdin is closed for the same reason.
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
     try:
-        return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+        return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=timeout,
+                              env=env, stdin=subprocess.DEVNULL)
     except FileNotFoundError as e:
         return subprocess.CompletedProcess(argv, 127, "", str(e))
     except subprocess.TimeoutExpired as e:
@@ -167,13 +196,16 @@ def _matches_any(name, patterns):
     return any(fnmatch.fnmatch(name, pat) for pat in patterns)
 
 
-def list_branch_refs(repo, patterns=GLOB_PATTERNS, include_names=None):
+def list_branch_refs(repo, patterns=GLOB_PATTERNS, include_names=None, stats=None):
     """`git for-each-ref` over refs/heads + refs/remotes/origin, filtered to the glob set PLUS any
     name in `include_names` (used for the protected default branch, e.g. `main`, which never
     matches the discipline's own naming glob but must still surface as a `protected` row -- AC-
     BWD-2: "main ... are protected"). Returns (local, remote) dicts of name -> {"sha",
     "committerdate"}. `origin/HEAD` is never a branch candidate and is always excluded."""
     include_names = include_names or set()
+    # ER #244 (a): `stats` (optional dict) receives `scanned` (every candidate ref seen) and
+    # `filtered_out` (refs the glob set dropped) so a caller can tell `merged: 0` from "looked at 8%".
+    scanned, filtered = 0, 0
     fmt = "%(refname)%09%(objectname)%09%(committerdate:iso-strict)"
     p = _git(repo, "for-each-ref", f"--format={fmt}", "refs/heads", "refs/remotes/origin")
     local, remote = {}, {}
@@ -193,9 +225,18 @@ def list_branch_refs(repo, patterns=GLOB_PATTERNS, include_names=None):
             bucket = remote
         else:
             continue
+        scanned += 1
+        if name.startswith("-"):
+            # never a candidate (PR #246 review R2): a name git could parse as an option
+            filtered += 1
+            continue
         if not _matches_any(name, patterns) and name not in include_names:
+            filtered += 1
             continue
         bucket[name] = {"sha": sha, "committerdate": cdate}
+    if stats is not None:
+        stats["scanned_refs"] = scanned
+        stats["filtered_out_refs"] = filtered
     return local, remote
 
 
@@ -273,12 +314,18 @@ def _age_days(committerdate_iso, *, now=None):
     return max(0, (now - dt).days)
 
 
-def classify_repo(repo, *, protected_names=None, use_gh=True, base=None):
+def classify_repo(repo, *, protected_names=None, use_gh=True, base=None, patterns=GLOB_PATTERNS,
+                  stats=None, stale_remote=None):
     """Orchestrates the primitives above into one row per candidate branch. Returns
-    (rows, worktrees). `base` defaults to `origin/<default_branch>`."""
+    (rows, worktrees). `base` defaults to `origin/<default_branch>`. `patterns` is the include glob
+    set (GLOB_PATTERNS plus any `--include`); `stats`, when given, receives the ref counts."""
     base = base or f"origin/{default_branch(repo)}"
-    protected = set(protected_names or []) | {default_branch(repo)}
-    local, remote = list_branch_refs(repo, include_names=protected)
+    protected = set(protected_names or []) | {default_branch(repo)} | ALWAYS_PROTECTED
+    local, remote = list_branch_refs(repo, patterns=patterns, include_names=protected, stats=stats)
+    # a dry-run prune's findings (ER #244): a remote-tracking ref for a branch already gone upstream
+    # is classified as if pruned, without the dry run changing any ref
+    for gone in (stale_remote or ()):
+        remote.pop(gone, None)
     worktrees = list_worktrees(repo)
     wt_by_branch = {w["branch"]: w["path"] for w in worktrees if w.get("branch")}
 
@@ -352,6 +399,10 @@ def apply_deletions(repo, rows):
     actually refuse an ancestor-merged branch, but the fallback is unconditional so a git edge case
     is still narrated rather than silently forced)."""
     removed_worktrees, deleted_local, deleted_remote, force_deleted = [], [], [], []
+    # ER #244 (c): every call that did not do what it was asked is RECORDED, never dropped —
+    # `failed` feeds `status: "partial"`, and a remote ref that is already gone upstream (a stale
+    # remote-tracking ref) is named as such rather than counted as either a success or a failure.
+    failed, already_absent = [], []
     for row in rows:
         if row["class"] != "merged":
             continue
@@ -360,22 +411,100 @@ def apply_deletions(repo, rows):
             p = _git(repo, "worktree", "remove", wt)
             if p.returncode == 0:
                 removed_worktrees.append(wt)
+            else:
+                failed.append({"name": row["name"], "op": "worktree-remove", "path": wt, "reason": _why(p)})
         if row["local"]:
-            p = _git(repo, "branch", "-d", row["name"])
+            p = _git(repo, "branch", "-d", "--", row["name"])
             if p.returncode == 0:
                 deleted_local.append(row["name"])
             else:
-                p2 = _git(repo, "branch", "-D", row["name"])
+                p2 = _git(repo, "branch", "-D", "--", row["name"])
                 if p2.returncode == 0:
                     deleted_local.append(row["name"])
                     reason = (f"squash-merged, PR #{row['pr_number']} verified by headRefOid"
                               if row.get("pr_number") else "squash-merged, ancestry-verified")
                     force_deleted.append({"name": row["name"], "reason": reason})
+                else:
+                    failed.append({"name": row["name"], "op": "local-delete", "reason": _why(p2)})
         if row["remote"]:
-            p = _git(repo, "push", "origin", "--delete", row["name"])
-            if p.returncode == 0:
-                deleted_remote.append(row["name"])
-    return removed_worktrees, deleted_local, deleted_remote, force_deleted
+            # Upstream presence is checked FIRST: `git push --delete refs/heads/<x>` for a ref that
+            # no longer exists exits 0 with only a warning, so a push-then-check order would count
+            # a phantom as deleted — the exact false success ER #244 is about. A ref provably gone
+            # upstream is named `remote_already_absent` and only its stale tracking ref is removed.
+            if _remote_head_absent(repo, row["name"]):
+                already_absent.append(row["name"])
+                pu = _git(repo, "update-ref", "-d", f"refs/remotes/origin/{row['name']}")
+                if pu.returncode != 0:
+                    failed.append({"name": row["name"], "op": "stale-ref-cleanup", "reason": _why(pu)})
+            else:
+                p = _git(repo, "push", "origin", "--delete", f"refs/heads/{row['name']}")
+                if p.returncode == 0:
+                    deleted_remote.append(row["name"])
+                else:
+                    failed.append({"name": row["name"], "op": "remote-delete", "reason": _why(p)})
+    return {"removed_worktrees": removed_worktrees, "deleted_local": deleted_local,
+            "deleted_remote": deleted_remote, "force_deleted": force_deleted,
+            "failed": failed, "remote_already_absent": already_absent}
+
+
+def _why(p):
+    """The last non-empty stderr (or stdout) line of a failed call — enough to act on."""
+    lines = [ln.strip() for ln in ((p.stderr or "") + "\n" + (p.stdout or "")).splitlines() if ln.strip()]
+    line = lines[-1] if lines else f"exit {p.returncode}"
+    # a remote URL can embed a credential (`https://x-access-token:...@host`): never pass it on
+    # into JSON an agent reads (PR #246 review R3)
+    line = re.sub(r"://[^/@\s]+@", "://***@", line)
+    return line[:300]
+
+
+def _remote_head_absent(repo, name):
+    """True only when `git ls-remote --heads origin <name>` SUCCEEDS and returns no row — the ref
+    is provably gone upstream. A failed ls-remote (offline, auth) is never read as absent."""
+    p = _git(repo, "ls-remote", "--heads", "origin", f"refs/heads/{name}")
+    return p.returncode == 0 and not (p.stdout or "").strip()
+
+
+def _standard_fetch_refspec(repo):
+    """True only when every `remote.origin.fetch` destination is under `refs/remotes/origin/` —
+    `git remote prune` deletes whatever sits on the destination side, so a mirror-style refspec
+    (`+refs/heads/*:refs/heads/*`) would make it delete LOCAL branches (PR #246 review R4)."""
+    p = _git(repo, "config", "--get-all", "remote.origin.fetch")
+    specs = [ln.strip() for ln in (p.stdout or "").splitlines() if ln.strip()]
+    if p.returncode != 0 or not specs:
+        return False
+    return all(":" in sp and sp.split(":", 1)[1].startswith("refs/remotes/origin/") for sp in specs)
+
+
+def stale_remote_refs(repo):
+    """READ-ONLY: `git remote prune --dry-run origin` — the branch names whose remote-tracking ref
+    points at a branch already gone upstream. Used by --dry-run, which must change no ref (its
+    permission-floor row is `allow` because it is read-only). Returns (status_dict, names)."""
+    if _git(repo, "remote", "get-url", "origin").returncode != 0:
+        return {"status": "no-origin", "pruned": 0}, []
+    if not _standard_fetch_refspec(repo):
+        return {"status": "skipped", "pruned": 0, "reason": "non-standard fetch refspec"}, []
+    p = _git(repo, "remote", "prune", "--dry-run", "origin", timeout=120)
+    if p.returncode != 0:
+        return {"status": "failed", "pruned": 0, "reason": _why(p)}, []
+    names = [ln.split("origin/", 1)[1].strip() for ln in (p.stdout or "").splitlines()
+             if "[would prune]" in ln and "origin/" in ln]
+    return {"status": "dry-run", "would_prune": len(names), "pruned": 0}, names
+
+
+def prune_remote_refs(repo):
+    """ER #244 (4): `git remote prune origin` before classifying, so a remote-tracking ref for a
+    branch already deleted upstream never becomes a deletion candidate. Returns
+    {"status": "ok"|"failed"|"no-origin", "pruned": <n>, "reason"?}. Only remote-tracking refs are
+    touched (a cache of the remote), never a local branch."""
+    if _git(repo, "remote", "get-url", "origin").returncode != 0:
+        return {"status": "no-origin", "pruned": 0}
+    if not _standard_fetch_refspec(repo):
+        return {"status": "skipped", "pruned": 0, "reason": "non-standard fetch refspec"}
+    p = _git(repo, "remote", "prune", "origin", timeout=120)
+    if p.returncode != 0:
+        return {"status": "failed", "pruned": 0, "reason": _why(p)}
+    pruned = sum(1 for ln in (p.stdout or "").splitlines() if "[pruned]" in ln)
+    return {"status": "ok", "pruned": pruned}
 
 
 # ----------------------------------------------------------------------------------------------- #
@@ -394,6 +523,12 @@ def main(argv=None):
     ap.add_argument("--protected", action="append", default=[],
                     help="an additional protected branch name (repeatable); the default branch "
                          "is always protected")
+    ap.add_argument("--include", action="append", default=[], metavar="GLOB",
+                    help="an additional branch glob to consider (repeatable), e.g. 'spec/*'; "
+                         "added to the built-in set " + " ".join(GLOB_PATTERNS))
+    ap.add_argument("--no-prune", action="store_true",
+                    help="skip `git remote prune origin` (--apply) / `--dry-run` prune (--dry-run) "
+                         "before classifying")
     ap.add_argument("--no-gh", action="store_true",
                     help="skip the gh pr list fallback -- ancestry-only classification")
     args = ap.parse_args(argv)
@@ -407,23 +542,46 @@ def main(argv=None):
         print(json.dumps({"status": "refused", "reason": str(e)}))
         return 1
 
-    rows, _worktrees = classify_repo(repo, protected_names=args.protected, use_gh=not args.no_gh)
+    bad = [g for g in args.include if not include_glob_ok(g)]
+    if bad:
+        print(json.dumps({"status": "refused", "reason": f"--include needs a literal prefix directory "
+                          f"(e.g. 'spec/*'); refusing {bad}"}))
+        return 1
+    patterns = tuple(GLOB_PATTERNS) + tuple(args.include)
+    stale = []
+    if args.no_prune:
+        prune = {"status": "skipped", "pruned": 0}
+    elif args.apply:
+        prune = prune_remote_refs(repo)
+    else:
+        prune, stale = stale_remote_refs(repo)
+    stats = {}
+    rows, _worktrees = classify_repo(repo, protected_names=args.protected, use_gh=not args.no_gh,
+                                     patterns=patterns, stats=stats, stale_remote=stale)
 
-    removed_worktrees, deleted_local, deleted_remote, force_deleted = [], [], [], []
+    applied = {"removed_worktrees": [], "deleted_local": [], "deleted_remote": [], "force_deleted": [],
+               "failed": [], "remote_already_absent": []}
     if args.apply:
-        removed_worktrees, deleted_local, deleted_remote, force_deleted = apply_deletions(repo, rows)
+        applied = apply_deletions(repo, rows)
 
     counts = Counter(r["class"] for r in rows)
     doc = {
-        "status": "ok",
+        # ER #244 (c): a pass in which any requested deletion failed is `partial`, never `ok`.
+        "status": "partial" if applied["failed"] else "ok",
         "repo": repo,
         "dry_run": not args.apply,
+        "patterns": list(patterns),
+        "scanned_refs": stats.get("scanned_refs", 0),
+        "filtered_out_refs": stats.get("filtered_out_refs", 0),
+        "prune": prune,
         "counts": {k: counts.get(k, 0) for k in ("merged", "open-pr", "unmerged-no-pr", "protected")},
         "branches": rows,
-        "removed_worktrees": removed_worktrees,
-        "deleted_local_branches": deleted_local,
-        "deleted_remote_branches": deleted_remote,
-        "force_deleted": force_deleted,
+        "removed_worktrees": applied["removed_worktrees"],
+        "deleted_local_branches": applied["deleted_local"],
+        "deleted_remote_branches": applied["deleted_remote"],
+        "force_deleted": applied["force_deleted"],
+        "remote_already_absent": applied["remote_already_absent"],
+        "failed": applied["failed"],
     }
     print(json.dumps(doc, indent=2))
     return 0
