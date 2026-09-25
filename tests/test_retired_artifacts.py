@@ -54,7 +54,10 @@ def test_doctor_names_present_leftovers_and_is_advisory_only(tmp_path):
     assert "[adv ]" in line and "2 present" in line and ".foundry/wiring-hash.pin" in line
     assert "zeta-exec-guard.sh" in line and "aws-exec-guard.sh" not in line
     assert "foundry-cloud-cli-exec-guard.sh" not in line
-    assert "npx update-agentic-workspace --cleanup" in line
+    # AC-V118C-8 (audit D4): the remedy names the updater version this plugin was released with
+    with open(os.path.join(REPO, "cli-update", "package.json"), encoding="utf-8") as fh:
+        pinned = json.load(fh)["version"]
+    assert f"npx update-agentic-workspace@{pinned} --cleanup" in line
     # unreadable settings -> no hook is called stale (fail-closed); the pin still is
     (ws / ".claude" / "settings.local.json").write_text("{ not json", encoding="utf-8")
     line = _doctor_line(ws)

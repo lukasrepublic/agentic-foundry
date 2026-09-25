@@ -107,23 +107,32 @@ case "${1:-}" in
         # fixture need different verdicts (an "open-pr" branch vs an "unmerged-no-pr" branch in
         # the same repo). Falls back to GH_STUB_PR_LIST_JSON (one body for every branch/state)
         # when unset, so a single-branch test needs no JSON authoring at all.
+        #
+        # `--base <b>` (v1.18.0, audit D8) filters like real gh: a fixture row carrying a
+        # `baseRefName` other than <b> is dropped; a row without `baseRefName` always passes (so
+        # every pre-existing fixture is unchanged). The key is stripped from the emitted rows.
         branch=""
         state=""
+        base=""
         rest=("$@")
         for ((i = 2; i < ${#rest[@]}; i++)); do
           case "${rest[i]}" in
             --head) branch="${rest[i+1]:-}" ;;
             --state) state="${rest[i+1]:-}" ;;
+            --base) base="${rest[i+1]:-}" ;;
           esac
         done
         if [ -n "${GH_STUB_PR_LIST_BY_BRANCH:-}" ]; then
           printf '%s\n' "${GH_STUB_PR_LIST_BY_BRANCH}" | python3 -c '
 import json, sys
 doc = json.loads(sys.stdin.read())
-branch, state = sys.argv[1], sys.argv[2]
+branch, state, base = sys.argv[1], sys.argv[2], sys.argv[3]
 rows = (doc.get(branch) or {}).get(state) or []
+if base:
+    rows = [r for r in rows if not isinstance(r, dict) or r.get("baseRefName", base) == base]
+rows = [{k: v for k, v in r.items() if k != "baseRefName"} if isinstance(r, dict) else r for r in rows]
 print(json.dumps(rows))
-' "$branch" "$state"
+' "$branch" "$state" "$base"
         else
           printf '%s\n' "${GH_STUB_PR_LIST_JSON:-[]}"
         fi

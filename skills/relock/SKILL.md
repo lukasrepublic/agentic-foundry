@@ -1,6 +1,6 @@
 ---
 name: relock
-description: Re-lock the stack-profile lock after a trusted profile-version advance (/foundry:relock). When `/foundry:doctor` shows a `stack-profile` RED because a profile in `packs/` advanced (e.g. aws-eks-karpenter 0.3.0→0.4.0) and `.foundry/stack-profile.lock` still pins the old version/sha, this re-resolves the ALREADY-locked profiles against `packs/` and atomically re-writes the lock with their current {version, sha256, blueprints_sha256} — validate-before-write, refusing a downgrade / invalid / core-incompatible profile. Trigger after a `claude plugin update` bumped a locked profile, or when the operator says "/foundry:relock", "doctor stack-profile is red after updating", "re-lock the stack profile".
+description: Re-lock the stack-profile lock after a trusted profile-version advance (/foundry:relock). When `/foundry:doctor` shows a `stack-profile-lock` ADVISORY ("lock behind the profile version this plugin ships") because a profile in `packs/` advanced (e.g. aws-eks-karpenter 0.3.0→0.4.0) and `.foundry/stack-profile.lock` still pins the old version/sha, this re-resolves the ALREADY-locked profiles against `packs/` and atomically re-writes the lock with their current {version, sha256, blueprints_sha256} — validate-before-write, refusing a downgrade / invalid / core-incompatible profile. Trigger after a `claude plugin update` bumped a locked profile, or when the operator says "/foundry:relock", "doctor stack-profile is advisory/red after updating", "re-lock the stack profile".
 ---
 
 # /foundry:relock
@@ -8,7 +8,10 @@ description: Re-lock the stack-profile lock after a trusted profile-version adva
 The stack-profile re-lock operator surface (feat-foundry-stack-profile-relock). `.foundry/stack-profile.lock`
 pins each adopted profile as `{id, version, sha256, blueprints_sha256}`. When the plugin ships a new
 profile *version*, the locked `version`/`sha256` no longer match the profile now in `packs/` →
-`resolve_lock` fail-closes → `/foundry:doctor`'s `stack-profile` row goes **DOCTOR-RED**. This verb is the
+`resolve_lock` fail-closes. When the ONLY difference is that the installed plugin ships a NEWER
+version of the same locked id(s), `/foundry:doctor`'s `stack-profile-lock` row is **ADVISORY** (not
+RED, since v1.18.0 — AC-V118C-6) and names the exact command below; any other mismatch (an id the
+plugin does not ship, a downgrade, same-version content drift) is still **DOCTOR-RED**. This verb is the
 missing re-lock — the npm `update` / `terraform init -upgrade` / `/foundry:upgrade` (now a no-op pointer) "the
 trusted action re-pins the lock" pattern, for the stack-profile lock.
 
@@ -25,15 +28,18 @@ stay separate operations so `--lock` never silently re-points an adopter's exist
 
 ## When to trigger
 
-- `/foundry:doctor` shows `stack-profile … does not resolve` **and** the cause is a **known trusted
-  profile-version advance** (you just ran `claude plugin update`, or bumped a profile's `requires_core`).
+- `/foundry:doctor` shows the `stack-profile-lock` ADVISORY `lock behind the profile version this
+  plugin ships (<id> <old>→<new>)` — the plugin update you just ran advanced a locked profile.
+- `/foundry:doctor` shows `stack-profile … does not resolve` (RED) **and** the cause is a **known
+  trusted** change (e.g. you bumped a profile's `requires_core`) — inspect first; the RED means the
+  doctor could not tell it was a plain version advance.
 - Operator: "/foundry:relock", "re-lock the stack profile", "doctor stack-profile is red after updating".
 
 ## Procedure
 
 1. **Inspect the drift first** — confirm it is a trusted advance, not an unexplained change:
    ```bash
-   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-doctor.py"            # see the stack-profile RED detail
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-doctor.py"            # see the stack-profile-lock detail
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-stack-profile.py" --validate <profile-id>
    ```
 2. **Re-lock** (re-resolves the already-locked ids against `packs/`; validate-before-write; atomic):
