@@ -213,6 +213,45 @@ export function parseFloorRootShape(rule, pluginRootGlob) {
   return { name: m[1], sub: m[2] ?? null };
 }
 
+/** The floor's root-glob shape with every `*` segment of the glob allowed to be a CONCRETE
+ * segment instead (`cache/agentic-foundry/foundry/1.9.1/scripts/<name>[ <sub>]:*`) — the shape an
+ * init before installer-unpinning (v1.7.0) wrote, with the marketplace directory and the plugin
+ * version spelled out. hotfix-v1.17.3: such rows are stale by construction (the floor has written
+ * only version-wildcarded rows since; the wildcard row the reconcile adds in the same pass covers
+ * the script), and because they never matched the exact-shape regex above, nothing ever retired
+ * them — an adopter carried `1.9.1` allow rows across eight releases. `*` in the glob becomes
+ * `([^/]+)`; a row whose captured segments are ALL literal `*` is the exact shape (handled above),
+ * so this parser reports `pinned: true` only when at least one segment is concrete. */
+function floorPinnedShapeRe(pluginRootGlob) {
+  // PR #233 security review Risk 2: every `*` but the last (the marketplace directory) may be a
+  // plain name (no dots — so `..` and an operator's partial glob like `1.*` never qualify) or the
+  // literal `*`; the LAST `*` (the plugin version) may be a semver-shaped segment or `*`. A rule
+  // from a foreign marketplace still matches by shape (the name is not the floor's to know here),
+  // but only for the tiers and conditions planRetirements allows.
+  const stars = (pluginRootGlob.match(/\*/g) || []).length;
+  let seen = 0;
+  const src = escapeLiteral(pluginRootGlob).replace(/\\\*/g, () => {
+    seen += 1;
+    return seen === stars ? '(\\*|\\d+\\.\\d+\\.\\d+[A-Za-z0-9.+-]*)' : '(\\*|[A-Za-z0-9_-]+)';
+  });
+  return new RegExp(`^Bash\\(${src}/scripts/(${ROOT_SHAPE_NAME_RE})(?: (.+))?:\\*\\)$`);
+}
+
+/** Parse `rule` as a version-/marketplace-PINNED variant of the floor's own row shape. Returns
+ * `{ name, sub, pinned: true }` when at least one glob segment is concrete in the row, `null` for
+ * the exact wildcard shape (parseFloorRootShape's business) and for every other shape. Exported for
+ * the fixture tests. */
+export function parseFloorPinnedShape(rule, pluginRootGlob) {
+  if (typeof pluginRootGlob !== 'string' || pluginRootGlob === '') return null;
+  const stars = (pluginRootGlob.match(/\*/g) || []).length;
+  if (stars === 0) return null;
+  const m = floorPinnedShapeRe(pluginRootGlob).exec(rule);
+  if (!m) return null;
+  const segs = m.slice(1, 1 + stars);
+  if (segs.every((x) => x === '*')) return null;
+  return { name: m[1 + stars], sub: m[2 + stars] ?? null, pinned: true };
+}
+
 /** A collision-free key for the `(name, sub)` pair — `JSON.stringify` of a 2-tuple rather than a
  * string concatenation with a hand-picked separator, which a `sub` containing that exact separator
  * (an unlikely but not-impossible flag value) could otherwise fold into a DIFFERENT pair's key. */
@@ -241,13 +280,34 @@ function shippedRootNames(map) {
  * `{ retirements: { allow: [...], ask: [...] }, total }`. */
 export function planRetirements({ settingsObj, map }) {
   const shipped = shippedRootNames(map);
+  const shippedAsk = new Set();
+  for (const e of map.entries) {
+    if (e.tier !== 'ask') continue;
+    const parsed = parseFloorRootShape(e.rule, map.plugin_root_glob);
+    if (parsed) shippedAsk.add(rootNameKey(parsed));
+  }
   const retirements = { allow: [], ask: [] };
   const perms = (settingsObj && settingsObj.permissions) || {};
   for (const tier of ['allow', 'ask']) {
     for (const rule of perms[tier] || []) {
       const parsed = parseFloorRootShape(rule, map.plugin_root_glob);
-      if (!parsed) continue; // not the floor's own shape at all -> never touched (AC-FRR-2)
-      if (!shipped.has(rootNameKey(parsed))) retirements[tier].push(rule);
+      if (parsed) {
+        if (!shipped.has(rootNameKey(parsed))) retirements[tier].push(rule);
+        continue;
+      }
+      // hotfix-v1.17.3: a version-/marketplace-pinned variant of the floor's own shape. An `allow`
+      // row is retired whether or not the script still ships — the wildcard row covers a shipped
+      // script (added in this same pass when absent), and a pinned row for a gone script is exactly
+      // the ER #199 class. An `ask` row is retired ONLY when the shipped map declares the same
+      // (name, sub) at `ask`, so the wildcard `ask` row replaces it (PR #233 security review Risk 1:
+      // `ask` beats `allow`, so dropping an ask row under a broader allow would turn a prompt into a
+      // silent grant — a widening this pass must never perform).
+      const pinned = parseFloorPinnedShape(rule, map.plugin_root_glob);
+      if (pinned) {
+        if (tier === 'allow') retirements[tier].push(rule);
+        else if (shippedAsk.has(rootNameKey(pinned))) retirements[tier].push(rule);
+      }
+      // any other shape -> never touched (AC-FRR-2)
     }
   }
   const total = retirements.allow.length + retirements.ask.length;

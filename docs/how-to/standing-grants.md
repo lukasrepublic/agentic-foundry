@@ -17,9 +17,13 @@ the identical starter at `context/permissions-template.yaml`; the schema is
 `schema/permissions.schema.json`.
 
 Before the seed, the doctor's line reads `policy absent — seed it: …`. Right after it, it reads
-`policy drift` with two rules named: the compiler's own self-guard rules (`Edit` and `Write`
-denied on the policy file) are not in the floor, so they are missing until the first `--write` in
-the compile step below. That one run converges them and the line becomes `policy in-sync`.
+`policy in-sync`: the two self-guard rules (`Edit` and `Write` denied on the policy file) are
+written together with the seed by the scaffold's create path, by the updater, and by
+`create-agentic-workspace --existing --reconcile-floor` (`[permissions] self-guard deny rules added`;
+a plain `--existing` seeds the file but never writes settings, so it still reads `policy drift` until
+the updater or the compile step runs), so a workspace with zero grants never needs the compile step
+just to be in sync.
+The compile step below is for your grants.
 
 ## 1. Write the grant
 

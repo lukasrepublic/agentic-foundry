@@ -18,6 +18,7 @@ import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from '
 import { planAmendmentsBackfill, applyAmendmentsBackfill, renderAmendmentsRow } from './amendmentsBackfill.mjs';
 import { buildUpgradeReport, writeUpgradeReport, installedVersionBefore, versionOrNull, NEXT_LINE } from './upgradeReport.mjs';
 import { planStatuslineWiring, applyStatuslineWiring, renderStatuslineRows, statuslineChanged } from './statuslineWiring.mjs';
+import { policyPresent, missingSelfGuardDeny, applySelfGuardDeny, renderSelfGuardRow, selfGuardShapeOk } from './selfGuardDeny.mjs';
 import {
   ALLOWED_CLAUDE_SUBCOMMANDS, resolveClaudeOnPath, runClaude,
   defaultScopes, snapshotScopes, classifyMigration, migrationActions, migrateScope,
@@ -211,6 +212,13 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
       if (previewRetirementPlan && previewRetirementPlan.total > 0) {
         previewLines.push(`  [permission-floor] would retire allow=${previewRetirementPlan.retirements.allow.length}, ask=${previewRetirementPlan.retirements.ask.length}`);
       }
+      // hotfix-v1.17.3 (PR #233 review Risk 4): the self-guard pair is previewed like the floor.
+      if (policyPresent(physicalRoot) || filePlan.some((f) => f.seed && f.action === 'create')) {
+        const cur0 = readTarget(floorTarget.path);
+        const prow = renderSelfGuardRow(physicalRoot, missingSelfGuardDeny(cur0).length, { shapeOk: selfGuardShapeOk(cur0), applied: false });
+        if (prow) previewLines.push(prow);
+        else previewLines.push('  [permissions] would add self-guard deny rules (2): Edit/Write on .foundry/permissions.yaml (with the seed)');
+      }
     } else {
       previewLines.push('  [permission-floor] .claude/settings.json absent — left to the create path');
     }
@@ -292,6 +300,17 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
         for (const line of renderPlan(floorPlan, {
           applied: true, retirementPlan: floorRetirementPlan, mapEntryCount: map.entries.length,
         })) print(line);
+      }
+      // hotfix-v1.17.3 (ER #232): the policy file's self-guard deny pair is framework-owned — converge
+      // it here, fresh from disk after the floor write, whenever a policy file exists (seeded above or
+      // kept). Grants stay the compiler's (operator-run) business.
+      if (policyPresent(physicalRoot)) {
+        const cur = readTarget(freshFloorTarget.path);
+        const shapeOk = selfGuardShapeOk(cur);
+        const missing = missingSelfGuardDeny(cur);
+        if (shapeOk && missing.length > 0) writeTargetAtomically(freshFloorTarget.path, applySelfGuardDeny(cur));
+        const row = renderSelfGuardRow(physicalRoot, missing.length, { shapeOk });
+        if (row) print(row);
       }
     }
     // Recomputed FRESH from disk, same reasoning as floorPlan just above: never apply a plan

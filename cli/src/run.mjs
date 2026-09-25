@@ -20,6 +20,7 @@ import {
 import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from './gitignoreReconcile.mjs';
 import { planAmendmentsBackfill, applyAmendmentsBackfill, renderAmendmentsRow } from './amendmentsBackfill.mjs';
 import { planStatuslineWiring, applyStatuslineWiring, renderStatuslineRows } from './statuslineWiring.mjs';
+import { policyPresent, missingSelfGuardDeny, applySelfGuardDeny, renderSelfGuardRow, selfGuardShapeOk } from './selfGuardDeny.mjs';
 
 export { DECLARED_PATH_SET };
 
@@ -253,8 +254,18 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
     // permission floor unattended; --yes must be given EXPLICITLY. This sits above applyPlan
     // deliberately — a "refused" verdict printed after the scaffold write had already landed reads
     // as "nothing happened", which is the one thing it must not mean.
+    // hotfix-v1.17.3 (PR #233 review Risk 4): the self-guard pair is previewed here and counts as
+    // floor work, so a piped run cannot write it without an explicit --yes and --dry-run names it.
+    let selfGuardPreview = { missing: [], shapeOk: true };
+    if (answers.reconcileFloor && floorTarget && floorTarget.present && policyPresent(physicalRoot)) {
+      const cur0 = readTarget(floorTarget.path);
+      selfGuardPreview = { missing: missingSelfGuardDeny(cur0), shapeOk: selfGuardShapeOk(cur0) };
+      const prow = renderSelfGuardRow(physicalRoot, selfGuardPreview.missing.length, { shapeOk: selfGuardPreview.shapeOk, applied: false });
+      if (prow) print(prow);
+    }
     const floorHasWork = Boolean(floorPlan)
-      && (floorPlan.total > 0 || (floorRetirementPlan && floorRetirementPlan.total > 0));
+      && (floorPlan.total > 0 || (floorRetirementPlan && floorRetirementPlan.total > 0)
+          || selfGuardPreview.missing.length > 0);
     if (floorHasWork && !isTTY && answers.yes !== true) {
       throw new RefusalError(
         'refusing --reconcile-floor without a terminal: pass --yes explicitly to confirm the write',
@@ -296,6 +307,17 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
       for (const line of renderPlan(floorPlan, {
         applied: true, retirementPlan: floorRetirementPlan, mapEntryCount: map.entries.length,
       })) print(line);
+    }
+    // hotfix-v1.17.3 (ER #232): under --reconcile-floor (the one opt-in that permits a narrow
+    // settings write on --existing), converge the policy file's self-guard deny pair, fresh from
+    // disk after the floor write, whenever a policy file exists.
+    if (answers.reconcileFloor && floorTarget && floorTarget.present && policyPresent(physicalRoot)) {
+      const cur = readTarget(floorTarget.path);
+      const shapeOk = selfGuardShapeOk(cur);
+      const missing = missingSelfGuardDeny(cur);
+      if (shapeOk && missing.length > 0) writeTargetAtomically(floorTarget.path, applySelfGuardDeny(cur));
+      const row = renderSelfGuardRow(physicalRoot, missing.length, { shapeOk });
+      if (row) print(row);
     }
     // AFTER the floor write above: that write serialises a settings object read before this
     // point, so wiring the statusLine keys first would have been overwritten by it. The wiring

@@ -240,9 +240,17 @@ FORBIDDEN_SETTINGS_KEYS = {
 #    control exercises the SAME logic the primary check runs — never a second, tautological copy) ─
 
 
+# hotfix-v1.17.3 (ER #232): the policy file's two self-guard deny rules ride with the floor on the
+# create path (cli/src/selfGuardDeny.mjs is their one home); the deny tier is the map's deny rows
+# plus exactly this pair.
+SELF_GUARD_DENY = {"Edit(.foundry/permissions.yaml)", "Write(.foundry/permissions.yaml)"}
+
+
 def _assert_settings_bijection(settings, map_data):
     for tier in ("allow", "ask", "deny"):
         expected = {e["rule"] for e in map_data["entries"] if e["tier"] == tier}
+        if tier == "deny":
+            expected |= SELF_GUARD_DENY
         actual = set(settings["permissions"][tier])
         assert actual == expected, (tier, actual ^ expected)
 
@@ -384,6 +392,7 @@ def test_the_update_package_manifest_has_no_lifecycle_scripts():
         "0.17.0": "0.1.12", # v1.17.0 -- cli/ takes a minor bump: the seed entry, the Amendments backfill, the statusline wiring, the upgrade report.
         "0.17.1": "0.1.13", # v1.17.1 -- patch: the backfill walks any basename; the report's from-version.
         "0.17.2": "0.1.14", # v1.17.2 -- patch: the report names its updater; the size ceiling ignores the ledger.
+        "0.17.3": "0.1.15", # v1.17.3 -- patch: the self-guard pair converges; pinned floor rows retire.
     }
     pin = deps["create-agentic-workspace"]
     expected_update_version = CLI_UPDATE_VERSION_BY_PIN.get(pin)
@@ -536,6 +545,7 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         "1.17.0": "0.17.0",
         "1.17.1": "0.17.1",
         "1.17.2": "0.17.2",
+        "1.17.3": "0.17.3",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (
@@ -1565,7 +1575,9 @@ console.log(JSON.stringify({refused}));
     # (the one test_settings_permissions_are_a_bijection_onto_the_map itself calls) fires.
     m2 = load_map()
     real_settings = {
-        "permissions": {tier: [e["rule"] for e in m2["entries"] if e["tier"] == tier] for tier in ("allow", "ask", "deny")}
+        "permissions": {tier: [e["rule"] for e in m2["entries"] if e["tier"] == tier]
+                        + (sorted(SELF_GUARD_DENY) if tier == "deny" else [])
+                        for tier in ("allow", "ask", "deny")}
     }
     # re-tier: move one `ask` rule into the written `allow` list, as a bad plugin build might.
     retiered = json.loads(json.dumps(real_settings))
