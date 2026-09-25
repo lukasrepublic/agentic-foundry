@@ -9,11 +9,21 @@ every foundry script call prompted the operator or went to the auto-mode classif
 hook returning `permissionDecision: "allow"` did make the same command run (and without it the
 command was denied). Operator decision 2026-09-25: no foundry script prompts, authorize included.
 
-WHAT IT ALLOWS — exactly one invocation of a file under `<plugin root>/scripts/` or
-`<plugin root>/hooks/`, optionally after `python3`/`python`/`bash`/`sh`, followed only by plain
-arguments. The root may be written as the resolved `$CLAUDE_PLUGIN_ROOT`, the literal
-`${CLAUDE_PLUGIN_ROOT}` / `$CLAUDE_PLUGIN_ROOT`, or any path that resolves inside a foundry plugin
-cache (`~/.claude/plugins/cache/<marketplace>/foundry/<version>/`).
+WHAT IT ALLOWS — exactly one invocation of a `.py`/`.sh` file whose REAL path is under THIS plugin's
+`scripts/` or `hooks/` directory (the hook's own resolved plugin root), optionally after
+`python3`/`python`/`bash`/`sh`, followed only by plain arguments. The path must be written as a real
+path (absolute, or `~/…`): a `$` anywhere means no decision, because the shell that runs the command
+does not see the hook's environment — measured 2026-09-25, `CLAUDE_PLUGIN_ROOT` is EMPTY in the Bash
+tool's shell, so a literal `${CLAUDE_PLUGIN_ROOT}/scripts/x.py` would run `/scripts/x.py` (and a
+quoted or escaped token a cwd-relative file) while the hook checked a different one (v1.18.0 security
+review Blocks 1-2).
+
+NEVER ALLOWED SILENTLY (security review Blocks 3-4) — scripts that execute commands read from their
+input (`foundry-verify.py` runs stack-profile commands through a shell; `foundry-decommission.py`
+passes register slots to `/bin/sh -c`), and `foundry-permissions-compile.py` with `--root` (which
+could point the settings write at another tree). "Every foundry script runs silently" (operator
+decision) means the plugin's own code, not an arbitrary command routed through it; these keep the
+session's normal permission mode.
 
 WHAT IT NEVER DOES — decide anything else. A compound command (`;`, `&&`, `|`), a redirection, a
 subshell or command substitution, any other `$` expansion, a newline, a path outside the plugin
@@ -26,10 +36,13 @@ import shlex
 import sys
 
 INTERPRETERS = {"python3", "python", "bash", "sh"}
-ROOT_TOKENS = ("${CLAUDE_PLUGIN_ROOT}", "$CLAUDE_PLUGIN_ROOT")
-# Characters that make a command more than one plain invocation. `(` `)` also exclude subshells and
-# `$(...)`; `$` is handled separately (only the root token may carry it).
-METACHARS = set(";&|<>()`\n\r")
+SUFFIXES = (".py", ".sh")
+# Characters that make a command more than one plain invocation, or that the shell would expand
+# differently from shlex: `$` (any expansion), quotes/backslash handled by requiring the parsed path
+# to equal a real file, `(` `)` subshells, backticks, redirections, separators, newlines.
+METACHARS = set(";&|<>()`$\\\n\r")
+# Scripts that execute commands taken from their input: never allowed silently.
+EXECUTES_INPUT = {"foundry-verify.py", "foundry-decommission.py"}
 
 
 def _plugin_root():
@@ -41,24 +54,10 @@ def _inside(path, base):
     return path == base or path.startswith(base + os.sep)
 
 
-def _foundry_cache_script(real):
-    """True when `real` is <home>/.claude/plugins/cache/<m>/foundry/<v>/(scripts|hooks)/<file>."""
-    cache = os.path.realpath(os.path.join(os.path.expanduser("~"), ".claude", "plugins", "cache"))
-    if not _inside(real, cache):
-        return False
-    parts = os.path.relpath(real, cache).split(os.sep)
-    return len(parts) >= 5 and parts[1] == "foundry" and parts[3] in ("scripts", "hooks")
-
-
 def allowed(command, root):
     if not isinstance(command, str) or not command.strip():
         return False
     if any(c in METACHARS for c in command):
-        return False
-    stripped = command
-    for tok in ROOT_TOKENS:
-        stripped = stripped.replace(tok, "")
-    if "$" in stripped:
         return False
     try:
         argv = shlex.split(command, posix=True)
@@ -71,18 +70,20 @@ def allowed(command, root):
         if not argv or argv[0].startswith("-"):
             return False  # `python3 -c ...`, `bash -c ...`: not a script invocation
     script = argv[0]
-    for tok in ROOT_TOKENS:
-        if script.startswith(tok):
-            script = root + script[len(tok):]
-            break
     script = os.path.expanduser(script)
     if not os.path.isabs(script):
         return False
     real = os.path.realpath(script)
-    if not os.path.isfile(real):
+    if not os.path.isfile(real) or not real.endswith(SUFFIXES):
         return False
-    in_root = any(_inside(real, os.path.join(root, d)) for d in ("scripts", "hooks"))
-    return in_root or _foundry_cache_script(real)
+    if not any(_inside(real, os.path.join(root, d)) for d in ("scripts", "hooks")):
+        return False
+    name = os.path.basename(real)
+    if name in EXECUTES_INPUT:
+        return False
+    if name == "foundry-permissions-compile.py" and any(a == "--root" or a.startswith("--root=") for a in argv[1:]):
+        return False
+    return True
 
 
 def main():

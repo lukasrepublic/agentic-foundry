@@ -372,6 +372,23 @@ def _git_sub_of(args_):
 
 def _resolve_no_refspec_push(git_idx, globals_, lrest_):
     """(candidate_destination_branches, None) or (None, unresolvable_reason)."""
+    # v1.18.0 security review R1: every EARLIER clause must itself be a branch-preserving `git`
+    # command — anything else (`bash -c "git checkout main"`, `./x.sh`, `make`, `sh …`) could change
+    # the branch between this read and the push and cannot be enumerated; `git stash branch …`
+    # checks a branch out. The everyday `git rebase origin/main && git push -f` and
+    # `git add … && git commit … && git push -f` stay admitted.
+    starts = [0] + [k + 1 for k in range(git_idx) if toks[k] in SEPARATORS]
+    for st in starts:
+        # grouping tokens (`(`, `{`, `!`) open a clause without being its command
+        while st < git_idx and (toks[st] in ("(", "{", "!", "((", ")", "}") or toks[st] in SEPARATORS):
+            st += 1
+        if st >= git_idx:
+            continue
+        if not _is_verb(low[st], "git"):
+            return None, "an earlier clause (%s) is not a git command" % toks[st]
+        psub, prest = _git_sub_of(clause_args(st))
+        if psub == "stash" and prest[:1] and prest[0].lower() == "branch":
+            return None, "an earlier `git stash branch`, which checks out a branch"
     for flag in ("--all", "--mirror", "--branches", "--tags", "--prune"):
         if flag in lrest_:
             return None, "%s pushes more than the current branch" % flag
@@ -423,6 +440,9 @@ def _resolve_no_refspec_push(git_idx, globals_, lrest_):
         pushcfg = _git("config", "--get-regexp", r"^remote\..*\.push$")
         if pushcfg.returncode == 0 and pushcfg.stdout.strip():
             return None, "a configured remote.<name>.push refspec decides the destination"
+        mirror = _git("config", "--get-regexp", r"^remote\..*\.mirror$")
+        if mirror.returncode == 0 and "true" in mirror.stdout.lower():
+            return None, "a remote configured as a mirror pushes every ref"
         cands = {branch}
         merge = _git("config", "--get", "branch.%s.merge" % branch)
         mref = merge.stdout.strip() if merge.returncode == 0 else ""

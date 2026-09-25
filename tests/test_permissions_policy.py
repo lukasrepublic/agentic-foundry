@@ -539,3 +539,28 @@ def test_preexisting_operator_rule_coinciding_with_a_grant_is_never_owned(tmp_pa
     _write_yaml(root, "schema_version: 1\ngrants: []\n")
     assert _run_cli(root, "--write").returncode == 0
     assert rule in _read_settings(root)["permissions"][tier]
+
+
+def test_write_refuses_user_scope_settings(tmp_path, monkeypatch):
+    """v1.18.0 security review Block 4: `--write --root $HOME` (or a `.claude` symlinked to the
+    user's) must never rewrite user-scope settings."""
+    import subprocess, sys
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".foundry").mkdir()
+    (home / ".foundry" / "permissions.yaml").write_text("schema_version: 1\ngrants:\n  - id: x\n    tool: Bash\n    pattern: \"python3:*\"\n    mode: automatic\n")
+    user = home / ".claude" / "settings.json"
+    user.write_text("{}\n")
+    env = dict(os.environ, HOME=str(home))
+    env.pop("CLAUDE_PROJECT_DIR", None)
+    script = os.path.join(REPO_ROOT, "scripts", "foundry-permissions-compile.py")
+    p = subprocess.run([sys.executable, script, "--write", "--root", str(home)], capture_output=True, text=True, env=env)
+    assert p.returncode != 0 and "user-scope" in p.stdout, p.stdout + p.stderr
+    assert user.read_text() == "{}\n"
+    proj = tmp_path / "proj"
+    (proj / ".foundry").mkdir(parents=True)
+    (proj / ".foundry" / "permissions.yaml").write_text((home / ".foundry" / "permissions.yaml").read_text())
+    os.symlink(home / ".claude", proj / ".claude")
+    p = subprocess.run([sys.executable, script, "--write", "--root", str(proj)], capture_output=True, text=True, env=env)
+    assert p.returncode != 0 and "user-scope" in p.stdout, p.stdout + p.stderr
+    assert user.read_text() == "{}\n"
