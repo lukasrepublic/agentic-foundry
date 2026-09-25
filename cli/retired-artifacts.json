@@ -1,12 +1,22 @@
 {
   "schema_version": 1,
   "_comment": "Workspace-side artifacts an earlier release wrote and no current release reads (hotfix-v1.17.4, ER #236). The updater reports every present entry as [stale] on every run and removes it only under --cleanup. `path` is relative to the workspace root; a single `*` is allowed in the LAST segment only (a basename glob). `kind` is `file` or `dir`; a path of the other kind, or a symlink, is reported and never removed. Nothing outside this list is ever touched; `.claude/skills`, `.claude/agents` and operator files are never candidates.",
+  "reference_scan": {
+    "_comment": "ER #241: a catalogued path is `stale` only when NONE of these workspace files names its full relative path (and, for a hook, when no other hook script names its basename) — an adopter may re-adopt a retired path for their own CI or tooling, in their own namespace. The updater and the doctor both read this list. A heuristic, deliberately fail-closed: a symlink, an unreadable entry, or a budget exceeded refuses every row. `.foundry/` itself is not scanned (the upgrade report lists retired paths by design).",
+    "files": [".claude/settings.json", ".claude/settings.local.json", ".mcp.json", ".gitlab-ci.yml", "Jenkinsfile", "Dockerfile", "Makefile", "justfile", "Taskfile.yml", "package.json", "pyproject.toml", "tox.ini", "noxfile.py", ".envrc", ".pre-commit-config.yaml", ".vscode/tasks.json"],
+    "dirs": [".github", ".gitlab", ".circleci", ".buildkite", ".gitea", ".forgejo", ".claude/hooks", ".claude/commands", ".claude/skills", ".claude/agents", ".githooks", ".husky", "scripts", "bin", "tools"],
+    "root_suffixes": [".md", ".sh", ".yml", ".yaml"],
+    "max_files": 5000,
+    "max_dirs": 20000,
+    "max_bytes": 4194304,
+    "max_total_bytes": 67108864
+  },
   "entries": [
     { "path": ".foundry/wiring-hash.pin", "kind": "file", "retired_in": "0.24.0", "reason": "the wiring-hash auto-heal and its pin were removed with the live-seam merge gate" },
     { "path": ".foundry/active-workflow.json", "kind": "file", "retired_in": "0.5.0", "reason": "the macro-workflow engine's active-workflow pointer; the engine was retired" },
     { "path": ".foundry/context-snapshots", "kind": "dir", "retired_in": "0.25.0", "reason": "the bespoke context-lifecycle snapshots; /foundry:context wraps native /compact and --resume now" },
     { "path": ".foundry/branch-protection-unenforced.json", "kind": "file", "retired_in": "0.24.0", "reason": "branch-protection-as-code's marker; Tier A is applied by hand and observed, never written from here" },
-    { "path": ".foundry/hasher-ref", "kind": "file", "retired_in": "0.24.0", "reason": "the retired hasher reference; no current script reads it" },
+    { "path": ".foundry/hasher-ref", "kind": "file", "retired_in": "0.24.0", "reason": "the retired hasher reference; no current foundry script reads it" },
     { "path": ".claude/settings.json.bak", "kind": "file", "retired_in": "1.7.0", "reason": "a backup an early settings migration left behind; the updater writes atomically and keeps no .bak" },
     { "path": ".claude/dispatch-queue", "kind": "dir", "retired_in": "1.10.0", "reason": "the retired dispatch-queue's old location; the multi-repo worktree manifest lives under .foundry/dispatch-queue" },
     { "path": ".claude/dispatcher-mode.json", "kind": "file", "retired_in": "1.10.0", "reason": "the retired dispatcher's mode file" },

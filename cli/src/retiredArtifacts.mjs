@@ -3,7 +3,9 @@
 // every present entry is reported `[stale]` on every run; removal happens only under `--cleanup`,
 // only for catalogued paths, only when the path is exactly the catalogued kind (a regular file, or a
 // real directory) — a symlink or the other kind is reported `[refused]` and left alone, and so is a
-// hook under `.claude/hooks/` that a hook command in `.claude/settings*.json` still names. Nothing
+// hook under `.claude/hooks/` that a hook command in `.claude/settings*.json` still names, and so is
+// any path a workspace wiring file (CI, scripts, settings, root docs — the catalogue's reference_scan)
+// still names by its full relative path (ER #241). Nothing
 // outside the catalogue is ever a candidate: `.claude/skills`, `.claude/agents` and every operator
 // file are invisible to this module by construction.
 import fs from 'node:fs';
@@ -18,6 +20,13 @@ export function loadRetiredCatalogue(pkgDir) {
   const doc = JSON.parse(fs.readFileSync(path.join(pkgDir, CATALOGUE_REL), 'utf-8'));
   if (!doc || doc.schema_version !== 1 || !Array.isArray(doc.entries)) {
     throw new Error('retired-artifacts.json: unrecognised schema');
+  }
+  const rs = doc.reference_scan;
+  const relOk = (x) => typeof x === 'string' && x.length > 0 && !path.isAbsolute(x) && !x.split(/[\\/]+/).includes('..');
+  if (!rs || !Array.isArray(rs.files) || !Array.isArray(rs.dirs) || !Array.isArray(rs.root_suffixes)
+    || !rs.files.every(relOk) || !rs.dirs.every(relOk) || !rs.root_suffixes.every((x) => typeof x === 'string' && x.startsWith('.'))
+    || !['max_files', 'max_dirs', 'max_bytes', 'max_total_bytes'].every((k) => Number.isInteger(rs[k]) && rs[k] >= 1)) {
+    throw new Error('retired-artifacts.json: reference_scan missing or malformed');
   }
   for (const e of doc.entries) {
     if (typeof e.path !== 'string' || path.isAbsolute(e.path) || e.path.split(/[\\/]+/).includes('..')) {
@@ -92,6 +101,72 @@ function hookCommandText(physicalRoot) {
   return { text: parts.join('\n'), unreadable };
 }
 
+// Skipped at ANY depth: version-control internals and installed dependencies only (PR #242 review
+// Risk 1 — `build`/`dist`/`venv` inside a wiring dir may hold wiring, so they are read).
+const SKIP_DIRS = new Set(['.git', 'node_modules']);
+const ABSENT = new Set(['ENOENT', 'ENOTDIR']);
+
+/** ER #241: read every file the catalogue's `reference_scan` names (explicit files, the tree under each
+ * listed dir, and workspace-root files with a listed suffix). Returns `{ texts: [[relPath, text]],
+ * incomplete: null | '<why>' }`. Links are never followed and never skipped silently: a symlink, a
+ * path escaping the root, a non-ENOENT stat error, an unreadable entry, or any budget exceeded
+ * (`max_files`, `max_dirs`, `max_bytes` per file, `max_total_bytes`) makes the scan `incomplete`, and
+ * the caller then refuses every row (PR #242 review Risks 2 and 5). Iterative, so depth cannot throw. */
+export function scanReferenceTexts(physicalRoot, rs) {
+  const texts = [];
+  let files = 0;
+  let dirs = 0;
+  let bytes = 0;
+  let incomplete = null;
+  const fail = (why) => { if (!incomplete) incomplete = why; };
+  const statOf = (rel) => {
+    const abs = confinedJoin(physicalRoot, rel);
+    if (!abs) { fail(`${rel} resolves outside the workspace`); return null; }
+    try {
+      return { abs, st: fs.lstatSync(abs) };
+    } catch (e) {
+      if (!ABSENT.has(e.code)) fail(`${rel} unreadable (${e.code || 'error'})`);
+      return null; // absent: nothing wired there
+    }
+  };
+  const readFile = (rel, abs, st) => {
+    files += 1;
+    if (files > rs.max_files) return fail(`more than ${rs.max_files} files to scan`);
+    if (st.size > rs.max_bytes) return fail(`${rel} is larger than ${rs.max_bytes} bytes`);
+    bytes += st.size;
+    if (bytes > rs.max_total_bytes) return fail(`more than ${rs.max_total_bytes} bytes to scan`);
+    try { texts.push([rel, fs.readFileSync(abs, 'utf-8')]); } catch (e) { fail(`${rel} unreadable (${e.code || 'error'})`); }
+  };
+  const visit = (rel, { treeRoot }) => {
+    const hit = statOf(rel);
+    if (!hit) return [];
+    const { abs, st } = hit;
+    if (st.isSymbolicLink()) { fail(`${rel} is a symlink (not followed)`); return []; }
+    if (st.isFile()) { readFile(rel, abs, st); return []; }
+    if (!st.isDirectory() || !treeRoot) return [];
+    dirs += 1;
+    if (dirs > rs.max_dirs) { fail(`more than ${rs.max_dirs} directories to scan`); return []; }
+    let names;
+    try { names = fs.readdirSync(abs).sort(); } catch (e) { fail(`${rel} unreadable (${e.code || 'error'})`); return []; }
+    return names.filter((n) => !SKIP_DIRS.has(n)).map((n) => path.posix.join(rel, n));
+  };
+  for (const f of rs.files) { visit(f, { treeRoot: false }); if (incomplete) return { texts, incomplete }; }
+  for (const d of rs.dirs) {
+    const stack = [d];
+    while (stack.length > 0 && !incomplete) stack.push(...visit(stack.pop(), { treeRoot: true }).reverse());
+    if (incomplete) return { texts, incomplete };
+  }
+  let rootNames = [];
+  try { rootNames = fs.readdirSync(physicalRoot).sort(); } catch (e) { fail(`workspace root unreadable (${e.code || 'error'})`); }
+  const explicit = new Set(rs.files);
+  for (const n of rootNames) {
+    if (incomplete) break;
+    if (explicit.has(n) || !rs.root_suffixes.some((suf) => n.endsWith(suf))) continue;
+    visit(n, { treeRoot: false });
+  }
+  return { texts, incomplete };
+}
+
 /** Plan: `{ rows: [{ relPath, kind, retired_in, reason, state, why?, entries? }], present, refused }`
  * where `state` is `stale` (present, of the catalogued kind, and not wired) or `refused` (present
  * but a symlink, the other kind, escaping the root, or — for a hook — still named by a hook command
@@ -101,6 +176,7 @@ function hookCommandText(physicalRoot) {
 export function planRetiredArtifacts({ physicalRoot, catalogue }) {
   const rows = [];
   let hooks = null; // read lazily, once, only when a hook candidate is present
+  let refs = null;  // ER #241: the reference scan, read lazily, once, only when a stale candidate exists
   for (const entry of catalogue.entries) {
     for (const relPath of candidates(physicalRoot, entry)) {
       const abs = confinedJoin(physicalRoot, relPath);
@@ -126,6 +202,21 @@ export function planRetiredArtifacts({ physicalRoot, catalogue }) {
         if (hooks === null) hooks = hookCommandText(physicalRoot);
         if (hooks.unreadable) { row.state = 'refused'; row.why = 'settings-unreadable'; }
         else if (hooks.text.includes(path.posix.basename(relPath))) { row.state = 'refused'; row.why = 'referenced'; }
+      }
+      if (row.state === 'stale') {
+        // ER #241: an adopter may re-adopt a retired path for their own CI or tooling. A path named
+        // (full relative path) by any file the catalogue's reference_scan lists is refused, never
+        // removed; a scan that could not finish refuses every row (fail-closed).
+        if (refs === null) refs = scanReferenceTexts(physicalRoot, catalogue.reference_scan);
+        if (refs.incomplete) { row.state = 'refused'; row.why = 'scan-incomplete'; row.detail = refs.incomplete; }
+        else {
+          // full relative path anywhere in the scan set; for a hook, also its basename in any OTHER
+          // hook script (a live hook that sources `$(dirname "$0")/<name>` — PR #242 review Risk 3)
+          const base = relPath.startsWith(HOOKS_DIR_REL) ? path.posix.basename(relPath) : null;
+          const by = refs.texts.filter(([rel, text]) => rel !== relPath
+            && (text.includes(relPath) || (base && rel.startsWith(HOOKS_DIR_REL) && text.includes(base)))).map(([rel]) => rel);
+          if (by.length > 0) { row.state = 'refused'; row.why = 'referenced'; row.refs = by.slice(0, 3); }
+        }
       }
       if (row.state === 'stale' && entry.kind === 'dir') {
         try { row.entries = fs.readdirSync(abs).length; } catch { row.entries = null; }
@@ -189,8 +280,12 @@ export function renderRetiredArtifactRows(plan, { cleanup, phase = 'result' }) {
       out.push(`  [stale] ${r.relPath}${size} — retired in v${r.retired_in} (${r.reason})${tail}`);
     } else if (r.state === 'removed') {
       out.push(`  [removed] ${r.relPath}${size} — retired in v${r.retired_in}`);
+    } else if (r.why === 'referenced' && r.refs) {
+      out.push(`  [refused] ${r.relPath} — still referenced by ${r.refs.join(', ')} — left alone`);
     } else if (r.why === 'referenced') {
       out.push(`  [refused] ${r.relPath} — still named by a hook command in .claude/settings*.json — left alone`);
+    } else if (r.why === 'scan-incomplete') {
+      out.push(`  [refused] ${r.relPath} — the reference scan could not finish (${r.detail}) — left alone`);
     } else if (r.why === 'remove-failed') {
       out.push(`  [refused] ${r.relPath} — removal failed (${r.error}) — left in place`);
     } else if (r.why === 'settings-unreadable') {
