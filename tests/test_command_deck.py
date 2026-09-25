@@ -441,7 +441,7 @@ def test_ready_set_confinement_covers_charter_ref(corpus):
     assert "escapes the corpus" not in res2["excluded"].get("charter-ok", ""), res2
 
 
-BASE_REV = "f7cfa25"   # the commit release-loader-vocabulary's worktree branched from
+BASE_REV = "01fefad"   # the commit release-loader-vocabulary's worktree branched from (was f7cfa25 before the 2026-09-23 history rewrite)
 
 
 def _exec_git_blob_as_module(rev, relpath, modname, *, fake_file=None):

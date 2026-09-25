@@ -31,6 +31,7 @@ export function versionOrNull(v) {
  * `amendmentsPlan` is the applied backfill plan (or null); `phases` is what renderSummary got. */
 export function buildUpgradeReport({
   installedBefore = null, afterEntry, toPluginVersion, phases, filePlan, amendmentsPlan, now = new Date(),
+  updaterVersion = null, coreVersion = null, updaterPluginVersion = null,
 }) {
   const seedRow = (filePlan || []).find((f) => f.seed);
   return {
@@ -42,10 +43,18 @@ export function buildUpgradeReport({
     // first install) makes the skill list only the current version's CHANGELOG section.
     from_plugin_version: versionOrNull(installedBefore),
     to_plugin_version: (afterEntry && versionOrNull(afterEntry.version)) || versionOrNull(toPluginVersion),
+    // ER #228 (v1.17.2): WHICH updater ran. A stale npx-cached updater was indistinguishable from a
+    // broken walk; the skill refuses a report whose updater was built for another plugin version.
+    updater_version: versionOrNull(updaterVersion),
+    core_version: versionOrNull(coreVersion),
+    updater_plugin_version: versionOrNull(updaterPluginVersion),
     phases: (phases || []).map((p) => ({ name: p.name, verdict: p.verdict, ...(p.reason ? { reason: p.reason } : {}) })),
+    // `total` is the walk's denominator (ER #228): backfilled + present + skipped == total, so a
+    // walk that never opened a file cannot read as a clean pass.
     amendments: amendmentsPlan
-      ? { backfilled: amendmentsPlan.written ?? 0, present: amendmentsPlan.present, skipped: amendmentsPlan.skipped }
-      : { backfilled: 0, present: 0, skipped: 0 },
+      ? { backfilled: amendmentsPlan.written ?? 0, present: amendmentsPlan.present, skipped: amendmentsPlan.skipped,
+          total: amendmentsPlan.total ?? ((amendmentsPlan.written ?? 0) + amendmentsPlan.present + amendmentsPlan.skipped) }
+      : { backfilled: 0, present: 0, skipped: 0, total: 0 },
     permissions_policy: seedRow ? (seedRow.action === 'create' ? 'created' : 'kept') : 'absent',
     drifted: (filePlan || []).filter((f) => f.action === 'drifted').map((f) => f.relPath),
   };

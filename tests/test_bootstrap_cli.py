@@ -383,6 +383,7 @@ def test_the_update_package_manifest_has_no_lifecycle_scripts():
         "0.16.1": "0.1.11", # v1.16.1 -- docs-only plugin patch; the pin and own version move with the plugin.
         "0.17.0": "0.1.12", # v1.17.0 -- cli/ takes a minor bump: the seed entry, the Amendments backfill, the statusline wiring, the upgrade report.
         "0.17.1": "0.1.13", # v1.17.1 -- patch: the backfill walks any basename; the report's from-version.
+        "0.17.2": "0.1.14", # v1.17.2 -- patch: the report names its updater; the size ceiling ignores the ledger.
     }
     pin = deps["create-agentic-workspace"]
     expected_update_version = CLI_UPDATE_VERSION_BY_PIN.get(pin)
@@ -534,6 +535,7 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         "1.16.1": "0.16.1",
         "1.17.0": "0.17.0",
         "1.17.1": "0.17.1",
+        "1.17.2": "0.17.2",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (

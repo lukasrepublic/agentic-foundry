@@ -8,6 +8,28 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.17.2 — 2026-09-24
+
+### The report says which updater ran; the size ceiling ignores the ledger
+
+Patch from ER #228. `create-agentic-workspace` 0.17.2 and `update-agentic-workspace` 0.1.14 are
+published together.
+
+- **The upgrade report names its updater** (#229, closes ER #228; `cli/src/upgradeReport.mjs`,
+  `cli/src/update.mjs`, `cli-update/bin/update-agentic-workspace.mjs`). An adopter's second machine ran
+  `npx update-agentic-workspace` unpinned, npx's cache handed back the previous wrapper, and the v1.17.0
+  walker's report (`backfilled 0, present N, skipped 0`) was indistinguishable from a broken v1.17.1
+  walk. The report now carries `updater_version`, `core_version`, `updater_plugin_version` and
+  `amendments.total` (`backfilled + present + skipped == total`), and every run prints
+  `update-agentic-workspace <v> (core create-agentic-workspace <v>, built for plugin <v>)` first.
+  `/foundry:post-upgrade` refuses a report whose updater was built for another plugin version and
+  names the remedy (`npx update-agentic-workspace@latest`).
+- **The spec size ceiling excludes the `## Amendments` ledger** (#229; `scripts/foundry-audit-prepare.py`
+  `spec_size_metrics`, reused by `foundry-spec-lint.py`). The backfill's own table tipped near-ceiling
+  specs over the eight-thousand-word gate on files it had no other reason to touch. The section — the
+  heading after the last normative close marker, outside fences, up to the next `## ` heading — is
+  bookkeeping, not prose, and no longer counts. The AC count is unchanged.
+
 ## v1.17.1 — 2026-09-23
 
 ### The backfill covers every spec; the report knows what this workspace had
