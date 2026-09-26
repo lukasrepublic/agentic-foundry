@@ -4,3 +4,10 @@ pytest==9.1.1
 # Runtime deps of the scripts under test — pinned per standing-versions (research 2026-07-27)
 pyyaml==6.0.2
 jsonschema==4.25.0
+# jsonschema's transitive deps — exact, equal to cli/python-requirements.json `constraints` (the set the
+# updater installs on operators' machines), so CI tests exactly that set.
+attrs==26.1.0
+jsonschema-specifications==2025.9.1
+referencing==0.37.0
+rpds-py==2026.6.3
+typing-extensions==4.16.0

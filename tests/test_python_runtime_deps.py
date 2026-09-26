@@ -91,3 +91,15 @@ def test_doctor_python_deps_ok_and_missing(tmp_path, monkeypatch):
     ok, detail = doc.check_python_deps(str(tmp_path))
     assert ok is False
     assert "not_a_real_module_xyz" in detail and "update-agentic-workspace" in detail
+
+
+def test_install_constraints_equal_ci_transitive_pins():
+    """The updater's -c constraints are exactly the transitive pins CI installs."""
+    doc = json.load(open(os.path.join(ROOT, "cli", "python-requirements.json"), encoding="utf-8"))
+    dev = set()
+    for line in open(os.path.join(ROOT, "requirements-dev.txt"), encoding="utf-8"):
+        line = line.split("#", 1)[0].strip()
+        if "==" in line:
+            dev.add(line.lower())
+    for c in doc["constraints"]:
+        assert c.lower() in dev, f"{c} not pinned in requirements-dev.txt"

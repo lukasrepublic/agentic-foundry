@@ -6,13 +6,24 @@
 // never upgraded or replaced — at the exact versions CI tests (`python-requirements.json`, kept equal
 // to the plugin's `requirements.txt` by test).
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-/** The declared runtime requirements shipped with this package: [{ module, requirement }]. */
+/** The declared runtime requirements shipped with this package: [{ module, requirement }], with the
+ * exact transitive pins attached as `.constraints` (pip -c) — the set CI tests (requirements-dev.txt). */
 export function loadPythonRequirements(pkgDir) {
   const doc = JSON.parse(fs.readFileSync(path.join(pkgDir, 'python-requirements.json'), 'utf-8'));
-  return doc.requirements;
+  const reqs = doc.requirements;
+  Object.defineProperty(reqs, 'constraints', { value: doc.constraints || [], enumerable: false });
+  return reqs;
+}
+
+// v1.18.2 security review (Risk 1): never run python in the workspace — `-c`/`-m` put the cwd first
+// on sys.path, so a stray json.py/pip/ there would run (and a `yaml/` dir would fake an install).
+// A neutral cwd plus PYTHONSAFEPATH (3.11+). Not `-I`: that also drops the user site we install into.
+function childOpts(env, timeout) {
+  return { env: { ...env, PYTHONSAFEPATH: '1' }, cwd: os.tmpdir(), encoding: 'utf-8', timeout };
 }
 
 // Prints JSON: the interpreter, whether it is a venv, and which declared modules cannot be found.
@@ -27,7 +38,7 @@ const PROBE = [
 
 /** Probe `python3` for the declared modules. `{ ok:false, reason }` when python3 cannot run. */
 export function probePythonDeps(requirements, { env = process.env, python = 'python3', spawn = spawnSync } = {}) {
-  const r = spawn(python, ['-c', PROBE, ...requirements.map((q) => q.module)], { env, encoding: 'utf-8', timeout: 30000 });
+  const r = spawn(python, ['-c', PROBE, ...requirements.map((q) => q.module)], childOpts(env, 30000));
   if (r.error || r.status !== 0) {
     return { ok: false, reason: r.error ? `${python} not runnable (${r.error.code || r.error.message})` : `${python} probe exited ${r.status}` };
   }
@@ -41,11 +52,22 @@ export function probePythonDeps(requirements, { env = process.env, python = 'pyt
 }
 
 /** The pip argv for installing `missing`: `--user` outside a venv (a venv has no user site). */
-export function pipArgs(missing, { venv, breakSystem = false }) {
-  const args = ['-m', 'pip', 'install', '--disable-pip-version-check', '--quiet', '--no-input'];
+export function pipArgs(missing, { venv, breakSystem = false, constraintsFile = null }) {
+  // --only-binary: no sdist build backend ever runs on the operator's machine (review Risk 2).
+  const args = ['-m', 'pip', 'install', '--disable-pip-version-check', '--quiet', '--no-input', '--only-binary=:all:'];
   if (!venv) args.push('--user');
   if (breakSystem) args.push('--break-system-packages');
+  if (constraintsFile) args.push('-c', constraintsFile);
   return [...args, ...missing.map((q) => q.requirement)];
+}
+
+function writeConstraints(requirements) {
+  const lines = requirements.constraints || [];
+  if (lines.length === 0) return null;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'foundry-pydeps-'));
+  const file = path.join(dir, 'constraints.txt');
+  fs.writeFileSync(file, lines.join('\n') + '\n', { mode: 0o600 });
+  return file;
 }
 
 /**
@@ -61,15 +83,20 @@ export function ensurePythonDeps(requirements, { env = process.env, python = 'py
   if (dryRun) {
     return { verdict: 'would change', installed: [], missing: before.missing.map((q) => q.module), python: before.python };
   }
-  let r = spawn(python, pipArgs(before.missing, { venv: before.venv }), { env, encoding: 'utf-8', timeout: 600000 });
+  let constraintsFile = null;
+  try { constraintsFile = writeConstraints(requirements); } catch { constraintsFile = null; }
+  let overrode = false;
+  let r = spawn(python, pipArgs(before.missing, { venv: before.venv, constraintsFile }), childOpts(env, 600000));
   const out = `${r.stdout || ''}${r.stderr || ''}`;
   if (r.status !== 0 && /externally-managed-environment/.test(out)) {
-    r = spawn(python, pipArgs(before.missing, { venv: before.venv, breakSystem: true }), { env, encoding: 'utf-8', timeout: 600000 });
+    overrode = true;
+    r = spawn(python, pipArgs(before.missing, { venv: before.venv, breakSystem: true, constraintsFile }), childOpts(env, 600000));
   }
+  if (constraintsFile) { try { fs.rmSync(path.dirname(constraintsFile), { recursive: true, force: true }); } catch { /* best effort */ } }
   const after = probePythonDeps(requirements, { env, python, spawn });
   const still = after.ok ? after.missing.map((q) => q.module) : before.missing.map((q) => q.module);
   const installed = before.missing.map((q) => q.module).filter((m) => !still.includes(m));
-  if (still.length === 0) return { verdict: 'changed', installed, missing: [], python: before.python };
+  if (still.length === 0) return { verdict: 'changed', installed, missing: [], python: before.python, pep668Overridden: overrode };
   const tail = `${r.stdout || ''}${r.stderr || ''}`.trim().split('\n').slice(-1)[0] || `exit ${r.status}`;
   const noPip = /No module named pip/.test(`${r.stdout || ''}${r.stderr || ''}`);
   return {
@@ -86,7 +113,7 @@ export function renderPythonDepsRow(result, requirements) {
   switch (result.verdict) {
     case 'already current': return `  [ok] python deps: ${requirements.map((q) => q.module).join(', ')} importable (${result.python})`;
     case 'would change': return `  [would install] python deps: ${result.missing.join(', ')} for ${result.python} (${want}; user site, missing only)`;
-    case 'changed': return `  [installed] python deps: ${result.installed.join(', ')} for ${result.python} (user site)`;
+    case 'changed': return `  [installed] python deps: ${result.installed.join(', ')} for ${result.python} (user site${result.pep668Overridden ? ', PEP 668 overridden' : ''})`;
     case 'skipped': return `  [skipped] python deps: ${result.reason}`;
     default: return `  [failed] python deps: still missing ${result.missing.join(', ')} — ${result.reason}`;
   }

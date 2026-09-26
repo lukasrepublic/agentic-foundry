@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { loadPythonRequirements, probePythonDeps, pipArgs, ensurePythonDeps, renderPythonDepsRow } from '../src/pythonDeps.mjs';
 
@@ -13,8 +14,10 @@ const REQS = loadPythonRequirements(CLI_DIR);
 function fakePython({ importable = [], venv = false, pip = 'ok' } = {}) {
   const have = new Set(importable);
   const calls = [];
-  const spawn = (bin, args) => {
+  const opts = [];
+  const spawn = (bin, args, o) => {
     calls.push([bin, ...args]);
+    opts.push(o);
     if (args[0] === '-c') {
       const mods = args.slice(2);
       return { status: 0, stdout: JSON.stringify({ python: '/usr/bin/python3', version: '3.12', venv, missing: mods.filter((m) => !have.has(m)) }) + '\n', stderr: '' };
@@ -29,7 +32,7 @@ function fakePython({ importable = [], venv = false, pip = 'ok' } = {}) {
     }
     return { status: 127, stdout: '', stderr: '' };
   };
-  return { spawn, calls };
+  return { spawn, calls, opts };
 }
 
 test('requirements: the two modules the scripts import, exactly pinned', () => {
@@ -96,4 +99,23 @@ test('dry run: probes only, never installs', () => {
 
 test('probe output unreadable: not ok', () => {
   assert.equal(probePythonDeps(REQS, { spawn: () => ({ status: 0, stdout: 'garbage' }) }).ok, false);
+});
+
+test('security review: python never runs in the workspace; exact transitive pins; wheels only', () => {
+  const f = fakePython({ importable: ['yaml'] });
+  ensurePythonDeps(REQS, { spawn: f.spawn });
+  for (const o of f.opts) {
+    assert.equal(o.cwd, os.tmpdir(), 'probe and pip run from a neutral cwd');
+    assert.equal(o.env.PYTHONSAFEPATH, '1');
+  }
+  const pip = f.calls.find((c) => c[1] === '-m');
+  assert.ok(pip.includes('--only-binary=:all:'));
+  const ci = pip.indexOf('-c');
+  assert.ok(ci > 0 && /constraints\.txt$/.test(pip[ci + 1]), 'constraints file passed with -c');
+  assert.ok(REQS.constraints.length >= 4 && REQS.constraints.every((c) => /^[A-Za-z0-9_.-]+==[\d.]+$/.test(c)));
+});
+
+test('the PEP 668 override is named in the row', () => {
+  const r = ensurePythonDeps(REQS, { spawn: fakePython({ pip: 'pep668' }).spawn });
+  assert.match(renderPythonDepsRow(r, REQS), /PEP 668 overridden/);
 });

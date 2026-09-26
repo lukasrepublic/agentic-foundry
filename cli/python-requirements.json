@@ -1,7 +1,21 @@
 {
   "//": "Third-party Python modules the plugin's scripts import, with the exact versions CI tests (requirements-dev.txt). Kept equal to the plugin's requirements.txt and to the scripts' actual imports by tests/test_python_runtime_deps.py. The updater installs a missing one into the user site; it never upgrades an existing install.",
   "requirements": [
-    { "module": "yaml", "requirement": "PyYAML==6.0.2" },
-    { "module": "jsonschema", "requirement": "jsonschema==4.25.0" }
+    {
+      "module": "yaml",
+      "requirement": "PyYAML==6.0.2"
+    },
+    {
+      "module": "jsonschema",
+      "requirement": "jsonschema==4.25.0"
+    }
+  ],
+  "//constraints": "Exact pins for jsonschema's transitive dependencies (pip -c), so the updater installs exactly what CI tests; equal to requirements-dev.txt by test.",
+  "constraints": [
+    "attrs==26.1.0",
+    "jsonschema-specifications==2025.9.1",
+    "referencing==0.37.0",
+    "rpds-py==2026.6.3",
+    "typing-extensions==4.16.0"
   ]
 }
