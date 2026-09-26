@@ -301,6 +301,11 @@ def check_python_deps(plugin_root=None):
                 continue
             dist = re.split(r"[=<>!~\[;\s]", line, maxsplit=1)[0].strip().lower()
             mods.append(_DIST_TO_MODULE.get(dist, dist.replace("-", "_")))
+    # the scripts use 3.10 syntax (PEP 604 unions at runtime, match): an older interpreter fails at
+    # import, whatever is installed (audit: stock macOS CLT python3 is 3.9)
+    if sys.version_info < (3, 10):
+        return False, (f"{sys.executable} is Python {sys.version_info[0]}.{sys.version_info[1]}; the plugin's "
+                       f"scripts need 3.10+ — put a newer python3 first on PATH")
     missing = [m for m in mods if importlib.util.find_spec(m) is None]
     if missing:
         return False, (f"{sys.executable} cannot import {', '.join(missing)} — run `{_updater_cmd(root)}` "

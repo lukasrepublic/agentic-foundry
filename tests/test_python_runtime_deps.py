@@ -103,3 +103,22 @@ def test_install_constraints_equal_ci_transitive_pins():
             dev.add(line.lower())
     for c in doc["constraints"]:
         assert c.lower() in dev, f"{c} not pinned in requirements-dev.txt"
+
+
+def test_task_hooks_pass_non_atom_tasks_without_pyyaml(tmp_path):
+    """Audit (v1.18.2, blocker): with PyYAML missing, TaskCreated/TaskCompleted refused EVERY task —
+    the floor module was imported before the subject was looked at. A non-atom task must pass."""
+    import subprocess
+    shadow = tmp_path / "shadow"
+    shadow.mkdir()
+    (shadow / "yaml.py").write_text("raise ImportError('No module named yaml (test shadow)')\n")
+    env = dict(os.environ, PYTHONPATH=str(shadow))
+    env.pop("PYTHONSAFEPATH", None)
+    for hook in ("foundry-task-created.py", "foundry-task-completed.py"):
+        path = os.path.join(ROOT, "hooks", hook)
+        r = subprocess.run([sys.executable, path], input='{"task_subject": "write the tests", "cwd": "/tmp"}',
+                           capture_output=True, text=True, env=env, timeout=30)
+        assert r.returncode == 0, f"{hook} refused a non-atom task without PyYAML: {r.stderr}"
+        r = subprocess.run([sys.executable, path], input='{"task_subject": "atom:rel/a1", "cwd": "/tmp"}',
+                           capture_output=True, text=True, env=env, timeout=30)
+        assert r.returncode == 2, f"{hook} must still fail closed on an atom it cannot verify"

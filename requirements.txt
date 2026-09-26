@@ -2,5 +2,5 @@
 # `npx update-agentic-workspace` when missing (never upgraded if present), checked by /foundry:doctor.
 # Exact pins per standing-versions; kept equal to cli/python-requirements.json by test. Direct imports
 # only — jsonschema's transitive pins are the updater's install constraints (python-requirements.json).
-PyYAML==6.0.2
+PyYAML==6.0.3
 jsonschema==4.25.0

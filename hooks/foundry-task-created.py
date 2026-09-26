@@ -60,12 +60,16 @@ def run(payload: dict, *, project_dir: "str | None" = None) -> int:
     misbehaving dependency — escapes as anything other than exit 0/2. Returns the exit code."""
     task_subject_repr = None
     try:
-        ffh = _import_ffh()
-
         task_subject = payload.get("task_subject") if isinstance(payload, dict) else None
         if not isinstance(task_subject, str):
             return 0  # AC-FLH-4: a malformed payload with no task_subject is never blocked
         task_subject_repr = task_subject
+        # v1.18.2: decide "not an atom" BEFORE importing the floor module — its import chain needs
+        # PyYAML, and a machine without it refused EVERY task, atom or not. Same test as
+        # parse_atom_subject's first gate (starts with `atom:`, case-insensitive, after strip).
+        if not task_subject.strip().lower().startswith("atom:"):
+            return 0
+        ffh = _import_ffh()
 
         parsed = ffh.parse_atom_subject(task_subject)  # may raise MalformedAtomSubjectError
         if parsed is None:
