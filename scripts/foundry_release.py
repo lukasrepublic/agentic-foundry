@@ -37,8 +37,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.dirname(HERE)
 
 _SLUG = re.compile(r"^[a-z0-9-]+$")
-# v1.18.2 (upgrade true-up): a RELEASE id may carry dots for a version (`friction-and-delivery-v1.18`,
-# 8 real manifests) — still one path segment, no leading dot, no `..`. Atom ids stay [a-z0-9-]+.
+# v1.18.2 (upgrade true-up): release AND atom ids may carry dots for a version
+# (`friction-and-delivery-v1.18`, `hotfix-v1.17.1`) — still one path segment, no leading dot, no `..`.
+# Every consumer (floor hooks, tasklist, command deck) uses this one rule.
 _RELEASE_SLUG = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*$")
 STATES = ["backlog", "planned", "active", "completed"]
 _LEGAL = {"backlog": "planned", "planned": "active", "active": "completed"}
@@ -632,7 +633,7 @@ def _history_contains(repo, branch, contract_sha256):
         return False
     key = (os.path.realpath(repo), branch, tip.stdout.strip())
     if key not in _LANDED_DIGESTS:
-        _LANDED_DIGESTS[key] = _landed_digests(repo, branch)
+        _LANDED_DIGESTS[key] = _landed_digests(repo, key[2])  # the resolved tip, not the moving name
     landed = _LANDED_DIGESTS[key]
     return landed is not None and contract_sha256 in landed
 
@@ -723,9 +724,10 @@ def _require_specs_and_contracts(release, project_dir):
             if not os.path.isfile(os.path.join(pd, a.charter_ref)):
                 missing.append(f"{a.id}:charter_ref")
             continue
-        if not os.path.isfile(os.path.join(pd, a.spec_ref)):
+        # v1.18.2: an unbound atom (no refs — tolerated outside active) is named, never a TypeError
+        if not a.spec_ref or not os.path.isfile(os.path.join(pd, a.spec_ref)):
             missing.append(f"{a.id}:spec_ref")
-        if not os.path.isfile(os.path.join(pd, a.contract_ref)):
+        if not a.contract_ref or not os.path.isfile(os.path.join(pd, a.contract_ref)):
             missing.append(f"{a.id}:contract_ref")
     if missing:
         raise ReleaseError(f"cannot plan: missing spec/contract file(s): {missing}")
@@ -758,10 +760,43 @@ def transition(release, target, *, project_dir=None, branch="main",
         if unclosed:
             detail = "; ".join(f"{v['atom_id']} (missing: {', '.join(v['missing'])})" for v in unclosed)
             raise ReleaseError(f"cannot close: {len(unclosed)} atom(s) not CLOSED by evidence — {detail}")
+    if target == "active" and not release.atoms:
+        raise ReleaseError(f"cannot activate {release.id!r}: it has no atoms")
     release.state = target
     if save:
-        save_release(release, project_dir=project_dir)
+        # v1.18.2 (security review R2): a transition changes ONE value — rewrite only the `state:`
+        # line in place, so bookkeeping fields, every comment and every other byte survive (a full
+        # re-serialize dropped them, now that the tolerant reader loads such manifests).
+        if not _save_state_in_place(release, project_dir):
+            save_release(release, project_dir=project_dir)
     return release
+
+
+def _save_state_in_place(release, project_dir):
+    path = release_path(release.id, project_dir)
+    try:
+        if os.path.islink(path) or not os.path.isfile(path):
+            return False
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return False
+    pat = re.compile(r"^state:[ \t]*([\"']?)[A-Za-z_-]+\1([ \t]*(?:#.*)?)$", re.M)
+    if len(pat.findall(text)) != 1:
+        return False
+    new = pat.sub(lambda m: f"state: {release.state}{m.group(2)}", text)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".release-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(new)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return True
 
 
 # ── CLI (the /foundry:release operator surface) ──────────────────────────────────────────────────────

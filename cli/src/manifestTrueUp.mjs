@@ -69,8 +69,12 @@ export function applyManifestTrueUp(plan) {
     let cur;
     try { cur = fs.readFileSync(r.abs, 'utf-8'); } catch { continue; }
     if (cur !== r.before) continue; // changed since the plan: left alone
+    // re-check at apply time (security review): still a regular, non-symlinked file inside the root
+    const fst = fs.lstatSync(r.abs, { throwIfNoEntry: false });
+    if (!fst || !fst.isFile()) continue;
     const tmp = path.join(path.dirname(r.abs), `.release.yaml.${process.pid}.tmp`);
-    const fd = fs.openSync(tmp, 'wx', 0o644);
+    let fd;
+    try { fd = fs.openSync(tmp, 'wx', 0o644); } catch { continue; } // a stale temp from a crashed run: skip this row
     try { fs.writeFileSync(fd, r.next); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
     try {
       fs.renameSync(tmp, r.abs);

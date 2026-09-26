@@ -941,3 +941,18 @@ class TestReleaseRunState:
         corrupt_dir.mkdir(parents=True)
         (corrupt_dir / "bad.report.json").write_text("not json {{{", encoding="utf-8")
         assert release._probe_dispatched(empty_atom, str(tmp_path)) == "unknown"
+
+
+def test_transition_rewrites_only_the_state_line(tmp_path):
+    """v1.18.2 (security review R2): a transition must not drop comments or bookkeeping fields."""
+    rel_dir = os.path.join(str(tmp_path), ".foundry", "releases", "r-keep")
+    os.makedirs(rel_dir, exist_ok=True)
+    text = ("# keep this comment\nid: r-keep\ndescription: d\nstate: backlog  # note\n"
+            "released_at: 2026-09-26\natoms:\n  - id: a1\n    charter_ref: c.md\n    depends_on: []\n"
+            "    delivered_pr: 12\n")
+    open(os.path.join(rel_dir, "release.yaml"), "w", encoding="utf-8").write(text)
+    open(os.path.join(str(tmp_path), "c.md"), "w").write("charter\n")
+    rel = release.load_release("r-keep", project_dir=str(tmp_path))
+    release.transition(rel, "planned", project_dir=str(tmp_path))
+    after = open(os.path.join(rel_dir, "release.yaml"), encoding="utf-8").read()
+    assert after == text.replace("state: backlog  # note", "state: planned  # note")

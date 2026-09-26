@@ -45,7 +45,7 @@ wt="$(printf '%s' "$payload" | python3 -c 'import sys,json
 try: print(json.load(sys.stdin).get("worktree_path","") or "")
 except Exception: print("")' 2>/dev/null || true)"
 mkdir -p "$WS/.foundry" 2>/dev/null || true
-printf '%s worktree-remove: unwire worktree_path=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)" "$wt" >> "$LOG" 2>/dev/null || true
+printf '%s worktree-remove: unwire worktree_path=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)" "$(printf '%s' "$wt" | tr -d '\n\r')" >> "$LOG" 2>/dev/null || true
 # best-effort dev-server reap (never change exit status), ONLY strictly inside a worktree directory
 # of this project, never the project root or anything above it, never this hook's own ancestry
 [ -n "$wt" ] && [ -d "$wt" ] || exit 0
