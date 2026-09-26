@@ -77,7 +77,7 @@ def _slug(programme: str) -> str:
     """The same `[a-z0-9-]+` shape `load_release` enforces, applied before this module touches a
     path. Resolution is still delegated to `resolve_programme` — this only keeps a bad identifier
     out of `os.path.join` on the way there."""
-    if not isinstance(programme, str) or not re.fullmatch(r"[a-z0-9-]+", programme.strip()):
+    if not isinstance(programme, str) or not re.fullmatch(r"[a-z0-9]+(?:[.-][a-z0-9]+)*", programme.strip()):
         raise WatchError(f"programme identifier {programme!r} is not a [a-z0-9-]+ slug")
     return programme.strip()
 

@@ -8,13 +8,13 @@
   "properties": {
     "id": {
       "type": "string",
-      "pattern": "^[a-z0-9-]+$",
+      "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$",
       "description": "The release's slug; must match its directory name under .foundry/releases/."
     },
     "description": {"type": "string", "minLength": 1},
     "state": {
       "type": "string",
-      "enum": ["backlog", "planned", "active", "completed", "proposed"],
+      "enum": ["backlog", "planned", "active", "completed", "proposed", "in_progress", "in-progress", "partially-released", "partially-merged", "released", "done"],
       "description": "The RA/RD state machine's forward-only state. `proposed` reads as a synonym of `planned` on load; a subsequent write always persists the real four-value vocabulary."
     },
     "integration_branch": {
@@ -44,7 +44,7 @@
         "type": "object",
         "required": ["id", "depends_on"],
         "properties": {
-          "id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+          "id": {"type": "string", "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$"},
           "depends_on": {"type": "array", "items": {"type": "string"}},
           "spec_ref": {
             "type": "string",
@@ -62,7 +62,7 @@
           "journeys": {"type": "array", "items": {"type": "string", "minLength": 1}},
           "lands": {"type": "string", "description": "Programme ordering hint (e.g. \"first\"); informational only."}
         },
-        "additionalProperties": false
+        "additionalProperties": true
       }
     },
     "program": {"type": "string"},
@@ -76,5 +76,5 @@
     "supersedes_atoms": {"type": "array", "items": {"type": "string"}},
     "exit": {"type": "string"}
   },
-  "additionalProperties": false
+  "additionalProperties": true
 }

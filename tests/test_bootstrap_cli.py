@@ -873,7 +873,7 @@ def test_the_cli_never_spawns_claude_or_writes_home_claude(tmp_path):
     # made through an alias. Resolving the local binding names first means a rename cannot walk a
     # spawn out of this guard's view; it also pins the imported SURFACE, so `spawn`/`exec`/`execSync`
     # (shell-bearing, or stream-shaped) cannot be introduced without this assertion being revisited.
-    UPDATE_PATH = {"update.mjs", "pluginRefresh.mjs", "cleanup.mjs"}
+    UPDATE_PATH = {"update.mjs", "pluginRefresh.mjs", "cleanup.mjs", "pythonDeps.mjs"}
     ALLOWED_CP_IMPORTS = {"execFileSync", "execFile"}
     create_spawns, update_spawns = [], []
     for f in _iter_mjs_files(CLI_DIR / "src"):
@@ -929,6 +929,13 @@ def test_the_cli_never_spawns_claude_or_writes_home_claude(tmp_path):
     # The update path's single claude spawn. Pinned to one site so a second one cannot appear
     # without this test being revisited — the property AC-UAW-14 buys is "one allowlisted spawn",
     # and that is only true while there is exactly one.
+    # v1.18.2: the update path also spawns the Python interpreter — from exactly one module, one
+    # function (runPython), whose callers pass only the fixed `-c <probe>` / `-m pip install` argv.
+    py_spawns = [(f, a) for f, a in update_spawns if f.name == "pythonDeps.mjs"]
+    assert [a for _, a in py_spawns] == ["bin"], f"pythonDeps.mjs spawns outside runPython: {py_spawns}"
+    py_src = (CLI_DIR / "src" / "pythonDeps.mjs").read_text()
+    assert "claude" not in re.sub(r"//.*", "", py_src).replace("Claude", ""), "pythonDeps.mjs must never reach claude"
+    update_spawns = [(f, a) for f, a in update_spawns if f.name != "pythonDeps.mjs"]
     assert [f.name for f, _ in update_spawns] == ["pluginRefresh.mjs"], (
         f"the claude spawn must live in exactly one update-path module, found: "
         f"{[f.name for f, _ in update_spawns]}"
@@ -1097,7 +1104,9 @@ def test_every_runtime_asset_is_packaged():
     # below, the same way cleanup.mjs's is: exactly one recursive delete, inside the apply function,
     # behind confinedJoin + lstat + isSymbolicLink + isDirectory, and the apply function enumerates
     # nothing — it removes ONLY the rows the plan handed it.
-    assert sorted(rm_sites) == ["cleanup.mjs", "retiredArtifacts.mjs"], (
+    # v1.18.2: cleanup.mjs no longer deletes plugin-cache versions (a running session may still use
+    # one) — it carries NO removal at all now, asserted below, so the sweep is the only site.
+    assert sorted(rm_sites) == ["retiredArtifacts.mjs"], (
         f"unexpected recursive-delete sites in cli/src: {rm_sites}"
     )
     sweep_src = (CLI_DIR / "src" / "retiredArtifacts.mjs").read_text()
@@ -1138,26 +1147,12 @@ def test_every_runtime_asset_is_packaged():
                 f"above is anchored on `fs.`, so a destructured mutator would bypass it silently"
             )
 
-    apply_body = _extract_function_body(mutator_src, "applyCachePrune")
-    assert apply_body is not None, "applyCachePrune not found in cleanup.mjs"
-    assert "rmSync" in apply_body, "applyCachePrune makes no rmSync call — did the delete move?"
-    assert "readdirSync" not in apply_body, (
-        "applyCachePrune enumerates the cache directory; it must remove ONLY the pre-validated "
-        "candidates planCachePrune handed it"
+    # v1.18.2: the cache mutator removes NOTHING from the cache — no rm/rmdir/unlink of any kind.
+    assert not re.search(r"\bfs\.(?:promises\.)?(?:rm|rmdir|unlink)(?:Sync)?\s*\(", mutator_src), (
+        "cleanup.mjs removes something again; superseded plugin-cache versions must never be deleted "
+        "(a running session keeps the version it started with — v1.18.2)"
     )
-
-    # The plan/apply separation, asserted as a COUNT rather than as an absence over a region: the
-    # file must carry exactly one recursive delete, and it must be the one inside applyCachePrune.
-    # That is strictly stronger than "planCachePrune contains no rmSync" and does not depend on
-    # where a region slice happens to end.
-    recursive_rms = RECURSIVE_DELETE.findall(mutator_src)
-    assert len(recursive_rms) == 1, (
-        f"cleanup.mjs carries {len(recursive_rms)} recursive deletes; exactly one is permitted, "
-        f"inside applyCachePrune"
-    )
-    assert RECURSIVE_DELETE.search(apply_body), (
-        "the recursive delete is not inside applyCachePrune — planning and applying must stay split"
-    )
+    assert "applyCachePrune" not in mutator_src
 
     plan_body = _function_region(mutator_src, "planCachePrune")
     assert plan_body is not None, "planCachePrune not found in cleanup.mjs"

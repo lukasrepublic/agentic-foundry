@@ -44,8 +44,9 @@ and want it to stay that way, disable it again after the update, or migrate that
 2. **Plugin update** — `claude plugin update <plugin>@<marketplace>` once for every scope whose
    settings enable it, verified by reading back the refreshed cache manifest rather than trusting
    the invoked CLI's own success line.
-3. **Cleanup, opt-in (`--cleanup`)** — prune superseded plugin-cache versions and remove a stale or
-   duplicate marketplace registration. **This is destructive** and off by default: without
+3. **Cleanup, opt-in (`--cleanup`)** — remove a stale or duplicate marketplace registration (superseded
+   plugin-cache versions are listed, never removed — since v1.18.2, because a running session may still
+   use one). **This is destructive** and off by default: without
    `--cleanup`, every candidate path and registration is still previewed, but nothing is removed and
    no `claude` invocation runs for this phase at all. Pass `--cleanup` to actually delete what was
    previewed.
@@ -105,9 +106,9 @@ happens, and ends with a per-phase summary (`changed` / `already current` / `ski
 
 - `--dry-run` — plan and print everything the run would do, write nothing and run no `claude`
   command; exits `0`/`2` exactly as the real run would.
-- `--cleanup` — also perform the destructive cache-prune, stale-registration removal and the
-  retired-artifacts removal previewed above. Off by default; a flagless run removes nothing and
-  prunes nothing.
+- `--cleanup` — also perform the stale-registration removal and the retired-artifacts removal
+  previewed above. Off by default; a flagless run removes nothing. Plugin-cache versions are never
+  removed (v1.18.2): a running session keeps the version it started with.
 - `--help` — print usage and exit.
 
 ## Exit codes
@@ -118,6 +119,7 @@ Same convention as the sibling package, and worth reading before you wire this i
 |------|---------|
 | `0`  | the run completed |
 | `2`  | the run completed, but `.gitignore`'s managed block could not be reconciled (malformed sentinels — reported, left alone) |
+| `2`  | the run completed, but a Python module the plugin's scripts import is still missing (the `python deps` row names it and why pip could not install it) |
 | `1`  | the run refused, or an invocation failed |
 
 **`2` is a success, not an error.** Since v1.18.0 a file that already exists is never "drifted" on

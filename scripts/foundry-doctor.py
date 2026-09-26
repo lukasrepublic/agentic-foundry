@@ -66,7 +66,10 @@ import os
 import re
 import sys
 
-import yaml
+try:  # v1.18.2: a missing PyYAML is the `python-deps` check's finding, never an import-time traceback
+    import yaml
+except ImportError:  # pragma: no cover — exercised by the python-deps check, not by this import
+    yaml = None
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.dirname(HERE)
@@ -277,6 +280,39 @@ def check_stack_profile_lock(plugin_root=None, project_dir=None):
 # --------------------------------------------------------------------------------------- #
 # 5. operator registry resolvable
 # --------------------------------------------------------------------------------------- #
+# v1.18.2: requirements.txt distribution name -> the module the scripts import.
+_DIST_TO_MODULE = {"pyyaml": "yaml"}
+
+
+def check_python_deps(plugin_root=None):
+    """Every third-party module the plugin's scripts import (the plugin's `requirements.txt`) is
+    importable by THIS interpreter. Hard: a missing one breaks the doctor's own probes and every
+    script that imports it (a fresh agent container shipped without both). The remedy is the pinned
+    updater, which installs what is missing into the user site."""
+    root = plugin_root or PLUGIN_ROOT
+    req = os.path.join(root, "requirements.txt")
+    if not os.path.isfile(req):
+        return True, "no requirements.txt in the plugin (nothing declared)"
+    mods = []
+    with open(req, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.split("#", 1)[0].strip()
+            if not line:
+                continue
+            dist = re.split(r"[=<>!~\[;\s]", line, maxsplit=1)[0].strip().lower()
+            mods.append(_DIST_TO_MODULE.get(dist, dist.replace("-", "_")))
+    # the scripts use 3.10 syntax (PEP 604 unions at runtime, match): an older interpreter fails at
+    # import, whatever is installed (audit: stock macOS CLT python3 is 3.9)
+    if sys.version_info < (3, 10):
+        return False, (f"{sys.executable} is Python {sys.version_info[0]}.{sys.version_info[1]}; the plugin's "
+                       f"scripts need 3.10+ — put a newer python3 first on PATH")
+    missing = [m for m in mods if importlib.util.find_spec(m) is None]
+    if missing:
+        return False, (f"{sys.executable} cannot import {', '.join(missing)} — run `{_updater_cmd(root)}` "
+                       f"(installs what is missing into the user site)")
+    return True, f"{', '.join(mods)} importable ({sys.executable})"
+
+
 def check_operator_registry(project_dir=None):
     scripts_dir = os.path.join(PLUGIN_ROOT, "scripts")
     if scripts_dir not in sys.path:
@@ -380,6 +416,9 @@ def _load_permissions_compile_module(plugin_root):
     return mod
 
 
+_UNLOADABLE_RELEASES = []
+
+
 def _active_release_atoms(project_dir):
     """Every (release_id, atom) pair from every release under `.foundry/releases/*/release.yaml`
     whose `state` is `active`, for atoms carrying a `contract_ref` or `charter_ref` (AC-CPD-4). A
@@ -403,7 +442,9 @@ def _active_release_atoms(project_dir):
             continue
         try:
             release = _fr.load_release(name, project_dir=project_dir)
-        except _fr.ReleaseError:
+        except _fr.ReleaseError as e:
+            # audit D14: never silent — the permissions-policy line names how many were skipped
+            _UNLOADABLE_RELEASES.append(f"{name}: {e}")
             continue
         if release.state != "active":
             continue
@@ -445,9 +486,11 @@ def check_permissions_policy(plugin_root=None, project_dir=None):
         if cpf is None or pc is None:
             return None, "capability-preflight/compiler module absent (not applicable)"
 
+        del _UNLOADABLE_RELEASES[:]
         atoms = _active_release_atoms(pdir)
         missing_total = 0
         classifier_total = 0
+        skipped_atoms = 0
         for _release_id, atom in atoms:
             try:
                 # AC-CPD-1 (auth_seq 2): the same path-confinement floor the CLI's own --contract/
@@ -461,7 +504,8 @@ def check_permissions_policy(plugin_root=None, project_dir=None):
             except cpf.PreflightInputError:
                 # an unreadable/out-of-bounds atom-level source is itself advisory here (AC-CPD-4
                 # "never RED") -- the preflight's own --contract/--charter run is the fail-closed
-                # surface for that.
+                # surface for that. Counted, never silent (audit D5/D14).
+                skipped_atoms += 1
                 continue
             missing_total += len(verdict.get("missing", []))
             classifier_total += len(verdict.get("classifier", []))
@@ -479,7 +523,12 @@ def check_permissions_policy(plugin_root=None, project_dir=None):
         if str(drift_state).startswith("absent"):
             detail += (" — seed it: the updater writes a starter .foundry/permissions.yaml, "
                        "or copy context/permissions-template.yaml")
-        if missing_total == 0 and drift_ok:
+        if skipped_atoms:
+            detail += f"; {skipped_atoms} atom(s) not checked (unreadable contract/charter)"
+        if _UNLOADABLE_RELEASES:
+            detail += (f"; {len(_UNLOADABLE_RELEASES)} release manifest(s) unloadable "
+                       f"(first: {_sanitize_detail(_UNLOADABLE_RELEASES[0])[:160]})")
+        if missing_total == 0 and drift_ok and not skipped_atoms and not _UNLOADABLE_RELEASES:
             return True, detail
         return ADVISORY, detail
     except Exception as e:  # noqa: BLE001 — deliberate: AC-CPD-4 must never redden the run
@@ -876,14 +925,23 @@ def main():
             ok, detail = False, _sanitize_detail(f"probe crashed: {type(e).__name__}: {e}")
         return (name, ok, detail)
 
-    checks = [
-        _run("manifest", check_manifest),
-        _run("hooks", check_hooks),
-        _run("skills-frontmatter", check_skills_frontmatter),
-        _run("stack-profile-lock", check_stack_profile_lock, project_dir=project_dir),
-        _run("operator-registry", check_operator_registry, project_dir),
-        _run("control-plane", check_control_plane, project_dir=project_dir),
-    ]
+    deps = _run("python-deps", check_python_deps)
+    if deps[1] is False:
+        # audit D20: without the declared modules the other probes crash in unrelated places and
+        # print wrong remedies (a relock, a refused `pip install`). One named cause, not five.
+        _skip = "skipped — fix python-deps above first (these probes need its modules)"
+        checks = [deps] + [(n, None, _skip) for n in ("manifest", "hooks", "skills-frontmatter",
+                                                      "stack-profile-lock", "operator-registry", "control-plane")]
+    else:
+        checks = [
+            deps,
+            _run("manifest", check_manifest),
+            _run("hooks", check_hooks),
+            _run("skills-frontmatter", check_skills_frontmatter),
+            _run("stack-profile-lock", check_stack_profile_lock, project_dir=project_dir),
+            _run("operator-registry", check_operator_registry, project_dir),
+            _run("control-plane", check_control_plane, project_dir=project_dir),
+        ]
 
     hard_fail = False
     any_advisory = False

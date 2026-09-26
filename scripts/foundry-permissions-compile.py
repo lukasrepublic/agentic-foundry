@@ -63,7 +63,7 @@ import foundry_permission_floor as _pf  # noqa: E402  (load_settings_file reuse,
 try:
     import yaml
 except ImportError:  # pragma: no cover - environment guard
-    sys.stderr.write("foundry-permissions-compile: PyYAML is required (pip install pyyaml)\n")
+    sys.stderr.write("foundry-permissions-compile: PyYAML is required (run `npx update-agentic-workspace@latest` — it installs the plugin's Python dependencies)\n")
     raise
 
 SCHEMA_VERSION = 1

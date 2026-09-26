@@ -1,0 +1,142 @@
+"""v1.18.2: the plugin declares every third-party module its scripts and hooks import, the updater's
+list equals it, and the doctor checks it — a fresh agent container shipped without yaml/jsonschema and
+nothing noticed until a session broke."""
+import ast
+import glob
+import importlib.util
+import json
+import os
+import re
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DIST_TO_MODULE = {"pyyaml": "yaml"}
+
+
+def _declared():
+    out = {}
+    with open(os.path.join(ROOT, "requirements.txt"), encoding="utf-8") as fh:
+        for line in fh:
+            line = line.split("#", 1)[0].strip()
+            if line:
+                dist = re.split(r"[=<>!~\[;\s]", line, maxsplit=1)[0].strip().lower()
+                out[DIST_TO_MODULE.get(dist, dist.replace("-", "_"))] = line
+    return out
+
+
+def _imported_third_party():
+    files = glob.glob(os.path.join(ROOT, "scripts", "**", "*.py"), recursive=True) + \
+        glob.glob(os.path.join(ROOT, "hooks", "**", "*.py"), recursive=True)
+    local = {os.path.splitext(os.path.basename(p))[0] for p in files}
+    found = set()
+    for p in files:
+        try:
+            tree = ast.parse(open(p, encoding="utf-8").read())
+        except SyntaxError:
+            continue
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Import):
+                mods = [a.name for a in n.names]
+            elif isinstance(n, ast.ImportFrom) and n.module and n.level == 0:
+                mods = [n.module]
+            else:
+                continue
+            for m in mods:
+                top = m.split(".")[0]
+                if top not in sys.stdlib_module_names and top not in local:
+                    found.add(top)
+    return found
+
+
+def test_every_third_party_import_is_declared():
+    assert _imported_third_party() <= set(_declared()), \
+        f"undeclared runtime imports: {sorted(_imported_third_party() - set(_declared()))}"
+
+
+def test_updater_list_equals_requirements_txt():
+    doc = json.load(open(os.path.join(ROOT, "cli", "python-requirements.json"), encoding="utf-8"))
+    assert {q["module"]: q["requirement"] for q in doc["requirements"]} == _declared()
+
+
+def test_runtime_pins_equal_ci_pins():
+    """The updater installs exactly what CI tests against."""
+    dev = {}
+    for line in open(os.path.join(ROOT, "requirements-dev.txt"), encoding="utf-8"):
+        line = line.split("#", 1)[0].strip()
+        if "==" in line:
+            name, ver = line.split("==", 1)
+            dev[name.strip().lower()] = ver.strip()
+    for req in _declared().values():
+        name, ver = req.split("==", 1)
+        assert dev.get(name.strip().lower()) == ver.strip(), f"{req} differs from requirements-dev.txt"
+
+
+def test_packaged_with_the_cli():
+    pkg = json.load(open(os.path.join(ROOT, "cli", "package.json"), encoding="utf-8"))
+    assert "python-requirements.json" in pkg["files"]
+
+
+def _doctor():
+    spec = importlib.util.spec_from_file_location("foundry_doctor_pydeps", os.path.join(ROOT, "scripts", "foundry-doctor.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_doctor_python_deps_ok_and_missing(tmp_path, monkeypatch):
+    doc = _doctor()
+    ok, detail = doc.check_python_deps(ROOT)
+    assert ok, detail
+    (tmp_path / "requirements.txt").write_text("PyYAML==6.0.2\nnot-a-real-module-xyz==1.0\n", encoding="utf-8")
+    ok, detail = doc.check_python_deps(str(tmp_path))
+    assert ok is False
+    assert "not_a_real_module_xyz" in detail and "update-agentic-workspace" in detail
+
+
+def test_install_constraints_equal_ci_transitive_pins():
+    """The updater's -c constraints are exactly the transitive pins CI installs."""
+    doc = json.load(open(os.path.join(ROOT, "cli", "python-requirements.json"), encoding="utf-8"))
+    dev = set()
+    for line in open(os.path.join(ROOT, "requirements-dev.txt"), encoding="utf-8"):
+        line = line.split("#", 1)[0].strip()
+        if "==" in line:
+            dev.add(line.lower())
+    for c in doc["constraints"]:
+        assert c.lower() in dev, f"{c} not pinned in requirements-dev.txt"
+
+
+def test_task_hooks_pass_non_atom_tasks_without_pyyaml(tmp_path):
+    """Audit (v1.18.2, blocker): with PyYAML missing, TaskCreated/TaskCompleted refused EVERY task —
+    the floor module was imported before the subject was looked at. A non-atom task must pass."""
+    import subprocess
+    shadow = tmp_path / "shadow"
+    shadow.mkdir()
+    (shadow / "yaml.py").write_text("raise ImportError('No module named yaml (test shadow)')\n")
+    env = dict(os.environ, PYTHONPATH=str(shadow))
+    env.pop("PYTHONSAFEPATH", None)
+    for hook in ("foundry-task-created.py", "foundry-task-completed.py"):
+        path = os.path.join(ROOT, "hooks", hook)
+        r = subprocess.run([sys.executable, path], input='{"task_subject": "write the tests", "cwd": "/tmp"}',
+                           capture_output=True, text=True, env=env, timeout=30)
+        assert r.returncode == 0, f"{hook} refused a non-atom task without PyYAML: {r.stderr}"
+        r = subprocess.run([sys.executable, path], input='{"task_subject": "atom:rel/a1", "cwd": "/tmp"}',
+                           capture_output=True, text=True, env=env, timeout=30)
+        assert r.returncode == 2, f"{hook} must still fail closed on an atom it cannot verify"
+
+
+def test_preflight_ignores_an_unparseable_operator_allow_row(tmp_path):
+    """Audit D5: an operator allow row with `;` must not error the preflight for every atom."""
+    import subprocess
+    ws = tmp_path / "ws"
+    (ws / ".claude").mkdir(parents=True)
+    (ws / ".claude" / "settings.local.json").write_text(json.dumps(
+        {"permissions": {"allow": ["Bash(find . -exec grep -l x {} \;)"]}}))
+    (ws / ".claude" / "settings.json").write_text(json.dumps({"permissions": {"allow": []}}))
+    contract = ws / "acceptance-contract.yaml"
+    contract.write_text("requires_capabilities:\n  - Bash(git status)\n")
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "foundry-capability-preflight.py"),
+                        "--contract", str(contract), "--root", str(ws)],
+                       capture_output=True, text=True, timeout=60, env=dict(os.environ, HOME=str(tmp_path)))
+    out = json.loads(r.stdout)
+    assert out.get("status") != "error", r.stdout + r.stderr
+    assert r.returncode in (0, 3), (r.returncode, r.stdout, r.stderr)

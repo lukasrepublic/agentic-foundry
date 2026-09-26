@@ -25,6 +25,7 @@
     "templates",
     "permission-floor.json",
     "retired-artifacts.json",
+    "python-requirements.json",
     "package.json",
     "README.md"
   ],

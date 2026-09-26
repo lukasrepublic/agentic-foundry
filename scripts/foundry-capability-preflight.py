@@ -85,7 +85,7 @@ import foundry_permission_floor as _pf  # noqa: E402  (load_settings_file + sani
 try:
     import yaml  # noqa: E402
 except ImportError:  # pragma: no cover - environment guard
-    sys.stderr.write("foundry-capability-preflight: PyYAML is required (pip install pyyaml)\n")
+    sys.stderr.write("foundry-capability-preflight: PyYAML is required (run `npx update-agentic-workspace@latest` — it installs the plugin's Python dependencies)\n")
     raise
 
 EXIT_OK = 0
@@ -352,11 +352,18 @@ def _effective_allow_and_deny(project_dir, home=None):
             raise PreflightInputError(f"{label} is unreadable/invalid")
         if result["status"] == "absent":
             continue
+        # v1.18.2 (audit D5): the character check guards DECLARED capabilities, not the operator's
+        # own settings rules. One unrelated allow row with a `;` (e.g. a `find -exec ... {} \;`
+        # grant) errored the preflight for EVERY atom while the doctor reported 0 denied. An allow
+        # rule the matcher cannot reason about simply does not cover anything (fail closed in the
+        # allow direction); a deny rule is kept as-is (fail closed in the deny direction).
         for rule in result["rules"]["allow"]:
-            _reject_forbidden(rule, f"{label} (allow)")
+            try:
+                _reject_forbidden(rule, f"{label} (allow)")
+            except PreflightInputError:
+                continue
             allow.append((rule, label))
         for rule in result["rules"]["deny"]:
-            _reject_forbidden(rule, f"{label} (deny)")
             deny.append((rule, label))
     return allow, deny
 

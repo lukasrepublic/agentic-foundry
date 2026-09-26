@@ -27,7 +27,15 @@ import { resolveTarget, readTarget, writeTargetAtomically } from './floorReconci
 export const MARKER = 'feat-foundry-init-statusline-wrapper';
 export const WRAPPERS = Object.freeze([
   { template: 'foundry-statusline.sh', rel: '.claude/hooks/foundry-statusline.sh', key: 'statusLine' },
-  { template: 'foundry-subagent-statusline.sh', rel: '.claude/hooks/foundry-subagent-statusline.sh', key: 'subagentStatusLine' },
+]);
+
+// v1.18.2 (operator directive, 2026-09-26): the status line is for the ROOT session in a visual
+// terminal only — never subagents. v1.17.0–v1.18.1 also wired `subagentStatusLine`, which Claude Code
+// runs once per running subagent on every refresh; with the renderer's git/python work that fed the
+// process storm that crashed adopters' sessions. The key is RETIRED: removed wherever its command is
+// exactly the one this framework wrote (an operator's own value is never touched), and never added.
+export const RETIRED_KEYS = Object.freeze([
+  { key: 'subagentStatusLine', rel: '.claude/hooks/foundry-subagent-statusline.sh' },
 ]);
 
 export function desiredSettingsValue(rel) {
@@ -68,6 +76,12 @@ export function planStatuslineWiring({ physicalRoot, templatesDir }) {
     const unverifiable = fileRow && (fileRow.action === 'kept' || fileRow.action === 'refused');
     plan.keys.push({ key: w.key, action: present ? 'already-wired' : (unverifiable ? 'not-wired' : 'wired') });
   }
+  for (const r of RETIRED_KEYS) {
+    const v = settings[r.key];
+    if (v && typeof v === 'object' && v.command === desiredSettingsValue(r.rel).command) {
+      plan.keys.push({ key: r.key, action: 'unwired' });
+    }
+  }
   return plan;
 }
 
@@ -99,12 +113,18 @@ export function applyStatuslineWiring(plan) {
     }
   }
   const toAdd = plan.keys.filter((k) => k.action === 'wired');
-  if (toAdd.length > 0) {
+  const toRemove = plan.keys.filter((k) => k.action === 'unwired');
+  if (toAdd.length > 0 || toRemove.length > 0) {
     const settings = readTarget(plan.settingsPath);
     for (const k of toAdd) {
       if (Object.prototype.hasOwnProperty.call(settings, k.key)) continue; // raced in since plan
       const w = WRAPPERS.find((x) => x.key === k.key);
       settings[k.key] = desiredSettingsValue(w.rel);
+    }
+    for (const k of toRemove) {
+      const r = RETIRED_KEYS.find((x) => x.key === k.key);
+      const v = settings[k.key];
+      if (v && typeof v === 'object' && v.command === desiredSettingsValue(r.rel).command) delete settings[k.key];
     }
     writeTargetAtomically(plan.settingsPath, settings);
   }
@@ -126,6 +146,8 @@ export function renderStatuslineRows(plan) {
   const notWired = plan.keys.filter((k) => k.action === 'not-wired').map((k) => k.key);
   if (wired.length) rows.push(`  [statusline] wired ${wired.join(', ')} in .claude/settings.json`);
   if (already.length) rows.push(`  [statusline] already wired: ${already.join(', ')} (existing value kept)`);
+  const unwired = plan.keys.filter((k) => k.action === 'unwired').map((k) => k.key);
+  if (unwired.length) rows.push(`  [statusline] ${plan.applied ? 'removed' : 'would remove'} ${unwired.join(', ')} from .claude/settings.json (the status line is for the root session only)`);
   if (notWired.length) rows.push(`  [statusline] NOT wired: ${notWired.join(', ')} — the wrapper at that path is not one this framework wrote (kept or refused); verify it, then wire by hand`);
   return rows;
 }
@@ -133,6 +155,6 @@ export function renderStatuslineRows(plan) {
 export function statuslineChanged(plan) {
   return Boolean(plan && plan.applied && (
     plan.files.some((f) => f.action === 'create' || f.action === 'converged')
-    || plan.keys.some((k) => k.action === 'wired')
+    || plan.keys.some((k) => k.action === 'wired' || k.action === 'unwired')
   ));
 }

@@ -35,7 +35,7 @@ import sys
 try:
     import yaml
 except ImportError:  # pragma: no cover - environment guard
-    sys.stderr.write("foundry_contract: PyYAML is required (pip install pyyaml)\n")
+    sys.stderr.write("foundry_contract: PyYAML is required (run `npx update-agentic-workspace@latest` — it installs the plugin's Python dependencies)\n")
     raise
 
 # Atom C (#121) — the system-grounding freeze floor consumes Atom A's snapshot builder
@@ -308,7 +308,7 @@ def validate_contract_bytes(raw: bytes, spec_ac_ids: list[str] | None = None) ->
     # again pass unnoticed — the hand-rolled freeze floors 1-4 below still run regardless.
     if not _jsonschema_available():
         warnings.append("schema floor in structural-fallback mode: jsonschema not installed "
-                        "(`pip install jsonschema`) — full JSON-Schema validation skipped; "
+                        "(`npx update-agentic-workspace@latest` installs it) — full JSON-Schema validation skipped; "
                         "hand-rolled freeze floors 1-4 still enforced (UL-0011)")
 
     # INTEGRITY (authorization-sentinel injection guard). contract_sha256 hashes only
