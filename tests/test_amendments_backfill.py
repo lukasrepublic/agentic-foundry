@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -53,6 +54,7 @@ SHAPES = {
     "inline-mention-in-normative-then-real": NORMATIVE.replace("it works.", "append to the `## Amendments` table.") + "\n" + BLOCK,
     "inline-mention-in-normative-only": NORMATIVE.replace("it works.", "append to the `## Amendments` table."),
     "inline-mention-after-marker-only": NORMATIVE + "\nSee the `## Amendments` table.\n",
+    "no-marker-inline-mention": "# spec\n\nAppend to the `## Amendments` table.\n",
 }
 
 
@@ -83,7 +85,7 @@ def test_js_classifier_agrees_with_foundry_amend(name):
     js = _js_classify(text)
     # The Python returns a bool; the JS adds `no-marker` only to say it will not write. Both must
     # agree on the one question amend asks: is the section there for amend's purposes?
-    js_ok = js == "present" or (js == "no-marker" and "## Amendments" in text)
+    js_ok = js == "present" or (js == "no-marker" and re.search(r"^## Amendments[ \t]*\r?$", text, re.M) is not None)
     assert js_ok == py_ok, f"{name}: python={py_ok} js={js}"
 
 
@@ -152,3 +154,12 @@ def test_inline_mention_is_never_the_section_and_rerun_is_idempotent(tmp_path):
     assert "| 1 | 2 |\n<!-- /normative -->" in after
     assert after.rstrip().endswith("| 2026-09-26 | what | why | 2 |")
     assert fc.spec_sha256(str(spec)) == before
+
+
+def test_append_never_uses_a_table_outside_the_ledger_section(tmp_path):
+    """v1.18.1 security review: a ledger heading with no table, followed by a later section that has
+    one, is refused — the row never lands in another section's table."""
+    spec = tmp_path / "feat-x.md"
+    spec.write_text(NORMATIVE + "\n## Amendments\n\n## Notes\n\n| a | b |\n|---|---|\n", encoding="utf-8")
+    with pytest.raises(AMEND.AmendError):
+        AMEND.append_amendment_row(str(spec), "2026-09-26", "what", "why", 2)

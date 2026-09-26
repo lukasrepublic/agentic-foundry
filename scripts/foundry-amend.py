@@ -488,10 +488,10 @@ def amendments_section_ok(spec_text: str) -> bool:
     positions stay comparable to the unmasked text's fence offset."""
     close_idx = spec_text.rfind(_NORMATIVE_CLOSE)
     masked = _CODE_FENCE_RE.sub(lambda m: "\x00" * len(m.group(0)), spec_text)
-    if close_idx == -1:
-        # no normative fence at all (whole-body fallback applies elsewhere)
-        return masked.find(_AMENDMENTS_HEADING) != -1
-    return _HEADING_LINE_RE.search(masked, close_idx) is not None
+    # No normative fence at all → the whole body is hashed (fallback elsewhere); the heading line may
+    # sit anywhere. The SAME line rule as append_amendment_row, so this check never passes a spec
+    # the append then refuses (v1.18.1 security review).
+    return _HEADING_LINE_RE.search(masked, max(close_idx, 0)) is not None
 
 
 def append_amendment_row(spec_path: str, date: str, what: str, why: str, auth_seq: int) -> None:
@@ -502,7 +502,10 @@ def append_amendment_row(spec_path: str, date: str, what: str, why: str, auth_se
     idx = heading.start() if heading else -1
     if idx == -1:
         raise AmendError(f"{spec_path} has no `## Amendments` section — cannot record the amendment")
-    m = _SEP_RE.search(text, idx)
+    # The separator must belong to THIS section: searched in the fence-masked text and bounded by the
+    # next `#`/`##` heading line, so a table in a later section or a code example is never chosen.
+    nxt = re.compile(r"^#{1,2} ", re.MULTILINE).search(masked, heading.end())
+    m = _SEP_RE.search(masked, idx, nxt.start() if nxt else len(masked))
     if not m:
         raise AmendError(f"{spec_path}'s `## Amendments` section has no table header separator row")
     pos = m.end()

@@ -33,8 +33,9 @@ the PR body instead of a mid-walk question:
    sessions run. A local check that trips on those writes is usually a stale copy of a plugin function,
    re-synced in the same PR;
 2. the CHANGELOG sections between the two versions, as an inventory of what was retired and added;
-3. standing grants you have already stated (memory, CLAUDE.md) into `.foundry/permissions.yaml` —
-   none stated means the step is done — then compiled, until the doctor reads `policy in-sync`;
+3. standing grants you have already stated — in the session or a committed CLAUDE.md; one found only
+   in memory becomes a proposal in the PR body — into `.foundry/permissions.yaml` (none stated means
+   the step is done), then compiled, until the doctor reads `policy in-sync`;
 4. `requires_capabilities` on contracts that are not frozen (frozen ones are listed for `/foundry:amend`);
    independent of the grants step, and it never blocks the walk;
 5. a relock when the stack-profile lock is behind the profile version the plugin ships;
