@@ -79,7 +79,7 @@ Print both lists, then carry on — they are the inventory the truth pass works 
    `chore(foundry): upgrade <from> → <to> — updater writes`. The report is an untracked file anything
    can edit, so refuse any `written`/`removed` entry that is absolute, contains `..`, or has a `kind`
    outside the updater's own set (`managed`, `seed`, `permission-floor`, `marketplace-migration`,
-   `managed-block`, `amendments-backfill`, `statusline`, `local-retirement`) — stage nothing from such
+   `managed-block`, `amendments-backfill`, `statusline`, `local-retirement`, `manifest-true-up`) — stage nothing from such
    a report.
 
    **If a workspace check fails on the updater's writes** (a pre-commit hook, a CI script), find out
@@ -123,10 +123,10 @@ Print both lists, then carry on — they are the inventory the truth pass works 
    rewritten to what ships now, checked against the doctor's actual output rather than old docs.
    **Also, whatever version range the upgrade crossed**, search the same files plus CI workflows,
    git hooks, `scripts/` and `.claude/agents/` for this fixed list of retired machinery — residue
-   from pre-1.0 scaffolds that no CHANGELOG section of a recent upgrade will name: `live-seam`,
-   `merge-gate hook` / `foundry-merge-gate-hook.sh`, `foundry-merge-gate.py`, `foundry-ci-gate.py`,
-   `wiring-hash`, `impl-wizard` / `impl-progress.yaml`, `dispatch-queue`, `/foundry:release-wave`,
-   `fail-closed merge-gate hooks`, and a hard-coded `plugins/cache/agentic-foundry/foundry/<version>`
+   from pre-1.0 scaffolds that no CHANGELOG section of a recent upgrade will name. One search covers it:
+   `grep -rniE 'live-seam|merge[-_ ]gate[-_ ]hooks?|foundry[-_](merge|ci)[-_]gate|wiring-hash|impl-wizard|impl-progress|dispatch-queue|foundry:release-wave|plugins/cache/agentic-foundry/foundry/[0-9]'`
+   — the retired live-seam merge gate, its script, CI-gate script and hook, the wiring-hash pin, the
+   impl-wizard, the dispatch queue, a verb that never existed, and a hard-coded plugin-cache version
    path. Prose is rewritten to the current floor ("branch protection + CI checks; the git-discipline
    hook"); a script or workflow that CALLS retired machinery goes under *For the operator* with the
    file:line (it may be load-bearing for their CI).
@@ -152,7 +152,7 @@ Print both lists, then carry on — they are the inventory the truth pass works 
 7b. **Required checks nothing posts.** For each GitHub repo (the workspace and every hosted repo),
    read the default branch's required status checks (read-only: `gh api
    repos/<owner>/<repo>/branches/<branch>/protection/required_status_checks`; a Free-plan 403 is
-   n/a). A required context that is a retired foundry context (`foundry-merge-gate`) or that no
+   n/a). A required context the retired merge gate used to post (its name ends in `-merge-gate`) or that no
    workflow in the repo produces leaves every matching PR unmergeable. List it under *For the
    operator* with the one-line remedy (replace it with a check that runs, e.g. the repo's CI job
    name); changing branch protection is the operator's, never this skill's.

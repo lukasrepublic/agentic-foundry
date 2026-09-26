@@ -116,7 +116,8 @@ _ATOM_PREFIX_RE = re.compile(r"^atom:", re.IGNORECASE)
 # Validation is DELIBERATELY strict against the RAW (unstripped) subject: a lowercase `atom:`
 # literal, both parts `[a-z0-9-]+`, and `\Z` (not `$`, which in Python also matches just before a
 # single trailing newline) so an embedded/trailing newline never slips through.
-_EXACT_ATOM_SUBJECT_RE = re.compile(r"^atom:([a-z0-9-]+)/([a-z0-9-]+)\Z")
+# v1.18.2: release and atom ids may carry version dots (`…-v1.18`); still no `..`, no separators
+_EXACT_ATOM_SUBJECT_RE = re.compile(r"^atom:([a-z0-9]+(?:[.-][a-z0-9]+)*)/([a-z0-9]+(?:[.-][a-z0-9]+)*)\Z")
 _SLUG_RE = re.compile(r"^[a-z0-9-]+$")
 
 

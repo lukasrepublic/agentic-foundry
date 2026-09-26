@@ -37,6 +37,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.dirname(HERE)
 
 _SLUG = re.compile(r"^[a-z0-9-]+$")
+# v1.18.2 (upgrade true-up): a RELEASE id may carry dots for a version (`friction-and-delivery-v1.18`,
+# 8 real manifests) — still one path segment, no leading dot, no `..`. Atom ids stay [a-z0-9-]+.
+_RELEASE_SLUG = re.compile(r"^[a-z0-9]+(?:[.-][a-z0-9]+)*$")
 STATES = ["backlog", "planned", "active", "completed"]
 _LEGAL = {"backlog": "planned", "planned": "active", "active": "completed"}
 _TOP_REQUIRED_FIELDS = {"id", "description", "state", "atoms"}
@@ -80,7 +83,13 @@ _ATOM_LANE_VALUES = {"charter", "factory"}
 # is read-only) while the in-memory `Release.state` normalizes to `planned`; a SUBSEQUENT
 # `transition`/`save_release` call (which does write) persists the real STATES vocabulary, never
 # `proposed` — the forward-only transition table (`_LEGAL`) is keyed on the real STATES only.
-_STATE_READ_SYNONYMS = {"proposed": "planned"}
+_STATE_READ_SYNONYMS = {
+    "proposed": "planned",
+    # v1.18.2 (upgrade true-up): legacy state names found in real manifests; the updater rewrites
+    # them on disk, and until it has run they read as the state they meant.
+    "in_progress": "active", "in-progress": "active", "partially-released": "active",
+    "partially-merged": "active", "released": "completed", "done": "completed",
+}
 
 # (feat-*-certification, AC per charter 2026-07-27-phase5-certification): a CLOSED,
 # 2-value, BOTH-TERMINAL verdict enum for the operator's own acceptance record — "refuses
@@ -205,22 +214,48 @@ def _validate_acceptance(rid, raw):
     return out
 
 
+def _typo_fields(unknown, known):
+    """v1.18.2 (upgrade true-up) — a TOLERANT READER with typo protection. The machinery reads only
+    its own fields; any other field is bookkeeping an author or agent added (41 of 84 real manifests
+    carried some) and is ignored. But a field that is a near-miss of a machinery field (`depends_om`,
+    `integration-branch`) is almost certainly a typo that would silently drop meaning, so it is still
+    refused, naming the field it resembles."""
+    import difflib
+    out = []
+    for k in unknown:
+        if not isinstance(k, str):
+            out.append(k)
+            continue
+        norm = k.replace("-", "_").lower()
+        close = difflib.get_close_matches(norm, list(known), n=1, cutoff=0.85)
+        # a plural of a machinery field (`versions` beside `version`) is a different, bookkeeping key
+        close = [c for c in close if norm not in (c + "s", c + "es") and c not in (norm + "s", norm + "es")]
+        if norm in known or close:
+            out.append(f"{k} (did you mean {close[0] if close else norm!r}?)")
+    return set(out)
+
+
 def _validate(doc, expected_id):
     if not isinstance(doc, dict):
         raise ReleaseError(f"release {expected_id!r}: top-level document is not a mapping — fail-closed")
     keys = set(doc.keys())
+    # v1.18.2: a missing description reads as the id (the updater writes one on disk)
+    if "description" not in keys and isinstance(doc.get("id"), str):
+        doc = dict(doc, description=doc["id"])
+        keys = set(doc.keys())
     missing = _TOP_REQUIRED_FIELDS - keys
     if missing:
         raise ReleaseError(f"release {expected_id!r}: missing required field(s) {sorted(missing)}")
-    unknown = keys - _TOP_REQUIRED_FIELDS - _TOP_OPTIONAL_FIELDS
+    unknown = _typo_fields(keys - _TOP_REQUIRED_FIELDS - _TOP_OPTIONAL_FIELDS,
+                           _TOP_REQUIRED_FIELDS | _TOP_OPTIONAL_FIELDS)
     if unknown:
         raise ReleaseError(f"release {expected_id!r}: unknown field(s) {sorted(unknown)} "
                            f"(allowed required: {sorted(_TOP_REQUIRED_FIELDS)}, optional: "
                            f"{sorted(_TOP_OPTIONAL_FIELDS)}; there is NO floor-gate field — the floor "
                            f"is core-owned)")
     rid = doc["id"]
-    if not isinstance(rid, str) or not _SLUG.match(rid):
-        raise ReleaseError(f"release {expected_id!r}: `id` {rid!r} is not a [a-z0-9-]+ slug")
+    if not isinstance(rid, str) or not _RELEASE_SLUG.match(rid):
+        raise ReleaseError(f"release {expected_id!r}: `id` {rid!r} is not a release slug ([a-z0-9] words joined by - or .)")
     if expected_id is not None and rid != expected_id:
         raise ReleaseError(f"release id {rid!r} does not match its directory {expected_id!r}")
     if not isinstance(doc["description"], str) or not doc["description"].strip():
@@ -237,23 +272,30 @@ def _validate(doc, expected_id):
         raise ReleaseError(f"release {rid!r}: `state` {state!r} not in {STATES} "
                            f"(also accepted on read: {sorted(_STATE_READ_SYNONYMS)})")
     atoms_raw = doc["atoms"]
-    if not isinstance(atoms_raw, list) or not atoms_raw:
+    # v1.18.2 (upgrade true-up): only an ACTIVE release must have atoms; a backlog/planned shell or a
+    # completed record with none is a real, harmless shape found in adopter manifests.
+    if atoms_raw is None and state != "active":
+        atoms_raw = []
+    if not isinstance(atoms_raw, list) or (not atoms_raw and state == "active"):
         raise ReleaseError(f"release {rid!r}: `atoms` must be a non-empty list")
 
     atoms, seen = [], set()
     for raw in atoms_raw:
         if not isinstance(raw, dict):
             raise ReleaseError(f"release {rid!r}: each atom must be a mapping, got {type(raw).__name__}")
+        # v1.18.2: an older manifest's atom with no `depends_on` depends on nothing
+        if "depends_on" not in raw and "id" in raw:
+            raw = dict(raw, depends_on=[])
         akeys = set(raw.keys())
         amiss = _ATOM_FIELDS - akeys
         if amiss:
             raise ReleaseError(f"release {rid!r}: atom {raw.get('id')!r} missing field(s) {sorted(amiss)}")
-        aunknown = akeys - _ATOM_FIELDS - _ATOM_OPTIONAL_FIELDS
+        aunknown = _typo_fields(akeys - _ATOM_FIELDS - _ATOM_OPTIONAL_FIELDS, _ATOM_FIELDS | _ATOM_OPTIONAL_FIELDS)
         if aunknown:
             raise ReleaseError(f"release {rid!r}: atom {raw.get('id')!r} unknown field(s) {sorted(aunknown)}")
         aid = raw["id"]
-        if not isinstance(aid, str) or not _SLUG.match(aid):
-            raise ReleaseError(f"release {rid!r}: atom id {aid!r} is not a [a-z0-9-]+ slug")
+        if not isinstance(aid, str) or not _RELEASE_SLUG.match(aid):
+            raise ReleaseError(f"release {rid!r}: atom id {aid!r} is not a slug ([a-z0-9] words joined by - or .)")
         if aid in seen:
             raise ReleaseError(f"release {rid!r}: duplicate atom id {aid!r}")
         seen.add(aid)
@@ -271,7 +313,14 @@ def _validate(doc, expected_id):
                 raise ReleaseError(f"release {rid!r}: atom {aid!r} {field} must be a non-empty string")
         has_charter = bool(charter_ref)
         has_factory = bool(spec_ref) and bool(contract_ref)
-        if not has_charter and not has_factory:
+        # v1.18.2: a HALF factory shape (one of spec_ref/contract_ref) is malformed in any state; an
+        # atom with no refs at all is an unbound atom — tolerated outside an active release (older
+        # programme manifests), refused in an active one, where dispatch needs its refs.
+        if bool(spec_ref) != bool(contract_ref) and not has_charter:
+            raise ReleaseError(
+                f"release {rid!r}: atom {aid!r} must carry `charter_ref`, or both `spec_ref` + "
+                f"`contract_ref` — carries only one of spec_ref/contract_ref")
+        if not has_charter and not has_factory and state == "active":
             raise ReleaseError(
                 f"release {rid!r}: atom {aid!r} must carry `charter_ref`, or both `spec_ref` + "
                 f"`contract_ref` — carries neither shape")
@@ -318,8 +367,8 @@ def _validate(doc, expected_id):
 def load_release(id, *, project_dir=None, root=None):
     """Load + validate a single release by id, fail-closed. `id` is a [a-z0-9-]+ slug (no path
     separators/traversal) resolved strictly within <project_dir>/.foundry/releases/<id>/release.yaml."""
-    if not isinstance(id, str) or not _SLUG.match(id):
-        raise ReleaseError(f"release id {id!r} is not a [a-z0-9-]+ slug (no path separators/traversal)")
+    if not isinstance(id, str) or not _RELEASE_SLUG.match(id):
+        raise ReleaseError(f"release id {id!r} is not a release slug (no path separators/traversal)")
     base = os.path.join(_project_dir(project_dir), ".foundry", "releases")
     path = os.path.join(base, id, "release.yaml")
     real_base, real_path = os.path.realpath(base), os.path.realpath(path)
@@ -571,6 +620,31 @@ def _history_contains(repo, branch, contract_sha256):
     bad branch) → fail-closed return False. (a gate that cannot verify does not close.)"""
     if not contract_sha256:
         return False
+    # v1.18.2 (audit D22): the union of landed digests is a property of (repo, branch tip) — compute
+    # it ONCE per process instead of re-walking and re-parsing the whole history per atom (~150 s per
+    # `status` on a 600-contract workspace). Same per-revision rules; only the early exit is traded.
+    try:
+        tip = subprocess.run(["git", "-C", repo, "rev-parse", "--verify", "--quiet", branch],
+                             capture_output=True, text=True)
+    except Exception:
+        return False
+    if tip.returncode != 0:
+        return False
+    key = (os.path.realpath(repo), branch, tip.stdout.strip())
+    if key not in _LANDED_DIGESTS:
+        _LANDED_DIGESTS[key] = _landed_digests(repo, branch)
+    landed = _LANDED_DIGESTS[key]
+    return landed is not None and contract_sha256 in landed
+
+
+_LANDED_DIGESTS = {}
+_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
+def _landed_digests(repo, branch):
+    """Every `authorizations[].contract_sha256` in every marker state that landed on <branch>'s
+    first-parent mainline, or None when the enumeration itself fails (fail-closed)."""
+    digests = set()
     # Enumerate the marker states that LANDED ON <branch>'s mainline (--first-parent), newest first.
     try:
         r = subprocess.run(
@@ -578,9 +652,9 @@ def _history_contains(repo, branch, contract_sha256):
              "--", ".foundry/build-provenance.yaml"],
             capture_output=True, text=True)
     except Exception:
-        return False
+        return None
     if r.returncode != 0:
-        return False
+        return None
     shas = [s for s in r.stdout.split() if s]
     for sha in shas:
         try:
@@ -594,7 +668,7 @@ def _history_contains(repo, branch, contract_sha256):
             # path absent / deleted at this revision — a legit skip.
             continue
         try:
-            doc = yaml.safe_load(sh.stdout)
+            doc = yaml.load(sh.stdout, Loader=_YAML_LOADER)
         except Exception as e:
             sys.stderr.write(f"_history_contains: invalid YAML in marker at {sha[:12]} "
                              f"(fail-closed for this revision): {e}\n")
@@ -604,9 +678,9 @@ def _history_contains(repo, branch, contract_sha256):
                              f"(fail-closed for this revision)\n")
             continue
         for a in (doc.get("authorizations") or []):
-            if isinstance(a, dict) and a.get("contract_sha256") == contract_sha256:
-                return True
-    return False
+            if isinstance(a, dict) and isinstance(a.get("contract_sha256"), str):
+                digests.add(a["contract_sha256"])
+    return digests
 
 
 def _default_merged(atom, project_dir, branch="main"):

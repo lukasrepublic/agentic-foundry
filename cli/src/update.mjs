@@ -17,6 +17,7 @@ import {
 } from './floorReconcile.mjs';
 import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from './gitignoreReconcile.mjs';
 import { planAmendmentsBackfill, applyAmendmentsBackfill, renderAmendmentsRow } from './amendmentsBackfill.mjs';
+import { planManifestTrueUp, applyManifestTrueUp, renderManifestTrueUpRows } from './manifestTrueUp.mjs';
 import { buildUpgradeReport, writeUpgradeReport, installedVersionBefore, versionOrNull, NEXT_LINE } from './upgradeReport.mjs';
 import { planStatuslineWiring, applyStatuslineWiring, renderStatuslineRows, statuslineChanged } from './statuslineWiring.mjs';
 import { loadRetiredCatalogue, planRetiredArtifacts, applyRetiredArtifacts, renderRetiredArtifactRows } from './retiredArtifacts.mjs';
@@ -267,6 +268,8 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     // re-plans fresh from disk before it writes.
     const previewAmendmentsRow = renderAmendmentsRow(planAmendmentsBackfill({ physicalRoot }));
     if (previewAmendmentsRow) previewLines.push(previewAmendmentsRow);
+    // v1.18.2: release manifests trued up to the current contract (preview only here)
+    previewLines.push(...renderManifestTrueUpRows(planManifestTrueUp({ physicalRoot })));
     // statusline-wiring (AC-SLW-1/-2): PREVIEW-ONLY rows; Phase 4 re-plans fresh from disk.
     previewLines.push(...renderStatuslineRows(planStatuslineWiring({ physicalRoot, templatesDir })));
     // retired-artifacts (hotfix-v1.17.4, ER #236): PREVIEW-ONLY rows; Phase 4 re-plans fresh from disk.
@@ -407,6 +410,10 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     for (const rel of amendmentsPlan.writtenPaths || []) wrote(rel, 'amendments-backfill');
     const amendmentsRow = renderAmendmentsRow(amendmentsPlan);
     if (amendmentsRow) print(amendmentsRow);
+    // v1.18.2: release manifests trued up to the current contract — re-planned fresh from disk
+    const trueUpPlan = applyManifestTrueUp(planManifestTrueUp({ physicalRoot }));
+    for (const rel of trueUpPlan.written || []) wrote(rel, 'manifest-true-up');
+    for (const row of renderManifestTrueUpRows(trueUpPlan)) print(row);
 
     const anyCreated = filePlan.some((f) => f.action === 'create');
     const anyFloorAdded = Boolean(floorPlan && floorPlan.total > 0)
@@ -457,7 +464,7 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
 
     phases.push({
       name: 'reinitialization',
-      verdict: anyCreated || anyFloorAdded || anyGitignoreChanged || anyAmendmentsBackfilled
+      verdict: anyCreated || anyFloorAdded || anyGitignoreChanged || anyAmendmentsBackfilled || (trueUpPlan.written || []).length > 0
         || statuslineChanged(statuslinePlan) || retiredRemoved > 0 || localRetired > 0 ? 'changed' : 'already current',
     });
 

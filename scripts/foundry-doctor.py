@@ -416,6 +416,9 @@ def _load_permissions_compile_module(plugin_root):
     return mod
 
 
+_UNLOADABLE_RELEASES = []
+
+
 def _active_release_atoms(project_dir):
     """Every (release_id, atom) pair from every release under `.foundry/releases/*/release.yaml`
     whose `state` is `active`, for atoms carrying a `contract_ref` or `charter_ref` (AC-CPD-4). A
@@ -439,7 +442,9 @@ def _active_release_atoms(project_dir):
             continue
         try:
             release = _fr.load_release(name, project_dir=project_dir)
-        except _fr.ReleaseError:
+        except _fr.ReleaseError as e:
+            # audit D14: never silent — the permissions-policy line names how many were skipped
+            _UNLOADABLE_RELEASES.append(f"{name}: {e}")
             continue
         if release.state != "active":
             continue
@@ -481,9 +486,11 @@ def check_permissions_policy(plugin_root=None, project_dir=None):
         if cpf is None or pc is None:
             return None, "capability-preflight/compiler module absent (not applicable)"
 
+        del _UNLOADABLE_RELEASES[:]
         atoms = _active_release_atoms(pdir)
         missing_total = 0
         classifier_total = 0
+        skipped_atoms = 0
         for _release_id, atom in atoms:
             try:
                 # AC-CPD-1 (auth_seq 2): the same path-confinement floor the CLI's own --contract/
@@ -497,7 +504,8 @@ def check_permissions_policy(plugin_root=None, project_dir=None):
             except cpf.PreflightInputError:
                 # an unreadable/out-of-bounds atom-level source is itself advisory here (AC-CPD-4
                 # "never RED") -- the preflight's own --contract/--charter run is the fail-closed
-                # surface for that.
+                # surface for that. Counted, never silent (audit D5/D14).
+                skipped_atoms += 1
                 continue
             missing_total += len(verdict.get("missing", []))
             classifier_total += len(verdict.get("classifier", []))
@@ -515,7 +523,12 @@ def check_permissions_policy(plugin_root=None, project_dir=None):
         if str(drift_state).startswith("absent"):
             detail += (" — seed it: the updater writes a starter .foundry/permissions.yaml, "
                        "or copy context/permissions-template.yaml")
-        if missing_total == 0 and drift_ok:
+        if skipped_atoms:
+            detail += f"; {skipped_atoms} atom(s) not checked (unreadable contract/charter)"
+        if _UNLOADABLE_RELEASES:
+            detail += (f"; {len(_UNLOADABLE_RELEASES)} release manifest(s) unloadable "
+                       f"(first: {_sanitize_detail(_UNLOADABLE_RELEASES[0])[:160]})")
+        if missing_total == 0 and drift_ok and not skipped_atoms and not _UNLOADABLE_RELEASES:
             return True, detail
         return ADVISORY, detail
     except Exception as e:  # noqa: BLE001 — deliberate: AC-CPD-4 must never redden the run

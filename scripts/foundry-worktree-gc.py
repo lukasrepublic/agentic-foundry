@@ -253,6 +253,9 @@ def is_ancestor(repo, sha, base):
 # ----------------------------------------------------------------------------------------------- #
 
 
+GH_FAILURES = []
+
+
 def gh_pr_info(branch, tip_sha, base_branch=None, repo=None):
     """Returns {"state": "merged"|"open", "number": <int|None>} or None. Two separate literal
     calls -- `gh pr list --head <branch> --base <default> --state merged --json number,headRefOid`
@@ -279,7 +282,11 @@ def gh_pr_info(branch, tip_sha, base_branch=None, repo=None):
             argv += ["--base", base_branch]
         argv += ["--state", state, "--json", "number,headRefOid"]
         p = _run(argv, cwd=repo, timeout=_GH_TIMEOUT_SEC)
-        if p.returncode != 0 or not (p.stdout or "").strip():
+        if p.returncode != 0:
+            # audit D21: a gh that could not answer is recorded, not read as "no PR"
+            GH_FAILURES.append(((p.stderr or "").strip().splitlines() or [f"exit {p.returncode}"])[-1][:200])
+            continue
+        if not (p.stdout or "").strip():
             continue
         try:
             rows = json.loads(p.stdout)
@@ -589,6 +596,11 @@ def main(argv=None):
         "filtered_out_refs": stats.get("filtered_out_refs", 0),
         "prune": prune,
         "counts": {k: counts.get(k, 0) for k in ("merged", "open-pr", "unmerged-no-pr", "protected")},
+        # audit D21: whether the gh fallback could answer — `failed` means open PRs and squash-merges
+        # may be misread as unmerged-no-pr (nothing is deleted on that basis; the class is kept)
+        "gh": ({"status": "skipped"} if args.no_gh else
+               {"status": "failed" if GH_FAILURES else "ok", "failures": len(GH_FAILURES),
+                **({"first_error": GH_FAILURES[0]} if GH_FAILURES else {})}),
         "branches": rows,
         "removed_worktrees": applied["removed_worktrees"],
         "deleted_local_branches": applied["deleted_local"],
