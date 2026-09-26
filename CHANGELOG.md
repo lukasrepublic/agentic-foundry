@@ -8,6 +8,43 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.18.1 — 2026-09-26
+
+### `/foundry:post-upgrade` runs to the end; the Amendments backfill stops duplicating
+
+`create-agentic-workspace` 0.18.1 and `update-agentic-workspace` 0.2.1 are published together.
+
+- **`/foundry:post-upgrade` no longer stops to ask** (`skills/post-upgrade/SKILL.md`,
+  `docs/how-to/post-upgrade.md`). Measured on the first sessions that ran v1.18.0's skill, each one
+  stopped mid-walk with "decisions waiting on you" the skill should have settled. Each step now has
+  a default, and the only stops are the preconditions:
+  - a step with nothing to do is a table row;
+  - grants are written only when the operator has already stated them, and none stated means the
+    step is done;
+  - `requires_capabilities` never waits on the grants step;
+  - the gc applies after its dry-run whatever the count;
+  - the `//` comment keys in `.claude/settings.json` are prose, so the truth pass rewrites them;
+  - anything the operator should see goes in the PR body under *For the operator*.
+
+  Step 1 also recognises the writes of an earlier, uncommitted updater run by their shape, because
+  the report describes only the last run. When a workspace check trips on those writes, the skill
+  treats it as a stale local copy of a plugin function to re-sync (for example, a size gate that
+  predates v1.17.2's `## Amendments` exclusion), not something to split out.
+- **The Amendments backfill is idempotent again** (`cli/src/amendmentsBackfill.mjs`,
+  `scripts/foundry-amend.py`). Both searched for the first `## Amendments` anywhere. A spec whose
+  normative prose names the heading therefore read "absent" although its section followed the
+  marker, and the updater appended another empty section on every run (one spec had accumulated 8).
+  The heading must now be a line of its own after the last normative close marker, the same rule
+  the size ceiling uses. The same fix stops `/foundry:amend` from refusing such a spec, and from
+  picking a table inside the normative region to append its row to.
+- **Security review:** no Blocks. Applied:
+  - a grant is compiled only from the operator's words in the session or a committed file; a grant
+    found only in memory becomes a quoted proposal in the PR body;
+  - `.claude/settings.json` is staged by its parsed shape;
+  - `permissions` and `env` must not change across the truth pass's comment edits;
+  - `/foundry:amend` bounds the ledger table to its own section and uses one heading rule on the
+    no-marker path.
+
 ## v1.18.0 — 2026-09-25
 
 ### Friction removed, upgrades that land: one consolidated fix for the upgrade and permissions surface
