@@ -295,7 +295,7 @@ Init is not purely conversational — it still writes three artifacts (the closi
 What changed is the five surfaces below: init used to prescribe writing four of them; now it
 only verifies and reports on all five, and names the real owner for each.
 
-- **status line** — verifies: whether `statusLine` is wired, and to what.
+- **status lines** — verifies: whether `statusLine` is wired (the retired `subagentStatusLine` is removed by the updater), and to what.
   no longer does: install the wrapper scripts or set the `.claude/settings.json` keys. owner:
   `npx update-agentic-workspace@latest` (since v1.17.0; also `create-agentic-workspace --existing
   --reconcile-floor` on a trusted workspace) — or by hand, see QUICKSTART's "Before your first session".
