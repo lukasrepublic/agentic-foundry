@@ -51,11 +51,11 @@ test('AC-SLW-1/-2: post-trust, absent wrappers are created 0755 and absent keys 
   const root = scratch();
   withSettings(root, { permissions: { allow: ['Bash(git status:*)'] }, enabledPlugins: { 'foundry@agentic-foundry': true } });
   const plan = planStatuslineWiring({ physicalRoot: root, templatesDir: TEMPLATES_DIR });
-  assert.deepEqual(plan.files.map((f) => f.action), ['create', 'create']);
-  assert.deepEqual(plan.keys.map((k) => k.action), ['wired', 'wired']);
+  assert.deepEqual(plan.files.map((f) => f.action), ['create']);
+  assert.deepEqual(plan.keys.map((k) => k.action), ['wired']);
   const rows = renderStatuslineRows(plan);
   assert.ok(rows.some((r) => r === `  [create] ${MAIN.rel}`), rows.join('\n'));
-  assert.ok(rows.some((r) => r === '  [statusline] wired statusLine, subagentStatusLine in .claude/settings.json'), rows.join('\n'));
+  assert.ok(rows.some((r) => r === '  [statusline] wired statusLine in .claude/settings.json'), rows.join('\n'));
   applyStatuslineWiring(plan);
   assert.ok(statuslineChanged(plan));
   for (const w of WRAPPERS) {
@@ -65,7 +65,7 @@ test('AC-SLW-1/-2: post-trust, absent wrappers are created 0755 and absent keys 
   }
   const s = settings(root);
   assert.deepEqual(s.statusLine, desiredSettingsValue(MAIN.rel));
-  assert.deepEqual(s.subagentStatusLine, desiredSettingsValue(WRAPPERS[1].rel));
+  assert.equal(s.subagentStatusLine, undefined, 'the subagent status line is never wired (v1.18.2)');
   assert.deepEqual(s.permissions, { allow: ['Bash(git status:*)'] });
   assert.deepEqual(s.enabledPlugins, { 'foundry@agentic-foundry': true });
 });
@@ -77,8 +77,8 @@ test('a second run: unchanged wrappers, already-wired keys, no write, not change
   const before = fs.statSync(path.join(root, MAIN.rel)).mtimeMs;
   const sBefore = fs.readFileSync(path.join(root, '.claude', 'settings.json'));
   const plan = planStatuslineWiring({ physicalRoot: root, templatesDir: TEMPLATES_DIR });
-  assert.deepEqual(plan.files.map((f) => f.action), ['unchanged', 'unchanged']);
-  assert.deepEqual(plan.keys.map((k) => k.action), ['already-wired', 'already-wired']);
+  assert.deepEqual(plan.files.map((f) => f.action), ['unchanged']);
+  assert.deepEqual(plan.keys.map((k) => k.action), ['already-wired']);
   applyStatuslineWiring(plan);
   assert.equal(statuslineChanged(plan), false);
   assert.equal(fs.statSync(path.join(root, MAIN.rel)).mtimeMs, before);
@@ -90,15 +90,17 @@ test('a stale wrapper WITH the marker is converged; one WITHOUT it is kept verba
   withSettings(root);
   fs.mkdirSync(path.join(root, '.claude', 'hooks'), { recursive: true });
   fs.writeFileSync(path.join(root, MAIN.rel), `#!/usr/bin/env bash\n# old wrapper (${MARKER})\nexit 0\n`);
-  const own = '#!/usr/bin/env bash\necho my-own-statusline\n';
-  fs.writeFileSync(path.join(root, WRAPPERS[1].rel), own);
   const plan = planStatuslineWiring({ physicalRoot: root, templatesDir: TEMPLATES_DIR });
-  assert.deepEqual(plan.files.map((f) => f.action), ['converged', 'kept']);
-  const rows = renderStatuslineRows(plan);
-  assert.ok(rows.some((r) => r.startsWith(`  [kept] ${WRAPPERS[1].rel} (operator-owned`)), rows.join('\n'));
+  assert.deepEqual(plan.files.map((f) => f.action), ['converged']);
   applyStatuslineWiring(plan);
   assert.deepEqual(fs.readFileSync(path.join(root, MAIN.rel)), fs.readFileSync(path.join(TEMPLATES_DIR, MAIN.template)));
-  assert.equal(fs.readFileSync(path.join(root, WRAPPERS[1].rel), 'utf-8'), own);
+  const own = '#!/usr/bin/env bash\necho my-own-statusline\n';
+  fs.writeFileSync(path.join(root, MAIN.rel), own);
+  const again = planStatuslineWiring({ physicalRoot: root, templatesDir: TEMPLATES_DIR });
+  assert.deepEqual(again.files.map((f) => f.action), ['kept']);
+  assert.ok(renderStatuslineRows(again).some((r) => r.startsWith(`  [kept] ${MAIN.rel} (operator-owned`)));
+  applyStatuslineWiring(again);
+  assert.equal(fs.readFileSync(path.join(root, MAIN.rel), 'utf-8'), own);
 });
 
 test('an existing statusLine value pointing elsewhere is never overwritten', () => {
@@ -106,18 +108,18 @@ test('an existing statusLine value pointing elsewhere is never overwritten', () 
   const foreign = { type: 'command', command: '/usr/local/bin/my-statusline' };
   withSettings(root, { permissions: {}, statusLine: foreign });
   const plan = planStatuslineWiring({ physicalRoot: root, templatesDir: TEMPLATES_DIR });
-  assert.deepEqual(plan.keys.map((k) => k.action), ['already-wired', 'wired']);
+  assert.deepEqual(plan.keys.map((k) => k.action), ['already-wired']);
   applyStatuslineWiring(plan);
   const s = settings(root);
   assert.deepEqual(s.statusLine, foreign);
-  assert.deepEqual(s.subagentStatusLine, desiredSettingsValue(WRAPPERS[1].rel));
+  assert.equal(s.subagentStatusLine, undefined);
 });
 
 test('dry-run = plan without apply: rows rendered, nothing written', () => {
   const root = scratch();
   withSettings(root);
   const plan = planStatuslineWiring({ physicalRoot: root, templatesDir: TEMPLATES_DIR });
-  assert.ok(renderStatuslineRows(plan).length >= 3);
+  assert.ok(renderStatuslineRows(plan).length >= 2);
   assert.equal(fs.existsSync(path.join(root, MAIN.rel)), false);
   assert.equal(settings(root).statusLine, undefined);
 });
@@ -144,13 +146,39 @@ test('Risk 2: a kept (no marker) or refused wrapper leaves its settings key NOT 
   withSettings(root);
   fs.mkdirSync(path.join(root, '.claude', 'hooks'), { recursive: true });
   fs.writeFileSync(path.join(root, MAIN.rel), '#!/usr/bin/env bash\necho mine\n');
-  fs.symlinkSync('/nonexistent-target', path.join(root, WRAPPERS[1].rel));
   const plan = planStatuslineWiring({ physicalRoot: root, templatesDir: TEMPLATES_DIR });
-  assert.deepEqual(plan.files.map((f) => f.action), ['kept', 'refused']);
-  assert.deepEqual(plan.keys.map((k) => k.action), ['not-wired', 'not-wired']);
-  assert.ok(renderStatuslineRows(plan).some((r) => r.startsWith('  [statusline] NOT wired: statusLine, subagentStatusLine')));
+  assert.deepEqual(plan.files.map((f) => f.action), ['kept']);
+  assert.deepEqual(plan.keys.map((k) => k.action), ['not-wired']);
+  assert.ok(renderStatuslineRows(plan).some((r) => r.startsWith('  [statusline] NOT wired: statusLine')));
   applyStatuslineWiring(plan);
   assert.equal(settings(root).statusLine, undefined);
   assert.equal(settings(root).subagentStatusLine, undefined);
   assert.equal(statuslineChanged(plan), false);
+});
+
+// v1.18.2 (operator directive): the status line is for the root session only.
+test('the subagent status line this framework wired is removed; an operator-owned one is kept', () => {
+  const root = scratch();
+  withSettings(root, { permissions: {}, subagentStatusLine: desiredSettingsValue('.claude/hooks/foundry-subagent-statusline.sh') });
+  const plan = planStatuslineWiring({ physicalRoot: root, templatesDir: TEMPLATES_DIR });
+  assert.ok(plan.keys.some((k) => k.key === 'subagentStatusLine' && k.action === 'unwired'));
+  assert.ok(renderStatuslineRows(plan).some((r) => r.includes('would remove subagentStatusLine')));
+  applyStatuslineWiring(plan);
+  assert.equal(settings(root).subagentStatusLine, undefined);
+  assert.ok(statuslineChanged(plan));
+
+  const root2 = scratch();
+  const mine = { type: 'command', command: '/usr/local/bin/my-subagent-line' };
+  withSettings(root2, { permissions: {}, subagentStatusLine: mine });
+  const plan2 = planStatuslineWiring({ physicalRoot: root2, templatesDir: TEMPLATES_DIR });
+  assert.ok(!plan2.keys.some((k) => k.action === 'unwired'));
+  applyStatuslineWiring(plan2);
+  assert.deepEqual(settings(root2).subagentStatusLine, mine);
+});
+
+test('the status-line wrapper is single-flight and cached (v1.18.2): a burst of refreshes runs the renderer once', () => {
+  const tpl = fs.readFileSync(path.join(TEMPLATES_DIR, MAIN.template), 'utf-8');
+  assert.match(tpl, /FOUNDRY_STATUSLINE_INNER/);
+  assert.match(tpl, /mkdir "\$_lock"/);
+  assert.match(tpl, /FOUNDRY_STATUSLINE_TTL/);
 });

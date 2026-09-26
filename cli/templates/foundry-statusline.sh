@@ -24,6 +24,41 @@
 # FAIL-OPEN is the only invariant: any error → print what could be built (possibly nothing) and `exit 0`.
 set +e
 
+# v1.18.2 — THROTTLE + SINGLE-FLIGHT. Claude Code re-runs the status line on every update; the
+# renderer shells out to git (a full `git status`) and python, which on WSL took seconds. Runs then
+# overlapped, each refresh spawning another, until the machine ran out of memory and Claude Code
+# itself crashed (an adopter's WSL session: 44,616 spawns in 21 minutes, SIGBUS). So: one render per
+# project at a time (an mkdir lock), its output cached for FOUNDRY_STATUSLINE_TTL seconds (default 5),
+# and a refresh that finds a render in flight prints the last line and exits at once. The cache-hit
+# path spawns only `cat` (and `date` where bash has no EPOCHSECONDS).
+if [ -z "${FOUNDRY_STATUSLINE_INNER:-}" ]; then
+  PAYLOAD="$(cat 2>/dev/null || true)"
+  _d="${TMPDIR:-/tmp}"; _d="${_d%/}/foundry-statusline-${UID:-0}"
+  mkdir -p "$_d" 2>/dev/null && chmod 700 "$_d" 2>/dev/null
+  _k="${CLAUDE_PROJECT_DIR:-$PWD}"; _k="${_k//[^A-Za-z0-9]/_}"
+  _cache="$_d/${_k}.out"; _lock="$_d/${_k}.lock"
+  _now="${EPOCHSECONDS:-$(date +%s)}"; _ttl="${FOUNDRY_STATUSLINE_TTL:-5}"
+  _ts=0; [ -r "$_cache.ts" ] && read -r _ts < "$_cache.ts" 2>/dev/null
+  case "$_ts" in ''|*[!0-9]*) _ts=0 ;; esac
+  if [ -r "$_cache" ] && [ $(( _now - _ts )) -lt "$_ttl" ]; then
+    printf '%s' "$(< "$_cache")"; exit 0
+  fi
+  if ! mkdir "$_lock" 2>/dev/null; then
+    _lt=0; [ -r "$_lock/ts" ] && read -r _lt < "$_lock/ts" 2>/dev/null
+    case "$_lt" in ''|*[!0-9]*) _lt=0 ;; esac
+    if [ $(( _now - _lt )) -gt 30 ]; then rm -f "$_lock/ts" 2>/dev/null; rmdir "$_lock" 2>/dev/null; fi
+    [ -r "$_cache" ] && printf '%s' "$(< "$_cache")"
+    exit 0
+  fi
+  printf '%s\n' "$_now" > "$_lock/ts" 2>/dev/null
+  _out="$(printf '%s' "$PAYLOAD" | FOUNDRY_STATUSLINE_INNER=1 bash "$0" "$@" 2>/dev/null)"
+  printf '%s' "$_out" > "$_cache.tmp" 2>/dev/null && mv -f "$_cache.tmp" "$_cache" 2>/dev/null
+  printf '%s\n' "${EPOCHSECONDS:-$(date +%s)}" > "$_cache.ts" 2>/dev/null
+  rm -f "$_lock/ts" 2>/dev/null; rmdir "$_lock" 2>/dev/null
+  printf '%s' "$_out"
+  exit 0
+fi
+
 PAYLOAD="$(cat 2>/dev/null || true)"
 CFG="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
 RENDERER="foundry-statusline.sh"

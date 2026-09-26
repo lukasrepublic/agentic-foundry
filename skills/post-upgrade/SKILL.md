@@ -65,7 +65,8 @@ Print both lists, then carry on — they are the inventory the truth pass works 
    - `.claude/settings.json`, when — comparing the PARSED JSON of `HEAD` and the working tree —
      the only `permissions` changes are additions among the floor's three deny rows and removals of
      floor-shaped script rows or the retired literals the CHANGELOG names, no surviving rule string
-     changed, and every other change is the `statusLine`/`subagentStatusLine` wiring. Anything else
+     changed, and every other change is the `statusLine` wiring or the removal of the retired
+     `subagentStatusLine` key. Anything else
      in `permissions` is the operator's: do not stage the file, list it under *For the operator*;
    - a spec whose only change is an appended empty `## Amendments` table (heading + header + separator);
    - the files the updater installs: `.claude/hooks/foundry-statusline.sh`,
