@@ -281,15 +281,19 @@ def test_refuses_repo_outside_home(tmp_path):
     assert "home" in doc["reason"]
 
 
-def test_refuses_a_dirty_working_tree(fixture_repo):
+def test_a_dirty_working_tree_is_classified_not_refused(fixture_repo):
+    """v1.18.2 (audit D8): every real workspace has untracked or modified files, so refusing a dirty
+    tree meant the gc never ran. Branch deletion never touches the working tree, and a dirty LINKED
+    worktree is refused by `git worktree remove` itself."""
     work, home = fixture_repo
     with open(os.path.join(work, "README.md"), "a", encoding="utf-8") as f:
         f.write("dirty\n")
     p = _run_gc(work, home, "--dry-run")
-    assert p.returncode == 1, p.stdout + p.stderr
+    assert p.returncode == 0, p.stdout + p.stderr
     doc = json.loads(p.stdout)
-    assert doc["status"] == "refused"
-    assert "dirty" in doc["reason"]
+    assert doc["status"] == "ok"
+    assert "README.md" in subprocess.run(["git", "-C", work, "status", "--porcelain"],
+                                         capture_output=True, text=True).stdout
 
 
 def test_no_gh_flag_classifies_unmerged_branches_as_no_pr_never_open(fixture_repo):

@@ -338,16 +338,20 @@ def test_sanitize_strips_a_control_character_from_the_refusal_message():
     assert "\x07" not in CPF._sanitize(hostile)
 
 
-def test_forbidden_characters_in_an_effective_allow_rule_are_refused(tmp_path):
+def test_forbidden_characters_in_an_effective_allow_rule_never_grant_and_never_error(tmp_path):
+    """v1.18.2 (audit D5): an operator allow rule the matcher cannot reason about (here a `;`) is
+    skipped — it covers nothing, so the capability stays `classifier` — instead of erroring the
+    preflight for every atom in the workspace."""
     root = _workspace_root(tmp_path)
     home = _home_root(tmp_path)
     contract_path = os.path.join(root, "contract.yaml")
     _write_contract(contract_path, ["Bash(git status:*)"])
     _write_settings(root, allow=["Bash(git status; rm -rf /:*)"])
     r = _run_cli(root, home, "--contract", contract_path)
-    assert r.returncode == 2, r.stdout + r.stderr
-    err = json.loads(r.stdout)
-    assert "refused" in err["error"]
+    assert r.returncode == 0, r.stdout + r.stderr
+    out = json.loads(r.stdout)
+    assert out["status"] == "ok"
+    assert [c["capability"] for c in out["classifier"]] == ["Bash(git status:*)"]
 
 
 def test_every_string_echoed_into_the_verdict_is_sanitized(tmp_path):
