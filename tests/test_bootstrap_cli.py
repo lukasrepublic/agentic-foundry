@@ -873,7 +873,7 @@ def test_the_cli_never_spawns_claude_or_writes_home_claude(tmp_path):
     # made through an alias. Resolving the local binding names first means a rename cannot walk a
     # spawn out of this guard's view; it also pins the imported SURFACE, so `spawn`/`exec`/`execSync`
     # (shell-bearing, or stream-shaped) cannot be introduced without this assertion being revisited.
-    UPDATE_PATH = {"update.mjs", "pluginRefresh.mjs", "cleanup.mjs"}
+    UPDATE_PATH = {"update.mjs", "pluginRefresh.mjs", "cleanup.mjs", "pythonDeps.mjs"}
     ALLOWED_CP_IMPORTS = {"execFileSync", "execFile"}
     create_spawns, update_spawns = [], []
     for f in _iter_mjs_files(CLI_DIR / "src"):
@@ -929,6 +929,13 @@ def test_the_cli_never_spawns_claude_or_writes_home_claude(tmp_path):
     # The update path's single claude spawn. Pinned to one site so a second one cannot appear
     # without this test being revisited — the property AC-UAW-14 buys is "one allowlisted spawn",
     # and that is only true while there is exactly one.
+    # v1.18.2: the update path also spawns the Python interpreter — from exactly one module, one
+    # function (runPython), whose callers pass only the fixed `-c <probe>` / `-m pip install` argv.
+    py_spawns = [(f, a) for f, a in update_spawns if f.name == "pythonDeps.mjs"]
+    assert [a for _, a in py_spawns] == ["bin"], f"pythonDeps.mjs spawns outside runPython: {py_spawns}"
+    py_src = (CLI_DIR / "src" / "pythonDeps.mjs").read_text()
+    assert "claude" not in re.sub(r"//.*", "", py_src).replace("Claude", ""), "pythonDeps.mjs must never reach claude"
+    update_spawns = [(f, a) for f, a in update_spawns if f.name != "pythonDeps.mjs"]
     assert [f.name for f, _ in update_spawns] == ["pluginRefresh.mjs"], (
         f"the claude spawn must live in exactly one update-path module, found: "
         f"{[f.name for f, _ in update_spawns]}"

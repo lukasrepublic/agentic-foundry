@@ -8,7 +8,17 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
+
+/** A spawnSync-shaped result from the CLI's closed spawn surface (the named import above); never throws. */
+function runPython(bin, args, opts) {
+  try {
+    return { status: 0, stdout: execFileSync(bin, args, { ...opts, stdio: ['ignore', 'pipe', 'pipe'] }), stderr: '' };
+  } catch (e) {
+    if (typeof e.status === 'number') return { status: e.status, stdout: String(e.stdout || ''), stderr: String(e.stderr || '') };
+    return { error: e, status: null, stdout: '', stderr: '' };
+  }
+}
 
 /** The declared runtime requirements shipped with this package: [{ module, requirement }], with the
  * exact transitive pins attached as `.constraints` (pip -c) — the set CI tests (requirements-dev.txt). */
@@ -37,7 +47,7 @@ const PROBE = [
 ].join('\n');
 
 /** Probe `python3` for the declared modules. `{ ok:false, reason }` when python3 cannot run. */
-export function probePythonDeps(requirements, { env = process.env, python = 'python3', spawn = spawnSync } = {}) {
+export function probePythonDeps(requirements, { env = process.env, python = 'python3', spawn = runPython } = {}) {
   const r = spawn(python, ['-c', PROBE, ...requirements.map((q) => q.module)], childOpts(env, 30000));
   if (r.error || r.status !== 0) {
     return { ok: false, reason: r.error ? `${python} not runnable (${r.error.code || r.error.message})` : `${python} probe exited ${r.status}` };
@@ -76,7 +86,7 @@ function writeConstraints(requirements) {
  * or ~/Library/Python), never the system interpreter's own packages. Never throws.
  * Returns { verdict: 'already current'|'changed'|'failed'|'skipped', installed, missing, reason }.
  */
-export function ensurePythonDeps(requirements, { env = process.env, python = 'python3', spawn = spawnSync, dryRun = false } = {}) {
+export function ensurePythonDeps(requirements, { env = process.env, python = 'python3', spawn = runPython, dryRun = false } = {}) {
   const before = probePythonDeps(requirements, { env, python, spawn });
   if (!before.ok) return { verdict: 'skipped', installed: [], missing: requirements.map((q) => q.module), reason: before.reason };
   if (before.missing.length === 0) return { verdict: 'already current', installed: [], missing: [], python: before.python };
@@ -92,7 +102,7 @@ export function ensurePythonDeps(requirements, { env = process.env, python = 'py
     overrode = true;
     r = spawn(python, pipArgs(before.missing, { venv: before.venv, breakSystem: true, constraintsFile }), childOpts(env, 600000));
   }
-  if (constraintsFile) { try { fs.rmSync(path.dirname(constraintsFile), { recursive: true, force: true }); } catch { /* best effort */ } }
+  if (constraintsFile) { try { fs.unlinkSync(constraintsFile); fs.rmdirSync(path.dirname(constraintsFile)); } catch { /* best effort */ } }
   const after = probePythonDeps(requirements, { env, python, spawn });
   const still = after.ok ? after.missing.map((q) => q.module) : before.missing.map((q) => q.module);
   const installed = before.missing.map((q) => q.module).filter((m) => !still.includes(m));
