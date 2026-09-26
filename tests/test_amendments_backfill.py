@@ -48,6 +48,11 @@ SHAPES = {
     "crlf-present": (NORMATIVE + "\n" + BLOCK).replace("\n", "\r\n"),
     "no-marker-with-heading": "# spec\n\n## Amendments\n",
     "no-marker-no-heading": "# spec\n",
+    # v1.18.1: normative prose that NAMES the heading must not hide the real section after the marker
+    # (the updater appended a duplicate on every run), nor stand in for a missing one.
+    "inline-mention-in-normative-then-real": NORMATIVE.replace("it works.", "append to the `## Amendments` table.") + "\n" + BLOCK,
+    "inline-mention-in-normative-only": NORMATIVE.replace("it works.", "append to the `## Amendments` table."),
+    "inline-mention-after-marker-only": NORMATIVE + "\nSee the `## Amendments` table.\n",
 }
 
 
@@ -122,3 +127,28 @@ def test_backfill_covers_any_basename_under_specs(tmp_path):
     assert _node(js, AMB_ROOT=str(tmp_path)) == "1 2 1"
     assert AMEND.amendments_section_ok((d / "spec-atom.md").read_text(encoding="utf-8"))
     assert (tmp_path / "specs" / "README.md").read_text(encoding="utf-8") == "# index\n"
+
+
+def test_inline_mention_is_never_the_section_and_rerun_is_idempotent(tmp_path):
+    """v1.18.1: a spec whose normative region mentions `## Amendments` and already has the section is
+    left alone by the backfill (no duplicate on re-run), and `append_amendment_row` writes into the
+    real ledger after the marker, never into a table inside the normative region."""
+    spec = tmp_path / "specs" / "features" / "p" / "d" / "c" / "feat-x.md"
+    spec.parent.mkdir(parents=True)
+    body = ("# feat-x\n\n<!-- normative -->\n- **AC-X-1**: append a row to the `## Amendments` table.\n\n"
+            "| a | b |\n|---|---|\n| 1 | 2 |\n<!-- /normative -->\n\n" + BLOCK)
+    spec.write_text(body, encoding="utf-8")
+    js = (
+        "const m = await import(process.env.AMB_MODULE);"
+        "const p = m.planAmendmentsBackfill({ physicalRoot: process.env.AMB_ROOT });"
+        "process.stdout.write(String(m.applyAmendmentsBackfill(p)));"
+    )
+    assert _node(js, AMB_ROOT=str(tmp_path)) == "0"
+    assert spec.read_text(encoding="utf-8") == body
+    before = fc.spec_sha256(str(spec))
+    AMEND.append_amendment_row(str(spec), "2026-09-26", "what", "why", 2)
+    after = spec.read_text(encoding="utf-8")
+    assert after.count("## Amendments\n") == 1
+    assert "| 1 | 2 |\n<!-- /normative -->" in after
+    assert after.rstrip().endswith("| 2026-09-26 | what | why | 2 |")
+    assert fc.spec_sha256(str(spec)) == before

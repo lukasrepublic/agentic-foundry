@@ -28,6 +28,7 @@ export const AMENDMENTS_BLOCK = `${AMENDMENTS_HEADING}\n\n| date | what changed 
 // `spec-*.md`. A README or template without a normative region lands in `skipped`, never written.
 const SPEC_BASENAME_RE = /\.md$/;
 const CODE_FENCE_RE = /```[\s\S]*?```/g;
+const HEADING_LINE_SRC = '^## Amendments[ \\t]*\\r?$';
 
 /** The verdict `foundry-amend.py`'s amendments_section_ok gives: `present` when a `## Amendments`
  * heading appears after the LAST normative close marker and outside any fenced code block;
@@ -39,8 +40,13 @@ export function classifySpec(text) {
   const closeIdx = text.lastIndexOf(NORMATIVE_CLOSE);
   if (closeIdx === -1) return 'no-marker';
   const masked = text.replace(CODE_FENCE_RE, (m) => '\0'.repeat(m.length));
-  const idx = masked.indexOf(AMENDMENTS_HEADING);
-  if (idx !== -1 && idx > closeIdx) return 'present';
+  // v1.18.1: the heading must be a LINE of its own, searched from the marker onward. The first
+  // occurrence anywhere was used before, so a spec whose normative prose names "`## Amendments`"
+  // read `absent` although its real section followed the marker — and got another section appended
+  // on every updater run. Same line rule as the size ceiling's strip_amendments_section.
+  const heading = new RegExp(HEADING_LINE_SRC, 'gm');
+  heading.lastIndex = closeIdx;
+  if (heading.exec(masked)) return 'present';
   // A heading BEFORE the marker does not count for amend either — the section must follow the
   // normative region — so it is `absent` and the block is appended at the end of the file.
   return 'absent';

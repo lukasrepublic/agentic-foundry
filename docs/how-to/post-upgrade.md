@@ -25,19 +25,23 @@ gitignored, so it stays local.
 ## 2. The judgement half — a skill
 
 Open a session in the workspace and run `/foundry:post-upgrade`. It refuses without a fresh report,
-then walks, in order:
+then walks to the end without stopping — every step has a default, and anything you should see goes in
+the PR body instead of a mid-walk question:
 
-1. a commit of exactly what the updater wrote (the report lists every path), first on the PR branch —
-   so the workspace's `main` matches what its sessions run;
+1. a commit of what the updater wrote (the report lists its last run; earlier uncommitted runs are
+   recognised by their shape), first on the PR branch — so the workspace's `main` matches what its
+   sessions run. A local check that trips on those writes is usually a stale copy of a plugin function,
+   re-synced in the same PR;
 2. the CHANGELOG sections between the two versions, as an inventory of what was retired and added;
-3. standing grants into `.foundry/permissions.yaml` (grants only widen), compiled, until the doctor
-   reads `policy in-sync`;
+3. standing grants you have already stated (memory, CLAUDE.md) into `.foundry/permissions.yaml` —
+   none stated means the step is done — then compiled, until the doctor reads `policy in-sync`;
 4. `requires_capabilities` on contracts that are not frozen (frozen ones are listed for `/foundry:amend`);
+   independent of the grants step, and it never blocks the walk;
 5. a relock when the stack-profile lock is behind the profile version the plugin ships;
 6. a truth pass over `CLAUDE.md`, `docs/`, the prose under `.claude/` and your memory directory against
    the inventory — out-of-repo deletions are quoted in the PR body because the diff cannot show them;
 7. retired-artifact cleanup (`--cleanup`), which removes only what the reference scan cleared;
-8. branch garbage collection, dry-run first, then `--apply` on the merged class;
+8. branch garbage collection, dry-run first, then `--apply` on the merged class — whatever the count;
 9. verification: doctor green with no mechanical advisory left;
 10. one PR to `main` with a before/after table and the list of deletions.
 

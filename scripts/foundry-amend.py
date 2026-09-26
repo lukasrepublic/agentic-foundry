@@ -473,6 +473,11 @@ _SEP_RE = re.compile(r"^\|[-\s|]+\|\s*$", re.MULTILINE)
 _NORMATIVE_CLOSE = "<!-- /normative -->"
 _AMENDMENTS_HEADING = "## Amendments"
 _CODE_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
+# v1.18.1: the heading is a LINE of its own after the last close marker — not the first occurrence
+# anywhere, which a spec whose normative prose names "`## Amendments`" would match (the updater then
+# appended a duplicate section on every run, and append_amendment_row could pick a table inside the
+# normative region). Same line rule as foundry-audit-prepare.py's strip_amendments_section.
+_HEADING_LINE_RE = re.compile(r"^## Amendments[ \t]*\r?$", re.MULTILINE)
 
 
 def amendments_section_ok(spec_text: str) -> bool:
@@ -483,17 +488,18 @@ def amendments_section_ok(spec_text: str) -> bool:
     positions stay comparable to the unmasked text's fence offset."""
     close_idx = spec_text.rfind(_NORMATIVE_CLOSE)
     masked = _CODE_FENCE_RE.sub(lambda m: "\x00" * len(m.group(0)), spec_text)
-    idx = masked.find(_AMENDMENTS_HEADING)
-    if idx == -1:
-        return False
     if close_idx == -1:
-        return True  # no normative fence at all (whole-body fallback applies elsewhere)
-    return idx > close_idx
+        # no normative fence at all (whole-body fallback applies elsewhere)
+        return masked.find(_AMENDMENTS_HEADING) != -1
+    return _HEADING_LINE_RE.search(masked, close_idx) is not None
 
 
 def append_amendment_row(spec_path: str, date: str, what: str, why: str, auth_seq: int) -> None:
     text = open(spec_path, encoding="utf-8").read()
-    idx = text.find(_AMENDMENTS_HEADING)
+    close_idx = text.rfind(_NORMATIVE_CLOSE)
+    masked = _CODE_FENCE_RE.sub(lambda m: "\x00" * len(m.group(0)), text)
+    heading = _HEADING_LINE_RE.search(masked, max(close_idx, 0))
+    idx = heading.start() if heading else -1
     if idx == -1:
         raise AmendError(f"{spec_path} has no `## Amendments` section — cannot record the amendment")
     m = _SEP_RE.search(text, idx)
