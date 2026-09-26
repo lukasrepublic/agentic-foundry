@@ -121,6 +121,15 @@ Print both lists, then carry on — they are the inventory the truth pass works 
    permission rules — rewriting one is in scope) and the operator's memory directory, against the
    *Retired* list: a sentence that mandates, describes or links retired machinery is removed or
    rewritten to what ships now, checked against the doctor's actual output rather than old docs.
+   **Also, whatever version range the upgrade crossed**, search the same files plus CI workflows,
+   git hooks, `scripts/` and `.claude/agents/` for this fixed list of retired machinery — residue
+   from pre-1.0 scaffolds that no CHANGELOG section of a recent upgrade will name: `live-seam`,
+   `merge-gate hook` / `foundry-merge-gate-hook.sh`, `foundry-merge-gate.py`, `foundry-ci-gate.py`,
+   `wiring-hash`, `impl-wizard` / `impl-progress.yaml`, `dispatch-queue`, `/foundry:release-wave`,
+   `fail-closed merge-gate hooks`, and a hard-coded `plugins/cache/agentic-foundry/foundry/<version>`
+   path. Prose is rewritten to the current floor ("branch protection + CI checks; the git-discipline
+   hook"); a script or workflow that CALLS retired machinery goes under *For the operator* with the
+   file:line (it may be load-bearing for their CI).
    Before touching `.claude/settings.json`, keep its parsed `permissions` and `env` objects; after the
    edit they must be identical — if not, restore the file from before the edit and record it.
    Every deletion goes in a list for the PR body; for a file OUTSIDE the repo the before-text is
@@ -140,6 +149,13 @@ Print both lists, then carry on — they are the inventory the truth pass works 
    branch is restorable from its PR, and a branch backing a live worktree lands in `failed[]` rather
    than being deleted. Read `status`: `partial` lists every deletion that did not happen in `failed`,
    while the exit code stays 0. A repo the gc refuses (dirty tree) is recorded and skipped.
+7b. **Required checks nothing posts.** For each GitHub repo (the workspace and every hosted repo),
+   read the default branch's required status checks (read-only: `gh api
+   repos/<owner>/<repo>/branches/<branch>/protection/required_status_checks`; a Free-plan 403 is
+   n/a). A required context that is a retired foundry context (`foundry-merge-gate`) or that no
+   workflow in the repo produces leaves every matching PR unmergeable. List it under *For the
+   operator* with the one-line remedy (replace it with a check that runs, e.g. the repo's CI job
+   name); changing branch protection is the operator's, never this skill's.
 8. **Verify.** `/foundry:doctor` → `DOCTOR-GREEN` with no advisory line whose remedy is mechanical
    (statusline, retired artifacts, a lock behind the shipped profile, branches merged-not-deleted):
    each of those has a step above. Compare with the doctor output from the preconditions.
