@@ -912,15 +912,23 @@ def main():
             ok, detail = False, _sanitize_detail(f"probe crashed: {type(e).__name__}: {e}")
         return (name, ok, detail)
 
-    checks = [
-        _run("python-deps", check_python_deps),
-        _run("manifest", check_manifest),
-        _run("hooks", check_hooks),
-        _run("skills-frontmatter", check_skills_frontmatter),
-        _run("stack-profile-lock", check_stack_profile_lock, project_dir=project_dir),
-        _run("operator-registry", check_operator_registry, project_dir),
-        _run("control-plane", check_control_plane, project_dir=project_dir),
-    ]
+    deps = _run("python-deps", check_python_deps)
+    if deps[1] is False:
+        # audit D20: without the declared modules the other probes crash in unrelated places and
+        # print wrong remedies (a relock, a refused `pip install`). One named cause, not five.
+        _skip = "skipped — fix python-deps above first (these probes need its modules)"
+        checks = [deps] + [(n, None, _skip) for n in ("manifest", "hooks", "skills-frontmatter",
+                                                      "stack-profile-lock", "operator-registry", "control-plane")]
+    else:
+        checks = [
+            deps,
+            _run("manifest", check_manifest),
+            _run("hooks", check_hooks),
+            _run("skills-frontmatter", check_skills_frontmatter),
+            _run("stack-profile-lock", check_stack_profile_lock, project_dir=project_dir),
+            _run("operator-registry", check_operator_registry, project_dir),
+            _run("control-plane", check_control_plane, project_dir=project_dir),
+        ]
 
     hard_fail = False
     any_advisory = False

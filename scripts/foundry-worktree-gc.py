@@ -548,7 +548,10 @@ def main(argv=None):
     try:
         _refuse_outside_home(repo)
         _refuse_not_a_repo(repo)
-        _refuse_dirty(repo)
+        # v1.18.2 (audit D8): no dirty-tree refusal. Every real workspace has untracked files, so the
+        # gc never ran; and it protected nothing — branch deletion and prune never touch the working
+        # tree, and a dirty LINKED worktree is refused by `git worktree remove` itself (no --force),
+        # landing in failed[].
     except GcRefused as e:
         print(json.dumps({"status": "refused", "reason": str(e)}))
         return 1

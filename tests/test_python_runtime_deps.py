@@ -122,3 +122,21 @@ def test_task_hooks_pass_non_atom_tasks_without_pyyaml(tmp_path):
         r = subprocess.run([sys.executable, path], input='{"task_subject": "atom:rel/a1", "cwd": "/tmp"}',
                            capture_output=True, text=True, env=env, timeout=30)
         assert r.returncode == 2, f"{hook} must still fail closed on an atom it cannot verify"
+
+
+def test_preflight_ignores_an_unparseable_operator_allow_row(tmp_path):
+    """Audit D5: an operator allow row with `;` must not error the preflight for every atom."""
+    import subprocess
+    ws = tmp_path / "ws"
+    (ws / ".claude").mkdir(parents=True)
+    (ws / ".claude" / "settings.local.json").write_text(json.dumps(
+        {"permissions": {"allow": ["Bash(find . -exec grep -l x {} \;)"]}}))
+    (ws / ".claude" / "settings.json").write_text(json.dumps({"permissions": {"allow": []}}))
+    contract = ws / "acceptance-contract.yaml"
+    contract.write_text("requires_capabilities:\n  - Bash(git status)\n")
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "foundry-capability-preflight.py"),
+                        "--contract", str(contract), "--root", str(ws)],
+                       capture_output=True, text=True, timeout=60, env=dict(os.environ, HOME=str(tmp_path)))
+    out = json.loads(r.stdout)
+    assert out.get("status") != "error", r.stdout + r.stderr
+    assert r.returncode in (0, 3), (r.returncode, r.stdout, r.stderr)
