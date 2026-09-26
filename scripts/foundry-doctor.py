@@ -66,7 +66,10 @@ import os
 import re
 import sys
 
-import yaml
+try:  # v1.18.2: a missing PyYAML is the `python-deps` check's finding, never an import-time traceback
+    import yaml
+except ImportError:  # pragma: no cover — exercised by the python-deps check, not by this import
+    yaml = None
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.dirname(HERE)
@@ -277,6 +280,34 @@ def check_stack_profile_lock(plugin_root=None, project_dir=None):
 # --------------------------------------------------------------------------------------- #
 # 5. operator registry resolvable
 # --------------------------------------------------------------------------------------- #
+# v1.18.2: requirements.txt distribution name -> the module the scripts import.
+_DIST_TO_MODULE = {"pyyaml": "yaml"}
+
+
+def check_python_deps(plugin_root=None):
+    """Every third-party module the plugin's scripts import (the plugin's `requirements.txt`) is
+    importable by THIS interpreter. Hard: a missing one breaks the doctor's own probes and every
+    script that imports it (a fresh agent container shipped without both). The remedy is the pinned
+    updater, which installs what is missing into the user site."""
+    root = plugin_root or PLUGIN_ROOT
+    req = os.path.join(root, "requirements.txt")
+    if not os.path.isfile(req):
+        return True, "no requirements.txt in the plugin (nothing declared)"
+    mods = []
+    with open(req, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.split("#", 1)[0].strip()
+            if not line:
+                continue
+            dist = re.split(r"[=<>!~\[;\s]", line, maxsplit=1)[0].strip().lower()
+            mods.append(_DIST_TO_MODULE.get(dist, dist.replace("-", "_")))
+    missing = [m for m in mods if importlib.util.find_spec(m) is None]
+    if missing:
+        return False, (f"{sys.executable} cannot import {', '.join(missing)} — run `{_updater_cmd(root)}` "
+                       f"(installs what is missing into the user site)")
+    return True, f"{', '.join(mods)} importable ({sys.executable})"
+
+
 def check_operator_registry(project_dir=None):
     scripts_dir = os.path.join(PLUGIN_ROOT, "scripts")
     if scripts_dir not in sys.path:
@@ -877,6 +908,7 @@ def main():
         return (name, ok, detail)
 
     checks = [
+        _run("python-deps", check_python_deps),
         _run("manifest", check_manifest),
         _run("hooks", check_hooks),
         _run("skills-frontmatter", check_skills_frontmatter),

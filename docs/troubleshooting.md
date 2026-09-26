@@ -5,10 +5,11 @@ the shipped CLI, that's a bug — file it.
 
 ## `/foundry:doctor` is RED
 
-The output names the failing probe. The six probes and their usual causes:
+The output names the failing probe. The seven probes and their usual causes:
 
 | Probe | Usual cause | Fix |
 |---|---|---|
+| `python-deps` | `python3` cannot import `yaml` or `jsonschema` (a fresh machine or container) | run `npx update-agentic-workspace@latest` — it installs what is missing |
 | `manifest` | corrupted plugin cache | reinstall (see wedged install, below) |
 | `hooks` | a hook script missing from the cache | reinstall |
 | `skills-frontmatter` | a locally-edited SKILL.md with broken YAML | revert the edit, or reinstall |
@@ -32,7 +33,7 @@ not revoke server-side).
 
 ## `foundry doctor` reports a `permissions-policy` advisory line
 
-Doctor renders one ADVISORY line, never `[adv ]`-paired with the six structural probes above and
+Doctor renders one ADVISORY line, never `[adv ]`-paired with the seven structural probes above and
 never RED by design — a stale-permission workspace must never wedge a session. The line has two
 parts:
 

@@ -118,6 +118,7 @@ Same convention as the sibling package, and worth reading before you wire this i
 |------|---------|
 | `0`  | the run completed |
 | `2`  | the run completed, but `.gitignore`'s managed block could not be reconciled (malformed sentinels — reported, left alone) |
+| `2`  | the run completed, but a Python module the plugin's scripts import is still missing (the `python deps` row names it and why pip could not install it) |
 | `1`  | the run refused, or an invocation failed |
 
 **`2` is a success, not an error.** Since v1.18.0 a file that already exists is never "drifted" on

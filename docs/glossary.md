@@ -45,7 +45,7 @@ The vocabulary, in one place. Terms link to the doc that owns them.
   (`packs/stack-profiles/`). The certify/verify verbs read it.
 - **Stage mode (`lean` / `scale`)** — how much ceremony the workspace runs with; lean is
   the solo default, scale enforces the full gates.
-- **Doctor** — the six-probe health check (`/foundry:doctor`); `DOCTOR-GREEN` or a named
+- **Doctor** — the seven-probe health check (`/foundry:doctor`); `DOCTOR-GREEN` or a named
   failure, in under a second. See [QUICKSTART](QUICKSTART.md).
 - **Intake** — the front door: fuzzy ask → interactive discovery → atomic spec + contract.
 - **Spec-review** — the single-pass default review: deterministic pre-lints, three

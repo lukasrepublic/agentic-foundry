@@ -122,7 +122,7 @@ registration no scope still enables; without the flag it previews and removes no
 Confirm inside a session in your repo:
 
 ```
-/foundry:doctor        # → DOCTOR-GREEN (6 probes: manifest, hooks, skills, profile lock, operators, control-plane)
+/foundry:doctor        # → DOCTOR-GREEN (7 probes: python deps, manifest, hooks, skills, profile lock, operators, control-plane)
 ```
 
 ## 1. Wire your repo (once)

@@ -33,6 +33,7 @@ export function buildUpgradeReport({
   installedBefore = null, installedAfter = null, afterEntry, toPluginVersion, phases, filePlan, amendmentsPlan, now = new Date(),
   updaterVersion = null, coreVersion = null, updaterPluginVersion = null,
   retiredArtifacts = null, localRetired = 0, written = [], removed = [], configDir = null, hostname = null,
+  pythonDeps = null,
 }) {
   const seedRow = (filePlan || []).find((f) => f.seed);
   return {
@@ -59,6 +60,12 @@ export function buildUpgradeReport({
           failed: amendmentsPlan.failed ?? 0,
           total: amendmentsPlan.total ?? ((amendmentsPlan.written ?? 0) + amendmentsPlan.present + amendmentsPlan.skipped) }
       : { backfilled: 0, present: 0, skipped: 0, failed: 0, total: 0 },
+    // v1.18.2: whether python3 can import every module the plugin's scripts need, and what this run
+    // installed. null when the phase did not run (a dry run records nothing).
+    python_deps: pythonDeps
+      ? { verdict: pythonDeps.verdict, installed: pythonDeps.installed || [], missing: pythonDeps.missing || [],
+          ...(pythonDeps.python ? { python: pythonDeps.python } : {}), ...(pythonDeps.reason ? { reason: pythonDeps.reason } : {}) }
+      : null,
     permissions_policy: seedRow ? (seedRow.action === 'create' ? 'created' : 'kept') : 'absent',
     drifted: (filePlan || []).filter((f) => f.action === 'drifted').map((f) => f.relPath),
     // hotfix-v1.17.4: what the sweep found (paths are workspace-relative catalogue entries, never free text)

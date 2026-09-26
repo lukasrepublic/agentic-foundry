@@ -92,6 +92,7 @@ function stubEnv({ stubDir, logPath, manifestPath }) {
     ...process.env,
     PATH: `${stubDir}${path.delimiter}${process.env.PATH || ''}`,
     CLAUDE_STUB_LOG: logPath,
+    FOUNDRY_PYTHON: '/nonexistent/python3', // never probe or pip-install the real interpreter in tests
     CLAUDE_STUB_MARKETPLACE_NAME: MARKETPLACE,
     CLAUDE_STUB_PLUGIN_NAME: PLUGIN,
     CLAUDE_STUB_MANIFEST_PATH: manifestPath,

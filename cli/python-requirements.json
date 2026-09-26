@@ -1,0 +1,7 @@
+{
+  "//": "Third-party Python modules the plugin's scripts import, with the exact versions CI tests (requirements-dev.txt). Kept equal to the plugin's requirements.txt and to the scripts' actual imports by tests/test_python_runtime_deps.py. The updater installs a missing one into the user site; it never upgrades an existing install.",
+  "requirements": [
+    { "module": "yaml", "requirement": "PyYAML==6.0.2" },
+    { "module": "jsonschema", "requirement": "jsonschema==4.25.0" }
+  ]
+}
