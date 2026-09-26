@@ -11,10 +11,10 @@
       "source": {
         "source": "github",
         "repo": "lukasrepublic/agentic-foundry",
-        "ref": "v1.18.1",
+        "ref": "v1.18.2",
         "sha": "1d447b2c5372e4deab97d06b6aec5aea4e5756be"
       },
-      "version": "1.18.1"
+      "version": "1.18.2"
     }
   ]
 }

@@ -401,6 +401,7 @@ def test_the_update_package_manifest_has_no_lifecycle_scripts():
         "0.17.6": "0.1.18", # v1.17.6 -- patch: branch gc honesty; publish poll window.
         "0.18.0": "0.2.0",  # v1.18.0 -- minor: friction removed; upgrades land in git.
         "0.18.1": "0.2.1",  # v1.18.1 -- patch: post-upgrade runs to the end; backfill idempotent.
+        "0.18.2": "0.2.2",  # v1.18.2 -- patch: python runtime deps declared, installed, checked.
     }
     pin = deps["create-agentic-workspace"]
     expected_update_version = CLI_UPDATE_VERSION_BY_PIN.get(pin)
@@ -559,6 +560,7 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         "1.17.6": "0.17.6",
         "1.18.0": "0.18.0",
         "1.18.1": "0.18.1",
+        "1.18.2": "0.18.2",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (

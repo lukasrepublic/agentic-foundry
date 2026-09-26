@@ -8,6 +8,102 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.18.2 — 2026-09-26
+
+### Sessions stop crashing, the Python dependencies install themselves, and upgrades true up older artifacts
+
+`create-agentic-workspace` 0.18.2 and `update-agentic-workspace` 0.2.2 are published together.
+**Upgrading from 1.17.x/1.18.x:** close every Claude Code session first, then run
+`npx update-agentic-workspace@0.2.2` in the workspace and start a new session.
+
+This release follows a machinery audit that covered:
+- every reference to retired machinery in 12 workspaces and 4 agent containers;
+- 5,374 script executions against current and legacy specs;
+- runtime dependencies on the Mac, in each container and in a fresh image;
+- the upgrade path in each environment.
+
+It shipped only after the upgrade rehearsal passed on clones of all 12 workspaces and the upgrade
+path was validated inside every container.
+
+**Why sessions crashed or were killed after an update — four causes, all fixed.**
+- **The WorktreeRemove hook killed the session itself** (`hooks/foundry-worktree-remove.sh`, since
+  v1.0.0).
+  - Cause: it read the payload's `cwd`, which is the session's own directory (the project root), and
+    `kill -9`'d every process whose cwd was under it. That included Claude Code whenever a
+    worktree-isolated subagent finished.
+  - Fix: it now reads `worktree_path` and reaps only strictly inside `.worktrees/` or
+    `.claude/worktrees/`. It never touches the project root or its own ancestry, and sends SIGTERM,
+    not SIGKILL. Its self-test proves a root process survives.
+- **`--cleanup` deleted plugin versions that running sessions still used** (`cli/src/cleanup.mjs`).
+  - Cause: a running session keeps the version it started with, so every hook in it failed ("Plugin
+    directory does not exist") and its `bin/` PATH entry died.
+  - Fix: superseded cache versions are now listed and kept. A guard test asserts `cleanup.mjs`
+    removes nothing.
+- **The status line piled up until the machine ran out of memory**
+  (`cli/templates/foundry-statusline.sh`, `cli/src/statuslineWiring.mjs`).
+  - Cause: the renderer took 2.5 s per refresh, and `subagentStatusLine` ran it again for every
+    subagent. On WSL that reached 44,616 spawns in 21 minutes, with 48 GB committed on a 25 GB
+    machine, and Claude Code crashed with SIGBUS.
+  - Fix: the wrapper is single-flight (one render per project) and caches its output for 5 s in the
+    user's own cache directory, used only if it is a real directory owned by that user. A burst of
+    20 refreshes renders once; a cold refresh takes ~70 ms and a cached one ~3 ms.
+  - The status line is for the root session only. `subagentStatusLine` is never wired, and the
+    updater removes it where an earlier release wrote it.
+- **The task hooks refused every task on a machine without PyYAML**
+  (`hooks/foundry-task-created.py`, `hooks/foundry-task-completed.py`).
+  - Cause: they imported the floor module before looking at the subject.
+  - Fix: a subject that does not name an atom now passes before that import.
+
+**Python dependencies — declared, installed, checked.**
+- Declared: `requirements.txt` lists PyYAML 6.0.3 and jsonschema 4.25.0. The transitive pins
+  (rpds-py 0.30.0 and others) are verified to install from wheels on Python 3.10–3.14. Tests keep
+  these equal to CI's set and fail on any undeclared import.
+- Installed: the updater's new `python-deps` phase installs only a missing module, into the user site
+  (not inside a venv), with exact constraints and wheels only. It never runs Python in the workspace
+  directory. A PEP 668 refusal is retried with `--break-system-packages`, which the output row names.
+- Checked: `/foundry:doctor` runs `python-deps` first, including the Python 3.10 floor. When it fails,
+  the dependent probes are skipped instead of crashing. Install hints name the updater, not a
+  `pip install` that PEP 668 refuses.
+
+**Upgrades true up older artifacts to the current contract.** 41 of 84 real release manifests could
+not be loaded. After this release, 81 load; the other 3 carry genuine authoring errors and are
+listed by name.
+- **Tolerant reader** (`scripts/foundry_release.py`):
+  - bookkeeping fields are ignored;
+  - a near-miss of a machinery field is still refused with "did you mean";
+  - dotted release and atom ids are accepted, under one id rule shared by every consumer;
+  - legacy state names are read as the current ones;
+  - a missing description reads as the id;
+  - an empty or ref-less atom list is allowed outside an active release.
+- **Updater rewrite** (`cli/src/manifestTrueUp.mjs`): it rewrites a legacy `state:` and adds a
+  missing `description:` on disk. The edits are line-level and keep comments; they are listed and
+  committed by post-upgrade.
+- **Transitions:** a transition rewrites only the `state:` line, so bookkeeping and comments survive.
+
+**The upgrade path works on real workspaces.**
+- The branch gc runs on a dirty tree. It had refused on any untracked file, so it never ran. It also
+  reports whether `gh` could answer.
+- An operator allow rule containing `;` no longer errors the capability preflight for every atom.
+  The rule simply grants nothing.
+- The doctor names release manifests it cannot load and atoms it could not check.
+- Legacy checklist-defined ACs count as definitions for spec-lint.
+- `release status` is 4x faster: landed digests are memoized per branch tip, and the C YAML loader is
+  used when available.
+- `/foundry:post-upgrade`:
+  - also searches for pre-1.0 retired machinery (live-seam gate, merge-gate hook, wiring-hash,
+    impl-wizard, hard-coded cache paths), whatever version range the upgrade crossed;
+  - surfaces required checks that nothing posts;
+  - stages earlier updater writes by their parsed shape;
+  - compiles grants only from reviewed text.
+- The retired admission ledger and subagent status-line wrapper join the retired-artifacts
+  catalogue.
+
+**Security reviews** (separate context, three passes): one Block, a shared-`/tmp` status-line cache,
+is fixed, and every Risk is applied.
+
+The agent-container template v42 installs `python3-jsonschema` and `python3-yaml` and adds
+`kubeconform`. It also fixes `conftest`'s amd64 download.
+
 ## v1.18.1 — 2026-09-26
 
 ### `/foundry:post-upgrade` runs to the end; the Amendments backfill stops duplicating
