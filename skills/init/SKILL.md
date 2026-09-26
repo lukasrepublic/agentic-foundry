@@ -200,18 +200,21 @@ standalone plugin repo) so the gates are live + fail-closed.
    that script no longer exists in this repo, and the current thin doctor —
    `skills/doctor/SKILL.md` — carries no wiring-hash check, so there is nothing left to pin.)
 11. **Status lines (opt-in, additive — isolation-first) — VERIFY-ONLY.** A wired native
-   `statusLine` + `subagentStatusLine` fleet surfaces the highest-value ambient signals every
-   prompt (isolation state, current task, context-window headroom, one row per dispatched
-   worker) — both are fail-open and opt-in, and this step's verdict does not affect
+   `statusLine` surfaces the highest-value ambient signals every prompt (isolation state,
+   current task, context-window headroom) — fail-open, opt-in, and for the ROOT session in a
+   visual terminal only (v1.18.2: the `subagentStatusLine` key is retired — it ran once per
+   subagent per refresh and fed a process storm); this step's verdict does not affect
    `DOCTOR-GREEN`.
 
    <!-- foundry:init-verify-only:statusline v1 -->
-   VERIFY-ONLY. init does not write the `statusLine`/`subagentStatusLine` wiring. The shipped
+   VERIFY-ONLY. init does not write the `statusLine` wiring. The shipped
    writer (since v1.17.0, statusline-wiring) is **`npx update-agentic-workspace@latest`** — and
    `create-agentic-workspace --existing --reconcile-floor` on a workspace that already carries
-   `.claude/settings.json` — which installs the two wrappers under `.claude/hooks/` (framework-owned:
-   converged when they carry the marker, kept when they do not; a kept or refused wrapper is never
-   wired) and adds the two keys only when absent. The pre-session
+   `.claude/settings.json` — which installs the wrapper under `.claude/hooks/` (framework-owned:
+   converged when it carries the marker, kept when it does not; a kept or refused wrapper is never
+   wired), adds the `statusLine` key only when absent, and removes a `subagentStatusLine` key only
+   when it is the exact value an earlier release wrote. The wrapper is single-flight and cached
+   (one render per project at a time, reused for 5 s), so a slow renderer can never pile up. The pre-session
    bootstrap still never emits them ([[feat-foundry-bootstrap-cli]] AC-BCL-4(c) closes the
    pre-session key set; that Block stands). This step only reads and reports; the doctor's
    `statusline:` advisory names the first missing piece.
@@ -292,7 +295,7 @@ Init is not purely conversational — it still writes three artifacts (the closi
 What changed is the five surfaces below: init used to prescribe writing four of them; now it
 only verifies and reports on all five, and names the real owner for each.
 
-- **status lines** — verifies: whether `statusLine`/`subagentStatusLine` are wired, and to what.
+- **status lines** — verifies: whether `statusLine` is wired (the retired `subagentStatusLine` is removed by the updater), and to what.
   no longer does: install the wrapper scripts or set the `.claude/settings.json` keys. owner:
   `npx update-agentic-workspace@latest` (since v1.17.0; also `create-agentic-workspace --existing
   --reconcile-floor` on a trusted workspace) — or by hand, see QUICKSTART's "Before your first session".

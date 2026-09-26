@@ -1,9 +1,9 @@
-// cleanup.mjs — Phase 3 (opt-in, `--cleanup`) of `npx update-agentic-workspace`: prune superseded
-// plugin-cache versions and remove a stale/duplicate marketplace registration. THE FIRST recursive
-// delete of an adopter path in cli/src/ — every other `rmSync` in this package removes a temp file
-// the process itself just wrote. Fail-closed throughout: AC-UWC-4 skips (removes nothing) on any
-// indeterminate input, and AC-UWC-9 refuses (removes nothing AT ALL, superseded entries included)
-// on any cache entry that is not a plain immediate-child directory of the pinned root.
+// cleanup.mjs — Phase 3 (opt-in, `--cleanup`) of `npx update-agentic-workspace`: remove a stale or
+// duplicate marketplace registration, and REPORT superseded plugin-cache versions. Since v1.18.2 a
+// cache version is never deleted (a running session may still use it — see the note above
+// runCleanupPhase's report), so this module carries no recursive delete. Fail-closed throughout:
+// AC-UWC-4 skips on any indeterminate input, and AC-UWC-9 refuses on any cache entry that is not a
+// plain immediate-child directory of the pinned root.
 import fs from 'node:fs';
 import path from 'node:path';
 import { RefusalError } from './util.mjs';
@@ -118,14 +118,13 @@ export function planCachePrune({ pluginCacheDir, liveVersions }) {
   return candidates;
 }
 
-/** Remove exactly the candidates already validated by planCachePrune — never re-validates, never
- * enumerates further. Called only under `--cleanup` (AC-UWC-6), and only once planCachePrune has
- * returned without throwing for the WHOLE directory (AC-UWC-9's "removes nothing at all"). */
-export function applyCachePrune(pluginCacheDir, candidates) {
-  for (const name of candidates) {
-    fs.rmSync(path.join(pluginCacheDir, name), { recursive: true, force: false });
-  }
-}
+// v1.18.2: superseded plugin-cache versions are NEVER removed. A running Claude Code session keeps
+// the version it started with — its hooks resolve through ${CLAUDE_PLUGIN_ROOT} and the plugin's
+// bin/ is on its PATH — so deleting a version the registry no longer names broke every live session
+// still on it ("Plugin directory does not exist … run /plugin to reinstall" on every hook, and a
+// dead PATH entry). Measured on the operator's own session and reported by an adopter ("keeps
+// crashing since update"). The registry cannot tell which versions running sessions hold, and an
+// old version costs only disk, so the prune is retired; planCachePrune still lists them (report).
 
 // ── AC-UWC-7 — a stale or duplicate registration that no scope enables ──────────────────────────
 
@@ -272,14 +271,14 @@ export function runCleanupPhase({
   // AC-UWC-5 — previewed before the first removal, in EVERY mode (report-only included, so the
   // adopter sees the same list --cleanup would act on).
   if (candidates.length > 0 || removableRegs.length > 0) {
-    print('cleanup: the following would be removed:');
-    for (const name of candidates) print(`  [cache] ${path.join(pluginCacheDir, name)}`);
+    print(removableRegs.length > 0 ? 'cleanup: the following would be removed:' : 'cleanup: nothing to remove.');
+    for (const name of candidates) print(`  [cache] ${path.join(pluginCacheDir, name)} — superseded; KEPT (a running session may still use it)`);
     for (const name of removableRegs) print(`  [marketplace registration] ${name}`);
   } else {
     print('cleanup: nothing to remove.');
   }
 
-  const anything = candidates.length > 0 || removableRegs.length > 0;
+  const anything = removableRegs.length > 0;
 
   if (!cleanupFlag) {
     // AC-UWC-6/-7 — report-only: zero filesystem-removal calls AND zero `claude` invocations.
@@ -291,13 +290,12 @@ export function runCleanupPhase({
     };
   }
 
-  applyCachePrune(pluginCacheDir, candidates);
   for (const name of removableRegs) {
     runClaude(['plugin', 'marketplace', 'remove', name], { env, cwd, claudeBin });
   }
 
   return {
     verdict: anything ? 'changed' : 'already current',
-    candidateVersions: candidates, prunedVersions: candidates, removedRegistrations: removableRegs,
+    candidateVersions: candidates, prunedVersions: [], removedRegistrations: removableRegs,
   };
 }

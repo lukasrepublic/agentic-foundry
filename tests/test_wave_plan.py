@@ -488,7 +488,7 @@ class TestReleaseSchemaAdditions:
 
     def test_unknown_atom_field_still_rejected(self, tmp_path):
         doc = _manifest([_atom("a")])
-        doc["atoms"][0]["bogus"] = "nope"
+        doc["atoms"][0]["charter_rf"] = "nope"  # v1.18.2: a typo of a machinery field is still rejected
         with pytest.raises(fr.ReleaseError):
             fr._validate(doc, expected_id=None)
 

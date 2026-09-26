@@ -476,7 +476,7 @@ def wave_state_path(release_id, project_dir=None):
     """`.foundry/releases/<release_id>/state.yaml`. `release_id` is re-checked against the same
     `[a-z0-9-]+` slug shape `foundry_release.load_release` enforces — defense in depth against a
     caller passing something path-hostile straight to `os.path.join`."""
-    if not isinstance(release_id, str) or not re.fullmatch(r"[a-z0-9-]+", release_id.strip() or ""):
+    if not isinstance(release_id, str) or not fr._RELEASE_SLUG.fullmatch(release_id.strip() or ""):
         raise CommandDeckError(f"release id {release_id!r} is not a [a-z0-9-]+ slug")
     root = fr._project_dir(project_dir)
     return os.path.join(root, ".foundry", "releases", release_id.strip(), "state.yaml")

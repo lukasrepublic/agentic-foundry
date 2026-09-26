@@ -17,6 +17,7 @@ import {
 } from './floorReconcile.mjs';
 import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from './gitignoreReconcile.mjs';
 import { planAmendmentsBackfill, applyAmendmentsBackfill, renderAmendmentsRow } from './amendmentsBackfill.mjs';
+import { planManifestTrueUp, applyManifestTrueUp, renderManifestTrueUpRows } from './manifestTrueUp.mjs';
 import { buildUpgradeReport, writeUpgradeReport, installedVersionBefore, versionOrNull, NEXT_LINE } from './upgradeReport.mjs';
 import { planStatuslineWiring, applyStatuslineWiring, renderStatuslineRows, statuslineChanged } from './statuslineWiring.mjs';
 import { loadRetiredCatalogue, planRetiredArtifacts, applyRetiredArtifacts, renderRetiredArtifactRows } from './retiredArtifacts.mjs';
@@ -29,6 +30,7 @@ import {
   readInstalledPluginsRegistry, scopeRecordsFor,
 } from './pluginRefresh.mjs';
 import { runCleanupPhase } from './cleanup.mjs';
+import { loadPythonRequirements, ensurePythonDeps, renderPythonDepsRow } from './pythonDeps.mjs';
 
 export { ALLOWED_CLAUDE_SUBCOMMANDS };
 
@@ -266,6 +268,8 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     // re-plans fresh from disk before it writes.
     const previewAmendmentsRow = renderAmendmentsRow(planAmendmentsBackfill({ physicalRoot }));
     if (previewAmendmentsRow) previewLines.push(previewAmendmentsRow);
+    // v1.18.2: release manifests trued up to the current contract (preview only here)
+    previewLines.push(...renderManifestTrueUpRows(planManifestTrueUp({ physicalRoot })));
     // statusline-wiring (AC-SLW-1/-2): PREVIEW-ONLY rows; Phase 4 re-plans fresh from disk.
     previewLines.push(...renderStatuslineRows(planStatuslineWiring({ physicalRoot, templatesDir })));
     // retired-artifacts (hotfix-v1.17.4, ER #236): PREVIEW-ONLY rows; Phase 4 re-plans fresh from disk.
@@ -280,6 +284,9 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
       if (lp.plan && lp.plan.total > 0) previewLines.push(`  [permission-floor] ${lp.rel}: would retire allow=${lp.plan.retirements.allow.length}, ask=${lp.plan.retirements.ask.length}, deny=${(lp.plan.retirements.deny || []).length} (never adds)`);
       else if (lp.error) previewLines.push(`  [permission-floor] ${lp.rel}: would not be reconciled (${lp.error})`);
     }
+    // v1.18.2: python deps — the preview only probes (nothing installed before the first write).
+    const pythonRequirements = loadPythonRequirements(pkgDir);
+    previewLines.push(renderPythonDepsRow(ensurePythonDeps(pythonRequirements, { env: spawnEnv, python: spawnEnv.FOUNDRY_PYTHON || 'python3', dryRun: true }), pythonRequirements));
     print(previewLines.join('\n'));
     if (flags.dryRun) {
       print('');
@@ -336,6 +343,12 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
       verdict: installedAfter && installedAfter !== installedBefore ? 'changed' : 'already current',
       ...(installedAfter ? {} : { reason: 'installed version unreadable from installed_plugins.json' }),
     });
+
+    // ── Phase 2b (v1.18.2): the plugin's Python runtime deps — install only what is missing ──────
+    // FOUNDRY_PYTHON names another interpreter (a venv's), and lets tests keep pip off the machine.
+    const pythonDeps = ensurePythonDeps(pythonRequirements, { env: spawnEnv, python: spawnEnv.FOUNDRY_PYTHON || 'python3' });
+    print(renderPythonDepsRow(pythonDeps, pythonRequirements));
+    phases.push({ name: 'python-deps', verdict: pythonDeps.verdict, ...(pythonDeps.reason ? { reason: pythonDeps.reason } : {}) });
 
     // ── Phase 3: cleanup (sibling atom; always previewed, only acts under --cleanup) ────────────
     const cleanupScopeDescriptors = scopes; // same {name, settingsPath} pairs, unresolved-required
@@ -397,6 +410,10 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     for (const rel of amendmentsPlan.writtenPaths || []) wrote(rel, 'amendments-backfill');
     const amendmentsRow = renderAmendmentsRow(amendmentsPlan);
     if (amendmentsRow) print(amendmentsRow);
+    // v1.18.2: release manifests trued up to the current contract — re-planned fresh from disk
+    const trueUpPlan = applyManifestTrueUp(planManifestTrueUp({ physicalRoot }));
+    for (const rel of trueUpPlan.written || []) wrote(rel, 'manifest-true-up');
+    for (const row of renderManifestTrueUpRows(trueUpPlan)) print(row);
 
     const anyCreated = filePlan.some((f) => f.action === 'create');
     const anyFloorAdded = Boolean(floorPlan && floorPlan.total > 0)
@@ -447,7 +464,7 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
 
     phases.push({
       name: 'reinitialization',
-      verdict: anyCreated || anyFloorAdded || anyGitignoreChanged || anyAmendmentsBackfilled
+      verdict: anyCreated || anyFloorAdded || anyGitignoreChanged || anyAmendmentsBackfilled || (trueUpPlan.written || []).length > 0
         || statuslineChanged(statuslinePlan) || retiredRemoved > 0 || localRetired > 0 ? 'changed' : 'already current',
     });
 
@@ -459,7 +476,7 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     // named in the LAST line so the operator's next step is never a guess.
     const report = buildUpgradeReport({
       installedBefore, installedAfter, afterEntry, toPluginVersion: pins.plugin_version, phases, filePlan, amendmentsPlan,
-      written, removed, configDir, hostname: os.hostname(),
+      written, removed, configDir, hostname: os.hostname(), pythonDeps,
       updaterVersion, coreVersion: corePkg.version, updaterPluginVersion: pins.plugin_version,
       retiredArtifacts: { present: retiredPlan.rows.filter((r) => r.state === 'stale').map((r) => r.relPath), removed: retiredRemoved, refused: retiredPlan.refused },
       localRetired,
@@ -481,7 +498,9 @@ export async function runUpdate(argv, { cwd, configDir, homeDir, pkgDir, output,
     // into "the update failed" for the whole run (run.mjs makes the identical choice; see its own
     // comment on `gitignoreRefused`).
     const gitignoreRefused = Boolean(freshGitignorePlan && freshGitignorePlan.action === 'refused');
-    return { exitCode: anyDrifted || gitignoreRefused ? 2 : 0, output: lines.join('\n') };
+    // v1.18.2: a python dep that could not be installed leaves the plugin's scripts broken — exit 2
+    // (attention needed; the row above names what is missing and why), like a refused gitignore.
+    return { exitCode: anyDrifted || gitignoreRefused || pythonDeps.verdict === 'failed' ? 2 : 0, output: lines.join('\n') };
   } catch (e) {
     if (e instanceof RefusalError) {
       print(`refused: ${e.message}`);

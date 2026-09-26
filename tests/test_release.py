@@ -350,19 +350,35 @@ class TestReleaseLoaderVocabulary:
         rel = release.load_release("r-vocab1", project_dir=str(tmp_path))   # must not raise
         assert rel.id == "r-vocab1"
 
-    def test_unknown_top_level_field_still_refused_by_name(self, tmp_path):
+    def test_a_typo_of_a_machinery_field_is_still_refused_by_name(self, tmp_path):
+        """v1.18.2 tolerant reader: bookkeeping fields are ignored, but a near-miss of a machinery
+        field (here `integration_branc`) would silently drop meaning, so it is still refused."""
         rel_dir = os.path.join(str(tmp_path), ".foundry", "releases", "r-vocab2")
         os.makedirs(rel_dir, exist_ok=True)
         doc = {
             "id": "r-vocab2", "description": "d", "state": "backlog",
-            "totally_unknown_field": "x",
+            "integration_branc": "release/v9",
             "atoms": [{"id": "a1", "spec_ref": "specs/a1.md", "contract_ref": "specs/a1.yaml",
                       "depends_on": []}],
         }
         with open(os.path.join(rel_dir, "release.yaml"), "w", encoding="utf-8") as f:
             yaml.safe_dump(doc, f, sort_keys=False)
-        with pytest.raises(release.ReleaseError, match="totally_unknown_field"):
+        with pytest.raises(release.ReleaseError, match="integration_branc"):
             release.load_release("r-vocab2", project_dir=str(tmp_path))
+
+    def test_bookkeeping_fields_legacy_states_and_dotted_ids_load(self, tmp_path):
+        """v1.18.2 upgrade true-up: shapes found in real adopter manifests read without error."""
+        rel_dir = os.path.join(str(tmp_path), ".foundry", "releases", "hotfix-v1.17.1")
+        os.makedirs(rel_dir, exist_ok=True)
+        doc = {
+            "id": "hotfix-v1.17.1", "state": "in_progress", "title": "t", "released_at": "2026-09-25",
+            "operator_approval": "go",
+            "atoms": [{"id": "hotfix-v1.17.1", "charter_ref": "c.md", "status": "done", "delivered_pr": 5}],
+        }
+        with open(os.path.join(rel_dir, "release.yaml"), "w", encoding="utf-8") as f:
+            yaml.safe_dump(doc, f, sort_keys=False)
+        rel = release.load_release("hotfix-v1.17.1", project_dir=str(tmp_path))
+        assert rel.state == "active" and rel.description == "hotfix-v1.17.1"
 
     # ---- AC-RLV-2: charter-lane atoms ----------------------------------------------------------
 
@@ -386,7 +402,7 @@ class TestReleaseLoaderVocabulary:
         rel_dir = os.path.join(str(tmp_path), ".foundry", "releases", "r-vocab4")
         os.makedirs(rel_dir, exist_ok=True)
         doc = {
-            "id": "r-vocab4", "description": "d", "state": "backlog",
+            "id": "r-vocab4", "description": "d", "state": "active",
             "atoms": [{"id": "bare-atom", "depends_on": []}],
         }
         with open(os.path.join(rel_dir, "release.yaml"), "w", encoding="utf-8") as f:
@@ -925,3 +941,18 @@ class TestReleaseRunState:
         corrupt_dir.mkdir(parents=True)
         (corrupt_dir / "bad.report.json").write_text("not json {{{", encoding="utf-8")
         assert release._probe_dispatched(empty_atom, str(tmp_path)) == "unknown"
+
+
+def test_transition_rewrites_only_the_state_line(tmp_path):
+    """v1.18.2 (security review R2): a transition must not drop comments or bookkeeping fields."""
+    rel_dir = os.path.join(str(tmp_path), ".foundry", "releases", "r-keep")
+    os.makedirs(rel_dir, exist_ok=True)
+    text = ("# keep this comment\nid: r-keep\ndescription: d\nstate: backlog  # note\n"
+            "released_at: 2026-09-26\natoms:\n  - id: a1\n    charter_ref: c.md\n    depends_on: []\n"
+            "    delivered_pr: 12\n")
+    open(os.path.join(rel_dir, "release.yaml"), "w", encoding="utf-8").write(text)
+    open(os.path.join(str(tmp_path), "c.md"), "w").write("charter\n")
+    rel = release.load_release("r-keep", project_dir=str(tmp_path))
+    release.transition(rel, "planned", project_dir=str(tmp_path))
+    after = open(os.path.join(rel_dir, "release.yaml"), encoding="utf-8").read()
+    assert after == text.replace("state: backlog  # note", "state: planned  # note")

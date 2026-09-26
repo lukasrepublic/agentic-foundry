@@ -327,8 +327,14 @@ def _extract_references(normative_text, own_ac_ids):
         _add("feat-slug", m.group(1))
     for m in _ATOM_CITE_RE.finditer(normative_text):
         _add("path", m.group(1).strip())
+    # v1.18.2 (audit D6): the older template DEFINED ACs as checklist/list lines
+    # (`- [ ] AC-X-1: ...`, `- **AC-X-1** (...)`); those are self-definitions, not references.
+    list_defined = set(re.findall(
+        r"(?m)^\s*[-*]\s*(?:\[[ xX]\]\s*)?(?:\*\*)?(AC-[A-Z0-9-]+-\d+)(?:\*\*)?\s*[:(]", normative_text))
     for m in _AC_ID_RE.finditer(normative_text):
         tok = m.group(0)
+        if tok in list_defined:
+            continue
         s, e = m.span()
         is_bold_definition = (normative_text[max(0, s - 2):s] == "**"
                               and normative_text[e:e + 2] == "**")

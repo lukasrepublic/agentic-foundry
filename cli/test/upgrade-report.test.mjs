@@ -58,6 +58,7 @@ test('buildUpgradeReport: every field, from a full run', () => {
     removed: ['.foundry/wiring-hash.pin'],
     config_dir: '/home/op/.claude',
     hostname: 'box',
+    python_deps: null,
   });
 });
 

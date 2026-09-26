@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  deriveLiveSet, planCachePrune, applyCachePrune, readKnownMarketplaces, resolveEnabledQualifiers,
+  deriveLiveSet, planCachePrune, readKnownMarketplaces, resolveEnabledQualifiers,
   planRegistrationRemoval, runCleanupPhase,
 } from '../src/cleanup.mjs';
 import { RefusalError } from '../src/util.mjs';
@@ -211,10 +211,12 @@ test('every live version directory survives an opted in prune', () => {
     cleanupFlag: true, configDir, marketplaceName: MARKETPLACE, marketplaceRepo: REPO,
     pluginName: PLUGIN, pluginKey: PLUGIN_KEY, scopeDescriptors: [], env: process.env, cwd: root, print,
   });
-  assert.deepEqual(result.prunedVersions, ['1.4.1']);
+  // v1.18.2: a superseded version is listed but NEVER removed — a running session may still use it.
+  assert.deepEqual(result.prunedVersions, []);
+  assert.deepEqual(result.candidateVersions, ['1.4.1']);
   assert.ok(fs.existsSync(path.join(dir, '1.5.0')));
   assert.ok(fs.existsSync(path.join(dir, '1.6.0')));
-  assert.ok(!fs.existsSync(path.join(dir, '1.4.1')));
+  assert.ok(fs.existsSync(path.join(dir, '1.4.1')), 'a superseded version was deleted under a possibly-running session');
   assert.deepEqual(fs.readFileSync(path.join(dir, '1.5.0', 'marker.txt')), beforeMarker15);
   assert.deepEqual(fs.readFileSync(path.join(dir, '1.6.0', 'marker.txt')), beforeMarker16);
   fs.rmSync(root, { recursive: true, force: true });
@@ -373,7 +375,7 @@ test('an unreadable or unrecognised registry skips the prune with a reason and r
 // AC-UWC-5 — nothing is removed that the preview did not name
 // ================================================================================================
 
-test('every removed path was named in the preview emitted before the first removal', () => {
+test('a superseded cache version is named in the preview as KEPT, never removed (v1.18.2)', () => {
   const { root, configDir } = makeConfigDir('uwc5-preview-');
   const dir = makeCacheVersions(configDir, ['1.4.1', '1.6.0']);
   writeInstalledPlugins(configDir, [{ installPath: '/a', version: '1.6.0' }]);
@@ -384,9 +386,11 @@ test('every removed path was named in the preview emitted before the first remov
     cleanupFlag: true, configDir, marketplaceName: MARKETPLACE, marketplaceRepo: REPO,
     pluginName: PLUGIN, pluginKey: PLUGIN_KEY, scopeDescriptors: [], env: process.env, cwd: root, print,
   });
-  assert.deepEqual(result.prunedVersions, ['1.4.1']);
+  assert.deepEqual(result.prunedVersions, []);
   const previewText = events.map((e) => e.s).join('\n');
-  assert.ok(previewText.includes(path.join(dir, '1.4.1')), 'the removed path was never named in the preview');
+  assert.ok(previewText.includes(path.join(dir, '1.4.1')), 'the superseded path was never named in the preview');
+  assert.match(previewText, /KEPT/);
+  assert.ok(fs.existsSync(path.join(dir, '1.4.1')));
   fs.rmSync(root, { recursive: true, force: true });
 });
 
@@ -620,7 +624,7 @@ test('a second opted in run reports already current and removes nothing', () => 
     cleanupFlag: true, configDir, marketplaceName: MARKETPLACE, marketplaceRepo: REPO,
     pluginName: PLUGIN, pluginKey: PLUGIN_KEY, scopeDescriptors: [], env, cwd: root, print: () => {},
   });
-  assert.deepEqual(first.prunedVersions, ['1.4.1']);
+  assert.deepEqual(first.prunedVersions, []);
   const statBefore = fs.statSync(path.join(dir, '1.6.0'));
 
   const second = runCleanupPhase({
@@ -756,15 +760,6 @@ test('resolveEnabledQualifiers is fine with an absent scope and fails on a broke
   fs.writeFileSync(broken, 'not json');
   const bad = resolveEnabledQualifiers([{ name: 'y', settingsPath: broken }]);
   assert.equal(bad.ok, false);
-  fs.rmSync(root, { recursive: true, force: true });
-});
-
-test('applyCachePrune removes only the given candidates', () => {
-  const { root, configDir } = makeConfigDir('primitives-apply-');
-  const dir = makeCacheVersions(configDir, ['1.4.1', '1.6.0']);
-  applyCachePrune(dir, ['1.4.1']);
-  assert.ok(!fs.existsSync(path.join(dir, '1.4.1')));
-  assert.ok(fs.existsSync(path.join(dir, '1.6.0')));
   fs.rmSync(root, { recursive: true, force: true });
 });
 

@@ -234,7 +234,7 @@ def main(argv=None):
     ap.add_argument("--root", default=os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd()))
     args = ap.parse_args(argv)
 
-    if not isinstance(args.release_id, str) or not fr._SLUG.match(args.release_id):
+    if not isinstance(args.release_id, str) or not fr._RELEASE_SLUG.match(args.release_id):
         print(f"foundry-manifest-to-tasklist: REFUSED — release id {args.release_id!r} is not a "
               f"[a-z0-9-]+ slug (no path separators/traversal)", file=sys.stderr)
         return 3

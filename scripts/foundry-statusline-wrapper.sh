@@ -24,6 +24,55 @@
 # FAIL-OPEN is the only invariant: any error → print what could be built (possibly nothing) and `exit 0`.
 set +e
 
+# v1.18.2 — THROTTLE + SINGLE-FLIGHT. Claude Code re-runs the status line on every update; the
+# renderer shells out to git (a full `git status`) and python, which on WSL took seconds. Runs then
+# overlapped, each refresh spawning another, until the machine ran out of memory and Claude Code
+# itself crashed (an adopter's WSL session: 44,616 spawns in 21 minutes, SIGBUS). So: one render per
+# project at a time (an mkdir lock), its output cached for FOUNDRY_STATUSLINE_TTL seconds (default 5),
+# and a refresh that finds a render in flight prints the last line and exits at once. The cache-hit
+# path spawns only `cat` (and `date` where bash has no EPOCHSECONDS). Cache: ~/.cache/foundry-statusline.
+# Security review (v1.18.2, Block): the cache lives in the user's OWN cache dir, never a shared /tmp,
+# and is used only when it is a real directory owned by this user (not a symlink) — otherwise the
+# wrapper renders directly, uncached (fail-open), so a planted dir/link is never read or written.
+if [ -z "${FOUNDRY_STATUSLINE_INNER:-}" ]; then
+  PAYLOAD="$(cat 2>/dev/null || true)"
+  _d="${XDG_CACHE_HOME:-${HOME:-/nonexistent}/.cache}/foundry-statusline"
+  mkdir -p -m 700 "$_d" 2>/dev/null
+  if [ ! -d "$_d" ] || [ -L "$_d" ] || [ ! -O "$_d" ]; then
+    printf '%s' "$PAYLOAD" | FOUNDRY_STATUSLINE_INNER=1 bash "$0" "$@" 2>/dev/null
+    exit 0
+  fi
+  _k="${CLAUDE_PROJECT_DIR:-$PWD}"; _k="${_k//[^A-Za-z0-9]/_}"
+  _cache="$_d/${_k}.out"; _lock="$_d/${_k}.lock"
+  _now="${EPOCHSECONDS:-$(date +%s)}"; _ttl="${FOUNDRY_STATUSLINE_TTL:-5}"
+  _ts=0; [ -r "$_cache.ts" ] && read -r _ts < "$_cache.ts" 2>/dev/null
+  case "$_ts" in ''|*[!0-9]*) _ts=0 ;; esac
+  if [ -r "$_cache" ] && [ "$_ts" -le "$_now" ] && [ $(( _now - _ts )) -lt "$_ttl" ]; then
+    printf '%s' "$(< "$_cache")"; exit 0
+  fi
+  if ! mkdir "$_lock" 2>/dev/null; then
+    # a lock whose ts is not written yet is FRESH (a render just started), never stale
+    _lt="$_now"; [ -r "$_lock/ts" ] && read -r _lt < "$_lock/ts" 2>/dev/null
+    case "$_lt" in ''|*[!0-9]*) _lt="$_now" ;; esac
+    if [ $(( _now - _lt )) -gt 30 ]; then rm -f "$_lock/ts" 2>/dev/null; rmdir "$_lock" 2>/dev/null; fi
+    [ -r "$_cache" ] && printf '%s' "$(< "$_cache")"
+    exit 0
+  fi
+  printf '%s\n' "$_now" > "$_lock/ts" 2>/dev/null
+  # bounded: a hung render (git on a stalled filesystem) is killed at 20 s where `timeout` exists,
+  # so it can never outlive the 30 s stale-lock window and overlap the next one
+  if command -v timeout >/dev/null 2>&1; then
+    _out="$(printf '%s' "$PAYLOAD" | FOUNDRY_STATUSLINE_INNER=1 timeout 20 bash "$0" "$@" 2>/dev/null)"
+  else
+    _out="$(printf '%s' "$PAYLOAD" | FOUNDRY_STATUSLINE_INNER=1 bash "$0" "$@" 2>/dev/null)"
+  fi
+  printf '%s' "$_out" > "$_cache.tmp" 2>/dev/null && mv -f "$_cache.tmp" "$_cache" 2>/dev/null
+  printf '%s\n' "${EPOCHSECONDS:-$(date +%s)}" > "$_cache.ts" 2>/dev/null
+  rm -f "$_lock/ts" 2>/dev/null; rmdir "$_lock" 2>/dev/null
+  printf '%s' "$_out"
+  exit 0
+fi
+
 PAYLOAD="$(cat 2>/dev/null || true)"
 CFG="${CLAUDE_CONFIG_DIR:-${HOME}/.claude}"
 RENDERER="foundry-statusline.sh"

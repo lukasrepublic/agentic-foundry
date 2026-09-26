@@ -5,10 +5,11 @@ the shipped CLI, that's a bug — file it.
 
 ## `/foundry:doctor` is RED
 
-The output names the failing probe. The six probes and their usual causes:
+The output names the failing probe. The seven probes and their usual causes:
 
 | Probe | Usual cause | Fix |
 |---|---|---|
+| `python-deps` | `python3` cannot import `yaml` or `jsonschema` (a fresh machine or container) | run `npx update-agentic-workspace@latest` — it installs what is missing |
 | `manifest` | corrupted plugin cache | reinstall (see wedged install, below) |
 | `hooks` | a hook script missing from the cache | reinstall |
 | `skills-frontmatter` | a locally-edited SKILL.md with broken YAML | revert the edit, or reinstall |
@@ -19,7 +20,7 @@ The output names the failing probe. The six probes and their usual causes:
 ## `/foundry:init` reports a status line, sandbox, or gh-jail finding instead of wiring it
 
 That's expected, not a bug. `/foundry:init` only **verifies and reports** on the
-`statusLine`/`subagentStatusLine` wiring, the native Bash sandbox enable, the `gh` jail's
+`statusLine` wiring, the native Bash sandbox enable, the `gh` jail's
 authentication, and the `GH_CONFIG_DIR` session-env carrier — it never writes any of them.
 The status-line wiring has a shipped writer since v1.17.0: `npx update-agentic-workspace@latest` (and
 `create-agentic-workspace --existing --reconcile-floor` on a trusted workspace) installs the
@@ -32,7 +33,7 @@ not revoke server-side).
 
 ## `foundry doctor` reports a `permissions-policy` advisory line
 
-Doctor renders one ADVISORY line, never `[adv ]`-paired with the six structural probes above and
+Doctor renders one ADVISORY line, never `[adv ]`-paired with the seven structural probes above and
 never RED by design — a stale-permission workspace must never wedge a session. The line has two
 parts:
 
@@ -262,11 +263,11 @@ claude plugin install foundry@agentic-foundry --scope project
 
 **A lighter touch, when nothing is actually wedged.** The recovery above is blunt on purpose — it
 discards every version of every plugin from every marketplace, which is right when nothing on disk
-can be trusted. If the install itself is fine and you just want the disk residue back (a superseded
-plugin-cache version left beside the current one after each update, or a stale/duplicate
-marketplace registration), `npx update-agentic-workspace@latest --cleanup` is the surgical alternative: it
-prunes only cache versions the platform's own state no longer names as live, and removes only a
-registration no scope still enables — never the blunt `rm -rf` above. Run it without `--cleanup`
+can be trusted. If the install itself is fine and you just want a stale/duplicate marketplace registration gone,
+`npx update-agentic-workspace@latest --cleanup` is the surgical alternative: it removes only a
+registration no scope still enables, and lists superseded plugin-cache versions without deleting them
+(v1.18.2: deleting one out from under a running session broke every hook in it — close your sessions
+first if you remove one by hand) — never the blunt `rm -rf` above. Run it without `--cleanup`
 first to preview what it would remove; nothing is deleted until you pass the flag.
 
 **Do not stack install sources.** The marketplace install and a directory-sourced local
