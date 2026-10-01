@@ -68,7 +68,11 @@ test('AC-BCL-4 / AC-V118A-2: buildSettings is a set bijection onto the map\'s de
   for (const r of ['Edit(.foundry/permissions.yaml)', 'Write(.foundry/permissions.yaml)', 'Bash(git push --force:*)']) {
     assert.ok(!actual.has(r), `retired deny rule ${r} was written`);
   }
-  assert.deepEqual(Object.keys(settings).sort(), ['enabledPlugins', 'extraKnownMarketplaces', 'permissions']);
+  assert.deepEqual(Object.keys(settings).sort(), ['enabledPlugins', 'extraKnownMarketplaces', 'permissions', 'statusLine']);
+  // v1.18.3 (AC-BCL-4(c) amended): the one permitted value, naming the framework wrapper
+  assert.deepEqual(settings.statusLine, {
+    type: 'command', command: '$CLAUDE_PROJECT_DIR/.claude/hooks/foundry-statusline.sh', padding: 0,
+  });
   // SUPERSEDED (feat-foundry-installer-unpinning, AC-IUP-3; out-of-band fix, necessitated by that
   // atom's cli/src/permissionFloor.mjs change — this fixture's own `pins` object above never
   // carried `plugin_version`, so this line's `ref` used to hard-code the literal "vundefined" and

@@ -60,10 +60,46 @@ def test_a_stale_lock_does_not_wedge_the_line_forever(tmp_path):
     lock = Path(env["XDG_CACHE_HOME"]) / "foundry-statusline" / f"{key}.lock"
     lock.mkdir(parents=True)
     (lock / "ts").write_text("0\n")  # a crashed render from long ago
-    _run(env).communicate(input="{}", timeout=10)   # clears the stale lock
-    out = _run(env).communicate(input="{}", timeout=10)[0]
+    out = _run(env).communicate(input="{}", timeout=10)[0]   # clears the stale lock AND renders
     assert out == "LINE"
     assert counter.read_text().count("x") == 1
+    assert not lock.exists(), "the render must release its lock"
+
+
+def _payload(sid="s1", cwd="/w", rem=None):
+    cw = {} if rem is None else {"remaining_percentage": rem}
+    return json.dumps({"session_id": sid, "workspace": {"current_dir": cwd}, "context_window": cw})
+
+
+def test_a_cached_line_is_never_served_for_a_different_context(tmp_path):
+    """v1.18.3: Claude Code re-runs the status line only on events. The first render of a session has
+    no context figure; serving that cached line after the first reply (inside the TTL) left the `tok`
+    bar absent until the NEXT event — every new session showed no bar. A new context figure, session
+    or directory must re-render even inside the TTL; the same one must still hit the cache."""
+    env, counter = _setup(tmp_path)
+    assert _run(env).communicate(input=_payload(), timeout=10)[0] == "LINE"
+    assert _run(env).communicate(input=_payload(), timeout=10)[0] == "LINE"
+    assert counter.read_text().count("x") == 1, "the same context inside the TTL must hit the cache"
+    _run(env).communicate(input=_payload(rem=95), timeout=10)
+    assert counter.read_text().count("x") == 2, "a new context figure must re-render"
+    _run(env).communicate(input=_payload(rem=95, sid="s2"), timeout=10)
+    assert counter.read_text().count("x") == 3, "another session must re-render"
+    _run(env).communicate(input=_payload(rem=95, sid="s2", cwd="/w/wt"), timeout=10)
+    assert counter.read_text().count("x") == 4, "another directory must re-render"
+
+
+def test_a_refresh_during_a_render_for_an_older_context_waits_for_a_current_line(tmp_path):
+    """v1.18.3: a refresh that finds a render in flight for a DIFFERENT context waits for it and renders
+    its own, instead of printing the line it knows is stale and exiting."""
+    env, counter = _setup(tmp_path)
+    first = _run(env)
+    first.stdin.write(_payload())
+    first.stdin.close()
+    time.sleep(0.3)  # the first render now holds the lock (the test renderer sleeps 1 s)
+    out = _run(env).communicate(input=_payload(rem=95), timeout=15)[0]
+    first.wait(timeout=15)
+    assert out == "LINE"
+    assert counter.read_text().count("x") == 2, "the newer context must get its own render"
 
 
 def test_a_planted_cache_dir_is_never_read_or_written(tmp_path):
@@ -83,3 +119,17 @@ def test_a_planted_cache_dir_is_never_read_or_written(tmp_path):
     out = _run(env).communicate(input="{}", timeout=10)[0]
     assert "TOP-SECRET" not in out and out == "LINE"
     assert secret.read_text() == "TOP-SECRET"
+
+
+def test_a_stale_lock_that_cannot_be_removed_never_spins(tmp_path):
+    """v1.18.3 security review R1: a stale lock holding a stray file (Finder's .DS_Store) cannot be
+    rmdir'ed; the refresh must still exit within the bounded wait, never loop without sleeping."""
+    env, counter = _setup(tmp_path)
+    key = "".join(c if (c.isascii() and c.isalnum()) else "_" for c in env["CLAUDE_PROJECT_DIR"])
+    lock = Path(env["XDG_CACHE_HOME"]) / "foundry-statusline" / f"{key}.lock"
+    lock.mkdir(parents=True)
+    (lock / "ts").write_text("0\n")
+    (lock / ".DS_Store").write_text("x")
+    start = time.monotonic()
+    _run(env).communicate(input=_payload(rem=50), timeout=30)
+    assert time.monotonic() - start < 10, "a wedged lock must not hold the refresh"

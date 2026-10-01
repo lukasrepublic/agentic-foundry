@@ -207,16 +207,18 @@ standalone plugin repo) so the gates are live + fail-closed.
    `DOCTOR-GREEN`.
 
    <!-- foundry:init-verify-only:statusline v1 -->
-   VERIFY-ONLY. init does not write the `statusLine` wiring. The shipped
-   writer (since v1.17.0, statusline-wiring) is **`npx update-agentic-workspace@latest`** — and
+   VERIFY-ONLY. init does not write the `statusLine` wiring. The shipped writers are
+   **`create-agentic-workspace`** whenever it writes `.claude/settings.json` itself (since v1.18.3 — the
+   operator reversed [[feat-foundry-bootstrap-cli]] AC-BCL-4(c)'s exclusion: a new workspace had no
+   status line), **`npx update-agentic-workspace@latest`** (since v1.17.0), and
    `create-agentic-workspace --existing --reconcile-floor` on a workspace that already carries
-   `.claude/settings.json` — which installs the wrapper under `.claude/hooks/` (framework-owned:
+   `.claude/settings.json`. They install the wrapper under `.claude/hooks/` (framework-owned:
    converged when it carries the marker, kept when it does not; a kept or refused wrapper is never
-   wired), adds the `statusLine` key only when absent, and removes a `subagentStatusLine` key only
+   wired), add the `statusLine` key only when absent, and remove a `subagentStatusLine` key only
    when it is the exact value an earlier release wrote. The wrapper is single-flight and cached
-   (one render per project at a time, reused for 5 s), so a slow renderer can never pile up. The pre-session
-   bootstrap still never emits them ([[feat-foundry-bootstrap-cli]] AC-BCL-4(c) closes the
-   pre-session key set; that Block stands). This step only reads and reports; the doctor's
+   (one render per project at a time; a line is reused for 5 s only while the session, directory and
+   context figure are unchanged), so a slow renderer can never pile up and the bar is never stale.
+   This step only reads and reports; the doctor's
    `statusline:` advisory names the first missing piece.
 
    - **Present** — read `.claude/settings.json`. A local `.claude/hooks/foundry-statusline.sh`

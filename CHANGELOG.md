@@ -8,6 +8,41 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.18.3 — 2026-09-30
+
+### The token bar shows for every user, new or upgraded, from the first reply
+
+`create-agentic-workspace` 0.18.3 and `update-agentic-workspace` 0.2.3 are published together.
+**Upgrading:** run `npx update-agentic-workspace@0.2.3` in the workspace and start a new session.
+
+Both failures were reproduced in real interactive Claude Code sessions (2.1.286) driven through a terminal
+emulator, and the fix was verified the same way, for a fresh install and for an upgrade of a v1.18.2 workspace.
+
+- **An upgraded workspace showed the line without `tok`.** Claude Code re-runs the status line only on
+  events, never on a clock. v1.18.2's 5-second wrapper cache served the line rendered at session start —
+  before the first reply, when there is no context figure yet — and it stayed on screen until the next
+  event. The cache is now keyed: a line is reused only while the session, its directory and the context
+  figure are the ones it was rendered from (read from the payload by bash pattern matching, no spawn). A
+  refresh that finds a render in flight for a different context waits for it (≤ ~2 s) instead of printing
+  a stale line; a refresh that clears a stale lock renders in the same run, and a lock that cannot be
+  removed never spins. Single-flight is unchanged. The updater converges the wrapper.
+- **A new workspace had no status line at all.** Only the updater wrote it; `create-agentic-workspace`
+  deliberately did not (AC-BCL-4(c)). The operator reversed that: the created `.claude/settings.json` now
+  carries `statusLine` (the one framework value) beside the wrapper, both shown in the preview. It grants
+  nothing, and the trust dialog gates its first run like any project command. A pre-existing wrapper
+  without the framework marker is never wired.
+- **No `jq` or `bc`, still a bar.** The wrapper's inline fallback and the renderer read the context figure
+  without `jq`; the fallback's arithmetic moved from `bc` (absent on slim images, where it printed a false
+  `0%`) to `awk`.
+- The doctor's absent-policy remedy names the pinned updater command.
+
+**Security review (0 Blocks).** R1 (a stale lock that cannot be removed spun without sleeping) and R3 (the
+wrapper's self-hosting fallback could run a renderer merely shipped in a project tree, which the create
+path now reaches before the plugin is installed — it now requires a real clone's own `.git` directory)
+applied. R4 applied as spec text: the trust-dialog gate is a property of the Claude Code version. R2 (two
+stale-lock clearers can race into one extra concurrent render) accepted: bounded to one render, user-owned
+0700 directory.
+
 ## v1.18.2 — 2026-09-26
 
 ### Sessions stop crashing, the Python dependencies install themselves, and upgrades true up older artifacts
