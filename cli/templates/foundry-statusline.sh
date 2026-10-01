@@ -29,11 +29,19 @@ set +e
 # overlapped, each refresh spawning another, until the machine ran out of memory and Claude Code
 # itself crashed (an adopter's WSL session: 44,616 spawns in 21 minutes, SIGBUS). So: one render per
 # project at a time (an mkdir lock), its output cached for FOUNDRY_STATUSLINE_TTL seconds (default 5),
-# and a refresh that finds a render in flight prints the last line and exits at once. The cache-hit
-# path spawns only `cat` (and `date` where bash has no EPOCHSECONDS). Cache: ~/.cache/foundry-statusline.
+# and a refresh that finds a render in flight waits briefly for it. The cache-hit path spawns only
+# `cat` (and `date` where bash has no EPOCHSECONDS). Cache: ~/.cache/foundry-statusline.
 # Security review (v1.18.2, Block): the cache lives in the user's OWN cache dir, never a shared /tmp,
 # and is used only when it is a real directory owned by this user (not a symlink) — otherwise the
 # wrapper renders directly, uncached (fail-open), so a planted dir/link is never read or written.
+#
+# v1.18.3 — the cache is KEYED, not just timed. Claude Code re-runs the status line only on events
+# (a message, a mode change), never on a clock, so a cached line served after the context moved stayed
+# on screen until the NEXT event: every new session showed no `tok` bar at all after its first reply
+# (the first render, before any reply, has no context figure and was cached). A cached line is reused
+# only while the session, its directory and the context figure are the ones it was rendered from —
+# read from the payload with bash pattern matching, no spawn — and a refresh that finds a render in
+# flight for a different key waits for it (≤ ~2 s) instead of printing a line it knows is stale.
 if [ -z "${FOUNDRY_STATUSLINE_INNER:-}" ]; then
   PAYLOAD="$(cat 2>/dev/null || true)"
   _d="${XDG_CACHE_HOME:-${HOME:-/nonexistent}/.cache}/foundry-statusline"
@@ -44,20 +52,40 @@ if [ -z "${FOUNDRY_STATUSLINE_INNER:-}" ]; then
   fi
   _k="${CLAUDE_PROJECT_DIR:-$PWD}"; _k="${_k//[^A-Za-z0-9]/_}"
   _cache="$_d/${_k}.out"; _lock="$_d/${_k}.lock"
+  _key=""
+  _re='"session_id"[[:space:]]*:[[:space:]]*"([^"]*)"'
+  [[ $PAYLOAD =~ $_re ]] && _key="${BASH_REMATCH[1]}"
+  _re='"current_dir"[[:space:]]*:[[:space:]]*"([^"]*)"'
+  [[ $PAYLOAD =~ $_re ]] && _key="${_key}|${BASH_REMATCH[1]}"
+  _re='"remaining_percentage"[[:space:]]*:[[:space:]]*([0-9.]+)'
+  if [[ $PAYLOAD =~ $_re ]]; then _key="${_key}|${BASH_REMATCH[1]}"; else _key="${_key}|-"; fi
   _now="${EPOCHSECONDS:-$(date +%s)}"; _ttl="${FOUNDRY_STATUSLINE_TTL:-5}"
   _ts=0; [ -r "$_cache.ts" ] && read -r _ts < "$_cache.ts" 2>/dev/null
   case "$_ts" in ''|*[!0-9]*) _ts=0 ;; esac
-  if [ -r "$_cache" ] && [ "$_ts" -le "$_now" ] && [ $(( _now - _ts )) -lt "$_ttl" ]; then
+  _ck=""; [ -r "$_cache.key" ] && _ck="$(< "$_cache.key")"
+  if [ -r "$_cache" ] && [ "$_ck" = "$_key" ] && [ "$_ts" -le "$_now" ] && [ $(( _now - _ts )) -lt "$_ttl" ]; then
     printf '%s' "$(< "$_cache")"; exit 0
   fi
-  if ! mkdir "$_lock" 2>/dev/null; then
+  _tries=0
+  while ! mkdir "$_lock" 2>/dev/null; do
     # a lock whose ts is not written yet is FRESH (a render just started), never stale
     _lt="$_now"; [ -r "$_lock/ts" ] && read -r _lt < "$_lock/ts" 2>/dev/null
     case "$_lt" in ''|*[!0-9]*) _lt="$_now" ;; esac
-    if [ $(( _now - _lt )) -gt 30 ]; then rm -f "$_lock/ts" 2>/dev/null; rmdir "$_lock" 2>/dev/null; fi
-    [ -r "$_cache" ] && printf '%s' "$(< "$_cache")"
-    exit 0
-  fi
+    # a stale lock is cleared once; one that cannot be removed (a stray file inside it) is never
+    # retried in a tight loop (security review R1) — the refresh falls through to the bounded wait
+    if [ $(( _now - _lt )) -gt 30 ] && [ "$_tries" -eq 0 ]; then
+      rm -f "$_lock/ts" 2>/dev/null
+      _tries=1
+      rmdir "$_lock" 2>/dev/null && continue
+    fi
+    _ck=""; [ -r "$_cache.key" ] && _ck="$(< "$_cache.key")"
+    if [ "$_ck" = "$_key" ] || [ "$_tries" -ge 20 ]; then
+      [ -r "$_cache" ] && printf '%s' "$(< "$_cache")"
+      exit 0
+    fi
+    _tries=$(( _tries + 1 )); sleep 0.1 2>/dev/null || sleep 1
+  done
+  trap 'rm -f "$_lock/ts" 2>/dev/null; rmdir "$_lock" 2>/dev/null' EXIT
   printf '%s\n' "$_now" > "$_lock/ts" 2>/dev/null
   # bounded: a hung render (git on a stalled filesystem) is killed at 20 s where `timeout` exists,
   # so it can never outlive the 30 s stale-lock window and overlap the next one
@@ -67,8 +95,9 @@ if [ -z "${FOUNDRY_STATUSLINE_INNER:-}" ]; then
     _out="$(printf '%s' "$PAYLOAD" | FOUNDRY_STATUSLINE_INNER=1 bash "$0" "$@" 2>/dev/null)"
   fi
   printf '%s' "$_out" > "$_cache.tmp" 2>/dev/null && mv -f "$_cache.tmp" "$_cache" 2>/dev/null
+  printf '%s' "$_key" > "$_cache.key" 2>/dev/null
   printf '%s\n' "${EPOCHSECONDS:-$(date +%s)}" > "$_cache.ts" 2>/dev/null
-  rm -f "$_lock/ts" 2>/dev/null; rmdir "$_lock" 2>/dev/null
+  rm -f "$_lock/ts" 2>/dev/null; rmdir "$_lock" 2>/dev/null; trap - EXIT
   printf '%s' "$_out"
   exit 0
 fi
@@ -95,10 +124,13 @@ if [ -z "$selected" ]; then
     done | sort -V -k1,1 | tail -1 | cut -f2-
   )"
 fi
-# 3. the self-hosting source checkout
+# 3. the self-hosting source checkout — only a real clone (its own `.git` DIRECTORY): a cloned repo
+# cannot commit a nested `.git` directory, so files merely shipped in a project tree never resolve here
+# (v1.18.3 security review R3 — the create path now wires the line before the plugin is installed,
+# when steps 1–2 miss and this step would otherwise run the project's own copy)
 if [ -z "$selected" ] || [ ! -r "$selected" ]; then
   src="${CLAUDE_PROJECT_DIR:-$PWD}/agentic-foundry/scripts/${RENDERER}"
-  [ -r "$src" ] && selected="$src"
+  [ -r "$src" ] && [ -d "${CLAUDE_PROJECT_DIR:-$PWD}/agentic-foundry/.git" ] && [ ! -L "${CLAUDE_PROJECT_DIR:-$PWD}/agentic-foundry/.git" ] && selected="$src"
 fi
 
 # The resolved file must be the shipped renderer, not merely a file at a plausible path (security
@@ -117,6 +149,13 @@ DIR=""; REM=""
 if command -v jq >/dev/null 2>&1; then
   DIR="$(jqr '(.workspace.current_dir // .workspace.project_dir // .cwd // empty)')"
   REM="$(jqr '(.context_window.remaining_percentage // empty)')"
+else
+  # v1.18.3: no jq (a fresh Windows/WSL or slim-container host) still gets the bar — the two fields are
+  # read by bash pattern matching
+  _re='"current_dir"[[:space:]]*:[[:space:]]*"([^"]*)"'
+  [[ $PAYLOAD =~ $_re ]] && DIR="${BASH_REMATCH[1]}"
+  _re='"remaining_percentage"[[:space:]]*:[[:space:]]*([0-9.]+)'
+  [[ $PAYLOAD =~ $_re ]] && REM="${BASH_REMATCH[1]}"
 fi
 [ -n "$DIR" ] || DIR="${CLAUDE_PROJECT_DIR:-$PWD}"
 LABEL="$(basename "$DIR" 2>/dev/null)"
@@ -126,7 +165,8 @@ OUT="⌂ ${LABEL}"
 case "$REM" in
   ''|*[!0-9.]*) ;;
   *)
-    USED="$(printf '%.0f' "$(printf '100 - %s\n' "$REM" | bc -l 2>/dev/null || echo 0)" 2>/dev/null)"
+    # awk, not bc: bc is absent from many slim images, and its absence printed a false `0%`
+    USED="$(awk -v r="$REM" 'BEGIN{ u=100-r; print int(u+0.5) }' 2>/dev/null)"
     [ -n "$USED" ] || USED=0
     [ "$USED" -lt 0 ] 2>/dev/null && USED=0
     [ "$USED" -gt 100 ] 2>/dev/null && USED=100

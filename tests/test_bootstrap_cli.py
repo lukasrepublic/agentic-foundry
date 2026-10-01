@@ -225,8 +225,16 @@ DECLARED_PATH_SET = {
     ".foundry/permissions.yaml",  # permissions-scaffold (ER #215): a SEED — created once, then `kept`
 }
 
+# v1.18.3 (AC-BCL-6 amended): a greenfield run also CREATES the status-line wrapper the settings'
+# statusLine key names. It is written by statuslineWiring.mjs (the updater's marker-convergence owns it
+# afterwards), not by the managed-file plan, so it is outside DECLARED_PATH_SET's reconcile rows.
+STATUSLINE_WRAPPER = ".claude/hooks/foundry-statusline.sh"
+CREATED_PATH_SET = DECLARED_PATH_SET | {STATUSLINE_WRAPPER}
+
+STATUSLINE_VALUE = {"type": "command", "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/foundry-statusline.sh", "padding": 0}
+
 FORBIDDEN_SETTINGS_KEYS = {
-    "statusLine",
+    "subagentStatusLine",
     "hooks",
     "sandbox",
     "apiKeyHelper",
@@ -278,8 +286,10 @@ def _assert_marketplace_pinned_literal(entry, marketplace_repo):
 
 def _assert_settings_key_set_closed(settings):
     top_keys = {k for k in settings if not k.startswith("//")}
-    assert top_keys == {"permissions", "extraKnownMarketplaces", "enabledPlugins"}
+    assert top_keys == {"permissions", "extraKnownMarketplaces", "enabledPlugins", "statusLine"}
     assert set(settings["permissions"].keys()) == {"allow", "ask", "deny"}
+    # v1.18.3 (AC-BCL-4(c) amended): the one permitted value, naming the framework wrapper
+    assert settings["statusLine"] == STATUSLINE_VALUE
     found = _walk_forbidden_keys(settings, FORBIDDEN_SETTINGS_KEYS)
     assert not found, found
 
@@ -402,6 +412,7 @@ def test_the_update_package_manifest_has_no_lifecycle_scripts():
         "0.18.0": "0.2.0",  # v1.18.0 -- minor: friction removed; upgrades land in git.
         "0.18.1": "0.2.1",  # v1.18.1 -- patch: post-upgrade runs to the end; backfill idempotent.
         "0.18.2": "0.2.2",  # v1.18.2 -- patch: python runtime deps declared, installed, checked.
+        "0.18.3": "0.2.3",  # v1.18.3 -- patch: the token bar shows for new and upgraded workspaces.
     }
     pin = deps["create-agentic-workspace"]
     expected_update_version = CLI_UPDATE_VERSION_BY_PIN.get(pin)
@@ -561,6 +572,7 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         "1.18.0": "0.18.0",
         "1.18.1": "0.18.1",
         "1.18.2": "0.18.2",
+        "1.18.3": "0.18.3",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (
@@ -1172,7 +1184,7 @@ def test_the_created_path_set_is_exactly_the_declared_set(tmp_path):
     proc, home, target = _scaffold(tmp_path)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     actual = {str(p.relative_to(target)) for p in target.rglob("*") if p.is_file()}
-    assert actual == DECLARED_PATH_SET, actual ^ DECLARED_PATH_SET
+    assert actual == CREATED_PATH_SET, actual ^ CREATED_PATH_SET
 
 
 def test_the_seeded_manifest_validates_against_the_shipped_schema(tmp_path):
@@ -1646,13 +1658,16 @@ console.log(JSON.stringify({refused}));
         results["g_row_flip_control_fires"] = True
     _assert_covers_row("Bash(a/b/c:*)", "Bash(a/b:*)", False)  # the correct verdict still passes
 
-    # (h) hooks + statusLine keys added to written settings -> the REAL closed-key-set helper fires
+    # (h) hooks + subagentStatusLine keys added, and statusLine repointed off the framework wrapper
+    #     (AC-BCL-4(c) amended v1.18.3) -> the REAL closed-key-set helper fires
     real_map_settings = json.loads(json.dumps(real_settings))
     real_map_settings["extraKnownMarketplaces"] = {}
     real_map_settings["enabledPlugins"] = {}
+    real_map_settings["statusLine"] = dict(STATUSLINE_VALUE)
     _assert_settings_key_set_closed(real_map_settings)  # sanity: passes unmutated
     mutated_h = json.loads(json.dumps(real_map_settings))
     mutated_h["hooks"] = {}
+    mutated_h["subagentStatusLine"] = {"type": "command", "command": "echo hi"}
     mutated_h["statusLine"] = {"type": "command", "command": "echo hi"}
     try:
         _assert_settings_key_set_closed(mutated_h)
@@ -1760,7 +1775,7 @@ console.log(JSON.stringify({refused}));
     assert proc_l.returncode == 0
     (target_l / "stray-eighth-file.txt").write_text("intrusion")
     actual_l = {str(p.relative_to(target_l)) for p in target_l.rglob("*") if p.is_file()}
-    results["l_eighth_file_breaks_closed_set"] = actual_l != DECLARED_PATH_SET
+    results["l_eighth_file_breaks_closed_set"] = actual_l != CREATED_PATH_SET
 
     # (m) a flag accepted by argv (a mutated parser hard-codes one extra flag) but absent from the
     # question table -> the REAL bijection helper fires. `--help`'s own rendering is unaffected by

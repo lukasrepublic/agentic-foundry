@@ -19,7 +19,7 @@ import {
 } from './floorReconcile.mjs';
 import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from './gitignoreReconcile.mjs';
 import { planAmendmentsBackfill, applyAmendmentsBackfill, renderAmendmentsRow } from './amendmentsBackfill.mjs';
-import { planStatuslineWiring, applyStatuslineWiring, renderStatuslineRows } from './statuslineWiring.mjs';
+import { planStatuslineWiring, applyStatuslineWiring, renderStatuslineRows, wrapperIsOurs } from './statuslineWiring.mjs';
 
 export { DECLARED_PATH_SET };
 
@@ -156,6 +156,7 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
     const map = loadMap(path.join(pkgDir, 'permission-floor.json'));
     const pins = loadPins(pkgDir);
     const settingsObj = buildSettings(map, pins);
+    if (!wrapperIsOurs(physicalRoot)) delete settingsObj.statusLine;
     const settingsBytes = Buffer.from(`${JSON.stringify(settingsObj, null, 2)}\n`, 'utf-8');
 
     const managedFiles = buildManagedFiles({
@@ -200,12 +201,14 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
     // --existing run never touches .claude/settings.json (AC-BCL-9: an existing settings file is
     // reported drifted, left byte-identical, never merged); --reconcile-floor is the one opt-in
     // that already permits a narrow-key write to it, and this wiring is the same class of write.
-    // The greenfield create path never wires it — feat-foundry-bootstrap-cli AC-BCL-4(c) closes
-    // the pre-session key set, deliberately. planStatuslineWiring returns an empty plan when
-    // settings.json is absent. The upgrader (update.mjs) always reconciles the floor, so it
-    // always wires.
-    const statuslinePlan = answers.existing && answers.reconcileFloor
-      ? planStatuslineWiring({ physicalRoot, templatesDir: path.join(pkgDir, 'templates') })
+    // The upgrader (update.mjs) always reconciles the floor, so it always wires.
+    // v1.18.3 (operator directive 2026-09-30): ALSO whenever this run creates .claude/settings.json
+    // itself — the greenfield path, or --existing into a folder that has none. Until then a new user
+    // started with no status line at all. An existing settings.json is still never merged without
+    // --reconcile-floor (AC-BCL-9).
+    const settingsCreated = plan.some((f) => f.relPath === '.claude/settings.json' && f.action === 'create');
+    const statuslinePlan = (answers.existing && answers.reconcileFloor) || settingsCreated
+      ? planStatuslineWiring({ physicalRoot, templatesDir: path.join(pkgDir, 'templates'), settingsWillBeCreated: settingsCreated })
       : null;
     for (const row of renderStatuslineRows(statuslinePlan)) print(row);
 

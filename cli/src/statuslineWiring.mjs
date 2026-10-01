@@ -7,10 +7,12 @@
 // nothing when its one cache glob missed — on the operator's second machine the bar was simply
 // absent, with no line saying which piece was missing.
 //
-// This module is the WRITER, and it runs only post-trust — from `update-agentic-workspace` and from
-// `create-agentic-workspace --existing` on a workspace whose `.claude/settings.json` already exists.
-// The greenfield create path never calls it: feat-foundry-bootstrap-cli AC-BCL-4(c) (a frozen
-// security Block) closes the pre-session settings key set, and that reasoning stands.
+// This module is the WRITER. It runs from `update-agentic-workspace`, from `create-agentic-workspace
+// --existing --reconcile-floor` on a workspace whose `.claude/settings.json` already exists, and — since
+// v1.18.3 — from the create path whenever that run writes `.claude/settings.json` itself. Until then
+// the greenfield path never wired it (AC-BCL-4(c) closed the pre-session key set), so every new user
+// started without the bar; the operator directed the fix on 2026-09-30. The key is declared, not
+// granted: the platform's trust dialog still gates the first run of any project command.
 //
 // Two artifacts, two disciplines:
 //   * the wrappers are FRAMEWORK-OWNED: absent -> create; present with the framework marker ->
@@ -38,6 +40,17 @@ export const RETIRED_KEYS = Object.freeze([
   { key: 'subagentStatusLine', rel: '.claude/hooks/foundry-subagent-statusline.sh' },
 ]);
 
+/** True when the wrapper path is absent or a regular file carrying the framework marker — i.e. the
+ * file a `statusLine` key would run is one this framework writes. The create path omits the key from
+ * a new settings.json otherwise (security review Risk 2: never wire a file the framework did not write). */
+export function wrapperIsOurs(physicalRoot) {
+  const abs = confinedJoin(physicalRoot, WRAPPERS[0].rel);
+  if (abs === null) return false;
+  const st = fs.lstatSync(abs, { throwIfNoEntry: false });
+  if (!st) return true;
+  return st.isFile() && fs.readFileSync(abs, 'utf-8').includes(MARKER);
+}
+
 export function desiredSettingsValue(rel) {
   return { type: 'command', command: `$CLAUDE_PROJECT_DIR/${rel}`, padding: 0 };
 }
@@ -45,10 +58,14 @@ export function desiredSettingsValue(rel) {
 /** Plan only. `files[]` rows carry `{ rel, abs, action: create|converged|unchanged|kept|refused, bytes }`;
  * `keys[]` rows carry `{ key, action: wired|already-wired }`; `settingsPresent` says whether the
  * post-trust precondition held (when it did not, the plan is empty and renders nothing). */
-export function planStatuslineWiring({ physicalRoot, templatesDir }) {
+export function planStatuslineWiring({ physicalRoot, templatesDir, settingsWillBeCreated = false }) {
   const target = resolveTarget(physicalRoot);
-  const plan = { settingsPresent: target.present, settingsPath: target.path, files: [], keys: [], applied: false };
-  if (!target.present) return plan;
+  // v1.18.3 (operator directive 2026-09-30, amends feat-foundry-bootstrap-cli AC-BCL-4(c)): the create
+  // path wires the status line too, in the settings.json it is about to write — a new user saw no bar.
+  // PREVIEW ONLY: the create path re-plans after its write, when the file exists, and applies that.
+  const preview = !target.present && settingsWillBeCreated;
+  const plan = { settingsPresent: target.present || preview, settingsPath: target.path, files: [], keys: [], applied: false };
+  if (!plan.settingsPresent) return plan;
   for (const w of WRAPPERS) {
     const abs = confinedJoin(physicalRoot, w.rel);
     const bytes = fs.readFileSync(path.join(templatesDir, w.template));
@@ -65,7 +82,7 @@ export function planStatuslineWiring({ physicalRoot, templatesDir }) {
     }
     plan.files.push({ rel: w.rel, abs, action, bytes, ...(action === 'refused' && st ? { reason: 'not a regular file' } : {}) });
   }
-  const settings = readTarget(target.path);
+  const settings = preview ? {} : readTarget(target.path);
   for (const w of WRAPPERS) {
     const present = Object.prototype.hasOwnProperty.call(settings, w.key);
     // Security review (Risk 2): never wire a key at a file this framework did not write or could
