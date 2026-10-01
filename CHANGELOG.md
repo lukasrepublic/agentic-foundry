@@ -8,6 +8,30 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.18.4 — 2026-10-01
+
+### Sessions start in about a second, not 9–16
+
+`create-agentic-workspace` 0.18.4 and `update-agentic-workspace` 0.2.4 are published together.
+**Upgrading:** run `npx update-agentic-workspace@0.2.4` in the workspace and start a new session.
+
+`foundry-doctor.py --session-start` runs as a SessionStart hook, so every session start, resume,
+`/clear` and compaction waited for it. Measured on an adopter workspace with 239 active contracts:
+16.4 s on macOS and 8.7 s in an agent container. It now takes 1.06 s, and its output is byte-identical.
+
+- **YAML on the C loader.** PyYAML's libyaml `CSafeLoader` is used when PyYAML was built with it,
+  and the pure-Python `SafeLoader` otherwise. Both are safe loaders. The new helper
+  `scripts/foundry_yaml_load.py` also memoizes each file per process on (realpath, mtime, size) and
+  returns copies. It now serves the capability preflight, the permissions compiler's policy load,
+  the doctor's skill frontmatter and the release loader. The preflight had parsed 587 YAML documents
+  for 239 contracts in pure Python.
+- **The preflight stops redoing work per atom.** It loads the compiler module once and memoizes the
+  automatic grants on the policy file's identity, so the schema is validated once per run.
+- **Branch ancestry in one git call.** The doctor's branches line had spawned one
+  `git merge-base --is-ancestor` per branch (about 2.2 s). It now makes a single
+  `for-each-ref --merged`, and falls back to the per-branch check when that call fails. "Merged"
+  still means exactly "the branch tip is an ancestor of the base".
+
 ## v1.18.3 — 2026-09-30
 
 ### The token bar shows for every user, new or upgraded, from the first reply

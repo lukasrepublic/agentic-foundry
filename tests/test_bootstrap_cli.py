@@ -413,6 +413,7 @@ def test_the_update_package_manifest_has_no_lifecycle_scripts():
         "0.18.1": "0.2.1",  # v1.18.1 -- patch: post-upgrade runs to the end; backfill idempotent.
         "0.18.2": "0.2.2",  # v1.18.2 -- patch: python runtime deps declared, installed, checked.
         "0.18.3": "0.2.3",  # v1.18.3 -- patch: the token bar shows for new and upgraded workspaces.
+        "0.18.4": "0.2.4",  # v1.18.4 -- patch: session start no longer waits 9-16 s on the doctor.
     }
     pin = deps["create-agentic-workspace"]
     expected_update_version = CLI_UPDATE_VERSION_BY_PIN.get(pin)
@@ -573,6 +574,7 @@ def test_the_plugin_pin_block_matches_the_marketplace_manifest():
         "1.18.1": "0.18.1",
         "1.18.2": "0.18.2",
         "1.18.3": "0.18.3",
+        "1.18.4": "0.18.4",
     }
     expected_tarball = TARBALL_VERSION_BY_PLUGIN_PIN.get(pins["plugin_version"])
     assert expected_tarball is not None, (

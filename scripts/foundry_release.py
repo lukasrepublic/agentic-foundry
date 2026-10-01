@@ -34,6 +34,9 @@ import tempfile
 import yaml
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+import foundry_yaml_load as _yl  # noqa: E402  (shared C-accelerated safe loader)
 PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.dirname(HERE)
 
 _SLUG = re.compile(r"^[a-z0-9-]+$")
@@ -379,7 +382,7 @@ def load_release(id, *, project_dir=None, root=None):
         raise ReleaseError(f"release {id!r}: no manifest at {path}")
     try:
         with open(path, encoding="utf-8") as f:
-            doc = yaml.safe_load(f)
+            doc = _yl.safe_load(f)
     except yaml.YAMLError as e:
         raise ReleaseError(f"release {id!r}: malformed YAML in {path}: {e}")
     return _validate(doc, expected_id=id)
@@ -505,7 +508,7 @@ def _contract_info(atom, project_dir):
     path = os.path.join(_project_dir(project_dir), atom.contract_ref)
     try:
         with open(path, encoding="utf-8") as f:
-            doc = yaml.safe_load(f) or {}
+            doc = _yl.safe_load(f) or {}
     except (OSError, yaml.YAMLError):
         return (None, None)
     blk = doc.get("authorized") or {}
@@ -639,7 +642,7 @@ def _history_contains(repo, branch, contract_sha256):
 
 
 _LANDED_DIGESTS = {}
-_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+_YAML_LOADER = _yl.SAFE_LOADER
 
 
 def _landed_digests(repo, branch):
@@ -853,7 +856,7 @@ def _probe_superseded(atom, project_dir):
         end = text.find("\n---", 3)
         if end != -1:
             try:
-                fm = yaml.safe_load(text[3:end]) or {}
+                fm = _yl.safe_load(text[3:end]) or {}
                 if isinstance(fm, dict) and fm.get("status") == "superseded":
                     fm_superseded = True
             except yaml.YAMLError:
@@ -906,7 +909,7 @@ def _probe_merged_on_main(atom, project_dir, branch):
         return None, f"{atom.id}: contract unreadable ({atom.contract_ref})"
     try:
         with open(contract_path, encoding="utf-8") as f:
-            raw = yaml.safe_load(f)
+            raw = _yl.safe_load(f)
     except (OSError, yaml.YAMLError) as e:
         return None, f"{atom.id}: contract malformed ({atom.contract_ref}): {e}"
     if not isinstance(raw, dict):
@@ -927,7 +930,7 @@ def _read_marker(repo_dir):
     path = os.path.join(repo_dir, ".foundry", "build-provenance.yaml")
     try:
         with open(path, encoding="utf-8") as f:
-            doc = yaml.safe_load(f)
+            doc = _yl.safe_load(f)
     except (OSError, yaml.YAMLError):
         return None
     return doc if isinstance(doc, dict) else None

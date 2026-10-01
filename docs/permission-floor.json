@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "plugin_root_glob": "~/.claude/plugins/cache/*/foundry/*",
-  "generated_for_plugin_version": "1.18.3",
+  "generated_for_plugin_version": "1.18.4",
   "entries": [
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-acceptance-contract-validate.py:*)",
@@ -371,6 +371,10 @@
     {
       "script": "foundry_audit_log.py",
       "rationale": "library: no argparse/__main__; shared audit-log helper imported by other scripts"
+    },
+    {
+      "script": "foundry_yaml_load.py",
+      "rationale": "library: no argparse/__main__; shared C-accelerated safe-YAML loader + per-process file memo imported by the doctor, the capability preflight and the release loader"
     },
     {
       "script": "foundry_audit_preconditions.py",

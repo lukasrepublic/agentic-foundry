@@ -196,6 +196,14 @@ def _skill_paths(plugin_root):
     )
 
 
+def _safe_load_yaml(text):
+    """Frontmatter parse via the shared C-accelerated safe loader (scripts/foundry_yaml_load.py)."""
+    if HERE not in sys.path:
+        sys.path.insert(0, HERE)
+    import foundry_yaml_load
+    return foundry_yaml_load.safe_load(text)
+
+
 def check_skills_frontmatter(plugin_root=None):
     root = plugin_root or PLUGIN_ROOT
     paths = _skill_paths(root)
@@ -218,7 +226,7 @@ def check_skills_frontmatter(plugin_root=None):
             continue
         fm_text = text[3:end]
         try:
-            fm = yaml.safe_load(fm_text)
+            fm = _safe_load_yaml(fm_text)
         except yaml.YAMLError as e:
             broken.append(f"{p}: frontmatter YAML parse error: {e}")
             continue
