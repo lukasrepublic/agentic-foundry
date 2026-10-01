@@ -40,6 +40,17 @@ export const RETIRED_KEYS = Object.freeze([
   { key: 'subagentStatusLine', rel: '.claude/hooks/foundry-subagent-statusline.sh' },
 ]);
 
+/** True when the wrapper path is absent or a regular file carrying the framework marker — i.e. the
+ * file a `statusLine` key would run is one this framework writes. The create path omits the key from
+ * a new settings.json otherwise (security review Risk 2: never wire a file the framework did not write). */
+export function wrapperIsOurs(physicalRoot) {
+  const abs = confinedJoin(physicalRoot, WRAPPERS[0].rel);
+  if (abs === null) return false;
+  const st = fs.lstatSync(abs, { throwIfNoEntry: false });
+  if (!st) return true;
+  return st.isFile() && fs.readFileSync(abs, 'utf-8').includes(MARKER);
+}
+
 export function desiredSettingsValue(rel) {
   return { type: 'command', command: `$CLAUDE_PROJECT_DIR/${rel}`, padding: 0 };
 }

@@ -71,7 +71,13 @@ if [ -z "${FOUNDRY_STATUSLINE_INNER:-}" ]; then
     # a lock whose ts is not written yet is FRESH (a render just started), never stale
     _lt="$_now"; [ -r "$_lock/ts" ] && read -r _lt < "$_lock/ts" 2>/dev/null
     case "$_lt" in ''|*[!0-9]*) _lt="$_now" ;; esac
-    if [ $(( _now - _lt )) -gt 30 ]; then rm -f "$_lock/ts" 2>/dev/null; rmdir "$_lock" 2>/dev/null; continue; fi
+    # a stale lock is cleared once; one that cannot be removed (a stray file inside it) is never
+    # retried in a tight loop (security review R1) — the refresh falls through to the bounded wait
+    if [ $(( _now - _lt )) -gt 30 ] && [ "$_tries" -eq 0 ]; then
+      rm -f "$_lock/ts" 2>/dev/null
+      _tries=1
+      rmdir "$_lock" 2>/dev/null && continue
+    fi
     _ck=""; [ -r "$_cache.key" ] && _ck="$(< "$_cache.key")"
     if [ "$_ck" = "$_key" ] || [ "$_tries" -ge 20 ]; then
       [ -r "$_cache" ] && printf '%s' "$(< "$_cache")"
@@ -118,10 +124,13 @@ if [ -z "$selected" ]; then
     done | sort -V -k1,1 | tail -1 | cut -f2-
   )"
 fi
-# 3. the self-hosting source checkout
+# 3. the self-hosting source checkout — only a real clone (its own `.git` DIRECTORY): a cloned repo
+# cannot commit a nested `.git` directory, so files merely shipped in a project tree never resolve here
+# (v1.18.3 security review R3 — the create path now wires the line before the plugin is installed,
+# when steps 1–2 miss and this step would otherwise run the project's own copy)
 if [ -z "$selected" ] || [ ! -r "$selected" ]; then
   src="${CLAUDE_PROJECT_DIR:-$PWD}/agentic-foundry/scripts/${RENDERER}"
-  [ -r "$src" ] && selected="$src"
+  [ -r "$src" ] && [ -d "${CLAUDE_PROJECT_DIR:-$PWD}/agentic-foundry/.git" ] && [ ! -L "${CLAUDE_PROJECT_DIR:-$PWD}/agentic-foundry/.git" ] && selected="$src"
 fi
 
 # The resolved file must be the shipped renderer, not merely a file at a plausible path (security

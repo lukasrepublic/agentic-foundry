@@ -119,3 +119,17 @@ def test_a_planted_cache_dir_is_never_read_or_written(tmp_path):
     out = _run(env).communicate(input="{}", timeout=10)[0]
     assert "TOP-SECRET" not in out and out == "LINE"
     assert secret.read_text() == "TOP-SECRET"
+
+
+def test_a_stale_lock_that_cannot_be_removed_never_spins(tmp_path):
+    """v1.18.3 security review R1: a stale lock holding a stray file (Finder's .DS_Store) cannot be
+    rmdir'ed; the refresh must still exit within the bounded wait, never loop without sleeping."""
+    env, counter = _setup(tmp_path)
+    key = "".join(c if (c.isascii() and c.isalnum()) else "_" for c in env["CLAUDE_PROJECT_DIR"])
+    lock = Path(env["XDG_CACHE_HOME"]) / "foundry-statusline" / f"{key}.lock"
+    lock.mkdir(parents=True)
+    (lock / "ts").write_text("0\n")
+    (lock / ".DS_Store").write_text("x")
+    start = time.monotonic()
+    _run(env).communicate(input=_payload(rem=50), timeout=30)
+    assert time.monotonic() - start < 10, "a wedged lock must not hold the refresh"

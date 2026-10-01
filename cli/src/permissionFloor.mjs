@@ -274,8 +274,16 @@ export function buildSettings(map, pins) {
     permissions: { allow: byTier.allow, ask: byTier.ask, deny: byTier.deny },
     extraKnownMarketplaces: { [pins.marketplace_name]: marketplaceEntry },
     enabledPlugins: { [`${pins.plugin_name}@${pins.marketplace_name}`]: true },
+    // v1.18.3 (AC-BCL-4(c) amended, operator directive 2026-09-30): the status line ships with the
+    // scaffold — a new workspace had none. The one value permitted, naming the framework wrapper the
+    // create path writes beside it (statuslineWiring.mjs). Grants nothing; the trust dialog gates it.
+    statusLine: { ...STATUSLINE_VALUE },
   };
 }
+
+export const STATUSLINE_VALUE = Object.freeze({
+  type: 'command', command: '$CLAUDE_PROJECT_DIR/.claude/hooks/foundry-statusline.sh', padding: 0,
+});
 
 /** One capability-preview line per bundled-map entry, grouped by tier, carrying rule/tier/
  * rationale (AC-BCL-3). */

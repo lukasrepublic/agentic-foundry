@@ -87,7 +87,21 @@ def test_resolution_3_self_hosting_source_checkout(tmp_path):
     cfg.mkdir()
     ws = tmp_path / "ws"
     _fake_renderer(str(ws / "agentic-foundry" / "scripts" / "foundry-statusline.sh"), "VIA-SOURCE")
+    (ws / "agentic-foundry" / ".git").mkdir()
     assert _run(WRAPPER, cfg, ws) == "VIA-SOURCE"
+
+
+def test_resolution_3_never_runs_a_renderer_merely_shipped_in_the_project_tree(tmp_path):
+    """v1.18.3 security review R3: the create path wires the line before the plugin is installed, so
+    steps 1-2 miss; a project tree that only CARRIES agentic-foundry/scripts/ (no real clone — a repo
+    cannot commit a nested .git directory) must fall through to the inline bar, not run that file."""
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    ws = tmp_path / "ws"
+    _fake_renderer(str(ws / "agentic-foundry" / "scripts" / "foundry-statusline.sh"), "PLANTED")
+    (ws / "agentic-foundry" / ".git").write_text("gitdir: /elsewhere\n")  # a gitlink FILE, not a clone
+    out = _run(WRAPPER, cfg, ws, payload=json.dumps({"workspace": {"current_dir": str(ws)}}))
+    assert out == "⌂ ws", out
 
 
 def test_inline_fallback_renders_the_bar_when_nothing_resolves(tmp_path):

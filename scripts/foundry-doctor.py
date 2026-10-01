@@ -521,7 +521,9 @@ def check_permissions_policy(plugin_root=None, project_dir=None):
         detail = f"{preflight_part}; policy {drift_state} (.foundry/permissions.yaml vs .claude/settings.json)"
         # permissions-scaffold (ER #215, AC-PSC-4): an absent policy names its remedy in one clause.
         if str(drift_state).startswith("absent"):
-            detail += (" — seed it: the updater writes a starter .foundry/permissions.yaml, "
+            # v1.18.3: name the pinned command — the test of this remedy had been passing only because
+            # the statusline line, absent its key, happened to name the updater on the same screen
+            detail += (f" — seed it: `{_updater_cmd()}` writes a starter .foundry/permissions.yaml, "
                        "or copy context/permissions-template.yaml")
         if skipped_atoms:
             detail += f"; {skipped_atoms} atom(s) not checked (unreadable contract/charter)"

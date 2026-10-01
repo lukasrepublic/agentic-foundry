@@ -19,7 +19,7 @@ import {
 } from './floorReconcile.mjs';
 import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from './gitignoreReconcile.mjs';
 import { planAmendmentsBackfill, applyAmendmentsBackfill, renderAmendmentsRow } from './amendmentsBackfill.mjs';
-import { planStatuslineWiring, applyStatuslineWiring, renderStatuslineRows } from './statuslineWiring.mjs';
+import { planStatuslineWiring, applyStatuslineWiring, renderStatuslineRows, wrapperIsOurs } from './statuslineWiring.mjs';
 
 export { DECLARED_PATH_SET };
 
@@ -156,6 +156,7 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
     const map = loadMap(path.join(pkgDir, 'permission-floor.json'));
     const pins = loadPins(pkgDir);
     const settingsObj = buildSettings(map, pins);
+    if (!wrapperIsOurs(physicalRoot)) delete settingsObj.statusLine;
     const settingsBytes = Buffer.from(`${JSON.stringify(settingsObj, null, 2)}\n`, 'utf-8');
 
     const managedFiles = buildManagedFiles({
