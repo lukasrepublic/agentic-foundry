@@ -5,12 +5,12 @@
 # renderer surfaces the highest-value ambient signals for the parallel-autonomous-session operator,
 # isolation-first:
 #
-#   ⌂ <repo>:<branch>[+ahead/-behind,?untracked] · ⊙ <native task> · tok ███░░ NN%
+#   ⌂ <repo>:<branch>[+ahead/-behind] · ⊙ <native task> · tok ███░░ NN%
 #
-#   1. REPO ORIENTATION (leads, color-coded): `<glyph> <repo>:<branch>[+a/-b,?u]` — the repo basename
+#   1. REPO ORIENTATION (leads, color-coded): `<glyph> <repo>:<branch>[+a/-b]` — the repo basename
 #      (from the git COMMON-dir, so it is identical for a main checkout OR a linked worktree of the same
 #      repo), the branch (short-sha when detached, never empty), and a git-state cluster
-#      `[+ahead/-behind,?untracked]` rendered only when out-of-sync / dirty (ahead+behind default 0 with
+#      `[+ahead/-behind]` rendered only when out-of-sync (ahead+behind default 0 with
 #      no upstream, so the bracket is never malformed). A linked/dedicated worktree → green `⊞`; the main
 #      checkout → amber `⌂` (an honest "not isolated"; red is reserved for the tok bar). Detection =
 #      realpath-normalized `git rev-parse --absolute-git-dir` ≠ `--git-common-dir`. A non-repo cwd
@@ -44,6 +44,9 @@
 # error (no jq, git absent, malformed/empty payload, missing todos, non-TTY/no stdin) drops that
 # segment and the rest still renders; the process always `exit 0`.
 set +e
+# v1.18.5: read-only git — never take the index lock for an opportunistic refresh, so the status line
+# never contends with the session's own git work on a shared checkout.
+export GIT_OPTIONAL_LOCKS=0
 
 ESC=$'\033'
 GREEN="${ESC}[32m"
@@ -95,14 +98,16 @@ if git -C "$DIR" rev-parse --git-dir >/dev/null 2>&1; then
   BR="$(git -C "$DIR" symbolic-ref --short HEAD 2>/dev/null)"
   SHA="$(git -C "$DIR" rev-parse --short HEAD 2>/dev/null)"
   [ -n "$BR" ] || BR="$SHA"   # detached HEAD → short-sha, never empty
-  # git-state cluster [+ahead/-behind,?untracked]; ahead/behind DEFAULT 0 when there is no upstream
+  # git-state cluster [+ahead/-behind]; ahead/behind DEFAULT 0 when there is no upstream
   # (@{u} exits non-zero with empty stdout) — without the :-0 the cluster would render malformed.
+  # v1.18.5: NO `git status`. The untracked count it fed (`?N`) needed a walk of the whole working tree on
+  # every refresh; with several agent containers sharing one workspace over a VM file share, those walks
+  # overlapped and took seconds each (measured: 1-5 s, bursts to 142 s; 0.16 s for the rev-list below).
   AH="$(git -C "$DIR" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)"; AH=${AH:-0}
   BH="$(git -C "$DIR" rev-list --count 'HEAD..@{u}' 2>/dev/null || echo 0)"; BH=${BH:-0}
-  U="$(git -C "$DIR" status --porcelain --untracked-files=normal 2>/dev/null | grep -c '^??')"; U=${U:-0}
   CLUSTER=""
-  if [ "$((AH + BH + U))" -gt 0 ] 2>/dev/null; then
-    CLUSTER="[+${AH}/-${BH},?${U}]"
+  if [ "$((AH + BH))" -gt 0 ] 2>/dev/null; then
+    CLUSTER="[+${AH}/-${BH}]"
   fi
   if [ -n "$REPO" ] && [ -n "$BR" ]; then
     if [ -n "$GD" ] && [ -n "$CD" ] && [ "$GD" != "$CD" ]; then

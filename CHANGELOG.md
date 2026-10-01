@@ -8,6 +8,24 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v1.18.5 — 2026-10-01
+
+### The status line no longer walks the working tree
+
+`create-agentic-workspace` 0.18.5 and `update-agentic-workspace` 0.2.5 are published together.
+**Upgrading:** run `npx update-agentic-workspace@0.2.5` in the workspace and start a new session.
+
+The status line runs after every event in every session. To count untracked files (the `?N` in
+`[+a/-b,?N]`) it ran `git status --untracked-files=normal`, a walk of the whole working tree. With
+four agent containers sharing one adopter workspace (100k files) over a VM file share, those walks
+overlapped: 1–5 s each, with bursts to 142 s. The VM spent about 12% of its time stalled on I/O.
+
+- **No `git status`.** The repo segment is now `<repo>:<branch>[+ahead/-behind]`, and the untracked
+  count is gone. Ahead/behind comes from two ref reads (about 0.16 s on the same workspace).
+- **`GIT_OPTIONAL_LOCKS=0`.** Every git call the renderer makes runs without the optional index lock,
+  so it never contends with a session's own git work on a shared checkout.
+- A new test fails if the renderer runs `git status` again, or runs git with optional locks.
+
 ## v1.18.4 — 2026-10-01
 
 ### Sessions start in about a second, not 9–16
