@@ -59,6 +59,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 import foundry_permission_floor as _pf  # noqa: E402  (load_settings_file reuse, AC-SGP-2)
+import foundry_yaml_load as _yl  # noqa: E402  (C-accelerated safe loader + per-process file memo)
 
 try:
     import yaml
@@ -215,9 +216,7 @@ def load_policy(project_dir):
         st = os.stat(path)
         if st.st_size > _MAX_FILE_BYTES:
             raise PolicyError(f"{POLICY_REL} exceeds 1 MiB")
-        with open(path, "rb") as fh:
-            raw = fh.read()
-        data = yaml.safe_load(raw)
+        data = _yl.safe_load_file(path)
     except PolicyError:
         raise
     except Exception as e:

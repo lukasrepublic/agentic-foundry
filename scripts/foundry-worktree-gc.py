@@ -248,6 +248,19 @@ def is_ancestor(repo, sha, base):
     return p.returncode == 0
 
 
+def merged_tip_shas(repo, base):
+    """The set of tip SHAs of every local/remote-tracking branch ref reachable from `base`, in ONE
+    `for-each-ref --merged` call (the per-branch `is_ancestor` spawn dominated the doctor's
+    session-start time on a repo with many branches). `None` when the batch call fails (e.g. the
+    base is not fetched locally), so the caller falls back to per-branch `is_ancestor` -- the
+    conservative direction is unchanged: a sha is "merged" iff git says it is an ancestor of base."""
+    p = _git(repo, "for-each-ref", f"--merged={base}", "--format=%(objectname)",
+             "refs/heads", "refs/remotes")
+    if p.returncode != 0:
+        return None
+    return {ln.strip() for ln in p.stdout.splitlines() if ln.strip()}
+
+
 # ----------------------------------------------------------------------------------------------- #
 # gh (best-effort secondary signal)
 # ----------------------------------------------------------------------------------------------- #
@@ -346,11 +359,13 @@ def classify_repo(repo, *, protected_names=None, use_gh=True, base=None, pattern
     worktrees = list_worktrees(repo)
     wt_by_branch = {w["branch"]: w["path"] for w in worktrees if w.get("branch")}
 
+    merged_shas = merged_tip_shas(repo, base)
     rows = []
     for name in sorted(set(local) | set(remote)):
         l, r = local.get(name), remote.get(name)
         primary = l or r
-        ancestor_merged = is_ancestor(repo, primary["sha"], base)
+        ancestor_merged = ((primary["sha"] in merged_shas) if merged_shas is not None
+                           else is_ancestor(repo, primary["sha"], base))
         pr_info = None
         if use_gh and name not in protected and not ancestor_merged:
             # audit D8: only a PR merged into the DEFAULT branch counts (the gh `--base`)

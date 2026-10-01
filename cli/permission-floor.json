@@ -373,6 +373,10 @@
       "rationale": "library: no argparse/__main__; shared audit-log helper imported by other scripts"
     },
     {
+      "script": "foundry_yaml_load.py",
+      "rationale": "library: no argparse/__main__; shared C-accelerated safe-YAML loader + per-process file memo imported by the doctor, the capability preflight and the release loader"
+    },
+    {
       "script": "foundry_audit_preconditions.py",
       "rationale": "the shipped __main__ is a manual-invocation debug CLI for a human/operator; never instructed by any skill/hook"
     },

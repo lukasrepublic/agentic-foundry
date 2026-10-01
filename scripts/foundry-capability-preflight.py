@@ -72,6 +72,7 @@ import argparse
 import importlib.util
 import json
 import os
+import copy
 import re
 import stat
 import sys
@@ -81,6 +82,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 import foundry_permission_floor as _pf  # noqa: E402  (load_settings_file + sanitize reuse)
+import foundry_yaml_load as _yl  # noqa: E402  (C-accelerated safe loader + per-process file memo)
 
 try:
     import yaml  # noqa: E402
@@ -283,12 +285,9 @@ def load_contract_capabilities(path, project_dir):
     `project_dir` first (AC-CPD-1)."""
     real_path = _confine_path(path, project_dir, "contract")
     try:
-        with open(real_path, "rb") as fh:
-            raw = fh.read()
+        data = _yl.safe_load_file(real_path)
     except OSError as e:
         raise PreflightInputError(f"{path} is unreadable: {e}") from e
-    try:
-        data = yaml.safe_load(raw)
     except Exception as e:
         raise PreflightInputError(f"{path} is not valid YAML: {e}") from e
     if not isinstance(data, dict):
@@ -323,14 +322,21 @@ def load_charter_capabilities(path, project_dir):
 # --------------------------------------------------------------------------------------------- #
 
 
+_COMPILE_MODULE = None
+
+
 def _load_compile_module():
     """Lazy-imports `foundry-permissions-compile.py` (hyphenated filename) for `load_policy` /
     `PolicyError` reuse -- never re-implemented (mirrors the doctor's own lazy-import pattern for
     a hyphenated sibling script)."""
+    global _COMPILE_MODULE
+    if _COMPILE_MODULE is not None:
+        return _COMPILE_MODULE
     path = os.path.join(HERE, "foundry-permissions-compile.py")
     spec = importlib.util.spec_from_file_location("foundry_permissions_compile_preflight", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    _COMPILE_MODULE = mod
     return mod
 
 
@@ -372,6 +378,26 @@ def _automatic_grants(project_dir):
     """[{"rule", "grant_id", "preconditions"}, ...] for every `automatic` grant in
     `.foundry/permissions.yaml`. A missing policy file is NOT an error (not every atom needs one);
     a present-but-malformed one is, and so is a forbidden-character rule (AC-CPD-1/-2)."""
+    # Per-process memo on the policy file's identity: a doctor run over N active atoms called this N
+    # times, each re-parsing + schema-validating the same unchanged file. Errors are never cached.
+    try:
+        st = os.stat(os.path.join(project_dir, ".foundry", "permissions.yaml"))
+        key = (os.path.realpath(project_dir), st.st_mtime_ns, st.st_size)
+    except OSError:
+        key = None
+    if key is not None and key in _GRANTS_MEMO:
+        return copy.deepcopy(_GRANTS_MEMO[key])
+    out = _automatic_grants_uncached(project_dir)
+    if key is not None:
+        _GRANTS_MEMO.clear()
+        _GRANTS_MEMO[key] = copy.deepcopy(out)
+    return out
+
+
+_GRANTS_MEMO = {}
+
+
+def _automatic_grants_uncached(project_dir):
     pc = _load_compile_module()
     try:
         grants = pc.load_policy(project_dir)
