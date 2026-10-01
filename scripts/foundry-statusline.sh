@@ -133,6 +133,11 @@ fi
 # ── segment 3: context-pressure bar (tok ███░░ NN%) ───────────────────────────────────────────────
 TOK=""
 REM="$(jqr '(.context_window.remaining_percentage // empty)')"
+if [ -z "$REM" ] && [ "$_HAVE_JQ" -eq 0 ]; then
+  # v1.18.3: without jq the context figure is still read — bash pattern matching, no spawn
+  _re='"remaining_percentage"[[:space:]]*:[[:space:]]*([0-9.]+)'
+  [[ $PAYLOAD =~ $_re ]] && REM="${BASH_REMATCH[1]}"
+fi
 if [ -n "$REM" ]; then
   USED="$(awk -v r="$REM" -v b="$AUTO_COMPACT_BUFFER_PCT" 'BEGIN{
             ur=(r-b)/(100-b)*100; if(ur<0)ur=0; u=100-ur; u=int(u+0.5);
