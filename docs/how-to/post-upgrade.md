@@ -10,8 +10,8 @@ npx update-agentic-workspace@latest
 ```
 
 It refreshes the marketplace, updates the plugin in every scope that enables it, reconciles the
-managed files (never overwriting one you edited), backfills the `## Amendments` section every spec
-needs for `/foundry:amend`, and seeds `.foundry/permissions.yaml` when there is none. It previews
+managed files (never overwriting one you edited), backfills the empty `## Amendments` section every spec
+carries, and seeds `.foundry/permissions.yaml` when there is none. It previews
 every `claude` call and every path before the first write, prints one row per phase, and ends with:
 
 ```
@@ -36,7 +36,7 @@ the PR body instead of a mid-walk question:
 3. standing grants you have already stated — in the session or a committed CLAUDE.md; one found only
    in memory becomes a proposal in the PR body — into `.foundry/permissions.yaml` (none stated means
    the step is done), then compiled, until the doctor reads `policy in-sync`;
-4. `requires_capabilities` on contracts that are not frozen (frozen ones are listed for `/foundry:amend`);
+4. `requires_capabilities` on contracts that are not frozen (frozen ones are listed for an operator re-authorization);
    independent of the grants step, and it never blocks the walk;
 5. a relock when the stack-profile lock is behind the profile version the plugin ships;
 6. a truth pass over `CLAUDE.md`, `docs/`, the prose under `.claude/` and your memory directory against

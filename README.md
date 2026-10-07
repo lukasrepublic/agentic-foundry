@@ -1,18 +1,19 @@
 # Agentic Foundry
 
-**Governed, spec-driven delivery for agent-built software — as a Claude Code plugin.**
+**Ticket-first delivery for agent-built software — as a Claude Code plugin.**
 
-Spec tools stop at "generate documents." Review bots are advisory. Agent platforms sandbox
-execution but not *delivery*. Foundry runs the seam none of them run: **spec → operator
-authorization → governed build → an honestly-tiered merge floor → certification against the
-real running app → human sign-off.**
+One artifact per change: **a ticket with a runnable "Done means".** The agent builds it on a
+branch, runs the repository's own tests locally until green, opens one PR, and your platform —
+branch protection and CI — decides the merge. A separate security lane covers auth, secrets and
+custody changes. Specs, acceptance contracts and per-change authorization still exist, but they
+are an **opt-in lane** the operator chooses, not the default path.
 
 > Philosophy in one line: **gates make problems visible, not impossible** — and every gate has
 > to earn its keep. A gate ships only if it names the observed failure it prevents; the
 > operator's own judgment is what the automation serves, never what it replaces.
 
-**Status: v1.18.5.** Built solo, dogfooded daily — Foundry is built *with* Foundry: every release
-you can install was itself specced, authorized, floor-gated, and certified through it.
+**Status: v1.18.5 (v2.0.0, the delivery rebase, is in progress).** Built solo, dogfooded daily.
+The default path is on one page: **[context/operating-model.md](context/operating-model.md)**.
 
 ## The loop, in one picture
 
@@ -20,29 +21,25 @@ you can install was itself specced, authorized, floor-gated, and certified throu
  YOU (operator)          THE AGENT                 YOUR PLATFORM (GitHub/CI)
  ──────────────          ─────────                 ─────────────────────────
       │
-      │  "rate-limit the public API"
+      │  a ticket: what / why / Done means (a command) / Paper allowed
       ▼
- ┌──────────┐    ┌──────────────────────┐
- │  intake  │───▶│ atomic spec + accept- │        specs/features/<product>/api/rate-limit/
- └──────────┘    │ ance contract drafted │                    ├─ feat-api-rate-limit.md
-      │          └──────────────────────┘                    └─ acceptance-contract.yaml
-      ▼
- ┌──────────────┐ ┌─────────────────────┐
- │ spec-review  │▶│ 3 fresh-context     │
- └──────────────┘ │ reviewer lenses     │
-      │           └─────────────────────┘
-      ▼
- ┌──────────────┐
- │  AUTHORIZE   │  ← you read every checkpoint, you confirm.
- │  (no skip)   │    spec + contract hashes frozen, signed with your id
- └──────┬───────┘
-        │ frozen contract
-        ▼
+ ┌──────────────┐    ┌─────────────────────────┐
+ │ foundry-ticket│───▶│ active ticket recorded; │   the paper guard refuses writes to
+ │ start <issue> │    │ Done means = the check  │   specs/, docs/, .foundry/ … unless
+ └──────────────┘    └─────────────────────────┘   the ticket allows them
+                                │
+                                ▼
                   ┌─────────────────────┐
-                  │ dispatch: implement │       isolated git worktree,
-                  │ against the frozen  │──────▶ PR opened
-                  │ contract            │           │
+                  │ dispatch: build it  │       isolated git worktree;
+                  │ on a branch, run    │──────▶ foundry-test.sh until green
+                  │ `Done means`        │           │ (local-green recorded for HEAD)
                   └─────────────────────┘           ▼
+                                          ┌──────────────────────┐
+                                          │   one PR per ticket  │
+                                          │ push + non-draft PR   │
+                                          │ refused until green   │
+                                          └──────────┬───────────┘
+                                                     ▼
                                           ┌──────────────────────┐
                                           │   THE MERGE FLOOR    │
                                           │ your branch protection│
@@ -51,62 +48,49 @@ you can install was itself specced, authorized, floor-gated, and certified throu
                                           └──────────┬───────────┘
       ┌──────────────────────────────────────────────┘ merged
       ▼
- ┌───────────────┐ ┌────────────────────────┐
- │ certify-local │▶│ deploy ONCE, run every │      per-atom pass/fail from
- └───────────────┘ │ atom's real Playwright │      the runner's own output
-      │            │ journeys against it    │
-      ▼            └────────────────────────┘
  ┌───────────────┐
- │  SIGN-OFF     │  ← you test it yourself. Recorded as a practice
- │  (yours)      │    note — deliberately not a machine gate.
+ │  SIGN-OFF     │  ← you test it yourself. A practice,
+ │  (yours)      │    deliberately not a machine gate.
  └───────────────┘
 ```
 
-Two hard gates — **authorize** (yours) and **the floor** (your platform's) — then an honest
-tail: **certify** produces machine evidence, and the final **sign-off** is yours. Everything
-between the gates is the agent's job.
+The Stop hook runs `Done means`: while it fails the session keeps working (three refusals, then it
+may stop with the failure named). The platform is the gate; the operator's own test pass is the last
+step.
 
 ## See it in action
 
-The core loop, as you'd actually type it:
+The default loop, as you'd actually run it:
 
 ```text
-> /foundry:intake "rate-limit the public API"
-  … interactive discovery → writes specs/features/<product>/api/rate-limit/feat-api-rate-limit.md
-    + acceptance-contract.yaml (stable AC-IDs, observable checkpoints)
+> gh issue create --title "Repoint beta DNS" --body-file ticket.md
+  … ticket.md: ## What / ## Why / ## Done means (one fenced command) / ## Paper allowed
 
-> /foundry:spec-review specs/features/<product>/api/rate-limit/feat-api-rate-limit.md
-  … deterministic pre-lints → 3 fresh-context reviewer questions (prior-art,
-    steel-man+adversarial, per-AC rubric) → one remediation round → review recorded
+> python3 "$CLAUDE_PLUGIN_ROOT/scripts/foundry-ticket.py" start 42
+  … records the ticket in .claude/foundry-ticket.json (gitignored)
 
-> /foundry:authorize specs/features/<product>/api/rate-limit/feat-api-rate-limit.md
-  … shows you the contract's checkpoints → you confirm → spec+contract hashes frozen
-
-> /foundry:dispatch feat-api-rate-limit
-  … implementer persona builds it in an isolated worktree → opens a PR
+> /foundry:dispatch 42
+  … an implementer persona builds it in an isolated worktree, runs foundry-test.sh until green,
+    pushes once and opens one PR
   … your CI + branch protection decide the merge (the plugin's git-discipline hook
     refuses --admin bypasses and merges ahead of green checks — fail-closed)
 
-> /foundry:certify-local api-v2
-  … deploys the release ONCE locally, runs every atom's tagged Playwright journeys
-    against that one instance → per-atom pass/fail from the runner's own output
-
-> /foundry:release accept api-v2 --operator you --verdict accepted
-  … records YOUR sign-off — a practice note, never a machine gate
+> /foundry:merge-when-green 87
+  … on your explicit instruction: waits for every check, merges the instant the PR is CLEAN
 ```
 
-And the artifact the whole loop pivots on — an acceptance contract you can read:
+And the artifact the whole loop pivots on — a ticket you can read in one screen:
 
-```yaml
-spec_ref: specs/features/<product>/api/rate-limit/feat-api-rate-limit.md
-scope:
-  allowed_paths: ["src/api/**"]
-checkpoints:
-  - ac_id: AC-RATE-1
-    surface: "api:/v1/*"
-    locator: "GET /v1/anything x101 within 60s"
-    expect: { op: equals, value: "HTTP 429 on request 101" }
+````markdown
+## What
+Rate-limit the public API.
+## Done means
 ```
+npx playwright test tests/rate-limit.spec.ts
+```
+## Paper allowed
+docs/runbooks/rate-limit.md
+````
 
 ## Where you run it: one repo, or a control plane over many
 
@@ -114,16 +98,16 @@ Foundry works **inside a single repository** — install it, `/foundry:init`, an
 live in that repo. That is the fastest way to try it, and the Quickstart takes that path.
 
 But it is **designed to be operated from a control plane**: a small *workspace* repo that holds
-your specifications and hosts your code repositories as gitignored siblings, with the factory
+your tickets and runbooks and hosts your code repositories as gitignored siblings, with the factory
 dispatching work into each of them.
 
 ```
    SINGLE REPO                          CONTROL PLANE  (what it is built for)
    ───────────                          ─────────────
 
-   your-app/                            acme-handbook/          ◀── specs live here; you run
+   your-app/                            acme-handbook/          ◀── the workspace; you run
    ├── .claude/  ← the wiring           ├── .claude/                Claude from HERE
-   ├── specs/    ← the WHAT             ├── specs/features/…    ◀── the WHAT for every repo
+   ├── docs/     ← the runbooks         ├── docs/               ◀── the WHAT for every repo
    └── src/      ← the code             │
                                         ├── api/    ◀── its own git repo, gitignored
                                         ├── web/    ◀── its own git repo, gitignored
@@ -131,13 +115,13 @@ dispatching work into each of them.
 ```
 
 Why it matters: real projects are an app, some services, and the infrastructure under them. The
-control plane keeps **one governed corpus of specs** across all of them, while each repo keeps its
-own history, CI, and merge floor. A contract names its venue with `target_repo: api`, and the
-factory dispatches a worker into that repo's working tree.
+control plane keeps **one workspace** (tickets, runbooks, the operator registry) across all of them,
+while each repo keeps its own history, CI, and merge floor. A ticket names the repo it changes
+(`target_repo: api`), and the factory dispatches a worker into that repo's working tree.
 
 > **If you use a control plane, start your Claude session at the control plane — never inside a
 > hosted repo.** Everything the factory needs (the plugin wiring, the operator registry, the repo
-> manifest, your specs) resolves from the session's project directory. Open a session inside
+> manifest, your runbooks) resolves from the session's project directory. Open a session inside
 > `api/` and none of that corpus is there. Whether the `/foundry:*` verbs themselves appear
 > depends on where the plugin was enabled — and the common case is the dangerous one, because
 > `claude plugin install` enables it **user-wide**: the verbs load, pointed at the wrong root,
@@ -180,37 +164,35 @@ if a session still loads the old version, check each scope's registration. `--cl
 workspace files; without that flag it previews and removes nothing. Plugin-cache versions are never
 removed by the updater, because a running session may still use one.
 
-Then follow **[docs/QUICKSTART.md](docs/QUICKSTART.md)** — zero to your first governed merge.
-Existing codebase? Start at `/foundry:extract-spec` (brownfield → spec, then the same loop).
+Then follow **[docs/QUICKSTART.md](docs/QUICKSTART.md)** — zero to your first merged ticket.
 Want the full guided build? The **[Acme Links tutorial](https://github.com/lukasrepublic/agentic-handbook/blob/main/docs/example-acme-links/README.md)**
 takes an empty repo to a governed, live-proven merge in seven checkpointed steps.
 
 ## Start here
 
 Not sure which verb starts the thing you want to do? Find your task below. Every shipped verb,
-grouped by loop stage, is on **[docs/VERBS-QUICK-REF.md](docs/VERBS-QUICK-REF.md)**.
+grouped by stage, is on **[docs/VERBS-QUICK-REF.md](docs/VERBS-QUICK-REF.md)**.
 
 | I want to... | Run this |
 |---|---|
-| Turn a fuzzy ask into a reviewable spec | `/foundry:intake` |
-| Get a fresh-context review of a draft spec | `/foundry:spec-review` |
-| Give my go-ahead before any code gets touched | `/foundry:authorize` |
-| Have the authorized spec built in an isolated worktree | `/foundry:dispatch` |
-| Prove a release works against a real running instance | `/foundry:certify-local` |
-| Record my own sign-off on a release | `/foundry:release` |
+| Wire my repo for the factory (once) | `/foundry:init` |
+| Have a ticket built in an isolated worktree | `/foundry:dispatch` |
+| Wait for a PR's checks and merge it (on my say-so) | `/foundry:merge-when-green` |
 | Check whether my repo is wired up correctly | `/foundry:doctor` |
-| Turn an existing codebase into a candidate spec | `/foundry:extract-spec` |
+| Turn a fuzzy ask into a ticket (or a spec, if I opt in) | `/foundry:intake` |
+| Freeze a spec + contract for `security: true` work | `/foundry:authorize` |
+| Cut a release | `/foundry:cut-release` |
 | Recover from a red gate or a wedged install | [docs/how-to/](docs/how-to/) |
 
-## The core loop is six verbs
+## The core loop is three verbs
 
-`intake → spec-review → authorize → dispatch → certify-local → release accept`
+`init → dispatch → merge-when-green`
 
-That's the whole discipline. The other ~64 skills are an **optional catalog** — release-wave
-fan-out, infra-delivery (`id-*`) craft for OpenTofu/K8s/ArgoCD shops, brownfield extraction,
-citation-graph MCP, fleet/status tooling. Use six verbs, ignore the rest, add lanes when you
-need them. Want zero ceremony for a small change? `/foundry:mode-interactive` is the
-documented escape hatch — pure native Claude Code, no pipeline.
+That's the whole discipline, plus your own CI. The other ~29 skills are an **optional catalog** —
+the opt-in spec lane (`intake`, `authorize`), infra-delivery (`id-*`) craft for OpenTofu/K8s/ArgoCD
+shops, multi-repo (`repos`), release cutting and upgrade tooling. Use three verbs, ignore the rest,
+add lanes when you need them. Want zero ceremony for a small change? Plain Claude Code on a branch
+is the documented escape hatch — `/foundry:mode interactive` says so out loud.
 
 ## The merge floor, honestly
 
@@ -222,7 +204,7 @@ honestly labeled:
 | **A — enforced** | Branch protection / rulesets: required status checks on `main` | Public repos on any plan; private repos on paid plans |
 | **B — advisory, labeled** | The same CI checks, always-reporting + the plugin's client-side git-discipline hook (refuses `--admin` bypass; admits plain merge only on live all-green checks; fail-closed on any error) | Private repos on plans without rulesets |
 
-No tier is silently overclaimed: the `spec-link-base`, `security-path-base` and `shell-parse-bash32` gate jobs label their
+No tier is silently overclaimed: the `security-path-base` and `shell-parse-bash32` gate jobs label their
 tier in every summary. Why the
 tiers are honest rather than uniform — and what a client-side hook can and cannot promise —
 is the heart of the [trust model](docs/DESIGN.md). Full mechanics: **[docs/merge-floor.md](docs/merge-floor.md)**.
@@ -231,29 +213,15 @@ is the heart of the [trust model](docs/DESIGN.md). Full mechanics: **[docs/merge
 
 | | Spec Kit / OpenSpec / BMAD | Review bots (CodeRabbit…) | Agent platforms (Devin, Cursor…) | **Foundry** |
 |---|---|---|---|---|
-| Spec artifacts | ✅ generate them | — | plans, ephemeral | ✅ + frozen, hash-bound contracts |
-| Authorization before build | IDE/UX approvals at best | — | — | ✅ operator-signed hash freeze; the factory lane has no skip<sup>†</sup> |
+| Unit of work | spec documents | — | plans, ephemeral | ✅ a ticket with a runnable `Done means`; a spec only if you opt in |
+| Stops early? | — | — | often | ✅ the Stop hook runs `Done means`; the session keeps going while it fails |
 | Merge enforcement | prompt packs | advisory comments | — | ✅ tiered floor, honestly labeled |
-| Certification vs the running app | — | — | — | ✅ deploy-once + real journey suite<sup>‡</sup> |
+| Local-green before push | — | — | — | ✅ push and non-draft PR refused until `foundry-test.sh` is green for HEAD |
 | Human authority | varies | — | sandbox-level | ✅ operator sign-off is terminal, by design |
 
-<sup>‡</sup> **Reachability caveat, stated plainly.** The certification machinery ships and works,
-but a *fresh* adopter cannot currently reach it: `/foundry:certify-local` takes its boot recipe
-only from an active stack profile, and no shipped code path creates the
-`.foundry/stack-profile.lock` that a profile is resolved through. The `repos.<key>.boot_command`
-field the schema advertises for this is read by nothing. Two atoms are specified to close this
-(`boot-recipe-precedence`, `stack-profile-lock-create`) and are awaiting authorization; until
-they ship, read this row as "built and exercised in this repo", not "available on first install".
-
-<sup>†</sup> `/foundry:authorize` itself has no skip — the freeze is unconditional and
-operator-signed. Separately, the `spec-link-base` merge gate accepts a **declared light lane**
-for changes that are not spec-driven, applied as the `lane:light` LABEL. It used to be a
-`Lane: light` line in the PR body; that was removed because a PR body is written by its author,
-so a fork could self-declare the light lane and skip the check entirely. A label can only be
-applied by someone with write access — so the declaration is still discretionary, but it is no
-longer self-asserted by an outside contributor.
-So "nothing merges unauthorized" is a property of the factory lane, not of every possible
-PR. The trade and how to remove it: [docs/merge-floor.md → *The two lanes*](docs/merge-floor.md#the-two-lanes-and-the-escape-hatch-you-should-know-about).
+The opt-in spec lane (`security: true` work) keeps the hash-bound contract: `/foundry:authorize` has
+no skip, and the freeze is operator-signed. It is a lane the operator chooses, not a gate every
+change passes through — the trade and how it was measured: [docs/merge-floor.md](docs/merge-floor.md).
 
 **When NOT to use Foundry:** exploratory prototyping (use plain Claude Code — our
 interactive mode *is* that), teams not on Claude Code, GitLab (not yet supported), or if
@@ -262,9 +230,10 @@ Honest full comparison: **[docs/comparison.md](docs/comparison.md)**.
 
 ## Built with itself (the numbers)
 
-More than 2000 pytest tests · doctor green in under a second · every third-party GitHub Action
-SHA-pinned · every release specced, reviewed, authorized, floor-gated, and certified through
-the tool itself · the changelog documents every security-review disposition per release.
+More than 1500 pytest tests · doctor green in under a second · every third-party GitHub Action
+SHA-pinned · the changelog documents every security-review disposition per release. The 2.0 rebase
+came from measuring this very workflow over 60 days on two adopter workspaces (paper outweighed
+shipped code 1.5:1 to 8:1 by lines) and deleting the paper.
 These claims are **CI-locked** — a doc-drift test fails the build when they stop being true.
 
 ## Docs
@@ -283,14 +252,13 @@ step-by-step multi-repo setup live with the workspace template:
 ## Roadmap (near-term, honest)
 
 - Compliance-evidence reporting (provenance pins → EU-AI-Act / SOC2 artifacts).
-- Spec ⟷ code drift detection wired to frozen contracts.
 - GitLab: a go/no-go decision, stated openly rather than promised.
 - More stack profiles (community-driven — see good first issues).
 
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The floor: tests + doctor stay green; no claim ever
-exceeds shipped enforcement; features to Foundry go through Foundry. Good first issues:
+exceeds shipped enforcement; features to Foundry go through a ticket. Good first issues:
 stack profiles and reference-agent generification.
 
 ## License

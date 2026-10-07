@@ -61,16 +61,10 @@ the swarm documentation. Price that in before arming a team, not after.
 
 ## Foundry's own posture
 
-- `workflows/release-wave.js`'s fan-out workers are **always unnamed** `agent(...)` calls — they
-  stay ordinary subagents whether or not the operator has this flag on. See the comment at the top
-  of that file and `tests/test_agent_teams_enablement.py`, which greps every `agent(...)` call's
-  option object for a `name` key and asserts none carry one.
-- `skills/command-deck/SKILL.md`'s "Teammates" section documents the one place Foundry's own
-  machinery *does* consider spawning teammates — the command deck's tick, on explicit request
-  only.
+- Foundry ships no wave orchestrator and no recurring watcher; fan-out is several `Agent` calls in
+  one message (`/foundry:dispatch`), which stay ordinary subagents whether or not the operator has
+  this flag on. Foundry's own machinery never spawns teammates.
 
 ## Related
 
-- `skills/command-deck/SKILL.md` — the deck's spawn convention (teammates only by explicit
-  request, disjoint-scope atoms, `builder-<atom>`/`reviewer-<atom>` naming).
 - `/foundry:doctor` — prints the `agent-teams` advisory line described above.

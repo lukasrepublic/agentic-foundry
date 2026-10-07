@@ -1,27 +1,29 @@
 # Agentic Foundry
 
-> Governed, spec-driven delivery for agent-built software, shipped as a Claude Code plugin.
-> The loop: spec → operator authorization → governed build in an isolated worktree → an
-> honestly-tiered merge floor (the platform's own enforcement) → certification against the
-> real running app → human sign-off. Gates make problems visible, not impossible; the
-> operator's judgment is terminal by design.
+> Ticket-first delivery for agent-built software, shipped as a Claude Code plugin.
+> The loop: a ticket with a runnable "Done means" → build in an isolated worktree → local-green
+> before push → one PR → the platform's own enforcement (branch protection + CI, honestly tiered)
+> → human sign-off. Gates make problems visible, not impossible; the operator's judgment is
+> terminal by design.
 
-Key facts for agents: the core loop is six verbs (intake, spec-review, authorize, dispatch,
-certify-local, release accept); specs are atomic (stable AC-IDs, ≤14 ACs / 8,000 words, no
-override); the acceptance contract is frozen (content-hashed, operator-signed) at
-authorization and scope-widening requires re-authorization; certification refuses rather
-than passing vacuously; there is no unattended-merge mode.
+Key facts for agents: the core loop is three verbs (init, dispatch, merge-when-green); the unit of
+work is a GitHub issue whose `## Done means` fenced command is what the session runs before it
+stops; the paper guard refuses writes to specs/, docs/, .foundry/ and similar unless the active
+ticket allows them; a spec with a frozen, operator-signed acceptance contract is an opt-in lane
+(`security: true` work); merge-when-green runs only on explicit instruction; there is no
+unattended-merge mode.
 
 ## Docs
 
 - [README](README.md): the loop in one picture, quickstart, task→verb table, honest comparison
+- [Operating model](context/operating-model.md): the whole default path on one page
 - [Docs home](docs/README.md): the four-quadrant index (tutorials / how-to / reference / explanation)
-- [Quickstart](docs/QUICKSTART.md): zero to a first governed merge, artifact by artifact
+- [Quickstart](docs/QUICKSTART.md): zero to a first merged ticket, artifact by artifact
 - [Design & trust model](docs/DESIGN.md): what the machine enforces, what stays human, what is deliberately not guaranteed
 - [Merge floor](docs/merge-floor.md): the tier model (A server-enforced / B labeled-advisory) and exact hook semantics
 - [Architecture](docs/architecture.md): workspace (WHAT) ⟷ factory (HOW) and the wiring contract
 - [Verb reference](docs/VERBS-QUICK-REF.md): every /foundry:* verb, one line each
-- [Glossary](docs/glossary.md): atom, contract, floor, journey, operator…
+- [Glossary](docs/glossary.md): ticket, contract, floor, operator…
 - [Comparison](docs/comparison.md): vs SDD tools / review bots / agent platforms, including when NOT to use this
 - [Troubleshooting](docs/troubleshooting.md): symptom-first runbooks
 - [FAQ](docs/faq.md)
@@ -29,12 +31,9 @@ than passing vacuously; there is no unattended-merge mode.
 ## How-to
 
 - [Recover from a failed gate](docs/how-to/recover-from-a-failed-gate.md)
-- [Adopt on an existing codebase](docs/how-to/adopt-on-an-existing-codebase.md)
 - [Team review with CODEOWNERS](docs/how-to/team-review-with-codeowners.md)
 - [Multi-repo control plane](docs/how-to/multi-repo-control-plane.md)
 - [Cut a release](docs/how-to/cut-a-release.md)
-- [Migrate from Spec Kit](docs/how-to/migrate-from-spec-kit.md)
-- [Migrate from OpenSpec](docs/how-to/migrate-from-openspec.md)
 
 ## Optional
 

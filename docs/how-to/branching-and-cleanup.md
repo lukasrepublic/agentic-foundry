@@ -1,8 +1,7 @@
 # How to keep branch/worktree hygiene: one push per atom, one deploy per release
 
 `context/branch-discipline.md` is the full discipline (cited by
-`skills/mode-autonomous/SKILL.md`, `skills/command-deck/SKILL.md`,
-`skills/command-deck/tick-prompt.template.md`, and `skills/dispatch/SKILL.md`). This page is the
+`skills/dispatch/SKILL.md`). This page is the
 worked adopter example plus the cleanup recipe (branch-and-worktree-discipline, `AC-BWD-7`,
 v1.16.0).
 
@@ -32,8 +31,8 @@ branch behind even when it is run.
 
 ## The fix: a release branch batches the deploy trigger
 
-1. `/foundry:intake`'s last step, when opening a new release, creates `release/<version>` from
-   `main` and records it in the manifest as `integration_branch`.
+1. When opening a new release, create `release/<version>` from `main` (`/foundry:intake`'s last
+   step does it).
 2. Every atom builds on `atom/<id>` cut from `release/<version>`, and its own PR targets
    `release/<version>` — **not** `main`. Per-atom CI checks still run (they gate the atom PR); the
    `push: main` chain above simply never fires per atom, because no atom PR ever merges into
@@ -46,14 +45,14 @@ branch behind even when it is run.
 `skills/cut-release/SKILL.md`'s R/R2 procedure is otherwise unchanged; it now runs on
 `release/<version>` instead of directly on a bespoke feature branch.
 
-`/foundry:merge-when-green --release <id>` enforces the second rule above: it refuses (structured `blocked`,
-`remediation: "gh pr edit <n> --base release/<version>"`) an atom PR whose base is `main` when the
-named release's manifest carries an `integration_branch`.
+The rule that a ticket's PR targets `release/<version>`, never `main`, is a convention carried by
+`context/branch-discipline.md` and the dispatch prompt; the merge floor on `main` is what stops a
+direct merge.
 
 ### The security-review label re-pins on retarget, and the release branch's own merge-floor tier
 
 Learned dogfooding this flow (recorded here, not as a new acceptance criterion): `btb-gates`'s
-`security-path`/`spec-link` review label is `security-reviewed:<head12>-<base8>`, where `base8` is
+`security-path` review label is `security-reviewed:<head12>-<base8>`, where `base8` is
 derived from the **base ref name itself** (`.github/workflows/btb-gates-base.yml`):
 
 ```bash

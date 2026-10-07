@@ -16,11 +16,13 @@ the constraint is verification, not generation.
 
 Four floors, none ever relaxed; each names exactly what it enforces:
 
-1. **Front-authorization.** Specs are authored atomically (stable AC-IDs, a hard 14-AC/8k-word
-   ceiling), single-pass reviewed (three fresh-context lenses), then **authorized by the
-   operator**: the spec + acceptance-contract hashes are frozen and signed. In the factory
-   flow an unauthorized spec cannot reach `main` — approval is the spec merged to your
-   workspace's main; **git history is the ledger**.
+1. **Front-authorization — the opt-in spec lane.** The default unit of work is a ticket with a
+   runnable `Done means` (see [context/operating-model.md](../context/operating-model.md)); the
+   operator's standing grant is the authorization. For `security: true` work, or a design the
+   operator chooses to spec, specs are authored atomically (stable AC-IDs, a hard 14-AC/8k-word
+   ceiling) and **authorized by the operator**: the spec + acceptance-contract hashes are
+   frozen and signed. On that lane an unauthorized spec cannot reach `main` — approval is the
+   spec merged to your workspace's main; **git history is the ledger**.
 2. **The merge floor.** Your platform's own enforcement, tiered honestly (see
    [merge-floor.md](merge-floor.md)): required status checks where your plan supports
    rulesets (Tier A); always-reporting checks + a fail-closed client-side git-discipline
@@ -30,20 +32,18 @@ Four floors, none ever relaxed; each names exactly what it enforces:
 4. **Typed contracts + git discipline.** Acceptance contracts are schema-validated YAML;
    no force-push to protected branches; PR-then-merge, always.
 
-Then the tail: **certification** (deploy the release once, run every atom's real Playwright
-journeys against that instance — refuse, never vacuously pass, when journeys are missing)
-and the **operator's terminal sign-off**, a recorded practice note that is deliberately
-**not** machine-enforced.
+Then the tail: the **operator's terminal sign-off** — their own test pass, a practice that is
+deliberately **not** machine-enforced.
 
 ```
         what the machine enforces                what stays human
  ┌────────────────────────────────────┐   ┌──────────────────────────────┐
- │ 1. front-authorization  (no skip)  │   │  the AUTHORIZE decision      │
- │ 2. the merge floor      (tiered)   │   │  the sign-off after testing  │
- │ 3. security review      (routed)   │   │  every scope/risk judgment   │
- │ 4. typed contracts + git discipline│   │                              │
- │    certification        (refuses   │   │  the automation makes these  │
- │                     when vacuous)  │   │  INFORMED — never replaced   │
+ │ 1. Done means + local-green        │   │  the sign-off after testing  │
+ │    (Stop hook · push guard)        │   │  every scope/risk judgment   │
+ │    spec lane: front-authorization  │   │  the choice to use a spec    │
+ │ 2. the merge floor      (tiered)   │   │                              │
+ │ 3. security review      (routed)   │   │  the automation makes these  │
+ │ 4. typed contracts + git discipline│   │  INFORMED — never replaced   │
  └────────────────────────────────────┘   └──────────────────────────────┘
 ```
 
@@ -68,7 +68,7 @@ The design method, stated as the rule it is: **every gate must name the observed
 prevents, or it does not ship.** Governance here is treated as a cost to be justified by
 evidence, not a virtue to be accumulated:
 
-- A review pipeline runs the number of passes the data says pays for itself — not more.
+- A review runs the number of passes the data says pays for itself — one round, not three.
 - Enforcement the platform already provides (branch protection, required checks) is *used*,
   never duplicated — a bespoke copy of a server-side control is strictly weaker than the
   original, minus the platform's tamper resistance.
@@ -83,15 +83,15 @@ it. What ships is what earned its place.
 ```
 BRAND       "Agentic Foundry"           ← metaphor lives ONLY here
 NAMESPACE   foundry                      ← the plugin namespace
-PRIMITIVES  [foundry]  the governance semantics: contracts, authorization,
-                       wave planning, certification, the floor discipline
-            [native]   Anthropic primitives — Agent · Workflow · Skill · hook · MCP
+PRIMITIVES  [foundry]  the governance semantics: tickets, the paper guard, local-green,
+                       opt-in contracts and authorization, the floor discipline
+            [native]   Anthropic primitives — Agent · Skill · hook · /loop
             [external] git · gh · your CI · your branch protection
 ```
 
-**Native-primitive-first.** Dispatch is the `Agent` tool; fan-out is the `Workflow` tool;
-review personas are subagents; retrieval is MCP. `[foundry]` exists only where the platform
-has no opinion: what a spec is, who may authorize it, what "certified" means, and how a
+**Native-primitive-first.** Dispatch is the `Agent` tool; recurring work is `/loop`;
+review personas are subagents. `[foundry]` exists only where the platform
+has no opinion: what a ticket's "done" is, who may authorize a spec, and how a
 release earns a human signature.
 
 ## Further reading
@@ -100,4 +100,4 @@ release earns a human signature.
 - [comparison.md](comparison.md) — honest positioning vs the alternatives, including when
   not to use this.
 - [architecture.md](architecture.md) — the workspace ⟷ factory split.
-- [glossary.md](glossary.md) — the vocabulary (atom, contract, floor, journey…).
+- [glossary.md](glossary.md) — the vocabulary (ticket, contract, floor…).
