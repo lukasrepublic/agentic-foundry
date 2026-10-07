@@ -4,8 +4,8 @@
 Drives `schema/acceptance-contract.schema.json` + `scripts/foundry_contract.py`'s
 `validate_contract_bytes` over the three new OPTIONAL top-level fields (`done_when`,
 `escalate_when`, `requires_capabilities`): schema accept/refuse (AC-DWE-1), contract_sha256 hash
-coverage (AC-DWE-5), and the amend-verb's pre-existing BOUNDARY_FIELDS membership (AC-DWE-5,
-"already in BOUNDARY_FIELDS — assert, do not re-implement").
+coverage (AC-DWE-5). (The amend-verb BOUNDARY_FIELDS assertion and the charter-list fixture went
+with `scripts/foundry-amend.py` and the command-deck watcher in v2.0.0.)
 
 Follows `tests/test_contract_authz.py`'s own idiom (`_golden()` dict + `yaml.safe_dump` +
 `contract.validate_contract_bytes`) rather than inventing a second one.
@@ -20,7 +20,6 @@ import yaml
 from conftest import REPO_ROOT, load_module
 
 contract = load_module("scripts/foundry_contract.py", "foundry_contract")
-amend = load_module("scripts/foundry-amend.py", "foundry_amend")
 
 FIXTURES = os.path.join(REPO_ROOT, "tests", "fixtures", "done-when")
 
@@ -133,17 +132,6 @@ class TestDoneWhenEscalateWhenRefused:
         assert ok is False, (field, bad_value, errors)
 
 
-# =================================================== AC-DWE-3/-4 fixture: markdown charter list ==== #
-
-def test_fixture_charter_exists_and_carries_both_sections():
-    """Sanity check on the fixture the command-deck-watch test suite parses — kept here so a
-    fixture edit that breaks the shape fails loudly beside the contract behavior it accompanies."""
-    with open(os.path.join(FIXTURES, "sample-charter.md"), encoding="utf-8") as fh:
-        text = fh.read()
-    assert "## Done when" in text
-    assert "## Escalate when" in text
-
-
 # ========================================================================== AC-DWE-5: hash ==== #
 
 class TestContractShaCoversNewFields:
@@ -182,13 +170,3 @@ class TestContractShaCoversNewFields:
         ok, errors, _ = contract.validate_contract_bytes(injected)
         assert ok is False
         assert any("done_when" in e and "integrity" in e for e in errors), errors
-
-
-# ============================================== AC-DWE-5: amend BOUNDARY_FIELDS (assert only) ==== #
-
-def test_requires_capabilities_already_in_amend_boundary_fields():
-    """AC-DWE-5: `requires_capabilities` is ALREADY in `scripts/foundry-amend.py`'s
-    BOUNDARY_FIELDS (a change to it already classifies AC-AMND-1(b)) — this atom's write boundary
-    denies scripts/foundry-amend.py outright, so this test only ASSERTS the pre-existing fact,
-    never re-implements or edits the classifier."""
-    assert "requires_capabilities" in amend.BOUNDARY_FIELDS

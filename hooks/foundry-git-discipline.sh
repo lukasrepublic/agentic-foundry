@@ -84,6 +84,7 @@ PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$HERE_DIR/.." && pwd)}"
 # ----------------------------------------------------------------------------------------
 PROTECTED="main"          # comma-joined; `main` is always a member (widen-only)
 STRICT_HISTORY=0          # strict_history_ops opt-in (adds reset --hard + rebase -i)
+LOCAL_GREEN=1             # clause (j): push / non-draft PR only after scripts/foundry-test.sh
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -98,9 +99,15 @@ while [ $# -gt 0 ]; do
     --strict-history)
       STRICT_HISTORY=1
       ;;
+    --local-green=off)
+      # The local-green clause (j) is a DELIVERY discipline, not a security floor: an adopter
+      # may switch it off here (and only here). Every other clause has no off-switch.
+      LOCAL_GREEN=0
+      ;;
     *)
-      # Unknown args are ignored (NO --allow / --force / off-switch is honored; there is no
-      # argument that downgrades a BLOCK to an ADMIT — AC-GITGUARD-3).
+      # Unknown args are ignored. No argument downgrades a security clause's BLOCK to an ADMIT
+      # (AC-GITGUARD-3); the one recognised off-switch, --local-green=off above, disables only the
+      # delivery-discipline clause (j), which admits nothing a security clause refuses.
       ;;
   esac
   shift
@@ -139,7 +146,7 @@ except Exception:
 # bash 3.2's command-substitution scanner mis-tracks backquotes/quotes across heredoc content
 # (feat-foundry-bash32-parse-guard), so the substitution below contains only the function call.
 _git_discipline_eval() {
-  PROTECTED="$PROTECTED" STRICT_HISTORY="$STRICT_HISTORY" CMD="$cmd" PLUGIN_ROOT="$PLUGIN_ROOT" \
+  PROTECTED="$PROTECTED" STRICT_HISTORY="$STRICT_HISTORY" LOCAL_GREEN="$LOCAL_GREEN" CMD="$cmd" PLUGIN_ROOT="$PLUGIN_ROOT" \
     PAYLOAD_CWD="$payload_cwd" python3 - <<'PY'
 import json, os, re, shlex, subprocess, sys
 
@@ -152,6 +159,58 @@ cmd = os.environ.get("CMD", "")
 protected = {b.strip() for b in os.environ.get("PROTECTED", "main").split(",") if b.strip()}
 protected.add("main")                                   # always protected (widen-only)
 strict = os.environ.get("STRICT_HISTORY", "0") == "1"
+local_green_on = os.environ.get("LOCAL_GREEN", "1") == "1"
+
+
+def _local_green(git_idx, git_globals):
+    """Clause (j) evidence: (ok, detail). The repository is the payload cwd composed with every
+    literal `-C` global (expanded, in order, as git does). `<git-dir>/foundry-local-green` (written
+    by scripts/foundry-test.sh) must name the current HEAD. UNRESOLVABLE => refused: an earlier
+    `cd`/`pushd`/`popd` in the command, a `--git-dir`/`--work-tree` global, or a non-literal `-C`
+    (the same posture as clause (a)'s no-refspec resolution). A cwd that is not a repository at
+    all is admitted (nothing to judge; the floor is branch protection + CI, not this clause)."""
+    for k in range(git_idx):
+        if low[k] in ("cd", "pushd", "popd"):
+            return False, ("an earlier directory change (%s) makes the repository unresolvable; "
+                           "run the push from the repository cwd or use `git -C <dir> push`" % toks[k])
+    repo = os.environ.get("PAYLOAD_CWD", "") or os.getcwd()
+    for opt, val in git_globals:
+        if opt.startswith(("--git-dir", "--work-tree")):
+            return False, "the git global option %s makes the repository unresolvable" % opt
+        if opt == "-C":
+            if not val or any(c in val for c in ("$", "`", "*", "?")):
+                return False, "a non-literal `-C` directory (%s)" % (val or "")
+            repo = os.path.join(repo, os.path.expanduser(val))
+    try:
+        gd = subprocess.run(["git", "-C", repo, "rev-parse", "--git-dir"], capture_output=True,
+                            text=True, timeout=10)
+        hd = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True,
+                            text=True, timeout=10)
+    except Exception:
+        return True, "repo unresolvable"
+    if gd.returncode != 0 or hd.returncode != 0:
+        return True, "not a repository"
+    gitdir = gd.stdout.strip()
+    if not os.path.isabs(gitdir):
+        gitdir = os.path.join(repo, gitdir)
+    head = hd.stdout.strip()
+    marker = os.path.join(gitdir, "foundry-local-green")
+    try:
+        fields = open(marker, encoding="utf-8").read().split()
+        first = fields[0]
+    except Exception:
+        return False, "no local-green marker for HEAD %s" % head[:12]
+    if first != head:
+        return False, "local-green marker names %s but HEAD is %s" % (first[:12], head[:12])
+    if len(fields) > 1 and fields[1] == "notests":
+        return True, "local-green for HEAD %s is UNTESTED (no test command found by foundry-test.sh)" % head[:12]
+    return True, "local-green for HEAD %s" % head[:12]
+
+
+_LOCAL_GREEN_REMEDY = ("Run the repository's own tests locally first: "
+                       "\"$CLAUDE_PLUGIN_ROOT/scripts/foundry-test.sh\" (writes "
+                       "<git-dir>/foundry-local-green for HEAD on success). CI confirms; it does "
+                       "not discover. A draft PR (`gh pr create --draft`) needs no marker.")
 
 # Refusal messages echo the offending command (and, for the gh clause, the check query's output)
 # into the agent transcript. Since an inline `GH_TOKEN=<pat> gh pr merge …` is a supported form,
@@ -492,6 +551,27 @@ for i, t in enumerate(low):
     rest = args[sub_idx + 1:]
     lrest = [r.lower() for r in rest]
 
+    # (j) local-green — EVERY push of commits (not --delete/-d, --dry-run, --tags) needs
+    # <git-dir>/foundry-local-green naming HEAD, written by scripts/foundry-test.sh. Measured:
+    # 890 PRs / 56 days on one adopter repo, each a 32-minute CI run, every merge a staging
+    # deploy — CI was the first test run. This clause moves the first run back to the branch.
+    # It runs on ADMISSION only — after clause (a) has had its say — so a protected-branch
+    # force-push is still refused with clause (a)'s own reason.
+    def _require_local_green():
+        if not local_green_on:
+            return
+        bare_push = [r for r in rest if not r.startswith("-")]
+        refspecs_push = bare_push[1:] if bare_push else []
+        maintenance = any(r in ("--delete", "-d", "--dry-run", "-n") for r in lrest) \
+            or ("--tags" in lrest and not refspecs_push) \
+            or (refspecs_push and all(r.startswith(":") for r in refspecs_push))
+        if maintenance:
+            return
+        ok, detail = _local_green(i, git_globals)
+        if not ok:
+            block("push refused: %s. Command: %s" % (detail, cmd),
+                  remediation=_LOCAL_GREEN_REMEDY, retryable=True)
+
     # (a) force-push — refspec-aware.
     if sub == "push":
         force_flag = any(r in ("--force", "-f", "--force-with-lease") or
@@ -504,6 +584,7 @@ for i, t in enumerate(low):
         plus_force = any(rs.startswith("+") for rs in refspecs)
         force_intent = force_flag or plus_force
         if not force_intent:
+            _require_local_green()                      # clause (j)
             continue                                    # not a force push → not this op
         # Resolve destination(s). No refspec / HEAD / unparseable => current branch =>
         # UNKNOWN => assume protected (BLOCK). Otherwise BLOCK iff any resolved dst is
@@ -529,6 +610,7 @@ for i, t in enumerate(low):
                 if dst in protected:
                     block("force-push with no refspec resolves to PROTECTED branch %r (the "
                           "current branch or its upstream). Command: %s" % (dst, cmd))
+            _require_local_green()                      # clause (j)
             continue                                    # resolved, every candidate non-protected
         for rs in refspecs:
             dst = strip_dst_ref(rs)
@@ -538,6 +620,7 @@ for i, t in enumerate(low):
             if dst in protected:
                 block("force-push to PROTECTED branch %r. Command: %s" % (dst, cmd))
         # every refspec resolved to a provably-non-protected branch => admit this clause.
+        _require_local_green()                          # clause (j)
         continue
 
     # (d) branch -D / --delete --force of a protected branch.
@@ -616,6 +699,24 @@ for i, t in enumerate(low):
         continue
     args = clause_args(i)
     largs = [a.lower() for a in args]
+    # (j) `gh pr create` without --draft/-d is a request for CI — admitted only with local-green.
+    if local_green_on:
+        bare_gh, skip = [], False
+        for a in largs:
+            if skip:
+                skip = False
+                continue
+            if a in ("-r", "--repo"):
+                skip = True            # drop the value of the repo selector
+                continue
+            if a.startswith("-"):
+                continue
+            bare_gh.append(a)
+        if bare_gh[:2] == ["pr", "create"] and not any(a in ("--draft", "-d") for a in largs):
+            ok, detail = _local_green(i, [])
+            if not ok:
+                block("non-draft `gh pr create` refused: %s. Command: %s" % (detail, cmd),
+                      remediation=_LOCAL_GREEN_REMEDY, retryable=True)
     # bare (non-option) tokens, skipping the VALUE of the one value-taking global gh flag we
     # know about (--repo/-R owner/repo) so it can't masquerade as the "pr" subcommand token —
     # any OTHER value-taking global flag interposed before `pr merge` is a bounded residual

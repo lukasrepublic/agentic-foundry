@@ -1,17 +1,16 @@
-"""tests/test_agent_teams_enablement.py — feat-agent-teams-enablement (AC-ATE-1..-5).
+"""tests/test_agent_teams_enablement.py — feat-agent-teams-enablement (AC-ATE-1, -4, -5).
 
-Two live seams, per AC-ATE-5:
+Two live seams:
 
-1. `workflows/release-wave.js` never passes `name:` inside any `agent(...)` call's option object
-   (AC-ATE-2) — verified with a real (not string-fooled) parse: `agent(...)` call sites are found by
-   a paren-depth scan over the SAME elided view `tests/test_workflow_export_shape.py` already uses
-   to keep string/template/comment content from ever being mistaken for code, then each call's span
-   is searched for a `name` property key.
-2. `scripts/foundry-doctor.py`'s `agent-teams` advisory line (AC-ATE-4) — on/off fixtures over the
+1. `scripts/foundry-doctor.py`'s `agent-teams` advisory line (AC-ATE-4) — on/off fixtures over the
    effective settings files' `env` block, at every precedence layer (`~/.claude/settings.json`, the
    project's `.claude/settings.json`, then `.claude/settings.local.json`), plus the "never RED"
    guarantee and the doc-sync exclusion (AC-ATE-4's line stays outside the doctor-probe-claims
    count, the same way `permissions-policy` already does).
+2. `docs/how-to/agent-teams.md` quotes the primary-doc facts (AC-ATE-1).
+
+(AC-ATE-2, the `release-wave.js` no-`name:` parse, and AC-ATE-3, the command-deck `## Teammates`
+convention, went with those two files in v2.0.0.)
 """
 from __future__ import annotations
 
@@ -23,10 +22,7 @@ import sys
 import pytest
 
 from conftest import REPO_ROOT, load_module, _functional_plugin_root
-from test_workflow_export_shape import elided_view
 
-RELEASE_WAVE_JS = os.path.join(REPO_ROOT, "workflows", "release-wave.js")
-COMMAND_DECK_SKILL = os.path.join(REPO_ROOT, "skills", "command-deck", "SKILL.md")
 AGENT_TEAMS_HOWTO = os.path.join(REPO_ROOT, "docs", "how-to", "agent-teams.md")
 
 doctor = load_module("scripts/foundry-doctor.py", "foundry_doctor")
@@ -35,70 +31,6 @@ doctor = load_module("scripts/foundry-doctor.py", "foundry_doctor")
 def _read(path):
     with open(path, encoding="utf-8") as f:
         return f.read()
-
-
-# ================================================================================================ #
-# AC-ATE-2 — workflows/release-wave.js: no agent(...) call ever passes `name:`
-# ================================================================================================ #
-
-_AGENT_CALL_RE = re.compile(r"\bagent\s*\(")
-_NAME_KEY_RE = re.compile(r"(?<![\w$])name\s*:")
-
-
-def _agent_call_spans(elided):
-    """Every `agent(...)` call's (start, end) span — `end` is the index AFTER the call's closing
-    `)` — found by a paren-depth scan starting at each call's own open paren, over the ELIDED view,
-    so a paren living only inside a string/template/comment can never mis-close a span."""
-    spans = []
-    n = len(elided)
-    for m in _AGENT_CALL_RE.finditer(elided):
-        open_paren = m.end() - 1
-        depth = 0
-        i = open_paren
-        close = None
-        while i < n:
-            c = elided[i]
-            if c == "(":
-                depth += 1
-            elif c == ")":
-                depth -= 1
-                if depth == 0:
-                    close = i
-                    break
-            i += 1
-        assert close is not None, (
-            f"unbalanced parens scanning an agent(...) call at offset {m.start()} in "
-            f"{RELEASE_WAVE_JS}"
-        )
-        spans.append((m.start(), close + 1))
-    return spans
-
-
-def test_release_wave_has_several_agent_calls():
-    """A floor for the negative assertion below — if this ever collects zero call sites, the naming
-    assertion would pass vacuously instead of actually checking anything."""
-    elided = elided_view(_read(RELEASE_WAVE_JS))
-    spans = _agent_call_spans(elided)
-    assert len(spans) >= 5, f"expected several agent(...) call sites, found {len(spans)}: {spans}"
-
-
-def test_release_wave_agent_calls_never_pass_name():
-    """AC-ATE-2: no `agent(...)` call carries a `name` key inside its option object — every worker
-    this fan-out dispatches stays an ordinary subagent even when the operator's own settings turn
-    the native team surface on."""
-    elided = elided_view(_read(RELEASE_WAVE_JS))
-    spans = _agent_call_spans(elided)
-    offenders = [(start, end) for start, end in spans if _NAME_KEY_RE.search(elided[start:end])]
-    assert not offenders, (
-        f"agent(...) call(s) in {RELEASE_WAVE_JS} carrying a name: key at offsets {offenders}"
-    )
-
-
-def test_release_wave_carries_the_ac_ate_2_rationale_comment():
-    """The invariant is explained in place, not just enforced silently (reviewability)."""
-    text = _read(RELEASE_WAVE_JS)
-    assert "AC-ATE-2" in text
-    assert "name" in text.lower()
 
 
 # ================================================================================================ #
@@ -399,29 +331,3 @@ def test_how_to_doc_states_when_not_to_use_a_team():
     text = _read(AGENT_TEAMS_HOWTO)
     assert "Sequential work" in text
     assert "Same-file edits" in text
-
-
-# ================================================================================================ #
-# AC-ATE-3 — skills/command-deck/SKILL.md carries the spawn convention
-# ================================================================================================ #
-
-def test_command_deck_skill_has_a_teammates_section():
-    text = _read(COMMAND_DECK_SKILL)
-    assert re.search(r"^## Teammates\s*$", text, re.MULTILINE), (
-        "expected a top-level '## Teammates' section in skills/command-deck/SKILL.md"
-    )
-
-
-def test_command_deck_teammates_section_states_the_spawn_convention():
-    text = _read(COMMAND_DECK_SKILL)
-    m = re.search(r"^## Teammates\s*$(.*?)(?=^## |\Z)", text, re.MULTILINE | re.DOTALL)
-    assert m, "no '## Teammates' section body found"
-    body = m.group(1)
-    assert "builder-<atom>" in body
-    assert "reviewer-<atom>" in body
-    assert "agents/" in body
-    assert "teams-allowed" in body
-    assert re.search(r"two or more|>=\s*2|≥2", body), (
-        "expected the >=2 disjoint-scope-atoms threshold stated in the section body"
-    )
-    assert "subagent" in body.lower()

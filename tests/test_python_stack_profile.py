@@ -1,12 +1,11 @@
 """tests/test_python_stack_profile.py — feat-foundry-python-stack-profile (atom GP-2).
 
 Validates the two shipped Python stack-profile packs (`python-uv-service`, `python-uv-lib`) against
-the shipped loader (`scripts/foundry-stack-profile.py`) and the certification driver
-(`skills/certify-local/certify_local.py`), and proves the additive `profile_kind: library` schema
-extension is back-compatible and fail-closed — over the REAL shipped tree plus throwaway `tmp_path`
-fixtures for the two criteria that need a resolvable lock (AC-PSP-7, AC-PSP-8), following the same
-throwaway-plugin-root pattern `tests/test_certify_fixture.py`'s `_seed_stack_profile`/`_write_lock`
-already use. Read-only over the live tree; no profile command string is ever executed here.
+the shipped loader (`scripts/foundry-stack-profile.py`), and proves the additive `profile_kind: library` schema
+extension is back-compatible and fail-closed — over the REAL shipped tree. Read-only over the live
+tree; no profile command string is ever executed here. (The certification-driver criteria AC-PSP-7 and
+the driver half of AC-PSP-8 went with `skills/certify-local` in v2.0.0; the declared boot recipe and
+health surface are still asserted straight from the pack.)
 """
 from __future__ import annotations
 
@@ -21,7 +20,6 @@ import yaml
 from conftest import REPO_ROOT, load_module
 
 sp = load_module("scripts/foundry-stack-profile.py", "foundry_stack_profile_python_stack_profile")
-cl = load_module("skills/certify-local/certify_local.py", "certify_local_python_stack_profile")
 
 PACKS_DIR = os.path.join(REPO_ROOT, "packs", "stack-profiles")
 PACK_IDS = ("python-uv-service", "python-uv-lib")
@@ -139,38 +137,6 @@ def _full_lib_doc(**overrides):
     return doc
 
 
-def _seed_plugin_root(tmp_path, pack_id):
-    """A throwaway CLAUDE_PLUGIN_ROOT-shaped tree carrying ONE copy of the real shipped pack, the
-    real schema, and a `.claude-plugin/plugin.json` — the same shape
-    `tests/test_certify_fixture.py`'s `_seed_stack_profile` builds. `certify_local.py` itself always
-    imports the REAL `scripts/foundry_release.py`/`foundry-stack-profile.py` from THIS repo (never
-    from the throwaway tree); only the packs/schema/plugin.json vary."""
-    import shutil
-    root = tmp_path / "plugin"
-    shutil.copytree(os.path.join(REPO_ROOT, "schema"), root / "schema")
-    (root / ".claude-plugin").mkdir(parents=True)
-    with open(root / ".claude-plugin" / "plugin.json", "w", encoding="utf-8") as f:
-        json.dump({"name": "foundry", "version": "0.99.0"}, f)
-    pack_dst = root / "packs" / "stack-profiles" / pack_id
-    shutil.copytree(os.path.join(PACKS_DIR, pack_id), pack_dst)
-    return root
-
-
-def _write_lock_for(root, pack_id, project_dir):
-    """A `.foundry/stack-profile.lock` resolving the ONE copied pack, with the digests computed
-    exactly as `resolve_lock` verifies them (content sha256 + the conditioned standing-versions
-    digest) — never a hand-typed/guessed value."""
-    doc, path, csha = sp.load_profile(pack_id, root=str(root), plugin_root=str(root))
-    svsha = sp._standing_versions_sha256_of(os.path.dirname(path), doc)
-    entry = {"id": pack_id, "version": doc["version"], "sha256": csha}
-    if svsha is not None:
-        entry["standing_versions_sha256"] = svsha
-    foundry_dir = project_dir / ".foundry"
-    foundry_dir.mkdir(parents=True, exist_ok=True)
-    with open(foundry_dir / "stack-profile.lock", "w", encoding="utf-8") as f:
-        json.dump({"profiles": [entry]}, f)
-
-
 # ═══════════════════════════════════ AC-PSP-1 : back-compat (pre-change-attributable half) ═══════ #
 
 class TestBackCompat:
@@ -282,44 +248,21 @@ class TestRecipeStringsPinned:
         assert actual == expected, f"{pid} {section}.{key}: {actual!r} != {expected!r}"
 
 
-# ═══════════════════════════════════ AC-PSP-7 : the negative control — library REFUSEs ═══════ #
-
-class TestCertifyRefusesForLibraryProfile:
-    def test_certify_refuses_for_library_profile(self, tmp_path):
-        root = _seed_plugin_root(tmp_path, "python-uv-lib")
-        project_dir = tmp_path / "project"
-        project_dir.mkdir()
-        _write_lock_for(root, "python-uv-lib", project_dir)
-        with pytest.raises(cl.CertifyError) as excinfo:
-            cl.resolve_boot_recipe(str(project_dir), str(root), root=str(root))
-        msg = str(excinfo.value)
-        assert msg.startswith(cl.REFUSED_PREFIX)
-        assert "no boot recipe" in msg
-
-
 # ═══════════════════════════════════ AC-PSP-8 : the service pack's real, pinned boot target ═══ #
 
 class TestServiceBootTarget:
-    def test_service_boot_recipe_byte_equal(self, tmp_path):
-        root = _seed_plugin_root(tmp_path, "python-uv-service")
-        project_dir = tmp_path / "project"
-        project_dir.mkdir()
-        _write_lock_for(root, "python-uv-service", project_dir)
-        _profile, binding = cl.resolve_boot_recipe(str(project_dir), str(root), root=str(root))
-        assert binding["boot"] == BOOT_CMD
+    def test_service_boot_recipe_byte_equal(self):
+        doc, _path, _sha = _load("python-uv-service")
+        assert doc["app_exercise_binding"]["boot"] == BOOT_CMD
 
-    def test_service_health_surface_bound_to_boot_authority(self, tmp_path):
-        root = _seed_plugin_root(tmp_path, "python-uv-service")
-        project_dir = tmp_path / "project"
-        project_dir.mkdir()
-        _write_lock_for(root, "python-uv-service", project_dir)
-        profile, binding = cl.resolve_boot_recipe(str(project_dir), str(root), root=str(root))
+    def test_service_health_surface_bound_to_boot_authority(self):
+        profile, _path, _sha = _load("python-uv-service")
         surfaces = profile["app_exercise_binding"]["surfaces"]
         assert len(surfaces) == 1
         surf = surfaces[0]
         assert surf["kind"] == "api"
         assert surf["exercise"] == SURFACE_EXERCISE
-        boot_authority = _boot_authority(binding["boot"])
+        boot_authority = _boot_authority(profile["app_exercise_binding"]["boot"])
         exercise_authority = _exercise_authority(surf["exercise"])
         assert boot_authority == "127.0.0.1:8000"
         assert exercise_authority == boot_authority  # bound — never independently edited

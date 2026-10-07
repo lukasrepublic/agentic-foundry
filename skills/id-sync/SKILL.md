@@ -114,13 +114,12 @@ over**.
 
 ## Outputs (the named hand-offs)
 
-- **The reconcile/realization report** — the human/`id-review`-readable post-merge report: the
+- **The reconcile/realization report** — the human-readable post-merge report: the
   reconcile target (the merged `candidate_sha`), the empty-plan re-check, BOTH ArgoCD axes
   (`sync_status` + `health_status`), and the deployed-artifact-identity observation.
 - **The `.foundry/`-partitioned realization-evidence** — the realization shape emitted by
-  **`emit_realization_evidence`** (`{candidate_sha, post_apply_plan_empty, argocd, artifact}`), a
-  sibling of the other `.foundry/` runtime partitions (NOT inside the citation-scope roots (`docs/`, `foundry/`, `specs/`); runtime
-  output, not part of the citation-gate corpus). **`derive_realization_verdict`** reads it to decide
+  **`emit_realization_evidence`** (`{candidate_sha, post_apply_plan_empty, argocd, artifact}`), advisory
+  per-run runtime output. **`derive_realization_verdict`** reads it to decide
   LANDED / NOT-LANDED.
 
 ## Anti-patterns

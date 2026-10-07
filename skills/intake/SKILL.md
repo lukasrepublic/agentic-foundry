@@ -1,18 +1,15 @@
 ---
 name: intake
-description: The front door (/foundry:intake, phase 0 of the pipeline). Ingest a fuzzy input (prose, a human-written spec, a PRD, a Figma/Claude-Design export, an MCP connector) → interactive discovery → a deterministic LLM-authored atomic spec ready for the single-pass spec-review + front-authorization. Trigger to turn a fuzzy ask into a spec the factory can build.
+description: The front door (/foundry:intake, phase 0 of the pipeline). Ingest a fuzzy input (prose, a human-written spec, a PRD, a Figma/Claude-Design export, an MCP connector) → interactive discovery → a ticket (the default) or, when the operator opts in, a deterministic LLM-authored atomic spec ready for front-authorization. Trigger to turn a fuzzy ask into work the factory can build.
 ---
 
 # /foundry:intake
 
-Phase 0 — the front of the pipeline. Turns fuzzy inputs into a routed atom: a **charter**
-(the default lane) or a deterministic atomic **spec** (the factory lane, reserved for the
-security set — see "Lane routing" below). The factory-lane pipeline is CLOSED: `intake →
-spec-review (the single-pass review default) → authorize → release-shape → implement →
-certification run → the merge floor → closeout → deploy-observe`. (`/foundry:audit`'s
-multi-pass engine stays dormant-invocable for an exceptional deep audit — see
-`skills/audit/SKILL.md` — it is never the default step here.) The charter lane skips
-straight to the noninteractive build; see `skills/mode/SKILL.md`.
+Phase 0 — the front door. Turns fuzzy inputs into a routed unit of work: a **ticket** (the
+default: a GitHub issue with a runnable `## Done means`, see `context/operating-model.md`) or, when
+the operator opts in or the change is `security: true`, a deterministic atomic **spec** (the spec
+lane, see "Lane routing" below). The spec-lane pipeline is `intake → authorize → implement → the
+merge floor`. The ticket lane skips straight to the build (`/foundry:dispatch`).
 
 ## When to trigger
 
@@ -28,55 +25,36 @@ downstream pipeline.
 
 1. **Ingest** the source(s). For design inputs, load the cited design assets first
    (the `design-context-load` discipline) so the spec is design-grounded.
-   **Read the previous wave's learning FIRST (feat wave-learn, AC-WVL-3/-4).** When the release
-   manifest being authored into declares `depends_on_release: [<id>, …]`, read each named
-   release's `.foundry/releases/<id>/state.yaml` **before the first discovery question** and
-   surface its four lists — `decisions`, `artifacts`, `open_risks`, `amendments_needed` — to the
-   operator as the opening context, so the interview starts from what the last wave already
-   learned instead of re-litigating it. **`next_action`, where recorded, is the FIRST thing
-   surfaced** (feat programme-state-minimal, AC-PSM-1) — the single next thing to do outranks the
-   four lists in the opening context, not an afterthought appended to them. If a named release has
-   no `state.yaml`, say so in one line and continue — do **not** fabricate learning that was never
-   recorded.
-2. **Route the lane (the game test)** — see "Lane routing" below. Classify the atom
-   **charter lane by default**; only a `security: true` atom, or one whose scope names auth,
-   secrets, custody, a production mutation, or a cross-repo pin, or whose contract's
-   `mandatory_review` names a security review, routes to the **factory lane**. The routed
-   lane decides the artifact the remaining steps produce (a charter vs. an atomic spec).
+2. **Route the lane (the game test)** — see "Lane routing" below. Classify the work **ticket lane
+   by default**; only a `security: true` change, one whose scope names auth, secrets, custody, a
+   production mutation, or a cross-repo pin, or one the operator chose to spec, routes to the
+   **spec lane**. The routed lane decides the artifact the remaining steps produce (a ticket vs.
+   an atomic spec).
 3. **Discovery (interactive)** — walk the decision tree (see the Discovery-interview
    discipline below). Use native `AskUserQuestion` to resolve the load-bearing
    ambiguities (scope, surfaces, acceptance criteria). Do NOT invent requirements; ask.
    (This is the former `clarify-blockers`, now native.)
 4. **Research gate (before authoring)** — for a non-trivial approach decision, run the
    research gate (see below) BEFORE authoring; carry its outcome into the spec.
-5. **Author the atom.**
-   - **Charter lane (default)** — author a one-page charter from
-     `${CLAUDE_PLUGIN_ROOT}/context/charter-template.md`: Goal, Acceptance criteria, Out of
-     scope, Scope (write boundary), Verification, Merge, Amendments. Commit it; the commit is
-     the record — no frozen acceptance-contract, no §8 audit.
-   - **Factory lane (security set)** — author the atomic spec, one atom = one
-     capability-behavior, per the spec taxonomy:
-     `specs/features/<product>/<domain>/<capability>/feat-….md`, from
-     `context/feat-spec-template.md` (the industry-grounded shape — see "The template shape"
-     below). Stable AC IDs (the bijection target for the acceptance-contract) live in a
-     delimited normative region (`<!-- normative -->`) so `spec_sha256` excludes cosmetic
-     edits. On a **brownfield** atom, ground the spec's data-model / interface section on the
-     **schema-aware survey** (see "Schema-aware authoring" below) — `sd-discover`'s fifth
-     dimension, composed with `explore-before-ask` and the `data model`
-     clarification-taxonomy dimension — BEFORE drafting the section from memory.
-6. **Hand off** — charter lane → the noninteractive build (isolated worktree → PR → CI green
-   + fresh-context review → operator merge, per `skills/mode/SKILL.md`). Factory lane →
-   `/foundry:spec-review` (the default single-pass review — see `skills/spec-review/SKILL.md`)
-   → contract-author → `/foundry:authorize`. Intake never authorizes, reviews, or implements;
-   it produces the charter or the spec.
-7. **Create the release's integration branch — the LAST step, and ONLY when this intake is
-   opening a brand-new release** (branch-and-worktree-discipline, AC-BWD-4, v1.16.0; a no-op for
-   an atom intake into an already-`planned`/`active` release, which already has one). From `main`:
+5. **Author the work.**
+   - **Ticket lane (default)** — open a GitHub issue with `## Done means` (one fenced command
+     that exits 0 when the work is done) and, only if the work needs paper, `## Paper allowed`
+     (the paths it may write). The issue is the record — no frozen acceptance-contract, no audit.
+   - **Spec lane (opt-in, security set)** — author the atomic spec, one atom = one
+     capability-behavior: `specs/features/<product>/<domain>/<capability>/feat-….md`, from
+     `context/feat-spec-template.md` (see "The template shape" below). Stable AC IDs (the
+     bijection target for the acceptance-contract) live in a delimited normative region
+     (`<!-- normative -->`) so `spec_sha256` excludes cosmetic edits. On a **brownfield** atom,
+     ground the spec's data-model / interface section on the **schema-aware survey** (see
+     "Schema-aware authoring" below) BEFORE drafting the section from memory.
+6. **Hand off** — ticket lane → `/foundry:dispatch` (isolated worktree → PR → CI green, per
+   `skills/mode/SKILL.md`). Spec lane → operator review of the spec → contract-author →
+   `/foundry:authorize`. Intake never authorizes or implements; it produces the ticket or the spec.
+7. **Integration branch — ONLY when this intake opens a brand-new release.** From `main`:
    `git checkout main && git pull && git checkout -b release/<version> && git push -u origin
-   release/<version>`, then record it in `.foundry/releases/<id>/release.yaml` as
-   `integration_branch: release/<version>` (`scripts/foundry_release.py`'s optional field — see
-   `context/branch-discipline.md`). Every atom this release dispatches then PRs into THIS branch,
-   never `main` (`/foundry:merge-when-green --release <id>` enforces it).
+   release/<version>`; every ticket this release dispatches then PRs into THIS branch, never
+   `main`. `context/branch-discipline.md` is the rule set and the platform's branch protection is the
+   merge gate; nothing here checks a PR's base.
 
 ## Lane routing (the game test)
 
@@ -84,29 +62,23 @@ Route every atom by **Beck's game test** — most work is "the plumbing game" (l
 to redo, ship and learn); a minority is "the mortgage game" (irreversible, high consequence,
 warrants ceremony before the fact). Foundry's two lanes implement that split:
 
-- **Charter lane — the default.** A one-page charter (`context/charter-template.md`), no
-  frozen acceptance-contract, no §8 audit precondition. This is the lane for ordinary product
-  work: it is cheap to redo, reviewed live in the PR, and the operator's merge is the
-  authorization.
-- **Factory lane — reserved for the security set.** Route to the full spec + frozen
-  acceptance-contract + `/foundry:authorize` + mandatory review when, and only when, the atom
-  is `security: true`, OR its scope names one of: **auth**, **secrets**, **custody**, a
+- **Ticket lane — the default.** A ticket with a runnable `Done means`, no frozen
+  acceptance-contract, no audit. This is the lane for ordinary product work: it is cheap to redo,
+  reviewed live in the PR, and the platform (branch protection + CI) is the gate.
+- **Spec lane — opt-in, and the security set.** Route to the full spec + frozen
+  acceptance-contract + `/foundry:authorize` + mandatory review when the operator chooses it, OR
+  the atom is `security: true`, OR its scope names one of: **auth**, **secrets**, **custody**, a
   **production mutation**, or a **cross-repo pin**, OR its acceptance-contract's
-  `mandatory_review` field names a security review. Any one of these routes to the factory
-  lane; none of them present means the atom stays on the charter lane. This trigger is
-  re-checked when the contract is authored (spec-review → contract-author): a contract whose
-  `mandatory_review` names security re-routes the atom to the factory lane even if intake
-  placed it on the charter lane.
+  `mandatory_review` field names a security review. None of these present means the work stays on
+  the ticket lane.
 
-**Operator override.** The operator may override the routed lane for an atom in either
-direction. When they do, record the override and its reason immediately: in the atom's charter
-`## Amendments` table (charter lane) or the spec's `## Clarifications` section (factory lane) —
-never silently, and never without the reason.
+**Operator override.** The operator may override the routed lane in either direction. When they
+do, record the override and its reason immediately — in the ticket body or the spec's
+`## Clarifications` section — never silently, and never without the reason.
 
 ## The template shape (what intake emits)
 
 Every authored spec follows `context/feat-spec-template.md` — the industry-grounded shape
-`/foundry:spec-review`'s Phase 0 pre-lints and Phase 1 fan-out check against, and the shape
 CONSTITUTION.md §III names as the checked standard:
 
 - **EARS-phrased, singular, measurable ACs** (CONSTITUTION §13) — each AC-ID tagged
@@ -121,21 +93,19 @@ CONSTITUTION.md §III names as the checked standard:
   directory (`specs/features/<…>/<capability>/design/`) holding the structured design export,
   annotated mockup(s), and target screenshot(s), cited via the citation grammar; a
   **`## Journeys`** section naming each concrete, AC-tagged user path (`journeys: [<tag>,
-  …]` is exactly what `foundry-wave-plan.py`/the release manifest carries forward as
-  per-atom metadata) — these become the E2E suite **verbatim**, not reinterpreted.
+  …]`) — these become the E2E suite **verbatim**, not reinterpreted.
 - **Size respects the BINDING ceiling** (CONSTITUTION §12 — **14 ACs / 8,000 words, no
   override**) — if the atom you are drafting is trending oversize, **decompose it into
   smaller atoms now**, at authoring time, rather than authoring one large spec and
-  discovering the ceiling at review. `/foundry:spec-review`'s Phase 0 REFUSES an oversize
+  discovering the ceiling at review. the review REFUSES an oversize
   spec unconditionally; there is no `--allow-oversize` escape hatch to reach for. The spec is
   written to **wave-1 depth** — the depth needed to build wave 1, not the depth needed to
   survive review (CONSTITUTION §12; `.foundry/decisions/2026-09-18-spec-is-a-living-document.md`).
 - **`## Amendments`** — a required non-normative section (the spec is a living document,
-  adjusted during implementation when reality requires it, without re-entering the front gate —
-  except an amendment that widens scope (allowed_paths/denied_paths, requires_capabilities,
-  identifier tokens in checkpoints) or touches a security-surface atom (mandatory_review names
-  security), which re-enters `/foundry:authorize`). intake emits it **empty** — header row only,
-  no amendment recorded yet; the `amend` verb is what fills it later.
+  adjusted during implementation when reality requires it; an amendment that widens scope
+  (allowed_paths/denied_paths, requires_capabilities, identifier tokens in checkpoints) or touches
+  a security-surface atom re-enters `/foundry:authorize`). intake emits it **empty** — header row
+  only, no amendment recorded yet.
 
 ## Discovery-interview discipline
 
@@ -182,8 +152,7 @@ intake LOADS the primitive, it does not re-implement the procedure.
 **best-practice node** the research gate / `research-first` resolves it (adopt the
 convergent practice, or escalate only a genuine fork). This replaces "ask the operator
 about everything" with "research everything, ask only on the genuine forks." A fork escalated
-outside the live interview (e.g. discovered async, mid-build) hands off per the shared blocker
-schema (`schema/blocker.schema.json`, feat-foundry-blocker-requires-evidence).
+outside the live interview (e.g. discovered async, mid-build) is raised to the operator with its evidence.
 
 ### Prior art / industry grounding
 
@@ -205,7 +174,7 @@ on every atom.
 A spec that proposes **novel / non-standard machinery WITHOUT** either the
 `## Prior art / industry grounding` section (consensus-adopted) or the operator-fork record
 is an **intake defect**. This is the *prevent* half of closing the phantom-atom hole; the
-deep spec audit engine's prior-art lens is the *catch* half downstream.
+PR review's prior-art question is the *catch* half downstream.
 
 ## Clarification taxonomy
 
@@ -285,8 +254,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_ceremony_tier.py" --files <n> --a
 
 The CLI prints exactly one line (`tier: <tier> — <n> files, <…>, <…> ambiguity`, extended with
 ` (security override: <trigger>)` when the sensitivity trigger fired) — show that line to the
-operator verbatim and carry the resolved tier forward to `/foundry:spec-review`, which reads it
-to select the masked Phase-1 questions.
+operator verbatim and carry the resolved tier forward to the reviewer.
 
 **Operator override, either direction.** The operator may override the classified tier by
 re-running the CLI with `--override <tier> --override-reason <one-line>`. A security-triggered
@@ -303,8 +271,7 @@ ceremony-tier override: classified <tier> → adopted <tier> (reason: <one-line>
 The `data model` clarification-taxonomy dimension above is **hardened from advisory to
 machine-checked**: it is not scored by model judgment alone. Before drafting the spec's data-model /
 interface section (Procedure step 4), ground on the recovered live schema — composed with
-`explore-before-ask` — by running `sd-discover`'s **fifth data-model / persisted-schema dimension**
-(`[Skill: sd-discover]`), which recovers the existing entities/tables/columns with their live
+`explore-before-ask` — by running the **data-model / persisted-schema survey**, which recovers the existing entities/tables/columns with their live
 identifiers from the system-state snapshot tool's deterministic snapshot (`build_system_snapshot`). This is an
 **authoring-time** consumer of that dimension — it runs BEFORE the spec is drafted, in addition to
 (not instead of) the existing implement-time consumer.
@@ -322,19 +289,18 @@ project_dir)` directly). Each declared artifact is `{kind, classification, ident
 shape the authorize-time `system_grounding` block later freezes, so the intake *prevent* verdict and
 the authorize *freeze* verdict are the same function of the same snapshot.
 
-**A returned defect BLOCKS the hand-off to `/foundry:spec-review`.** Treat any non-empty
-`intake_schema_defects(...)` result as a blocking finding: do not proceed to step 5 (hand off to
-`/foundry:spec-review`) until the author resolves every returned defect (re-ground the declaration to
-`alter`/`exists`, or correct the identifier). This is the *prevent* half of the reality-grounding
-gate — the review pipeline's `reality-divergence` HALT and the authorize-time freeze remain the load-bearing
-downstream floors; this check is not itself a new enforcement floor, it just makes the author less
-likely to hand them a stale spec.
+**A returned defect BLOCKS the hand-off to `/foundry:authorize`.** Treat any non-empty
+`intake_schema_defects(...)` result as a blocking finding: do not hand off until the author
+resolves every returned defect (re-ground the declaration to `alter`/`exists`, or correct the
+identifier). This is the *prevent* half of the reality-grounding gate — the authorize-time freeze
+remains the load-bearing downstream floor; this check is not itself a new enforcement floor, it
+just makes the author less likely to hand it a stale spec.
 
 ### Mutation-delta authoring rule
 
 Express the authored spec's data-model / interface section as **deltas** — `alter` / extend /
 integrate — over the surveyed live schema. Use `net-new` / `CREATE` **only** for an artifact the
-fifth-dimension survey proves absent. A from-scratch, greenfield-in-a-vacuum redescription of an
+schema survey proves absent. A from-scratch, greenfield-in-a-vacuum redescription of an
 artifact the snapshot proves already live (declaring it `net-new` when it exists) is the
 schema-grounding intake defect above — the rule's enforcement IS the deterministic machine-check
 just described, applied to every declared artifact; the spec makes no unverifiable claim over an
@@ -347,7 +313,7 @@ no schema source wired.
 
 ## Inputs / Outputs
 
-- In: fuzzy source(s) + (for design) the cited assets. Out: a DRAFT atomic spec + its declared AC IDs, ready for review.
+- In: fuzzy source(s) + (for design) the cited assets. Out: a ticket, or a DRAFT atomic spec + its declared AC IDs, ready for review.
 
 ## Anti-patterns
 

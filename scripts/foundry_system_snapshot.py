@@ -18,7 +18,7 @@ The module dimension (`fs-tree`) mirrors the npm/Yarn/pnpm/Cargo/Nx workspace-di
 convention: one-level child-directory enumeration under a declared root, dot-prefixed/
 non-directory entries excluded, no manifest-content parsing.
 
-Configuration + error contract (mirrors `foundry_project_config.py`'s reader idiom — ER #111):
+Configuration + error contract (ER #111):
   - `.claude/foundry-project.json` under the resolved project root (`project_dir` ->
     `$CLAUDE_PROJECT_DIR` -> cwd) is read; absent/unreadable/non-dict degrades to `{}`, NEVER
     raises (AC-SSS-2 unconfigured no-op).
@@ -31,7 +31,7 @@ Configuration + error contract (mirrors `foundry_project_config.py`'s reader idi
     (AC-SSS-4 fail-closed): a broken configuration must never silently degrade to an empty
     snapshot (which would turn a downstream reality-divergence HALT into a vacuous pass).
   - `schema_source.path` / `module_source.path` are resolved project-root-relative and path-
-    confined (defense-in-depth, mirroring `foundry_project_config._confine`): an ABSOLUTE path or
+    confined (defense-in-depth): an ABSOLUTE path or
     one that escapes the project root via a leading `..` component is REJECTED — which, because
     there is no sensible "default" grounding path to fall back to (unlike the governance-path
     reader), surfaces as `GroundingSourceError` (folded into the AC-SSS-4c "path absent/
@@ -63,7 +63,7 @@ class GroundingSourceError(ValueError):
     unconfigured no-op path (absent `grounding` block, absent source key, or `kind: "none"`)."""
 
 
-# ── project-config resolution (mirrors foundry_project_config.py's reader idiom) ──────────────
+# ── project-config resolution ──────────────────────────────────────────────────────────
 
 
 def _project_dir(project_dir=None):
@@ -89,8 +89,7 @@ def _load_project_config(project_dir=None):
 
 def _confine_source_path(value, project_root, label):
     """Project-root-relative + `..`-escape-free path confinement for a grounding source `path`
-    (defense-in-depth, mirroring `foundry_project_config._confine`). Unlike that reader (which has
-    a safe static default to fall back to), a grounding source has no such default, so a rejected
+    (defense-in-depth). A grounding source has no safe static default to fall back to, so a rejected
     value raises `GroundingSourceError` — folded into the AC-SSS-4c "path absent/unreadable"
     fail-closed case rather than silently substituting a default."""
     if not isinstance(value, str) or not value.strip():

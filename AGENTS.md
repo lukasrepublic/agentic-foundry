@@ -11,8 +11,7 @@ tests in `tests/`, templates in `context/`, stack profiles in `packs/`.
 
 ## Ground rules
 
-- **Run the tests**: `python3 -m pytest tests/ -q` (full suite, ~10 min measured 2026-09-21;
-  the certify-fixture module boots a local `http.server`) with the pinned dev requirements
+- **Run the tests**: `python3 -m pytest tests/ -q` (full suite, ~15 min) with the pinned dev requirements
   (`requirements-dev.txt`; CI uses Python 3.12), and `python3 scripts/foundry-doctor.py`
   (must print `DOCTOR-GREEN` — run from this repo as the session root; run from a hosting
   workspace it reports the control-plane RED by design). Both must be green locally before
@@ -31,7 +30,7 @@ tests in `tests/`, templates in `context/`, stack profiles in `packs/`.
 - **Git discipline**: branch per change, PR-then-merge, no force-push to `main`. The repo's
   own PreToolUse hook (`hooks/foundry-git-discipline.sh`) refuses force-pushes to a protected
   branch, `gh pr merge --admin`, and any merge ahead of green checks — by design, not a bug
-  to work around. Atoms PR into `release/<version>`; `main` receives one PR per release;
+  to work around. Tickets PR into `release/<version>`; `main` receives one PR per release;
   `hotfix/<id>` → `main` is the one exception. See `docs/how-to/branching-and-cleanup.md`.
 - **Text that names a guarded command goes through Write/Edit, never a Bash heredoc.** The
   hook scans the whole command string, heredoc bodies included, so `cat > f <<EOF` with a
@@ -40,10 +39,11 @@ tests in `tests/`, templates in `context/`, stack profiles in `packs/`.
 - **The retired-framework token fails CI.** `ci.yml` greps the whole tree, case-insensitive,
   for the three-letter name of the retired environment tool (the one that starts with `c`
   and ends with `x`); any occurrence in any file — code, comment, doc, fixture — is red.
-- **PR trailers**: code-change PRs carry a `Spec:` trailer naming the authorizing spec (the
-  `spec-link-base` gate in `.github/workflows/btb-gates-base.yml` checks it; docs-only diffs
-  are exempt). Security-relevant changes (this hook, CI gate workflows, authorization,
-  provenance) get an independent reviewer — self-review has missed real bugs here.
+- **Local-green before push**: `scripts/foundry-test.sh` (set `FOUNDRY_TEST_CMD` to the suite
+  command) records local-green for HEAD; the hook refuses `git push` and a non-draft PR without
+  it. Security-relevant changes (this hook, CI gate workflows, authorization, provenance) get an
+  independent reviewer (the `security-path-base` check needs the `security-reviewed` label) —
+  self-review has missed real bugs here.
 
 ## Where to learn more
 

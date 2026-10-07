@@ -19,8 +19,7 @@ quoted or escaped token a cwd-relative file) while the hook checked a different 
 review Blocks 1-2).
 
 NEVER ALLOWED SILENTLY (security review Blocks 3-4) — scripts that execute commands read from their
-input (`foundry-verify.py` runs stack-profile commands through a shell; `foundry-decommission.py`
-passes register slots to `/bin/sh -c`), and `foundry-permissions-compile.py` with `--root` (which
+input (`foundry-verify.py` runs stack-profile commands through a shell), and `foundry-permissions-compile.py` with `--root` (which
 could point the settings write at another tree). "Every foundry script runs silently" (operator
 decision) means the plugin's own code, not an arbitrary command routed through it; these keep the
 session's normal permission mode.
@@ -42,7 +41,10 @@ SUFFIXES = (".py", ".sh")
 # to equal a real file, `(` `)` subshells, backticks, redirections, separators, newlines.
 METACHARS = set(";&|<>()`$\\\n\r")
 # Scripts that execute commands taken from their input: never allowed silently.
-EXECUTES_INPUT = {"foundry-verify.py", "foundry-decommission.py"}
+EXECUTES_INPUT = {"foundry-verify.py", "foundry-test.sh"}
+# foundry-ticket.py executes input only for these shapes (v2.0.0; security review of #270, R1):
+# `done` runs the ticket's command; `--trust-author` adopts a command from outside the write team.
+_TICKET_EXECUTING = ("done", "--trust-author")
 
 
 def _plugin_root():
@@ -79,6 +81,8 @@ def allowed(command, root):
     if not any(_inside(real, os.path.join(root, d)) for d in ("scripts", "hooks")):
         return False
     name = os.path.basename(real)
+    if name == "foundry-ticket.py" and any(a in _TICKET_EXECUTING for a in argv[1:]):
+        return False
     if name in EXECUTES_INPUT:
         return False
     if name == "foundry-permissions-compile.py" and any(a == "--root" or a.startswith("--root=") for a in argv[1:]):

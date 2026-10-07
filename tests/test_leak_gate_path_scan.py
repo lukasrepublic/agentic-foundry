@@ -158,13 +158,11 @@ def test_gate_enforces_what_the_selfscan_asserts(tmp_path):
 def test_script_output_names_merge_floor():
     """F2 (first-run audit): the USER-OUTPUT sites say merge floor. Asserted on the
     emitted strings, not on comments. (The third original site, scripts/foundry-fleet-session-
-    machinery.py, was deleted by subtraction-wave AC-SUB-1b, → fleet-is-listagents, R3.)"""
+    machinery.py, was deleted by subtraction-wave AC-SUB-1b, → fleet-is-listagents, R3; the second,
+    scripts/foundry-project-rtm.py, went with the GitHub Projects projection in v2.0.0.)"""
     contract = open(os.path.join(REPO_ROOT, "scripts", "foundry_contract.py"), encoding="utf-8").read()
     assert "is enforced at the merge floor, " in contract, "the warn must name the merge floor"
     assert "is enforced at the merge gate (0d), " not in contract, "the retired-gate warn survives"
-
-    rtm = open(os.path.join(REPO_ROOT, "scripts", "foundry-project-rtm.py"), encoding="utf-8").read()
-    assert 'merge-floor PASS: {r[\'merge_gate_pass\']}' in rtm
 
 
 # ------------------------------------------------------------------------------------ AC-LPS-6 --

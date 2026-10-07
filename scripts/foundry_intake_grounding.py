@@ -7,8 +7,8 @@ persisted-schema + module surface; Atom C (`foundry_contract.system_grounding_er
 declared `system_grounding` block against that snapshot at `/foundry:authorize`. This atom moves
 the SAME reconciliation one phase earlier — to `/foundry:intake` authoring — so a declared
 `net-new` artifact that is already live is a defect the AUTHOR sees before hand-off to
-`/foundry:audit`, not weeks later at freeze. It is a *prevent* aid, NOT a new enforcement floor:
-the load-bearing gates remain #120 (audit) and #121 (authorize freeze).
+`/foundry:authorize`, not weeks later at freeze. It is a *prevent* aid, NOT a new enforcement floor:
+the load-bearing gate remains the authorize-time freeze.
 
 REUSE, NOT REIMPLEMENTATION (AC-SAG-3/AC-SAG-4). This module constructs the
 `{"system_grounding": {"artifacts": [...]}}`-shaped input Atom C's schema expects and delegates
@@ -143,7 +143,7 @@ def _main(argv=None) -> int:
         for d in defects:
             print(d)
         print(f"intake-schema-grounding: {len(defects)} defect(s) — resolve before hand-off to "
-              "/foundry:audit")
+              "/foundry:authorize")
         return 1
     print("intake-schema-grounding: no defects")
     return 0

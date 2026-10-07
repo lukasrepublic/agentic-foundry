@@ -497,7 +497,6 @@ def test_quickstart_names_an_owner_for_every_moved_artifact():
 # (house lesson: "assert on structure, not substrings").
 
 ID_SYNC = os.path.join(REPO_ROOT, "skills", "id-sync", "SKILL.md")
-ADOPT_HOWTO = os.path.join(REPO_ROOT, "docs", "how-to", "adopt-on-an-existing-codebase.md")
 RECOVER_HOWTO = os.path.join(REPO_ROOT, "docs", "how-to", "recover-from-a-failed-gate.md")
 
 _ENFORCEMENT_RE = re.compile(r"machine-enforced", re.IGNORECASE)
@@ -706,7 +705,6 @@ def _reconciled_docs_failures(doc_texts):
 _RECONCILED_DOC_SET_PATHS = {
     "README.md": README,
     "docs/QUICKSTART.md": QUICKSTART,
-    "docs/how-to/adopt-on-an-existing-codebase.md": ADOPT_HOWTO,
     "docs/how-to/recover-from-a-failed-gate.md": RECOVER_HOWTO,
 }
 
@@ -731,14 +729,17 @@ def test_docs_truth_negative_controls_all_fire():
     assert _plugins_dir_scope_failures({"synthetic-b.md": stripped_row}), "control (b) did not fire"
 
     # (c) a spec-path mention shortened by one segment.
-    original = _read(QUICKSTART)
+    #     (v2.0.0: the shipped docs no longer carry a worked spec-path example, so the control runs
+    #     over a synthetic mention — the valid form must pass and the shortened form must fail.)
+    original = "Spec: specs/features/app/export/csv/feat-export-csv.md\n"
     shortened = original.replace(
         "specs/features/app/export/csv/feat-export-csv.md",
         "specs/features/app/feat-export-csv.md",
         1,
     )
     assert shortened != original, "control (c) setup found nothing to shorten"
-    assert _reconciled_docs_failures({"docs/QUICKSTART.md": shortened}), "control (c) did not fire"
+    assert not _reconciled_docs_failures({"synthetic-c.md": original}), "control (c) valid form wrongly failed"
+    assert _reconciled_docs_failures({"synthetic-c.md": shortened}), "control (c) did not fire"
 
     # (d) THE SLICE-SCOPING CONTROL (review B1): both fleet-doctor scope literals present in the
     #     file but OUTSIDE the mention's own slice -- a different table row, and beyond a blank

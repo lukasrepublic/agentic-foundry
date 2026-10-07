@@ -5,11 +5,10 @@ EVIDENCE RULE (binding, restated from the spec/contract): every test here execut
 `.github/workflows/btb-gates.yml` job step body — lifted VERBATIM out of the workflow YAML and
 run under `bash` — with the stub `gh` at tests/fixtures/gh-stub/gh placed FIRST on PATH to serve
 each fixture row's PR body / labels / changed-file list. Nothing here re-implements the
-`spec-link` lane-selection logic or the `security-path` alternation in Python: the workflow file
+`security-path` alternation in Python: the workflow file
 is parsed only to EXTRACT its `run:` script text (data extraction, not decision logic), and the
 step's real verdict is read from ITS OWN stdout/exit-code, compared against an expectation table
-authored SEPARATELY (tests/fixtures/btb-gates/lane-matrix.yaml,
-tests/fixtures/btb-gates/security-path-matrix.yaml) — never against the workflow's own emitted
+authored SEPARATELY (tests/fixtures/btb-gates/security-path-matrix.yaml) — never against the workflow's own emitted
 literal (that tautology is the Block-4 self-assertion defect this atom closes).
 """
 from __future__ import annotations
@@ -36,7 +35,7 @@ TEST_HEAD_SHA = "abcdef1234567890abcdef1234567890abcdef12"   # sha12 == "abcdef1
 TEST_STALE_SHA = "0badc0d000000000000000000000000000000000"  # sha12 == "0badc0d00000"
 
 
-# WHERE EACH GATE'S BODY NOW LIVES. `spec-link` and `security-path` moved to
+# WHERE EACH GATE'S BODY NOW LIVES. `security-path` lives in
 # `btb-gates-base.yml` on `pull_request_target` (whose definition GitHub takes from the base
 # repository's default branch), so a fork can no longer rewrite the gate that grades it. Only the
 # FILE and the JOB NAME changed — the step bodies are byte-identical, which is why every call site
@@ -46,7 +45,6 @@ TEST_STALE_SHA = "0badc0d000000000000000000000000000000000"  # sha12 == "0badc0d
 # silently keep passing if a gate reappeared in the fork-evaluated workflow, which is the exact
 # regression this migration exists to prevent. See test_the_gate_jobs_are_split_by_trigger.
 GATE_SOURCE = {
-    "spec-link":          (BASE_WORKFLOW_PATH, "spec-link-base"),
     "security-path":      (BASE_WORKFLOW_PATH, "security-path-base"),
     "shell-parse-bash32": (WORKFLOW_PATH,      "shell-parse-bash32"),
 }
@@ -109,24 +107,7 @@ def _load_fixture(name):
         return yaml.safe_load(f)
 
 
-LANE_MATRIX = _load_fixture("lane-matrix.yaml")["rows"]
 SECURITY_MATRIX = _load_fixture("security-path-matrix.yaml")
-
-
-# ==================================================================== AC-SCW-10 (spec-link) ==
-
-@pytest.mark.parametrize("row", LANE_MATRIX, ids=[r["name"] for r in LANE_MATRIX])
-def test_spec_link_verdict_matches_independent_lane_matrix(row, tmp_path):
-    proc, summary = _run_step_body(
-        "spec-link", tmp_path,
-        pr_body=row["pr_body"], labels=row["labels"], files=row["files"],
-    )
-    if row["expect_exit_zero"]:
-        assert proc.returncode == 0, proc.stdout + proc.stderr
-    else:
-        assert proc.returncode != 0, "expected the spec-link step to fail this row but it exited 0"
-    assert row["expect_summary_contains"] in proc.stdout, proc.stdout + "\n---summary---\n" + summary
-    assert row["expect_summary_contains"] in summary
 
 
 # ==================================================================== AC-SCW-11 (tier honesty) =
@@ -134,7 +115,7 @@ def test_spec_link_verdict_matches_independent_lane_matrix(row, tmp_path):
 def test_every_gate_job_states_its_tier_and_labels_tier_b_advisory(tmp_path):
     assert set(yaml.safe_load(WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]) \
         | set(yaml.safe_load(BASE_WORKFLOW_PATH.read_text(encoding="utf-8"))["jobs"]) \
-        == {"spec-link-base", "security-path-base", "shell-parse-bash32"}, \
+        == {"security-path-base", "shell-parse-bash32"}, \
         "the gate set changed — every gate must still state its tier"
 
     # Each job must STATE its enforcement tier, and state it DERIVED from the live protection
@@ -157,7 +138,6 @@ def test_every_gate_job_states_its_tier_and_labels_tier_b_advisory(tmp_path):
         ("",                                  "merge floor: UNKNOWN",      "advisory"),   # unreadable -> fail safe
     ]
     cases = (
-        ("spec-link",     dict(pr_body="Spec: specs/features/foundry/x/feat-x.md\n", labels=[], files=["a.py"])),
         ("security-path", dict(pr_body="", labels=[], files=["docs/readme.md"])),
     )
     for job_name, kwargs in cases:
@@ -496,7 +476,7 @@ def test_the_gate_jobs_are_split_by_trigger():
 
     `pull_request` runs a workflow FROM THE PR'S MERGE REF, so a fork author's edits to that file
     take effect in the run that grades their own PR. `pull_request_target` takes its definition
-    from the base repository's default branch instead. The two metadata gates therefore live in
+    from the base repository's default branch instead. The metadata gate therefore lives in
     `btb-gates-base.yml`; `shell-parse-bash32` must NOT follow them, because it checks out fork
     code and that is the one thing a privileged trigger must never do.
 
@@ -517,7 +497,7 @@ def test_the_gate_jobs_are_split_by_trigger():
     assert set(fork_doc["jobs"]) == {"shell-parse-bash32"}, (
         "a job other than shell-parse-bash32 is in the FORK-EVALUATED workflow; a fork PR can "
         f"rewrite it and report green under its own name: {set(fork_doc['jobs'])}")
-    assert set(base_doc["jobs"]) == {"spec-link-base", "security-path-base"}, set(base_doc["jobs"])
+    assert set(base_doc["jobs"]) == {"security-path-base"}, set(base_doc["jobs"])
 
     # The whole safety case for `pull_request_target` is that these jobs run NO repository code.
     # One `uses:` — an `actions/checkout` above all — turns a metadata gate into arbitrary fork

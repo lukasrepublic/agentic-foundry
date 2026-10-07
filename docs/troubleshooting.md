@@ -34,31 +34,12 @@ not revoke server-side).
 ## `foundry doctor` reports a `permissions-policy` advisory line
 
 Doctor renders one ADVISORY line, never `[adv ]`-paired with the seven structural probes above and
-never RED by design — a stale-permission workspace must never wedge a session. The line has two
-parts:
-
-- **Capability preflight**, over every atom (contract or charter) of every active release:
-  `preflight over <n> active atom(s): <d> denied[, <c> not pre-granted]`. Only `denied` — a
-  declared capability a deny rule would refuse — is a problem. `not pre-granted` means the
-  session's permission mode (auto mode's classifier, or a prompt) decides at run time; it is
-  information, never a blocker.
-- **Policy drift**, the same derivation `foundry-permissions-compile.py --check` runs, naming the
-  two files it compares: `policy absent`, `policy in-sync`, or `policy drift (<k>)`, each followed by
-  `(.foundry/permissions.yaml vs .claude/settings.json)`.
+never RED by design — a stale-permission workspace must never wedge a session. It is the policy
+drift state, the same derivation `foundry-permissions-compile.py --check` runs, naming the two files
+it compares: `policy absent`, `policy in-sync`, or `policy drift (<k>)`, each followed by
+`(.foundry/permissions.yaml vs .claude/settings.json)`.
 
 Remedies:
-
-- **`<d> denied`** — run the preflight directly to see which deny rule refuses which capability;
-  whether to lift the deny is your call:
-
-  ```bash
-  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-capability-preflight.py" --contract <path-to-acceptance-contract.yaml>
-  # or, for a charter-lane atom:
-  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-capability-preflight.py" --charter <path-to-charter.md>
-  ```
-
-  `/foundry:mode-autonomous` already runs this preflight before dispatching any atom — the doctor
-  line is the same signal, visible without a live dispatch.
 
 - **`policy drift (<k>)`** — reconcile the compiled settings from the policy source (`--check` is
   read-only; `--write` reconciles):
@@ -66,6 +47,13 @@ Remedies:
   ```bash
   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-permissions-compile.py" --check
   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-permissions-compile.py" --write
+  ```
+
+- **Checking a declared capability set directly** — to see which deny rule refuses which
+  capability a contract declares, run the preflight; whether to lift a deny is your call:
+
+  ```bash
+  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-capability-preflight.py" --contract <path-to-acceptance-contract.yaml>
   ```
 
 - **`policy absent`** — no `.foundry/permissions.yaml` yet; not itself a problem. The line names
@@ -146,54 +134,26 @@ To act around the hook deliberately, run the command yourself in your own termin
 human step is exactly the boundary the hook exists to draw
 ([merge-floor.md](merge-floor.md)).
 
-## `certify-local` refused instead of running
+## No stack-profile lock yet
 
-By design it never passes vacuously. The refusal names what's missing:
+`/foundry:verify` and the `id-*` lane gate on an active stack profile. If there is no
+`.foundry/stack-profile.lock` yet, create one:
 
-- **No journeys tagged for an atom** → write the Playwright journeys the contract's AC-IDs
-  name, or remove the atom from the release manifest.
-- **No boot recipe** → certification resolves the boot recipe with **the project's own
-  declaration first**:
-  1. `repos.<key>.boot_command` in `.claude/foundry-project.json`, keyed under the release's
-     resolved venue (`workspace` for the merge-gate sentinel / single-repo self-host default, or
-     the explicit `target_repo` key) — wins whenever it is a non-empty string, and the active
-     stack profile is **not consulted at all**.
-  2. Otherwise, the **active stack profile's** `app_exercise_binding.boot`, which requires
-     `.foundry/stack-profile.lock` to exist and resolve; see `packs/stack-profiles/<yours>/`.
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-stack-profile.py" --lock <id>[,<id>…]
+```
 
-  A refusal always names declaring `boot_command` as the remedy, and additionally names
-  "activate a different stack profile" only when a `.foundry/stack-profile.lock` already exists
-  (relocking is reachable only once a lock exists — naming it unconditionally would be a
-  dead-end pointer).
-
-  If there is no lock yet, create one:
-
-  ```bash
-  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-stack-profile.py" --lock <id>[,<id>…]
-  ```
-
-  (`/foundry:init` offers this during onboarding; run it directly to adopt a profile later.) It
-  refuses — with no write — if a lock already exists (run `/foundry:relock` to refresh instead),
-  the lock file present is corrupt (the refusal names the remedy), an id is unknown (the refusal
-  lists the ids available under `packs/stack-profiles/`), or any named id is schema-invalid,
-  core-incompatible, or leaks into the core plugin's `skills/` bundle.
-
-  > **Resolved (previously known limitations).** Earlier releases shipped no lock-create verb —
-  > `/foundry:relock` only refreshed an existing lock ("nothing to relock") — and
-  > `repos.<key>.boot_command` was accepted by the schema but never read. Both are fixed in this
-  > release: `--lock` (above) creates the lock (`feat-foundry-stack-profile-lock-create`), and
-  > `boot_command` is now the first-precedence boot recipe
-  > (`feat-foundry-boot-recipe-precedence`) — certification is reachable from a clean install by
-  > either path.
+(`/foundry:init` offers this during onboarding; run it directly to adopt a profile later.) It
+refuses — with no write — if a lock already exists (run `/foundry:relock` to refresh instead),
+the lock file present is corrupt (the refusal names the remedy), an id is unknown (the refusal
+lists the ids available under `packs/stack-profiles/`), or any named id is schema-invalid,
+core-incompatible, or leaks into the core plugin's `skills/` bundle. A lockless workspace is a
+fully-supported, `DOCTOR-GREEN` state.
 
 ## The authorize gate refused to freeze
 
-- **"DRAFT — no review recorded"** → run `/foundry:spec-review <spec>` first; its evidence
-  row is the precondition.
 - **Contract validation failed** → the output names the freeze floor that failed. Fix the
   contract (re-specify); the gate is never the thing to relax.
-- **Oversize spec** → the spec size ceiling (fourteen criteria / eight thousand words) has no override. Decompose into
-  smaller atoms.
 
 ## Authorize printed `warn: … degraded` lines and froze anyway
 

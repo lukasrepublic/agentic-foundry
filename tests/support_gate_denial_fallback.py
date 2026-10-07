@@ -36,7 +36,6 @@ LIMB_B_LITERALS = (
     "never route around",
     "another tool or credential",
     "documented degraded path",
-    "UPSTREAM-SUBMIT-LABEL-DEGRADED",
     "GATED",
 )
 LIMB_C_LITERALS = (
@@ -51,13 +50,9 @@ LIMB_LITERALS = {
 
 SKILLS_SECTION_HEADING = "## Skills that carry this clause"
 
-SEVEN_CEREMONY_SKILLS = (
+CEREMONY_SKILLS = (
     "skills/authorize/SKILL.md",
-    "skills/authorize-release/SKILL.md",
     "skills/cut-release/SKILL.md",
-    "skills/decommission-gate/SKILL.md",
-    "skills/release/SKILL.md",
-    "skills/upstream-submit/SKILL.md",
     "skills/id-apply/SKILL.md",
 )
 
@@ -406,7 +401,7 @@ def evaluate_gate_denial_fallback(root: str):
     else:
         listed_set = set(listed_paths)
 
-    enumerated_set = set(SEVEN_CEREMONY_SKILLS)
+    enumerated_set = set(CEREMONY_SKILLS)
 
     on_disk_set = set()
     skill_pointer_lines = {}  # relpath -> [(lineno, text), ...]

@@ -11,9 +11,7 @@ and was hand-run ~6× (every recurring gotcha was that procedure failing) — in
 gated loop driven by `scripts/foundry-cut-release.py`.
 
 Its EXIT GATE is the **EXISTING acceptance verdict** (`foundry-release-acceptance.run_acceptance`) — the
-only gate this script invokes; it reimplements no gate logic. The closure derivation
-(`foundry_release.py`) is **upstream prep the operator runs before the cut**, not invoked here. It
-adds **no new floor** and **never runs `git tag` / `git push`** — it emits the publish plan as
+only gate this script invokes; it reimplements no gate logic. It adds **no new floor** and **never runs `git tag` / `git push`** — it emits the publish plan as
 data and the operator executes it.
 
 > **Retired: the wiring-pin migrate.** This loop once named a `foundry-wiring-hash.py`
@@ -357,16 +355,13 @@ and emits their closes.
 `context/branch-discipline.md` is the full discipline (cited, never copied); this is where it
 lands in the cut-release playbook specifically — for the plugin's own repo AND for an adopter's.
 
-- `skills/intake/SKILL.md` creates `release/<version>` from `main` as its LAST step and records it
-  in the release manifest as `integration_branch` (`scripts/foundry_release.py`'s optional field).
-- Every atom's own PR targets `release/<version>`, not `main` — `/foundry:merge-when-green`
-  refuses the wrong base when `--release <id>` is passed (`skills/merge-when-green/SKILL.md`).
+- `skills/intake/SKILL.md` creates `release/<version>` from `main` as its LAST step.
+- Every ticket's own PR targets `release/<version>`, not `main`.
 - The R / R2 cut-release commits described above land ON `release/<version>`, exactly as before —
   this playbook's own procedure is unchanged; only the branch they land on moves.
 - **The ONE PR to `main`** is `release/<version>` → `main`, opened once every atom in the release
   has landed on the release branch and this playbook's `READY` plan is in hand. It is what makes a
-  per-merge deploy trigger fire once per release instead of once per atom (the charter's own
-  observed failure).
+  per-merge deploy trigger fire once per release instead of once per atom (the observed failure).
 - **After the tag exists** on the resulting `main` commit, the release branch itself is deleted —
   the same "delete after `origin` contains the merge, never before" rule as any atom branch. Run
   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-worktree-gc.py" --dry-run --repo <dir>` (add `--include '<prefix>/*'` for any branch prefix outside the built-in set; check `filtered_out_refs`; after `--apply`, read `status` — `partial` lists every deletion that did not happen in `failed`, while the exit code stays 0) first

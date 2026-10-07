@@ -756,7 +756,7 @@ def test_skill_ships_and_disambiguates_from_the_session_roster():
     assert "name: repos" in front
     for verb in ("sync", "status", "foreach", "validate"):
         assert verb in text
-    assert "/foundry:fleet" in text
+    assert "/list-agents" in text
     assert "session" in text.lower() and "roster" in text.lower()
 
 

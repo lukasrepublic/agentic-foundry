@@ -1,7 +1,7 @@
 """tests/test_cut_release_reconcile.py — the cut-release wiring-pin reconcile atom
 (AC-CRRC-1..8, feat-foundry-cut-release-reconcile.md).
 
-Verifies the eleven grounded stale-claim sites across the seven enumerated release surfaces
+Verifies the eleven grounded stale-claim sites across the six enumerated release surfaces
 carry either a conformant retired disclosure (naming the retired mechanism, the word "Retired", and
 today's load-bearer) or no mention at all, that the one dead step
 (`foundry-release-acceptance.py`'s wiring-pin seeding block) is removed and shown dead-at-removal,
@@ -101,7 +101,7 @@ def allowlist_well_formed_errors(root, allowlist, token_set):
 
 
 def _make_candidate_tree(tmp_path):
-    """A throwaway copy of the seven enumerated surfaces, relative-path-preserved, so an
+    """A throwaway copy of the six enumerated surfaces, relative-path-preserved, so an
     injected occurrence never touches the real repo."""
     for rel in FIXTURE["surface_set"]:
         src = REPO_ROOT_PATH / rel
@@ -157,7 +157,6 @@ _EXPECTED_SURFACE_SET = [
     "scripts/foundry-release-acceptance.py",
     "scripts/foundry-bootstrap.sh",
     "skills/cut-release/SKILL.md",
-    "skills/release/SKILL.md",
     "skills/init/SKILL.md",
     "hooks/foundry-git-discipline.sh",
 ]
@@ -173,10 +172,6 @@ _EXPECTED_ZERO_OCC = [
     "hooks/foundry-git-discipline.sh",
 ]
 _EXPECTED_ALLOWLIST_PAIRS = {
-    ("skills/release/SKILL.md", "wiring[- ]pin"),
-    ("skills/release/SKILL.md", "wiring[- ]hash"),
-    ("skills/release/SKILL.md", "wiring[_-]hash\\.pin"),
-    ("skills/release/SKILL.md", "wiring[- ]manifest"),
     ("skills/cut-release/SKILL.md", "wiring[- ]pin"),
     ("skills/cut-release/SKILL.md", "wiring[- ]hash"),
     ("skills/cut-release/SKILL.md", "wiring[_-]hash\\.pin"),
@@ -185,9 +180,6 @@ _EXPECTED_ALLOWLIST_PAIRS = {
     ("skills/init/SKILL.md", "branch-protection"),
 }
 _EXPECTED_DISCLOSURE_MATRIX = {
-    "skills/release/SKILL.md": {
-        "mechanism": "foundry-wiring-hash.py", "release": "RETIRED", "load_bearer": "source.sha",
-    },
     "skills/cut-release/SKILL.md": {
         "mechanism": "foundry-wiring-hash.py", "release": "Retired",
         "load_bearer": "foundry-release-acceptance",
@@ -233,9 +225,9 @@ def test_stale_claim_sweep_is_clean_and_allowlist_governs_both_directions(row, t
 
         bad_path = [{"path": "skills/does-not-exist/SKILL.md", "token": FIXTURE["token_set"][0], "reason": "x"}]
         assert allowlist_well_formed_errors(REPO_ROOT, bad_path, FIXTURE["token_set"]) != []
-        bad_token = [{"path": "skills/release/SKILL.md", "token": "not-a-frozen-token", "reason": "x"}]
+        bad_token = [{"path": "skills/cut-release/SKILL.md", "token": "not-a-frozen-token", "reason": "x"}]
         assert allowlist_well_formed_errors(REPO_ROOT, bad_token, FIXTURE["token_set"]) != []
-        bad_reason = [{"path": "skills/release/SKILL.md", "token": FIXTURE["token_set"][0], "reason": "   "}]
+        bad_reason = [{"path": "skills/cut-release/SKILL.md", "token": FIXTURE["token_set"][0], "reason": "   "}]
         assert allowlist_well_formed_errors(REPO_ROOT, bad_reason, FIXTURE["token_set"]) != []
         return
 
@@ -254,11 +246,10 @@ def test_stale_claim_sweep_is_clean_and_allowlist_governs_both_directions(row, t
 
 # ==================================================================== AC-CRRC-3 =================
 
-@pytest.mark.parametrize("row", ["release", "cut-release", "init", "forbidden-deferral"])
+@pytest.mark.parametrize("row", ["cut-release", "init", "forbidden-deferral"])
 def test_each_prose_surface_carries_a_conformant_retired_disclosure(row):
-    if row in ("release", "cut-release", "init"):
+    if row in ("cut-release", "init"):
         path_map = {
-            "release": "skills/release/SKILL.md",
             "cut-release": "skills/cut-release/SKILL.md",
             "init": "skills/init/SKILL.md",
         }

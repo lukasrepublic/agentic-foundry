@@ -86,7 +86,7 @@ Print both lists, then carry on — they are the inventory the truth pass works 
    why before splitting anything out. The usual cause is a workspace-local COPY of a plugin function
    that predates the plugin's fix (look for a `MIRRORED_FROM` note or a comment naming a plugin
    script). Example: the spec size ceiling has ignored the `## Amendments` table rows since v1.17.2
-   (ER #228, `strip_amendments_section` in `scripts/foundry-audit-prepare.py`), so a local size gate
+   (ER #228), so a local size gate
    that trips on a backfilled ledger is a stale mirror. Re-sync the copy to the plugin's current
    function in the same PR, with a test, and commit the writes. That is not an exemption: the check
    then measures what the plugin measures.
@@ -112,7 +112,7 @@ Print both lists, then carry on — they are the inventory the truth pass works 
    (a deny rule would refuse it) matters, and only for that atom's later dispatch — it never stops this
    walk. The floor's deny rows are `gh pr merge --admin`, `docker system prune` and
    `tofu destroy -auto-approve`; when no checkpoint uses one, record "nothing can be denied" and move
-   on. A contract WITH a frozen block is listed under "needs `/foundry:amend`" and not touched.
+   on. A contract WITH a frozen block is listed under "needs an operator re-authorization" and not touched.
 4. **Stack-profile lock.** If the doctor's `stack-profile-lock` line says the lock is behind the
    profile version this plugin ships, run the relock command it names (`/foundry:relock`) and commit
    the lock. Any other `stack-profile-lock` finding goes under *For the operator*.
@@ -124,9 +124,9 @@ Print both lists, then carry on — they are the inventory the truth pass works 
    **Also, whatever version range the upgrade crossed**, search the same files plus CI workflows,
    git hooks, `scripts/` and `.claude/agents/` for this fixed list of retired machinery — residue
    from pre-1.0 scaffolds that no CHANGELOG section of a recent upgrade will name. One search covers it:
-   `grep -rniE 'live-seam|merge[-_ ]gate[-_ ]hooks?|foundry[-_](merge|ci)[-_]gate|wiring-hash|impl-wizard|impl-progress|dispatch-queue|foundry:release-wave|plugins/cache/agentic-foundry/foundry/[0-9]'`
+   `grep -rniE 'live-seam|merge[-_ ]gate[-_ ]hooks?|foundry[-_](merge|ci)[-_]gate|wiring-hash|impl-wizard|impl-progress|dispatch-queue|foundry:(release-wave|amend|spec-review|audit|command-deck|mode-autonomous|learn-distill|upstream-submit)|plugins/cache/agentic-foundry/foundry/[0-9]'`
    — the retired live-seam merge gate, its script, CI-gate script and hook, the wiring-hash pin, the
-   impl-wizard, the dispatch queue, a verb that never existed, and a hard-coded plugin-cache version
+   impl-wizard, the dispatch queue, the verbs v2.0.0 removed, and a hard-coded plugin-cache version
    path. Prose is rewritten to the current floor ("branch protection + CI checks; the git-discipline
    hook"); a script or workflow that CALLS retired machinery goes under *For the operator* with the
    file:line (it may be load-bearing for their CI).
@@ -183,7 +183,7 @@ PR body, never pasted verbatim (its `reason` strings can carry local paths).
   PR, and the registry mints authorizers. COMMITTING what those tools wrote (steps 1, 2) is required,
   and the file's `//` comment keys are prose (step 5).
 - **Never edit a contract carrying a frozen `authorized:` block.** It moves `contract_sha256`;
-  `/foundry:amend` is the path.
+  re-authorization (`/foundry:authorize`) is the path.
 - **Never delete a branch the gc's dry-run did not list as `merged`.** The classifier is the evidence.
 - **Never write `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` into any settings file.** Agent teams are an
   explicit per-session opt-in (operator directive, 2026-09-23). If the flag is found in a workspace

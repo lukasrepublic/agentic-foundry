@@ -15,7 +15,7 @@ __pycache__/
 !/.foundry/README.md
 !/.foundry/build-provenance.yaml
 !/.foundry/stack-profile.lock
-# The workspace's RECORD lives here too: programme manifests + charters + wave state, decision
+# The workspace's RECORD lives here too: any earlier release manifests, decision
 # records, and the operator's standing-grants policy (ER #169) -- committed, never runtime.
 !/.foundry/releases/
 !/.foundry/decisions/
@@ -27,3 +27,4 @@ __pycache__/
 # unattributed files (ER #167). This pattern is re-emitted after the managed block below because
 # git resolves the LAST matching pattern, so it must win over the block's re-include.
 .foundry/build-provenance.yaml
+.claude/foundry-ticket.json

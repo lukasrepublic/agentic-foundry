@@ -1,10 +1,10 @@
 """tests/test_agents_workflow.py — converted from scripts/foundry_checks/{persona-model-selection,
-workflow-agent-model-pins, reference-agents}.py.
+reference-agents}.py. (The workflow-agent-model-pins half went with `workflows/*.js` in v2.0.0.)
 
-Ports the real behavioral assertions those three drop-in selftests drove — the parsers/predicates
+Ports the real behavioral assertions those drop-in selftests drove — the parsers/predicates
 are pure (frontmatter `model:` extraction, alias-only hygiene, tool-allowlist equality) and are
 exercised BOTH over throwaway fixtures (isolated negative controls) and over the REAL shipped
-`.claude-plugin/plugin.json` + `agents/*.md` + `workflows/*.js` (the acceptance evidence that
+`.claude-plugin/plugin.json` + `agents/*.md` (the acceptance evidence that
 actually matters: this governs which model powers every dispatched persona, including the
 framework-engineer persona this very test suite was authored under).
 """
@@ -86,7 +86,7 @@ class TestPersonaModelSelectionLiveTree:
         agent_path.write_text("---\nname: pr-reviewer\nmodel: sonnet\n---\nbody\n", encoding="utf-8")
         fixed = support.evaluate_persona_model_selection(root=str(plugin_root))
         assert fixed["ac2"] is True  # the dated-id violation is fixed (ac1 still flags the other
-        # 7 unregistered personas in this deliberately-minimal fixture — not this control's concern).
+        # 5 unregistered personas in this deliberately-minimal fixture — not this control's concern).
 
 
 # =================================================== reference-agents.py ==== #
@@ -113,27 +113,3 @@ class TestReferenceAgentsLiveTree:
             expected = support.ROLE_TOOLS.get(name)
             assert expected is not None, f"{name}: outside the known role map"
             assert declared == expected, (name, declared, expected)
-
-
-# =================================================== workflow-agent-model-pins.py ==== #
-
-class TestWorkflowAgentModelPinsLiveTree:
-    def test_live_workflows_pin_every_fanout_agent_to_an_alias(self):
-        result = support.evaluate_workflow_agent_model_pins(root=REPO_ROOT)
-        assert result["ac1"] is True, result["detail"]
-        assert result["ac2"] is True, result["detail"]
-
-    def test_dated_model_id_in_fixture_workflow_flips_red(self, tmp_path):
-        wf_dir = tmp_path / "workflows"
-        wf_dir.mkdir()
-        (wf_dir / "sample.js").write_text(
-            "agent({ label: 'audit:', model: 'claude-opus-4-8' });\n", encoding="utf-8")
-        result = support.evaluate_workflow_agent_model_pins(root=str(tmp_path))
-        assert result["ac2"] is False
-
-    def test_missing_model_pin_on_labeled_agent_flips_red(self, tmp_path):
-        wf_dir = tmp_path / "workflows"
-        wf_dir.mkdir()
-        (wf_dir / "sample.js").write_text("agent({ label: 'audit:' });\n", encoding="utf-8")
-        result = support.evaluate_workflow_agent_model_pins(root=str(tmp_path))
-        assert result["ac1"] is False

@@ -95,9 +95,7 @@ Run these steps **in order**. Every command is **read-only**.
   GREEN verdict.
 - **The `.foundry/id-validate-report` STEP-REPORT NOTE.** Record the validation observation to
   **`.foundry/id-validate-report`** in the *code* repo — a free-form advisory `.foundry/`-partitioned
-  record, a sibling of the other `.foundry/` runtime partitions (e.g. `.foundry/infra-walk/`,
-  `.foundry/discovery/`, `.foundry/session-learnings/`), **NOT** inside the citation-scope roots (`docs/`, `foundry/`, `specs/`), so it sits
-  **outside the citation gate's CANONICAL_SCOPE** by construction. It is **NOT** walk-evidence and
+  record, advisory per-run runtime output. It is **NOT** walk-evidence and
   **NOT** a verdict input — static validation runs no plan, so it was never plan-shaped evidence, and
   the `emit_infra_walk_evidence` recorder it is contrasted against no longer exists in `scripts/`
   (retired).

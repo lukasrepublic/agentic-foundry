@@ -1,16 +1,28 @@
 # {{PROJECT_NAME}} — an Agentic Foundry workspace
 
-This workspace was scaffolded by `npx create-agentic-workspace`. The Agentic Foundry plugin's
-verbs are `/foundry:*`; run `/foundry:init` inside a trusted Claude Code session to finish the
-logical wiring (operator registry, project config), then `/foundry:doctor` to confirm
-`DOCTOR-GREEN`.
+Scaffolded by `npx create-agentic-workspace`. The plugin's verbs are `/foundry:*`; run
+`/foundry:init` once inside a trusted Claude Code session, then `/foundry:doctor` for `DOCTOR-GREEN`.
+
+## How work happens here
+
+**One artifact per change: a ticket with a runnable "Done means". The platform is the gate.**
+Read the plugin's `context/operating-model.md` (one page) — it is the whole model.
+
+- Start every session on a ticket: `python3 "$CLAUDE_PLUGIN_ROOT/scripts/foundry-ticket.py" start <issue>`.
+- Build on a branch; run the repo's tests locally with `"$CLAUDE_PLUGIN_ROOT/scripts/foundry-test.sh"`
+  until green; push once; one PR per ticket. Push and non-draft PRs are refused until local-green.
+- Do not stop on reversible work; the Stop hook runs the ticket's `Done means`.
+- Do not write specs, contracts, status reports, manifests or docs the ticket did not ask for;
+  the paper guard refuses them. Proposing new governance machinery is a defect.
+- Ask the operator only on an irreversible, security or authorization-adjacent fork.
 
 ## Stage mode
 
 Stage mode: {{STAGE_MODE}}
 
-`lean` favors the direct loop with lighter ceremony; `scale` enforces the full gates.
+`lean` is the norm; `scale` adds the opt-in spec lane for `security: true` work.
 
-## Conventions
+## Floor (never relaxed)
 
-Specs are atomic: `specs/features/<domain>/<capability>/feat-<capability>.md`, each with stable AC-IDs, a delimited `<!-- normative -->` region, and a sibling `acceptance-contract.yaml`.
+Branch protection + CI on `main`; security review on auth / secrets / custody / supply-chain
+changes; no force-push; the operator's own walkthrough before a release is called delivered.

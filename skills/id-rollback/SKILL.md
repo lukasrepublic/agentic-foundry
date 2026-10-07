@@ -1,6 +1,6 @@
 ---
 name: id-rollback
-description: 'The infra-delivery INCIDENT safe-revert PROCEDURE skill (the recurring/incident rollback step) — the PROCEDURE the generic agent runs when a delivered change did NOT land (a NOT-LANDED realization, an escaped defect, bad config) to restore the last-known-good IaC and prove reality matches it again. The shape is git revert -> reconcile -> verify-landed: revert the offending commit via the governed /foundry:revert (restoring the prior authorized IaC — the reused prior authorization, NOT a no-skip bypass; still subject to the merge floor), drive the GitOps controller''s idempotent reconcile toward the REVERTED IaC PINNED to the reverted commit''s candidate_sha (the merged-HEAD pin, never an arbitrary HEAD), then run the realization read and RECORD the realization observation via the DEDICATED post-deploy producer emit_realization_evidence(*, change_scope, candidate_sha, post_apply_plan_results, argocd_status, artifact) (scripts/foundry_realization.py, DC3 — a real, live producer) — recording {candidate_sha, post_apply_plan_empty, argocd:{applicable, sync_status, health_status}, artifact:{applicable, deployed_identity, merged_commit}} that derive_realization_verdict consumes — confirming LANDED iff post_apply_plan_empty AND (argocd NA OR Synced ∧ Healthy) AND (artifact NA OR identity-match) against the reverted IaC. The mutation is delegated to id-apply''s EXECUTE | VERIFY_ONLY | REFUSE decision — the skill issues no mutating verb of its own. ADVISORY observe-and-record (the realization read is NOT a merge-floor verdict the skill self-certifies; the merge floor — branch protection + CI checks, see docs/merge-floor.md — governs the revert''s reused authorization); NOT-LANDED is a tracked incident state surfaced, never force-reverted blindly / papered over.'
+description: 'The infra-delivery INCIDENT safe-revert PROCEDURE skill (the recurring/incident rollback step) — the PROCEDURE the generic agent runs when a delivered change did NOT land (a NOT-LANDED realization, an escaped defect, bad config) to restore the last-known-good IaC and prove reality matches it again. The shape is git revert -> reconcile -> verify-landed: revert the offending commit with `git revert` through a PR (restoring the prior IaC — still subject to the merge floor), drive the GitOps controller''s idempotent reconcile toward the REVERTED IaC PINNED to the reverted commit''s candidate_sha (the merged-HEAD pin, never an arbitrary HEAD), then run the realization read and RECORD the realization observation via the DEDICATED post-deploy producer emit_realization_evidence(*, change_scope, candidate_sha, post_apply_plan_results, argocd_status, artifact) (scripts/foundry_realization.py, DC3 — a real, live producer) — recording {candidate_sha, post_apply_plan_empty, argocd:{applicable, sync_status, health_status}, artifact:{applicable, deployed_identity, merged_commit}} that derive_realization_verdict consumes — confirming LANDED iff post_apply_plan_empty AND (argocd NA OR Synced ∧ Healthy) AND (artifact NA OR identity-match) against the reverted IaC. The mutation is delegated to id-apply''s EXECUTE | VERIFY_ONLY | REFUSE decision — the skill issues no mutating verb of its own. ADVISORY observe-and-record (the realization read is NOT a merge-floor verdict the skill self-certifies; the merge floor — branch protection + CI checks, see docs/merge-floor.md — governs the revert''s reused authorization); NOT-LANDED is a tracked incident state surfaced, never force-reverted blindly / papered over.'
 ---
 
 # id-rollback — the incident safe-revert procedure (git revert → reconcile → verify-landed)
@@ -9,8 +9,7 @@ The `infra-delivery` step sequence (a documented procedure this skill family for
 **NOT-LANDED** realization (the `derive_realization_verdict` consequence), an escaped defect, bad
 config — the operator runs this **safe-revert PROCEDURE** to restore the last-known-good IaC and
 **prove reality matches it again**. The shape is **`git revert` → reconcile → verify-landed**:
-revert the offending commit (restoring the prior **authorized** IaC via the governed
-`/foundry:revert`), drive the GitOps controller's **idempotent** reconcile toward the **reverted
+revert the offending commit (restoring the prior IaC through a `git revert` PR), drive the GitOps controller's **idempotent** reconcile toward the **reverted
 IaC**, then run the **realization read** through the **post-deploy realization frame** — ArgoCD
 **Synced ∧ Healthy** + post-revert **`tofu plan == ∅` against the reverted IaC** ⇒ the revert
 **LANDED** (the incident is closed); a residual OutOfSync / non-empty plan ⇒ **NOT-LANDED**
@@ -22,10 +21,9 @@ This skill is **ADVISORY**. The post-deploy **realization frame** is an **observ
 (the `id-sync`/`id-verify` discipline): `id-rollback` **records** the post-revert realization
 observation; the **realization gate** (`derive_realization_verdict` — a real, live function) +
 `deploy-status` adjudicate the recorded signals — the skill **self-certifies NOTHING**. The revert
-restores a previously **authorized** state through the governed `/foundry:revert`: it **reuses the
-prior authorization** (no new contract), is **still subject to the merge floor**, and is **NOT** a
-skip of the no-skip front-authorization gate — the revert's reused authorization + the realization
-observation are surfaced to the operator/reviewer at **the merge floor** (the adopter's branch
+restores a previously merged state through a `git revert` PR: it is **still subject to the merge
+floor**, and is **NOT** a bypass of any gate — the realization
+observation is surfaced to the operator/reviewer at **the merge floor** (the adopter's branch
 protection + CI checks — see `docs/merge-floor.md`). The both-modes floor is
 unchanged: front-authorization, the merge floor, security review,
 typed contracts. Craft guidance **FOR** the trusted operator, not a defense **against** them.
@@ -45,13 +43,11 @@ outside `id-apply`'s own decision, or into fabricating a LANDED — all are forb
 
 Run these steps **in order**. Each is a step, not reference prose.
 
-1. **Revert the offending commit via the governed `/foundry:revert`** (restore the prior
-   **authorized** IaC). Cut the revert PR through the governed `/foundry:revert`
-   — it **reuses the prior authorization** (no new contract), is **still subject to the merge
-   floor**, and is **NOT** a no-skip bypass of the front-authorization gate. The revert restores a
-   **previously-authorized** state; the reverted commit becomes the new merged HEAD whose
+1. **Revert the offending commit with `git revert`** (restore the prior IaC). Cut the revert PR
+   — it is **still subject to the merge floor** and is **NOT** a bypass of any gate. The revert restores a
+   previously merged state; the reverted commit becomes the new merged HEAD whose
    `candidate_sha` pins everything downstream. **Never force-revert blindly** — the revert restores
-   an authorized state, it does not fabricate one.
+   a merged state, it does not fabricate one.
 
 2. **Resolve the active profile + read `infra_binding.verify`.** Resolve the active stack profile
    (the `.foundry/stack-profile.lock`-pinned profile) and read its **`infra_binding`** — specifically
@@ -152,14 +148,13 @@ blindly**.
 
 ## Outputs (the named hand-offs)
 
-- **The incident-revert + realization report** — the human/`id-review`-readable incident report: the
+- **The incident-revert + realization report** — the human-readable incident report: the
   reverted commit (the `candidate_sha` reverted-commit pin), the reconcile target (the reverted
   IaC), the post-revert empty-plan re-check against the reverted IaC, BOTH ArgoCD axes
   (`sync_status` + `health_status`), and the deployed-artifact-identity observation.
 - **The `.foundry/`-partitioned post-revert realization-evidence** — the realization shape emitted by
-  **`emit_realization_evidence`** (`{candidate_sha, post_apply_plan_empty, argocd, artifact}`), a
-  sibling of the other `.foundry/` runtime partitions (NOT inside the citation-scope roots (`docs/`, `foundry/`, `specs/`); runtime
-  output, not part of the citation-gate corpus). **`derive_realization_verdict`** reads it to decide
+  **`emit_realization_evidence`** (`{candidate_sha, post_apply_plan_empty, argocd, artifact}`), advisory
+  per-run runtime output. **`derive_realization_verdict`** reads it to decide
   LANDED / NOT-LANDED.
 
 ## Anti-patterns
@@ -173,9 +168,8 @@ blindly**.
 - **Verifying landed against the bad commit instead of the reverted IaC** — forbidden. The
   verify-landed read is against the **reverted IaC**, coupled to the reverted commit's
   `candidate_sha`.
-- **A no-skip bypass of the front-authorization gate** — forbidden. The revert **reuses the prior
-  authorization** through the governed `/foundry:revert` (still subject to the merge floor); it never
-  manufactures a new authorization or skips the gate.
+- **A bypass of the merge floor** — forbidden. The revert goes through a PR and the merge floor like
+  any other change; it never skips a gate.
 - **Self-certifying a LANDED inside the skill** — forbidden (the `id-sync`/`id-plan` invariant). The
   skill RECORDS the realization shape; **`derive_realization_verdict`** decides LANDED / NOT-LANDED.
 - **Issuing a mutating verb of its own** — forbidden. The mutation is
