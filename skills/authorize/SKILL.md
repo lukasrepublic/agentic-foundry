@@ -5,6 +5,14 @@ description: The Foundry front-authorization gate (/foundry:authorize). Display 
 
 # /foundry:authorize
 
+> **Opt-in since v2.0.0 (the delivery rebase).** The default unit of work is a ticket with a
+> runnable `Done means` (`context/operating-model.md`); the operator's standing grant in
+> `.claude/foundry-operators.json` (`standing_authorization: true`) **is** the authorization and
+> ticket assignment is the act. This verb runs only when the operator chooses the spec lane —
+> `security: true` work (auth / secrets / custody / production data) or a design too large for a
+> ticket. Measured before the rebase: `foundry-authorize.py` ran 473 times in 60 days on one
+> adopter workspace, about as often as `tofu apply`. Do not reach for it unasked.
+
 The operator-facing half of the front-authorization gate. The
 mechanical write is performed by `${CLAUDE_PLUGIN_ROOT}/scripts/foundry-authorize.py`
 (validated, logged, byte-canonical). This skill is the **operator-confirmation

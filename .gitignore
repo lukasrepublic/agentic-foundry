@@ -27,3 +27,4 @@ __pycache__/
 # unattributed files (ER #167). This pattern is re-emitted after the managed block below because
 # git resolves the LAST matching pattern, so it must win over the block's re-include.
 .foundry/build-provenance.yaml
+.claude/foundry-ticket.json

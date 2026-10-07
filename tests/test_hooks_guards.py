@@ -197,8 +197,10 @@ def _discipline(cmd, extra_env=None, cwd=None):
     if cwd is not None:
         body["cwd"] = str(cwd)          # the harness-reported session cwd (AC-V118B-3 resolves in it)
     payload = json.dumps(body)
+    # --local-green=off: these cases exercise the force-push / merge / history clauses from the
+    # plugin checkout's own cwd; clause (j) (v2.0.0) is covered by tests/test_ticket_first.py.
     return _run_hook("foundry-git-discipline.sh", stdin_text=payload,
-                     extra_env=extra_env, args=("--protected", "main"))
+                     extra_env=extra_env, args=("--protected", "main", "--local-green=off"))
 
 
 def test_discipline_blocks_force_push_to_protected():
@@ -724,6 +726,11 @@ def _make_repo(path, branch="main", upstream_merge=None, config=None):
         _git(path, "config", f"branch.{branch}.merge", f"refs/heads/{upstream_merge}")
     for k, v in (config or {}).items():
         _git(path, "config", k, v)
+    # v2.0.0 clause (j): a push is admitted only with local-green for HEAD. These repos test the
+    # OTHER clauses, so record the marker the way scripts/foundry-test.sh would.
+    gitdir = _git(path, "rev-parse", "--absolute-git-dir").stdout.strip()
+    head = _git(path, "rev-parse", "HEAD").stdout.strip()
+    (Path(gitdir) / "foundry-local-green").write_text(head + " test\n")
     return path
 
 

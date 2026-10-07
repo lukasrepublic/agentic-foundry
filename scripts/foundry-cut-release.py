@@ -806,7 +806,39 @@ def _gh_er_state(ers, repo=None):
     return out
 
 
-def cut_release(tree, version, *, acceptance_fn=None, er_state_fn=None, suite_runner=None):
+CADENCE_DAYS = 30
+
+
+def release_cadence(tree, version, *, now=None):
+    """(ok, detail) — v2.0.0: a release may not be cut less than CADENCE_DAYS after the previous tag.
+    Measured: 34 tags in 60 days, each followed by per-workspace upgrade ceremony on the operator's
+    path. `--hotfix` is the only bypass and is recorded in the CLI output. Reads the newest tag's
+    creatordate from the candidate tree's own git; a tree with no tags, or git unavailable, is ok."""
+    import datetime as _dt
+    try:
+        out = subprocess.run(["git", "-C", tree, "for-each-ref", "--sort=-creatordate", "--count=1",
+                              "--format=%(refname:short) %(creatordate:iso8601-strict)", "refs/tags"],
+                             capture_output=True, text=True, timeout=30)
+    except Exception as e:  # pragma: no cover - git missing
+        return True, f"cadence not checked ({e})"
+    line = (out.stdout or "").strip()
+    if out.returncode != 0 or not line:
+        return True, "no previous tag"
+    tag, _, when = line.partition(" ")
+    try:
+        prev = _dt.datetime.fromisoformat(when.replace("Z", "+00:00"))
+    except ValueError:
+        return True, f"previous tag {tag} has an unparseable date {when!r}"
+    now = now or _dt.datetime.now(_dt.timezone.utc)
+    age = (now - prev).days
+    if age < CADENCE_DAYS:
+        return False, (f"previous tag {tag} is {age} day(s) old; the cadence floor is {CADENCE_DAYS} days. "
+                       f"Batch this into the next monthly release, or pass --hotfix for a defect that "
+                       f"blocks the operator's work.")
+    return True, f"previous tag {tag} is {age} day(s) old (floor {CADENCE_DAYS})"
+
+
+def cut_release(tree, version, *, acceptance_fn=None, er_state_fn=None, suite_runner=None, hotfix=False):
     """The deterministic-seam. preflight → (if ok) acceptance_fn(tree) → (if pass) publish_plan. Returns a
     verdict dict {state ∈ refused|gated|ready, ...}. NEVER runs git tag/push/gh or mutates the tree.
     acceptance_fn and er_state_fn are dependency-injected (defaults to the real gate / gh resolver) so the
@@ -815,6 +847,12 @@ def cut_release(tree, version, *, acceptance_fn=None, er_state_fn=None, suite_ru
     acceptance_fn = acceptance_fn or run_acceptance
     if er_state_fn is None:
         er_state_fn = _gh_er_state
+    if not hotfix:
+        cad_ok, cad_detail = release_cadence(tree, version)
+        if not cad_ok:
+            return {"state": "refused", "stage": "cadence",
+                    "preflight": [("release cadence (30-day floor; --hotfix bypasses)", False, cad_detail)],
+                    "failures": [f"release cadence: {cad_detail}"], "plan": None}
     pf = preflight(tree, version, suite_runner=suite_runner)
     failed = [c for c in pf if not c[1]]
     if failed:
@@ -1037,6 +1075,8 @@ def main(argv=None):
     ap.add_argument("--tree", help="path to the candidate plugin tree (a committed checkout)")
     ap.add_argument("--version", help="the release version being cut (the operator picks it; no inference)")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--hotfix", action="store_true",
+                    help="bypass the 30-day release cadence floor for a defect that blocks the operator's work")
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--verify-tag", action="store_true",
                     help="re-run ONLY the install-pin coherence check against an EXISTING tag "
@@ -1075,7 +1115,7 @@ def main(argv=None):
         # path would make every cut report a fabricated green suite — strictly worse than the v0.27.0 hole
         # this atom closes, because v0.27.0 at least made no claim about tests. Guarded by
         # test_cli_path_never_injects_a_suite_runner and by _GREEN_SUITE being local to _selftest.
-        r = cut_release(os.path.abspath(args.tree), args.version)
+        r = cut_release(os.path.abspath(args.tree), args.version, hotfix=args.hotfix)
     except CutReleaseError as e:
         print(f"cut-release error: {e}", file=sys.stderr)
         return 2
