@@ -217,7 +217,7 @@ jobs:
   # Release acceptance-gate (feat-foundry-release-acceptance-gate) — validate the ARTIFACT as a fresh client
   # receives it, using the tool's OWN first-party validators, BEFORE the cut. Guarded to TRUSTED refs only
   # (push to main / tags, or a same-repo PR) — never a fork pull_request HEAD, since the gate runs the
-  # candidate's own validators/doctor. The binding enforcement is the /foundry:release pre-cut hard-stop
+  # candidate's own validators/doctor. The binding enforcement is the /foundry:cut-release pre-cut hard-stop
   # (run locally where `claude` is always present); this CI job is the earlier advisory signal.
   release-acceptance:
     runs-on: ubuntu-latest

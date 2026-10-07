@@ -86,7 +86,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_ceremony_tier.py:*)",
       "tier": "allow",
-      "rationale": "one-line ceremony-tier classification printed by /foundry:intake and /foundry:spec-review"
+      "rationale": "one-line ceremony-tier classification printed by /foundry:intake"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_control_plane.py:*)",
@@ -151,7 +151,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-merge-when-green.py:*)",
       "tier": "ask",
-      "rationale": "issues gh pr merge <pr> --squash once every check is green — a merge is a repo-state mutation, ask like foundry-authorize.py/foundry-amend.py, never a self-grant"
+      "rationale": "issues gh pr merge <pr> --squash once every check is green — a merge is a repo-state mutation, ask like foundry-authorize.py, never a self-grant"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-stack-profile.py --relock:*)",

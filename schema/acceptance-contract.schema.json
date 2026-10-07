@@ -412,7 +412,7 @@
     },
     "requires_capabilities": {
       "type": "array",
-      "description": "OPTIONAL top-level task-contract slot (feat-foundry-contract-done-when-escalate-when, AC-DWE-1): the capabilities (e.g. network egress, a credential, a cloud CLI) this atom's build needs — already a member of the amend-verb's BOUNDARY_FIELDS (scripts/foundry-amend.py), so a change to this list classifies as AC-AMND-1(b) (a boundary-widening amendment) without any change to the amend classifier. Top-level (sibling of `scope`/`checkpoints`). Lives in the contract-proper region -> hash-covered into contract_sha256. This schema fixes only the SHAPE; enforcement is deferred to consumers. Omitted ⇒ no declared capability requirements (back-compat, unchanged).",
+      "description": "OPTIONAL top-level task-contract slot (feat-foundry-contract-done-when-escalate-when, AC-DWE-1): the capabilities (e.g. network egress, a credential, a cloud CLI) this atom's build needs. Top-level (sibling of `scope`/`checkpoints`). Lives in the contract-proper region -> hash-covered into contract_sha256. This schema fixes only the SHAPE; enforcement is deferred to consumers. Omitted ⇒ no declared capability requirements (back-compat, unchanged).",
       "items": {
         "type": "string",
         "minLength": 1

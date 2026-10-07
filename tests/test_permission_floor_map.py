@@ -572,7 +572,7 @@ def test_doctor_green_regression(tmp_path):
 # --------------------------------------------------------------------------------------------- #
 # v1.18.0 (AC-V118A-2): re-pinned for the two dropped rows (deny `Bash(git push --force:*)`, ask
 # `Bash(claude plugin tag:*)`).
-MERGE_BASE_ENTRIES_DIGEST = "d6d112aa0330221fe39be16c93bae1ac85aa959d313188fc406906b61933bbf3"  # v2.0.0: +foundry-ticket.py, foundry-test.sh, foundry-delivery-metrics.py (ticket #269); -30 rows of the deleted spec/manifest/deck/learnings scripts (PR 2)
+MERGE_BASE_ENTRIES_DIGEST = "76c1b008b10131372091f1526a75a4861aaf41029d74532dd0c8c1f30b3b73e4"  # v2.0.0: +foundry-ticket.py, foundry-test.sh, foundry-delivery-metrics.py (ticket #269); -30 rows of the deleted spec/manifest/deck/learnings scripts (PR 2)
 
 
 def _entries_digest(entries):
@@ -612,8 +612,7 @@ def test_permission_floor_surviving_public_surface_is_intact():
     # `_pf.load_settings_file`).
     assert callable(pf.sanitize)
     assert callable(pf.load_settings_file)
-    # the doctor's `agent-teams` probe and `foundry_command_deck_watch`'s advisory-header gate
-    # (AC-RES-3's new shared helper).
+    # the doctor's `agent-teams` probe (AC-RES-3's shared helper).
     assert callable(pf.load_settings_env)
     # the shared subsumption primitive the sibling map suite (AC-DPF-5(c)) and
     # `tests/test_floor_drift_classification.py`'s differential both drive.

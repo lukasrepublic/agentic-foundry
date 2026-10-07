@@ -27,8 +27,8 @@ This profile declares `profile_kind: library` — the operator-authored claim th
 have **no runtime surface to boot**. If the atom you are implementing exposes anything bootable (an
 HTTP endpoint, a CLI entrypoint, a long-running worker process), it does **not** belong on this
 pack — implement it on `python-uv-service` instead, where the boot recipe and `/healthz` live-seam
-surface make certification a real, dispatched check. Locking a runtime-bearing atom here does not
-fail loudly; `/foundry:certify-local` REFUSEs by design for this pack (see `conventions.md`'s
+surface make a boot-driven check a real, dispatched run. Locking a runtime-bearing atom here does not
+fail loudly; a boot-driven check REFUSEs by design for this pack (see `conventions.md`'s
 "Profile-kind claim" section), and that refusal looks identical whether the atom is genuinely a
 library or was mislocked here. Choose deliberately, before you write code.
 
