@@ -816,15 +816,23 @@ def release_cadence(tree, version, *, now=None):
     creatordate from the candidate tree's own git; a tree with no tags, or git unavailable, is ok."""
     import datetime as _dt
     try:
-        out = subprocess.run(["git", "-C", tree, "for-each-ref", "--sort=-creatordate", "--count=1",
-                              "--format=%(refname:short) %(creatordate:iso8601-strict)", "refs/tags"],
+        # release tags only (v<digits>…), reachable from HEAD (not another line's backport),
+        # excluding the tag of the version being cut (a re-run must not refuse itself). A
+        # lightweight tag dates by its commit, an annotated one by its tagger — both are "when
+        # the release happened" closely enough for a 30-day floor.
+        out = subprocess.run(["git", "-C", tree, "for-each-ref", "--sort=-creatordate",
+                              "--merged", "HEAD",
+                              "--format=%(refname:short) %(creatordate:iso8601-strict)",
+                              "refs/tags/v[0-9]*"],
                              capture_output=True, text=True, timeout=30)
     except Exception as e:  # pragma: no cover - git missing
         return True, f"cadence not checked ({e})"
-    line = (out.stdout or "").strip()
-    if out.returncode != 0 or not line:
-        return True, "no previous tag"
-    tag, _, when = line.partition(" ")
+    if out.returncode != 0:
+        return True, "cadence NOT checked (git for-each-ref failed: %s)" % (out.stderr or "").strip()[:120]
+    lines = [ln for ln in (out.stdout or "").splitlines() if ln.strip() and ln.split()[0] != f"v{version}"]
+    if not lines:
+        return True, "no previous release tag reachable from HEAD"
+    tag, _, when = lines[0].strip().partition(" ")
     try:
         prev = _dt.datetime.fromisoformat(when.replace("Z", "+00:00"))
     except ValueError:

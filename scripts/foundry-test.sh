@@ -12,8 +12,11 @@
 #   3. Makefile with a `test:` target → make test
 #   4. package.json with scripts.test → npm test --silent
 #   5. pytest.ini / pyproject.toml / tests/ → python3 -m pytest -q
-#   6. nothing found → the marker is written with "notests" and a warning (an untested repo is
-#      not gated; that is honest, not safe — add a test command).
+#   6. nothing found → the marker is written with "notests" (exit 0, LOUD warning); the hook
+#      admits the push and names it UNTESTED. An untested repo is not gated — add a test command.
+#
+# A dirty working tree is REFUSED before anything runs (exit 3): the marker names HEAD, and tests
+# that passed on uncommitted changes prove nothing about the commits a push would send.
 #
 # usage: foundry-test.sh [--print-cmd] [--dir PATH]
 set -uo pipefail
@@ -22,7 +25,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --dir) dir="$2"; shift 2 ;;
     --print-cmd) print_only=1; shift ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
     *) echo "foundry-test: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -34,8 +37,12 @@ head="$(git rev-parse HEAD 2>/dev/null || echo none)"
 cmd=""
 if [ -n "${FOUNDRY_TEST_CMD:-}" ]; then
   cmd="$FOUNDRY_TEST_CMD"
-elif tf="$(ls Taskfile.yml Taskfile.yaml 2>/dev/null | head -1)" && [ -n "$tf" ]; then
-  if grep -qE '^\s{2}ci:' "$tf"; then cmd="task ci"; elif grep -qE '^\s{2}test:' "$tf"; then cmd="task test"; fi
+else
+  tf=""
+  for f in Taskfile.yml Taskfile.yaml; do [ -f "$f" ] && tf="$f" && break; done
+  if [ -n "$tf" ]; then
+    if grep -qE '^[[:space:]]{2}ci:' "$tf"; then cmd="task ci"; elif grep -qE '^[[:space:]]{2}test:' "$tf"; then cmd="task test"; fi
+  fi
 fi
 if [ -z "$cmd" ] && [ -f Makefile ] && grep -qE '^test:' Makefile; then cmd="make test"; fi
 if [ -z "$cmd" ] && [ -f package.json ] && python3 -c 'import json,sys; sys.exit(0 if (json.load(open("package.json")).get("scripts") or {}).get("test") else 1)' 2>/dev/null; then cmd="npm test --silent"; fi
@@ -43,18 +50,20 @@ if [ -z "$cmd" ] && { [ -f pytest.ini ] || [ -f pyproject.toml ] || [ -d tests ]
 
 if [ "$print_only" = 1 ]; then echo "${cmd:-notests}"; exit 0; fi
 
+if [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+  echo "foundry-test: REFUSED — the working tree has uncommitted changes. The marker names HEAD ($head); commit first, then run again." >&2
+  exit 3
+fi
+
 if [ -z "$cmd" ]; then
   printf '%s notests %s\n' "$head" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$gitdir/foundry-local-green"
-  echo "foundry-test: no test command found (Taskfile ci/test, Makefile test, npm test, pytest) — recorded local-green for $head as UNTESTED. Add a test command." >&2
+  echo "foundry-test: ⚠ NO TEST COMMAND FOUND (Taskfile ci/test, Makefile test, npm test, pytest). Recorded local-green for $head as UNTESTED — the push will be admitted and marked UNTESTED. Add a test command." >&2
   exit 0
 fi
 
-if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
-  echo "foundry-test: working tree has uncommitted changes — the marker covers HEAD ($head) only; commit first if you intend to push these." >&2
-fi
 echo "foundry-test: running: $cmd" >&2
 start=$(date +%s)
-eval "$cmd"; rc=$?
+/bin/bash -c "$cmd"; rc=$?
 secs=$(( $(date +%s) - start ))
 if [ $rc -eq 0 ]; then
   printf '%s %s %s %ss\n' "$head" "$(printf '%s' "$cmd" | tr ' ' '_')" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$secs" > "$gitdir/foundry-local-green"

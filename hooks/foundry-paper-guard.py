@@ -11,8 +11,10 @@ went to paper and the paper:code line ratio ran 1.5:1 to 8:1. The guard makes pa
 not impossible: `foundry-ticket.py allow <path>` lifts it for one path when the operator asks.
 
 Everything else — code, infra, tests, CLAUDE.md, config — is admitted without a ticket. Writes
-outside the project root (e.g. ~/.claude memory) are admitted. Malformed payloads are admitted
-(this guard is a visibility control, not a security floor).
+outside the project root (e.g. ~/.claude memory) are admitted; so is a symlink that resolves
+outside it. Malformed payloads are admitted (a visibility control, not a security floor). The
+first path component is compared case-insensitively on case-insensitive filesystems (darwin).
+A refusal is exit 2 with the reason on stderr (what the agent sees) and as JSON on stdout.
 """
 import json
 import os
@@ -21,6 +23,7 @@ from pathlib import Path
 
 PAPER_DIRS = ("specs", "intake", ".foundry", "status-reports", "charters", "docs")
 PAPER_FILES = ("acceptance-contract.yaml", "release.yaml", "state.yaml")
+CASEFOLD = sys.platform == "darwin" or os.name == "nt"
 
 
 def _root() -> Path:
@@ -30,24 +33,35 @@ def _root() -> Path:
     return Path.cwd().resolve()
 
 
+def _key(s: str) -> str:
+    return s.casefold() if CASEFOLD else s
+
+
 def _is_paper(rel: Path) -> bool:
     parts = rel.parts
     if not parts:
         return False
-    if parts[0] in PAPER_DIRS:
+    if _key(parts[0]) in {_key(d) for d in PAPER_DIRS}:
         return True
-    return rel.name in PAPER_FILES
+    return _key(rel.name) in {_key(f) for f in PAPER_FILES}
 
 
 def _allowed(rel: Path, allowed: list) -> bool:
-    rel_s = rel.as_posix()
+    rel_s = _key(rel.as_posix())
     for a in allowed:
-        a = a.strip().rstrip("/")
+        a = _key(str(a).strip().strip("/").lstrip("./"))
         if not a:
             continue
         if rel_s == a or rel_s.startswith(a + "/"):
             return True
     return False
+
+
+def _refuse(reason: str) -> int:
+    msg = "foundry-paper-guard: " + reason
+    sys.stderr.write(msg + "\n")
+    sys.stdout.write(json.dumps({"decision": "block", "reason": msg}))
+    return 2
 
 
 def main() -> int:
@@ -67,7 +81,9 @@ def main() -> int:
         abs_t = Path(target).expanduser()
         if not abs_t.is_absolute():
             abs_t = root / abs_t
-        rel = abs_t.resolve().relative_to(root)
+        # resolve the PARENT (the file may not exist yet) so symlinked dirs land where they point
+        resolved = abs_t.parent.resolve() / abs_t.name
+        rel = resolved.relative_to(root)
     except Exception:
         return 0  # outside the project → not our business
     if not _is_paper(rel):
@@ -83,18 +99,16 @@ def main() -> int:
     if doc and _allowed(rel, doc.get("paper_allowed") or []):
         return 0
 
+    p = rel.as_posix()
     if doc:
-        why = ("ticket #%s does not allow writing %s. If the operator asked for this document, run "
-               "`python3 \"$CLAUDE_PLUGIN_ROOT/scripts/foundry-ticket.py\" allow %s` and retry. "
-               "Otherwise write code, not paper." % (doc.get("issue"), rel.as_posix(), rel.as_posix()))
-    else:
-        why = ("no active ticket, and %s is a paper path (specs/, .foundry/, docs/, status-reports/, "
-               "charters/, contracts, manifests). Start the ticket you are working "
-               "(`python3 \"$CLAUDE_PLUGIN_ROOT/scripts/foundry-ticket.py\" start <issue>`) and list the "
-               "paper it needs under `## Paper allowed`; a ticket's Done means is a command, not a "
-               "document." % rel.as_posix())
-    sys.stdout.write(json.dumps({"decision": "block", "reason": "foundry-paper-guard: " + why}))
-    return 2
+        return _refuse("ticket #%s does not allow writing %s. If the operator asked for this document, run "
+                       "`python3 \"$CLAUDE_PLUGIN_ROOT/scripts/foundry-ticket.py\" allow %s` and retry. "
+                       "Otherwise write code, not paper." % (doc.get("issue"), p, p))
+    return _refuse("no active ticket, and %s is a paper path (specs/, intake/, .foundry/, docs/, "
+                   "status-reports/, charters/, contracts, manifests). Start the ticket you are working "
+                   "(`python3 \"$CLAUDE_PLUGIN_ROOT/scripts/foundry-ticket.py\" start <issue>`) and list the "
+                   "paper it needs under `## Paper allowed`; a ticket's Done means is a command, not a "
+                   "document." % p)
 
 
 if __name__ == "__main__":

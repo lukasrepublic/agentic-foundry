@@ -105,8 +105,9 @@ while [ $# -gt 0 ]; do
       LOCAL_GREEN=0
       ;;
     *)
-      # Unknown args are ignored (NO --allow / --force / off-switch is honored; there is no
-      # argument that downgrades a BLOCK to an ADMIT — AC-GITGUARD-3).
+      # Unknown args are ignored. No argument downgrades a security clause's BLOCK to an ADMIT
+      # (AC-GITGUARD-3); the one recognised off-switch, --local-green=off above, disables only the
+      # delivery-discipline clause (j), which admits nothing a security clause refuses.
       ;;
   esac
   shift
@@ -161,15 +162,25 @@ strict = os.environ.get("STRICT_HISTORY", "0") == "1"
 local_green_on = os.environ.get("LOCAL_GREEN", "1") == "1"
 
 
-def _local_green(git_globals):
-    """Clause (j) evidence: (ok, detail). The repo is the `-C` global if present, else the
-    payload cwd. `<git-dir>/foundry-local-green` (written by scripts/foundry-test.sh) must name
-    the current HEAD. A cwd that is not a repository cannot be judged → admitted (this clause is
-    a delivery discipline, not a security floor; the floor is branch protection + CI)."""
+def _local_green(git_idx, git_globals):
+    """Clause (j) evidence: (ok, detail). The repository is the payload cwd composed with every
+    literal `-C` global (expanded, in order, as git does). `<git-dir>/foundry-local-green` (written
+    by scripts/foundry-test.sh) must name the current HEAD. UNRESOLVABLE => refused: an earlier
+    `cd`/`pushd`/`popd` in the command, a `--git-dir`/`--work-tree` global, or a non-literal `-C`
+    (the same posture as clause (a)'s no-refspec resolution). A cwd that is not a repository at
+    all is admitted (nothing to judge; the floor is branch protection + CI, not this clause)."""
+    for k in range(git_idx):
+        if low[k] in ("cd", "pushd", "popd"):
+            return False, ("an earlier directory change (%s) makes the repository unresolvable; "
+                           "run the push from the repository cwd or use `git -C <dir> push`" % toks[k])
     repo = os.environ.get("PAYLOAD_CWD", "") or os.getcwd()
     for opt, val in git_globals:
-        if opt == "-C" and val:
-            repo = val if os.path.isabs(val) else os.path.join(repo, val)
+        if opt.startswith(("--git-dir", "--work-tree")):
+            return False, "the git global option %s makes the repository unresolvable" % opt
+        if opt == "-C":
+            if not val or any(c in val for c in ("$", "`", "*", "?")):
+                return False, "a non-literal `-C` directory (%s)" % (val or "")
+            repo = os.path.join(repo, os.path.expanduser(val))
     try:
         gd = subprocess.run(["git", "-C", repo, "rev-parse", "--git-dir"], capture_output=True,
                             text=True, timeout=10)
@@ -185,11 +196,14 @@ def _local_green(git_globals):
     head = hd.stdout.strip()
     marker = os.path.join(gitdir, "foundry-local-green")
     try:
-        first = open(marker, encoding="utf-8").read().split()[0]
+        fields = open(marker, encoding="utf-8").read().split()
+        first = fields[0]
     except Exception:
         return False, "no local-green marker for HEAD %s" % head[:12]
     if first != head:
         return False, "local-green marker names %s but HEAD is %s" % (first[:12], head[:12])
+    if len(fields) > 1 and fields[1] == "notests":
+        return True, "local-green for HEAD %s is UNTESTED (no test command found by foundry-test.sh)" % head[:12]
     return True, "local-green for HEAD %s" % head[:12]
 
 
@@ -546,11 +560,14 @@ for i, t in enumerate(low):
     def _require_local_green():
         if not local_green_on:
             return
-        maintenance = any(r in ("--delete", "-d", "--dry-run", "-n", "--tags", "--prune") for r in lrest) \
-            or any(r.startswith(":") for r in rest)
+        bare_push = [r for r in rest if not r.startswith("-")]
+        refspecs_push = bare_push[1:] if bare_push else []
+        maintenance = any(r in ("--delete", "-d", "--dry-run", "-n") for r in lrest) \
+            or ("--tags" in lrest and not refspecs_push) \
+            or (refspecs_push and all(r.startswith(":") for r in refspecs_push))
         if maintenance:
             return
-        ok, detail = _local_green(git_globals)
+        ok, detail = _local_green(i, git_globals)
         if not ok:
             block("push refused: %s. Command: %s" % (detail, cmd),
                   remediation=_LOCAL_GREEN_REMEDY, retryable=True)
@@ -684,9 +701,19 @@ for i, t in enumerate(low):
     largs = [a.lower() for a in args]
     # (j) `gh pr create` without --draft/-d is a request for CI — admitted only with local-green.
     if local_green_on:
-        bare_gh = [a for a in largs if not a.startswith("-")]
+        bare_gh, skip = [], False
+        for a in largs:
+            if skip:
+                skip = False
+                continue
+            if a in ("-r", "--repo"):
+                skip = True            # drop the value of the repo selector
+                continue
+            if a.startswith("-"):
+                continue
+            bare_gh.append(a)
         if bare_gh[:2] == ["pr", "create"] and not any(a in ("--draft", "-d") for a in largs):
-            ok, detail = _local_green([])
+            ok, detail = _local_green(i, [])
             if not ok:
                 block("non-draft `gh pr create` refused: %s. Command: %s" % (detail, cmd),
                       remediation=_LOCAL_GREEN_REMEDY, retryable=True)

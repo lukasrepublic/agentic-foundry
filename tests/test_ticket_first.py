@@ -71,6 +71,26 @@ def test_parse_body_without_sections_is_empty():
     assert foundry_ticket.parse_body("just prose") == ("", [])
 
 
+def test_parse_body_crlf_unfenced_and_heading_inside_fence():
+    crlf = "## Done means\r\n```\r\nmake check\r\n```\r\n## Paper allowed\r\n./docs/a.md — the runbook\r\n"
+    assert foundry_ticket.parse_body(crlf) == ("make check", ["docs/a.md"])
+    # prose under the heading is never a command
+    assert foundry_ticket.parse_body("## Done means\nthe dashboard loads and tests pass\n## Notes\nx")[0] == ""
+    # a shell comment line that looks like a heading inside the fence does not cut the block
+    body = "## Done means\n```bash\n## build\nmake all\n```\n## Paper allowed\nCHANGELOG.md\n"
+    assert foundry_ticket.parse_body(body) == ("## build\nmake all", ["CHANGELOG.md"])
+
+
+def test_author_trust_uses_collaborator_permission():
+    calls = {"api user": {"login": "me"}, "api repos/o/r/collaborators/bob/permission": {"permission": "read"},
+             "api repos/o/r/collaborators/ann/permission": {"permission": "write"}}
+    gh = lambda args: calls.get(" ".join(args))
+    assert foundry_ticket.author_trusted("o/r", "me", gh)[0]
+    assert foundry_ticket.author_trusted("o/r", "ann", gh)[0]
+    ok, why = foundry_ticket.author_trusted("o/r", "bob", gh)
+    assert not ok and "read" in why
+
+
 # --- paper guard --------------------------------------------------------------------------
 
 @pytest.mark.parametrize("rel", ["specs/features/x/feat-x.md", ".foundry/releases/r/release.yaml",
@@ -80,7 +100,7 @@ def test_paper_guard_refuses_paper_without_ticket(tmp_path, rel):
     root = _repo(tmp_path)
     p = _hook("foundry-paper-guard.py", {"tool_name": "Write", "tool_input": {"file_path": str(root / rel)}}, root)
     assert p.returncode == 2, p.stdout + p.stderr
-    assert "no active ticket" in p.stdout
+    assert "no active ticket" in p.stderr and "no active ticket" in p.stdout
 
 
 @pytest.mark.parametrize("rel", ["src/app.py", "infra/main.tf", "tests/test_a.py", "CLAUDE.md",
@@ -97,7 +117,7 @@ def test_paper_guard_honours_ticket_allow_list(tmp_path):
     ok = _hook("foundry-paper-guard.py", {"tool_name": "Write", "tool_input": {"file_path": str(root / "docs/how-to/x.md")}}, root)
     assert ok.returncode == 0
     no = _hook("foundry-paper-guard.py", {"tool_name": "Write", "tool_input": {"file_path": str(root / "docs/other.md")}}, root)
-    assert no.returncode == 2 and "ticket #7 does not allow" in no.stdout
+    assert no.returncode == 2 and "ticket #7 does not allow" in no.stderr
 
 
 def test_paper_guard_ignores_paths_outside_project(tmp_path):
@@ -115,7 +135,7 @@ def test_stop_hook_refuses_while_done_means_fails_then_caps(tmp_path):
     for n in (1, 2, 3):
         p = _hook("foundry-ticket-stop.py", {"session_id": "s"}, root)
         assert p.returncode == 2, (n, p.stdout, p.stderr)
-        assert f"refusal {n}/3" in p.stdout
+        assert f"refusal {n}/3" in p.stderr
     p = _hook("foundry-ticket-stop.py", {"session_id": "s"}, root)
     assert p.returncode == 0
     assert json.loads(tf.read_text())["stop_blocks"] == 3
@@ -127,6 +147,17 @@ def test_stop_hook_marks_done_and_admits_when_check_passes(tmp_path):
     p = _hook("foundry-ticket-stop.py", {"session_id": "s"}, root)
     assert p.returncode == 0
     assert json.loads(tf.read_text())["status"] == "done"
+
+
+def test_stop_hook_counts_a_timeout_as_a_refusal(tmp_path):
+    root = _repo(tmp_path)
+    tf = _ticket(root, done="sleep 30")
+    env = _env(root)
+    env["FOUNDRY_TICKET_STOP_TIMEOUT"] = "1"
+    p = subprocess.run([str(HOOKS / "foundry-ticket-stop.py")], input="{}", capture_output=True, text=True,
+                       env=env, cwd=str(root), timeout=60)
+    assert p.returncode == 2 and "timed out" in p.stderr
+    assert json.loads(tf.read_text())["stop_blocks"] == 1
 
 
 def test_stop_hook_is_fail_open_without_ticket_or_command(tmp_path):
@@ -157,6 +188,48 @@ def test_foundry_test_writes_marker_for_head(tmp_path):
     assert p.returncode != 0 and not marker.exists()
 
 
+def test_foundry_test_refuses_a_dirty_tree_and_finds_a_taskfile(tmp_path):
+    root = _repo(tmp_path)
+    env = _env(root)
+    env.pop("FOUNDRY_TEST_CMD", None)
+    (root / "Taskfile.yml").write_text("version: '3'\ntasks:\n  ci:\n    cmds:\n      - true\n")
+    p = subprocess.run([str(SCRIPTS / "foundry-test.sh"), "--print-cmd"], cwd=root, env=env, capture_output=True, text=True)
+    assert p.stdout.strip() == "task ci"
+    (root / "a.py").write_text("x = 2\n")  # tracked file modified → dirty
+    env["FOUNDRY_TEST_CMD"] = "true"
+    p = subprocess.run([str(SCRIPTS / "foundry-test.sh")], cwd=root, env=env, capture_output=True, text=True)
+    assert p.returncode == 3 and "uncommitted" in p.stderr
+    marker = Path(_git(root, "rev-parse", "--absolute-git-dir")) / "foundry-local-green"
+    assert not marker.exists()
+
+
+def test_notests_marker_is_named_untested_in_the_admission(tmp_path):
+    root = _repo(tmp_path)
+    env = _env(root)
+    env.pop("FOUNDRY_TEST_CMD", None)
+    p = subprocess.run([str(SCRIPTS / "foundry-test.sh")], cwd=root, env=env, capture_output=True, text=True)
+    assert p.returncode == 0 and "UNTESTED" in p.stderr
+    assert _discipline(root, "git push origin feature-1").returncode == 0
+
+
+def test_push_after_cd_or_git_dir_is_unresolvable_and_refused(tmp_path):
+    root = _repo(tmp_path)
+    env = _env(root)
+    env["FOUNDRY_TEST_CMD"] = "true"
+    subprocess.run([str(SCRIPTS / "foundry-test.sh")], cwd=root, env=env, check=True, capture_output=True)
+    p = _discipline(root, "cd /tmp && git push origin feature-1")
+    assert p.returncode == 2 and "directory change" in (p.stdout + p.stderr)
+    p = _discipline(root, "git --git-dir=/tmp/x/.git push origin feature-1")
+    assert p.returncode == 2 and "unresolvable" in (p.stdout + p.stderr)
+
+
+def test_gh_repo_selector_does_not_hide_pr_create(tmp_path):
+    root = _repo(tmp_path)
+    p = _discipline(root, "gh -R owner/repo pr create --title t --body b")
+    assert p.returncode == 2 and "non-draft" in (p.stdout + p.stderr)
+    assert _discipline(root, "gh -R owner/repo pr create --draft --title t --body b").returncode == 0
+
+
 def test_push_refused_without_local_green_and_admitted_with_it(tmp_path):
     root = _repo(tmp_path)
     p = _discipline(root, "git push origin feature-1")
@@ -182,6 +255,12 @@ def test_push_maintenance_forms_need_no_marker(tmp_path, cmd):
     root = _repo(tmp_path)
     p = _discipline(root, cmd)
     assert p.returncode == 0, cmd + "\n" + p.stdout + p.stderr
+
+
+@pytest.mark.parametrize("cmd", ["git push --tags origin mybranch", "git push --prune origin refs/heads/x:refs/heads/x"])
+def test_push_of_commits_dressed_as_maintenance_still_needs_marker(tmp_path, cmd):
+    root = _repo(tmp_path)
+    assert _discipline(root, cmd).returncode == 2
 
 
 def test_pr_create_draft_admitted_non_draft_needs_marker(tmp_path):
@@ -230,3 +309,9 @@ def test_release_cadence_refuses_within_30_days_unless_hotfix(tmp_path):
     (tmp_path / "u").mkdir()
     untagged = _repo(tmp_path / "u")
     assert fcr.release_cadence(str(untagged), "1.0.0")[0]
+    # the tag of the version being cut is ignored (a re-run must not refuse itself); a lightweight
+    # tag counts; a non-release tag (no v<digits>) is ignored
+    _git(root, "tag", "v1.1.0")
+    _git(root, "tag", "staging-20261007")
+    ok, detail = fcr.release_cadence(str(root), "1.1.0")
+    assert not ok and "v1.0.0" in detail
