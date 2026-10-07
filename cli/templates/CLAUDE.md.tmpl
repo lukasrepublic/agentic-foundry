@@ -9,7 +9,7 @@ Scaffolded by `npx create-agentic-workspace`. The plugin's verbs are `/foundry:*
 Read the plugin's `context/operating-model.md` (one page) — it is the whole model.
 
 - Start every session on a ticket: `python3 "$CLAUDE_PLUGIN_ROOT/scripts/foundry-ticket.py" start <issue>`.
-- Build on a branch; run the repo's tests locally with `bash "$CLAUDE_PLUGIN_ROOT/scripts/foundry-test.sh"`
+- Build on a branch; run the repo's tests locally with `"$CLAUDE_PLUGIN_ROOT/scripts/foundry-test.sh"`
   until green; push once; one PR per ticket. Push and non-draft PRs are refused until local-green.
 - Do not stop on reversible work; the Stop hook runs the ticket's `Done means`.
 - Do not write specs, contracts, status reports, manifests or docs the ticket did not ask for;

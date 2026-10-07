@@ -7,7 +7,7 @@ requested in prose.
 
 1. **One ticket, one branch, one PR.** `git switch -c <ticket>-<slug>` from `main`. Commit as
    often as you like on the branch; nothing you commit there runs CI.
-2. **Local-green before the first push.** `bash "$CLAUDE_PLUGIN_ROOT/scripts/foundry-test.sh"`
+2. **Local-green before the first push.** `"$CLAUDE_PLUGIN_ROOT/scripts/foundry-test.sh"`
    runs the repository's own CI command (Taskfile `ci`/`test`, `make test`, `npm test`, pytest)
    and records `<git-dir>/foundry-local-green` for HEAD. `git push` and a non-draft
    `gh pr create` are **refused** without it (clause (j); `--local-green=off` in `hooks.json`

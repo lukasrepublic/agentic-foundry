@@ -32,7 +32,7 @@ Start it in the session: `python3 "$CLAUDE_PLUGIN_ROOT/scripts/foundry-ticket.py
 
 1. Branch from `main`: `git switch -c <ticket>-<slug>`.
 2. Build on the branch. Run `Done means` and the repo's own tests **locally** —
-   `bash "$CLAUDE_PLUGIN_ROOT/scripts/foundry-test.sh"` — until green. In a container this is
+   `"$CLAUDE_PLUGIN_ROOT/scripts/foundry-test.sh"` — until green. In a container this is
    the real stack (compose / DinD), not a mock.
 3. Push once and open **one** PR per ticket (draft until local-green). The push and the
    non-draft PR are refused by the git-discipline hook until `foundry-test.sh` has recorded

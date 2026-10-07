@@ -51,7 +51,7 @@ def main() -> int:
     if blocks >= STOP_CAP:
         return 0
     try:
-        out = subprocess.run(["bash", "-lc", cmd], cwd=str(root), capture_output=True,
+        out = subprocess.run(["/bin/bash", "-c", cmd], cwd=str(root), capture_output=True,
                              text=True, timeout=TIMEOUT_S)
     except subprocess.TimeoutExpired:
         return 0

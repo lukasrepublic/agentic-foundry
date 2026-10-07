@@ -148,12 +148,12 @@ def test_foundry_test_writes_marker_for_head(tmp_path):
     root = _repo(tmp_path)
     env = _env(root)
     env["FOUNDRY_TEST_CMD"] = "true"
-    p = subprocess.run(["bash", str(SCRIPTS / "foundry-test.sh")], cwd=root, env=env, capture_output=True, text=True)
+    p = subprocess.run([str(SCRIPTS / "foundry-test.sh")], cwd=root, env=env, capture_output=True, text=True)
     assert p.returncode == 0, p.stderr
     marker = Path(_git(root, "rev-parse", "--absolute-git-dir")) / "foundry-local-green"
     assert marker.read_text().split()[0] == _git(root, "rev-parse", "HEAD")
     env["FOUNDRY_TEST_CMD"] = "false"
-    p = subprocess.run(["bash", str(SCRIPTS / "foundry-test.sh")], cwd=root, env=env, capture_output=True, text=True)
+    p = subprocess.run([str(SCRIPTS / "foundry-test.sh")], cwd=root, env=env, capture_output=True, text=True)
     assert p.returncode != 0 and not marker.exists()
 
 
@@ -164,7 +164,7 @@ def test_push_refused_without_local_green_and_admitted_with_it(tmp_path):
     assert "no local-green marker" in (p.stdout + p.stderr)
     env = _env(root)
     env["FOUNDRY_TEST_CMD"] = "true"
-    subprocess.run(["bash", str(SCRIPTS / "foundry-test.sh")], cwd=root, env=env, check=True, capture_output=True)
+    subprocess.run([str(SCRIPTS / "foundry-test.sh")], cwd=root, env=env, check=True, capture_output=True)
     p = _discipline(root, "git push origin feature-1")
     assert p.returncode == 0, p.stdout + p.stderr
     # a new commit invalidates the marker
@@ -191,7 +191,7 @@ def test_pr_create_draft_admitted_non_draft_needs_marker(tmp_path):
     assert p.returncode == 2 and "non-draft" in (p.stdout + p.stderr)
     env = _env(root)
     env["FOUNDRY_TEST_CMD"] = "true"
-    subprocess.run(["bash", str(SCRIPTS / "foundry-test.sh")], cwd=root, env=env, check=True, capture_output=True)
+    subprocess.run([str(SCRIPTS / "foundry-test.sh")], cwd=root, env=env, check=True, capture_output=True)
     assert _discipline(root, "gh pr create --title t --body b").returncode == 0
 
 

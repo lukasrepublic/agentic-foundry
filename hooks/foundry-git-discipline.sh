@@ -194,7 +194,7 @@ def _local_green(git_globals):
 
 
 _LOCAL_GREEN_REMEDY = ("Run the repository's own tests locally first: "
-                       "bash \"$CLAUDE_PLUGIN_ROOT/scripts/foundry-test.sh\" (writes "
+                       "\"$CLAUDE_PLUGIN_ROOT/scripts/foundry-test.sh\" (writes "
                        "<git-dir>/foundry-local-green for HEAD on success). CI confirms; it does "
                        "not discover. A draft PR (`gh pr create --draft`) needs no marker.")
 

@@ -54,7 +54,7 @@ if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
 fi
 echo "foundry-test: running: $cmd" >&2
 start=$(date +%s)
-bash -lc "$cmd"; rc=$?
+eval "$cmd"; rc=$?
 secs=$(( $(date +%s) - start ))
 if [ $rc -eq 0 ]; then
   printf '%s %s %s %ss\n' "$head" "$(printf '%s' "$cmd" | tr ' ' '_')" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$secs" > "$gitdir/foundry-local-green"

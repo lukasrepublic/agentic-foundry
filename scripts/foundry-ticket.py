@@ -173,7 +173,7 @@ def run_done(doc: dict, root: Path, timeout: int = 1800) -> tuple[int, str]:
     if not cmd.strip():
         return 0, "no Done-means command declared"
     try:
-        out = subprocess.run(["bash", "-lc", cmd], cwd=str(root), capture_output=True,
+        out = subprocess.run(["/bin/bash", "-c", cmd], cwd=str(root), capture_output=True,
                              text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return 124, f"timed out after {timeout}s"
