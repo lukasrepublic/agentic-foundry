@@ -29,6 +29,19 @@
     { "path": ".claude/session-learnings", "kind": "dir", "retired_in": "1.0.0", "reason": "the old learnings location; the partition is .foundry/session-learnings" },
     { "path": ".claude/hooks/*-exec-guard.sh", "kind": "file", "exclude_prefix": "foundry-", "retired_in": "1.8.0", "reason": "the retired session-context framework's cloud-cli exec guard; a hook still named by a command in .claude/settings*.json is refused, never removed" },
     { "path": ".foundry/admission-ledger.jsonl", "kind": "file", "retired_in": "0.24.0", "reason": "the retired ADL admission gate's ledger; nothing reads it" },
-    { "path": ".claude/hooks/foundry-subagent-statusline.sh", "kind": "file", "retired_in": "1.18.2", "reason": "the subagent status line is retired (the status line runs for the root session only); removed only once no settings file names it" }
+    { "path": ".claude/hooks/foundry-subagent-statusline.sh", "kind": "file", "retired_in": "1.18.2", "reason": "the subagent status line is retired (the status line runs for the root session only); removed only once no settings file names it" },
+    { "path": ".foundry/graph.json", "kind": "file", "retired_in": "2.0.0", "reason": "the citation graph and its MCP server were removed in v2.0.0; grep and native search replace it" },
+    { "path": ".foundry/session-learnings", "kind": "dir", "retired_in": "2.0.0", "reason": "session-learnings capture and distillation were removed in v2.0.0; native memory replaces it" },
+    { "path": ".foundry/audit-ledger.jsonl", "kind": "file", "retired_in": "2.0.0", "reason": "the deep-audit ledger and its engine were removed in v2.0.0; the PR review and /code-review replace it" },
+    { "path": ".foundry/watchers", "kind": "dir", "retired_in": "2.0.0", "reason": "the command-deck watcher state was removed in v2.0.0; native /loop and /schedule replace it" },
+    { "path": ".foundry/evidence", "kind": "dir", "retired_in": "2.0.0", "reason": "the TaskCompleted done_when evidence records were removed in v2.0.0; a ticket's Done means command replaces them" },
+    { "path": ".foundry/idle-nudges*.jsonl", "kind": "file", "retired_in": "2.0.0", "reason": "the TeammateIdle nudge log was removed in v2.0.0 with the hook that wrote it" },
+    { "path": ".foundry/discovery", "kind": "dir", "retired_in": "2.0.0", "reason": "the sd-discover survey partition was removed in v2.0.0 with the sd-* craft lane" },
+    { "path": ".foundry/test-plan", "kind": "dir", "retired_in": "2.0.0", "reason": "the sd-plan-tests partition was removed in v2.0.0 with the sd-* craft lane" },
+    { "path": ".foundry/id-architect-report", "kind": "file", "retired_in": "2.0.0", "reason": "the id-architect step-report note; the skill was removed in v2.0.0 (design notes live in the ticket)" },
+    { "path": ".foundry/id-document-report", "kind": "file", "retired_in": "2.0.0", "reason": "the id-document step-report note; the skill was removed in v2.0.0 (the PR description replaces it)" },
+    { "path": ".foundry/project-map.json", "kind": "file", "retired_in": "2.0.0", "reason": "the GitHub Projects atom-to-issue cache; the projection was removed in v2.0.0" },
+    { "path": ".foundry/reconciliation.yaml", "kind": "file", "retired_in": "2.0.0", "reason": "the reconcile manifest; the reconcile script was removed in v2.0.0" },
+    { "path": ".foundry/upstream-redaction.txt", "kind": "file", "retired_in": "2.0.0", "reason": "the upstream-submit redaction list; the skill was removed in v2.0.0 (use gh issue create)" }
   ]
 }

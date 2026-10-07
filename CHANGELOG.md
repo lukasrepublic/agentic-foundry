@@ -60,6 +60,99 @@ default path.
 - `docs/how-to/plugin-evals.md`: judge and model repinned off a retiring model
   (`claude-haiku-4-5` retirable from 2026-10-15).
 
+**Removed (PR 2):** the spec / contract / authorize / manifest / learnings / deck machinery leaves
+the default path. `/foundry:intake` and `/foundry:authorize` stay as the **opt-in spec lane**
+(`security: true` work, or a spec the operator chooses). Skills 70 → 32, agents 8 → 6, hook
+events 11 → 6. Each line names what replaces it.
+
+- *Skills (38):*
+  - `amend` — edit the ticket; `/foundry:authorize` re-freezes (security: true only).
+  - `audit` — the ticket's review pass and `/code-review`.
+  - `authorize-release` — the ticket; branch protection.
+  - `certify-local` (+ `certify_local.py`) — the CI e2e job; `npx playwright test`.
+  - `certify-staging` — the ticket's `Done means`; CD promotion.
+  - `coherence-check` — nothing (an advisory citation sweep).
+  - `command-deck` (+ tick prompt template) — native `/loop` and `/schedule`; GitHub Projects.
+  - `dashboards-as-code` (+ `foundry-dashboard-fidelity.py`) — the adopter's own CI.
+  - `data-tier-cutover` — a runbook in the ticket.
+  - `decommission-gate` (+ `foundry-decommission.py`) — the ticket; the adopter's CI.
+  - `drift-sweep` — `id-drift`.
+  - `extract-spec` — the ticket.
+  - `fleet` — native `/list-agents`.
+  - `grounding-conformance` (+ `foundry_grounding_conformance.py`) — nothing.
+  - `id-architect` — design notes in the ticket.
+  - `id-document` — the PR description.
+  - `id-impact` — `id-plan` / `id-test` output (`foundry_plan_model.parse_policy_findings`).
+  - `id-review` — the `pr-reviewer` and `security-reviewer` agents, `/security-review`, CI `security-path-base`.
+  - `index` — `/help`.
+  - `infra-sandboxed-apply` — `id-apply`.
+  - `learn-capture`, `learn-distill` — native memory.
+  - `mode-autonomous` — native `/loop` + `/foundry:merge-when-green`.
+  - `mode-interactive` — the default behaviour (`/foundry:mode interactive`).
+  - `release` (+ `foundry_release.py`) — the ticket; milestones and projects.
+  - `report-citation-graph` (+ graph builder, graph MCP server, `.mcp.json`) — grep and native search.
+  - `research-capture` (+ template) — a ticket comment.
+  - `revert` — `git revert` and a PR.
+  - `sd-debug`, `sd-discover`, `sd-document`, `sd-plan-tests`, `sd-review`, `sd-test`, `sd-verify` — the ticket's `Done means`, CI, the review agents.
+  - `skill-authoring` — skill-creator and the plugin docs.
+  - `spec-review` — the ticket's review pass.
+  - `upstream-submit` (+ `foundry-upstream-submit.py`) — `gh issue create`.
+- *Agents (2):* `spec-author`, `spec-reviewer` (dropped from `plugin.json`) — the `pr-reviewer` agent.
+- *Workflows (3):* `workflows/release-wave.js` — native `/loop` + `/foundry:merge-when-green`;
+  `workflows/spec-audit.js` — nothing; `.github/workflows/foundry-project-sync.yml` — GitHub Projects' own automation.
+- *Hooks (7) and their `hooks.json` entries:* `foundry-harvest-learnings.sh`,
+  `foundry-session-learnings.sh`, `foundry-learnings-lib.sh` (+ `bin/foundry-learn-capture`) — native
+  memory; `foundry-task-created.py`, `foundry-task-completed.py`, `foundry-teammate-idle.py` and the
+  SessionStart `foundry-native-todo-discipline.py --session-start` — the Stop hook running `Done means`;
+  `foundry-cloud-cli-exec-guard.sh` — native sandbox credential masking (inert by default, its
+  purpose left with the removed session-context framework, 55 of 61 sampled blocks were false positives).
+- *Scripts (non-skill):* `foundry-wave-plan.py`, `foundry_command_deck.py`,
+  `foundry_command_deck_watch.py`, `foundry-routine-wake-prompt.py`, `foundry_message_kind.py`,
+  `foundry_blocker_check.py`, `foundry-manifest-to-tasklist.py`, `foundry-native-todo-discipline.py`,
+  `foundry_floor_hooks.py` — native `/loop`, `/schedule`, the Stop hook; `foundry-project-sync.py`,
+  `foundry_project_tracking.py`, `foundry-project-rtm.py`, `foundry_project_config.py` — GitHub
+  Projects; `foundry-amend.py`, `foundry_audit_ledger.py`, `foundry_audit_preconditions.py`,
+  `foundry-audit-prepare.py`, `foundry-audit-record.py`, `foundry-spec-lint.py`,
+  `foundry-content-conformance.py`, `foundry-acceptance-contract-validate.py`,
+  `foundry-done-when-backfill.py`, `foundry_reconcile.py`, `foundry-coherence-check.py`,
+  `foundry-governance-budget.py`, `foundry_pr_review.py` — the ticket and the PR review;
+  `foundry_graph.py`, `foundry-build-citation-graph.py`, `foundry-graph-mcp.py`,
+  `foundry-index.py` — grep, native search, `/help`; `foundry-distill.py` — native memory;
+  `foundry-autonomy-instrument.py` — `scripts/foundry-delivery-metrics.py`;
+  `foundry_sandbox_signature.py` — nothing (dead).
+- *Context, schemas, evals:* `context/{charter,constitution,staging-checklist}-template.md`,
+  `context/{acceptance-contract-template,autonomy-thresholds}.yaml`, `context/citation-grammar.md` —
+  the ticket template in `context/operating-model.md` (`feat-spec-template.md` stays for the spec
+  lane); `schema/{release,wave-state,build-provenance,reconciliation,blocker}.schema.json`,
+  `schemas/audit-ledger-row.schema.json`; `evals/` ×5 (`merge-waits-with-primitive` stays);
+  `.agent/assignment.json`; `.mcp.json`.
+- *CI:* the `spec-link-base` job in `btb-gates-base.yml` (its required-check status was removed from
+  branch protection first; `security-path-base` is the one metadata gate left), the citation-graph
+  and graph-MCP selftest steps and the workflow-syntax step in `ci.yml`.
+- *Docs:* `docs/github-projects-projection.md`, `docs/GOVERNANCE-BUDGET.md`,
+  `docs/feat-spec.conformance.yaml`, `docs/TERMINOLOGY.conformance.yaml`,
+  `docs/how-to/{deck-and-containers,routine-wake,migrate-from-openspec,migrate-from-spec-kit,adopt-on-an-existing-codebase}.md`;
+  README, QUICKSTART, VERBS-QUICK-REF, architecture, DESIGN, merge-floor, troubleshooting and the
+  smaller pages rewritten to the ticket-first loop.
+- *Tests:* 32 test modules and their fixtures went with the code they covered (spec-lint, amend,
+  command-deck, wave-plan, learnings, teammate-idle, upstream-submit, certify, and so on); the kept
+  tests were edited so no assertion about a keeper was weakened.
+
+**Changed (PR 2):**
+- Doctor's `permissions-policy` line is now just the policy drift state (`policy absent|in-sync|drift
+  (<k>)`); it no longer walks `.foundry/releases/*/release.yaml`.
+- `/foundry:merge-when-green` drops `--release` and the release-manifest base-branch refusal.
+- The SessionStart re-inject keeps the posture line and the active worktree's contract path; the
+  programme-state and release summaries are gone.
+- `/foundry:dispatch` dispatches a ticket (a `Done means` command) and runs the `security-reviewer`
+  agent when the ticket is `security: true` or touches auth, secrets or custody paths — as does
+  `/foundry:merge-when-green`.
+- `plugin.json` `description` and `keywords` describe the ticket-first model.
+- `cli/retired-artifacts.json` gains 13 `.foundry/` entries the removed machinery wrote into adopter
+  workspaces (`retired_in: 2.0.0`); `cli/permission-floor.json` and `docs/permission-floor.json` lose
+  the rows of every deleted script.
+- `tests/test_subtraction_absence.py` pins this wave's deleted modules so they cannot creep back.
+
 **Security review (separate context, two rounds):** the ticket moved from `.claude/` into the git dir
 (a committed ticket on a fork branch would otherwise have run on `gh pr checkout`); `foundry-test.sh`,
 `foundry-ticket.py done` and `--trust-author` are never silently allowed by the plugin-scripts hook —
