@@ -363,12 +363,7 @@ def test_ceremony_and_denial_rules_are_pinned():
 
     ask_pins = [
         f"Bash({G}/scripts/foundry-authorize.py:*)",
-        f"Bash({G}/scripts/foundry-decommission.py record:*)",
-        f"Bash({G}/scripts/foundry-decommission.py gate-check:*)",
-        f"Bash({G}/scripts/foundry_release.py accept:*)",
-        f"Bash({G}/scripts/foundry-upstream-submit.py:*)",
         f"Bash({G}/scripts/foundry-cut-release.py:*)",
-        f"Bash({G}/scripts/foundry-project-sync.py:*)",
         f"Bash({G}/scripts/foundry_tier_preflight.py:*)",
         f"Bash({G}/scripts/foundry-doctor.py --heal:*)",
         f"Bash({G}/scripts/foundry-stack-profile.py --relock:*)",
@@ -573,13 +568,11 @@ def test_doctor_green_regression(tmp_path):
 # continuation R4) from tests/test_permission_floor_check.py, deleted along with the doctor probe
 # (feat-foundry-doctor-permission-floor-check) that file's own docstring named as its whole
 # subject; this map-entries invariant is orthogonal to that probe and belongs with the map's own
-# test file. tests/test_message_kind.py and tests/test_routine_wake.py each independently re-derive
-# the SAME digest and regex-search THIS file (not the deleted one) for MERGE_BASE_ENTRIES_DIGEST --
-# see their own R8 comments; a re-pin here must land in the same diff as any of the three.
+# test file. A re-pin here must land in the same diff as the map edit.
 # --------------------------------------------------------------------------------------------- #
 # v1.18.0 (AC-V118A-2): re-pinned for the two dropped rows (deny `Bash(git push --force:*)`, ask
 # `Bash(claude plugin tag:*)`).
-MERGE_BASE_ENTRIES_DIGEST = "f2d42eb6f6426aeaaefaab28c70730d7067b44aa5106f47f90ec98575c129740"  # v2.0.0: +foundry-ticket.py, foundry-test.sh, foundry-delivery-metrics.py (ticket #269)
+MERGE_BASE_ENTRIES_DIGEST = "d6d112aa0330221fe39be16c93bae1ac85aa959d313188fc406906b61933bbf3"  # v2.0.0: +foundry-ticket.py, foundry-test.sh, foundry-delivery-metrics.py (ticket #269); -30 rows of the deleted spec/manifest/deck/learnings scripts (PR 2)
 
 
 def _entries_digest(entries):

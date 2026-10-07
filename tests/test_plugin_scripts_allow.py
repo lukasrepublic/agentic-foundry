@@ -26,7 +26,7 @@ def env(tmp_path):
     (root / "scripts" / "foundry-doctor.py").write_text("print('x')\n")
     (root / "scripts" / "foundry-authorize.py").write_text("print('x')\n")
     (root / "hooks" / "foundry-git-discipline.sh").write_text("#!/bin/sh\n")
-    for n in ("foundry-verify.py", "foundry-decommission.py", "foundry-permissions-compile.py"):
+    for n in ("foundry-verify.py", "foundry-permissions-compile.py"):
         (root / "scripts" / n).write_text("print('x')\n")
     (root / "scripts" / "floor.json").write_text("{}\n")
     other = home / ".claude" / "plugins" / "cache" / "agentic-foundry" / "foundry" / "1.17.6" / "scripts"
@@ -78,7 +78,6 @@ def test_one_plain_invocation_of_a_plugin_script_is_allowed(env, cmd):
     'python3 "$CLAUDE_PLUGIN_ROOT/scripts/foundry-doctor.py"',
     # B3: scripts that execute commands from their input are never silent
     "python3 {root}/scripts/foundry-verify.py --project-dir /tmp/evil",
-    "python3 {root}/scripts/foundry-decommission.py gate-check --register /tmp/r.yaml",
     # B4: the compiler pointed at another tree
     "python3 {root}/scripts/foundry-permissions-compile.py --write --root /Users/someone",
     "python3 {root}/scripts/foundry-permissions-compile.py --write --root=/Users/someone",

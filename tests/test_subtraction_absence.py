@@ -121,6 +121,54 @@ _EXPECTED_TOKEN_SET = [
     'foundry-fanout', 'foundry-branch-protection', 'branch-protection\\.json', 'merge-gate-hook',
     'pr-create-provenance', 'foundry-merge-gate-status', 'skills/authorize-light',
     'skills/emit-provenance',
+    # v2.0.0 PR 2 (the delivery rebase, ticket #269) — hand-transcribed, not read off the fixture.
+    'foundry[_-]command[_-]deck',
+    'foundry[_-]wave[_-]plan',
+    'foundry[_-]routine[_-]wake',
+    'foundry[_-]message[_-]kind',
+    'foundry[_-]blocker[_-]check',
+    'foundry[_-]manifest[_-]to[_-]tasklist',
+    'foundry[_-]native[_-]todo',
+    'foundry[_-]project[_-]sync',
+    'foundry[_-]project[_-]tracking',
+    'foundry[_-]project[_-]rtm',
+    'foundry[_-]project[_-]config',
+    'foundry[_-]floor[_-]hooks',
+    'foundry[_-]amend',
+    'foundry[_-]audit[_-]ledger',
+    'foundry[_-]audit[_-]preconditions',
+    'foundry[_-]audit[_-]prepare',
+    'foundry[_-]audit[_-]record',
+    'foundry[_-]spec[_-]lint',
+    'foundry[_-]content[_-]conformance',
+    'foundry[_-]acceptance[_-]contract[_-]validate',
+    'foundry[_-]done[_-]when[_-]backfill',
+    'foundry[_-]grounding[_-]conformance',
+    'foundry[_-]reconcile\\b',
+    'foundry[_-]coherence[_-]check',
+    'foundry[_-]graph\\b',
+    'foundry[_-]build[_-]citation[_-]graph',
+    'foundry[_-]graph[_-]mcp',
+    'foundry[_-]distill',
+    'foundry[_-]upstream[_-]submit',
+    'foundry[_-]autonomy[_-]instrument',
+    'foundry[_-]governance[_-]budget',
+    'foundry[_-]index\\b',
+    'foundry[_-]decommission',
+    'foundry[_-]pr[_-]review',
+    'foundry[_-]dashboard[_-]fidelity',
+    'foundry[_-]sandbox[_-]signature',
+    'foundry_release\\b',
+    'foundry[_-]harvest[_-]learnings',
+    'foundry[_-]session[_-]learnings',
+    'foundry[_-]learnings[_-]lib',
+    'foundry[_-]task[_-]created',
+    'foundry[_-]task[_-]completed',
+    'foundry[_-]teammate[_-]idle',
+    'foundry[_-]cloud[_-]cli[_-]exec[_-]guard',
+    'foundry-learn-capture',
+    'workflows/release-wave',
+    'workflows/spec-audit',
 ]
 _EXPECTED_SURFACE_SET = [
     'scripts/*.py', 'scripts/*.sh', 'scripts/foundry_checks/*.py', 'hooks/*.sh',
@@ -196,12 +244,12 @@ def test_allowlist_governs_every_tolerated_occurrence_and_is_well_formed(row):
     # deleted-module mention in a surface file with NO allowlist entry covering it.
     candidate = _make_candidate_tree(tmp_root=_tmp_candidate_root())
     try:
-        target = os.path.join(candidate, "scripts", "foundry_grounding_conformance.py")
+        target = os.path.join(candidate, "scripts", "foundry_contract.py")
         with open(target, "a", encoding="utf-8") as f:
             f.write("\n# freshly injected, un-allowlisted mention: foundry_ihdi\n")
         occ2 = sweep_occurrences(candidate, FIXTURE["token_set"], FIXTURE["surface_set"])
         uncovered2 = uncovered_occurrences(occ2, FIXTURE["allowlist"])
-        assert ("scripts/foundry_grounding_conformance.py", "foundry[_-]ihdi") in uncovered2, (
+        assert ("scripts/foundry_contract.py", "foundry[_-]ihdi") in uncovered2, (
             "an injected, un-allowlisted deleted-module mention must fail the sweep"
         )
     finally:

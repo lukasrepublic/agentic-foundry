@@ -24,10 +24,8 @@ CLI = os.path.join(REPO_ROOT, "scripts", "foundry-capability-preflight.py")
 
 CPF = load_module("scripts/foundry-capability-preflight.py", "foundry_capability_preflight")
 CONTRACT_SCHEMA_PATH = os.path.join(REPO_ROOT, "schema", "acceptance-contract.schema.json")
-BLOCKER_SCHEMA_PATH = os.path.join(REPO_ROOT, "schema", "blocker.schema.json")
 
 contract_mod = load_module("scripts/foundry_contract.py", "foundry_contract")
-blocker_mod = load_module("scripts/foundry_blocker_check.py", "foundry_blocker_check")
 
 
 # --------------------------------------------------------------------------------------------- #
@@ -555,39 +553,33 @@ def test_adopter_a_allowlist_names_each_not_pre_granted_capability(tmp_path):
 
 
 # --------------------------------------------------------------------------------------------- #
-# AC-CPD-5 — operator-approval is byte-identical across all four sites
+# AC-CPD-5 — operator-approval is byte-identical across both remaining sites
 # --------------------------------------------------------------------------------------------- #
 
 
-def test_operator_approval_member_is_byte_identical_across_four_sites():
+def test_operator_approval_member_is_byte_identical_across_both_sites():
     with open(CONTRACT_SCHEMA_PATH, encoding="utf-8") as fh:
         contract_schema = json.load(fh)
-    with open(BLOCKER_SCHEMA_PATH, encoding="utf-8") as fh:
-        blocker_schema = json.load(fh)
 
     escalate_when_enum = set(contract_schema["properties"]["escalate_when"]["items"]["enum"])
-    why_operator_enum = set(blocker_schema["properties"]["why_operator"]["enum"])
     dwe_set = contract_mod._DWE_ESCALATE_SET
-    why_operator_set = blocker_mod._WHY_OPERATOR_SET
 
     for label, s in (
         ("schema/acceptance-contract.schema.json escalate_when", escalate_when_enum),
         ("scripts/foundry_contract.py _DWE_ESCALATE_SET", dwe_set),
-        ("schema/blocker.schema.json why_operator", why_operator_enum),
-        ("scripts/foundry_blocker_check.py _WHY_OPERATOR_SET", why_operator_set),
     ):
         assert "operator-approval" in s, f"{label} is missing operator-approval: {sorted(s)}"
 
-    # byte-identical: all four are the SAME set of members, not merely each containing the one.
-    assert escalate_when_enum == dwe_set == why_operator_enum == why_operator_set
+    # byte-identical: both are the SAME set of members, not merely each containing the one.
+    assert escalate_when_enum == dwe_set
 
 
 # --------------------------------------------------------------------------------------------- #
-# AC-CPD-9 — both schemas + both hand-rolled floors accept operator-approval, refuse an unknown
+# AC-CPD-9 — the contract schema + its hand-rolled floor accept operator-approval, refuse an unknown
 # --------------------------------------------------------------------------------------------- #
 
 
-def test_both_schemas_and_floors_accept_operator_approval_and_refuse_unknown():
+def test_schema_and_floor_accept_operator_approval_and_refuse_unknown():
     jsonschema = pytest.importorskip("jsonschema")
 
     with open(CONTRACT_SCHEMA_PATH, encoding="utf-8") as fh:
@@ -597,18 +589,9 @@ def test_both_schemas_and_floors_accept_operator_approval_and_refuse_unknown():
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate("not-a-real-member", contract_item_schema)
 
-    with open(BLOCKER_SCHEMA_PATH, encoding="utf-8") as fh:
-        blocker_schema = json.load(fh)
-    why_operator_schema = blocker_schema["properties"]["why_operator"]
-    jsonschema.validate("operator-approval", why_operator_schema)
-    with pytest.raises(jsonschema.ValidationError):
-        jsonschema.validate("not-a-real-member", why_operator_schema)
-
-    # the hand-rolled floors (UL-0011 pattern: run regardless of jsonschema availability)
+    # the hand-rolled floor (UL-0011 pattern: runs regardless of jsonschema availability)
     assert "operator-approval" in contract_mod._DWE_ESCALATE_SET
     assert "not-a-real-member" not in contract_mod._DWE_ESCALATE_SET
-    assert "operator-approval" in blocker_mod._WHY_OPERATOR_SET
-    assert "not-a-real-member" not in blocker_mod._WHY_OPERATOR_SET
 
     # end-to-end through the real structural validators.
     doc = {
@@ -623,14 +606,6 @@ def test_both_schemas_and_floors_accept_operator_approval_and_refuse_unknown():
     }
     ok, errors, _ = contract_mod.validate_contract_bytes(yaml.safe_dump(doc).encode("utf-8"))
     assert ok is True, errors
-
-    candidate = {
-        "claim": "the operator has not granted a capability this atom's contract declares",
-        "evidence": ["cli:foundry-capability-preflight.py --contract x.yaml exited 3"],
-        "attempted": ["ran the preflight", "checked .claude/settings.json"],
-        "why_operator": "operator-approval",
-    }
-    assert blocker_mod.validate_candidate(candidate) == []
 
 
 # --------------------------------------------------------------------------------------------- #
@@ -699,20 +674,7 @@ def test_cli_requires_one_of_contract_or_charter(tmp_path):
 # --------------------------------------------------------------------------------------------- #
 
 
-def test_doctor_permissions_policy_never_reddens_on_a_malformed_active_release(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    doctor = load_module("scripts/foundry-doctor.py", "foundry_doctor_capability_preflight_test")
-    project_dir = str(tmp_path / "proj")
-    releases_dir = os.path.join(project_dir, ".foundry", "releases", "r1")
-    os.makedirs(releases_dir, exist_ok=True)
-    with open(os.path.join(releases_dir, "release.yaml"), "w", encoding="utf-8") as fh:
-        fh.write("id: r1\ndescription: not a valid release (missing atoms)\nstate: active\n")
-    ok, detail = doctor.check_permissions_policy(plugin_root=REPO_ROOT, project_dir=project_dir)
-    assert ok is not False
-    assert "preflight" in detail
-
-
-def test_doctor_permissions_policy_reports_ok_with_zero_atoms(tmp_path, monkeypatch):
+def test_doctor_permissions_policy_reports_ok_with_no_policy(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     doctor = load_module("scripts/foundry-doctor.py", "foundry_doctor_capability_preflight_test2")
     project_dir = str(tmp_path / "proj")
@@ -721,32 +683,7 @@ def test_doctor_permissions_policy_reports_ok_with_zero_atoms(tmp_path, monkeypa
     # AC-CPD-4: the R1 drift state rides the SAME line -- no .foundry/permissions.yaml here, so
     # the policy half reads `absent`, exactly like the pre-existing R1 probe did on its own line.
     # permissions-scaffold (ER #215, AC-PSC-4): an absent policy names its remedy in the same line
-    assert detail.startswith("preflight over 0 active atom(s): 0 denied; policy absent (.foundry/permissions.yaml vs .claude/settings.json) — seed it"), detail
-
-
-def test_doctor_permissions_policy_counts_missing_rules_from_an_active_release(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    doctor = load_module("scripts/foundry-doctor.py", "foundry_doctor_capability_preflight_test3")
-    project_dir = str(tmp_path / "proj")
-    release_dir = os.path.join(project_dir, ".foundry", "releases", "r1")
-    os.makedirs(release_dir, exist_ok=True)
-    contract_path = os.path.join(project_dir, "specs", "atom-a", "acceptance-contract.yaml")
-    _write_contract(contract_path, ["Bash(gh pr merge:*)"])
-    with open(os.path.join(release_dir, "release.yaml"), "w", encoding="utf-8") as fh:
-        fh.write(
-            "id: r1\n"
-            "description: one atom, one missing capability\n"
-            "state: active\n"
-            "atoms:\n"
-            "  - id: atom-a\n"
-            "    spec_ref: specs/atom-a/spec.md\n"
-            "    contract_ref: specs/atom-a/acceptance-contract.yaml\n"
-            "    depends_on: []\n"
-        )
-    ok, detail = doctor.check_permissions_policy(plugin_root=REPO_ROOT, project_dir=project_dir)
-    # v1.18.0 (AC-V118A-5): not pre-granted is advisory information, never a blocker — the line
-    # stays ok (the absent policy is informational too)
-    assert detail.startswith("preflight over 1 active atom(s): 0 denied, 1 not pre-granted; policy absent"), detail
+    assert detail.startswith("policy absent (.foundry/permissions.yaml vs .claude/settings.json) — seed it"), detail
 
 
 def test_doctor_permissions_policy_keeps_the_r1_drift_state_on_the_same_line(tmp_path, monkeypatch):
@@ -768,7 +705,7 @@ def test_doctor_permissions_policy_keeps_the_r1_drift_state_on_the_same_line(tmp
     # the self-guard deny pair is retired, so it is no longer derived).
     ok, detail = doctor.check_permissions_policy(plugin_root=REPO_ROOT, project_dir=project_dir)
     assert ok is doctor.ADVISORY
-    assert detail == "preflight over 0 active atom(s): 0 denied; policy drift (1) (.foundry/permissions.yaml vs .claude/settings.json)"
+    assert detail == "policy drift (1) (.foundry/permissions.yaml vs .claude/settings.json)"
 
     # reconcile it, via the real compiler this time -- --check now reports in-sync.
     pc = load_module("scripts/foundry-permissions-compile.py", "foundry_permissions_compile_for_doctor_test")
@@ -776,4 +713,4 @@ def test_doctor_permissions_policy_keeps_the_r1_drift_state_on_the_same_line(tmp
     assert code == 0
     ok, detail = doctor.check_permissions_policy(plugin_root=REPO_ROOT, project_dir=project_dir)
     assert ok is True
-    assert detail == "preflight over 0 active atom(s): 0 denied; policy in-sync (.foundry/permissions.yaml vs .claude/settings.json)"
+    assert detail == "policy in-sync (.foundry/permissions.yaml vs .claude/settings.json)"
