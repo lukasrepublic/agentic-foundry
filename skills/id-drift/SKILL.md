@@ -24,7 +24,7 @@ It **NEVER auto-reconciles** — detection is read-only; the operator (via `id-s
 decides the fix. The same empty-plan predicate `id-baseline`/`id-import` accept on is REUSED — not a new
 bar.
 
-The cadence/schedule itself is the native scheduler's concern (a wrap, like the learn-distill tick);
+The cadence/schedule itself is the native scheduler's concern (a wrap);
 `id-drift` is the per-tick **PROCEDURE** the schedule fires.
 
 ## ADVISORY — not a gate, no machine-adjudicated GREEN verdict
@@ -118,11 +118,8 @@ Run these steps **in order**, on each cadence tick. Every command is **read-only
   **never** a machine-adjudicated GREEN verdict.
 - **The `.foundry/`-partitioned drift step-report note.** Record the **drift step-report note** to
   **`.foundry/id-drift-report`** in the *code* repo — a free-form advisory record (the empty/DRIFT
-  finding + the diverging resources). This is a `.foundry/` runtime/work partition — a sibling of the
-  other `.foundry/` runtime partitions (e.g. `.foundry/discovery/`, `.foundry/session-learnings/`,
-  `.foundry/build-provenance.yaml`) — **NOT** inside the citation-scope roots (`docs/`, `foundry/`, `specs/`), so it sits **outside the
-  citation gate's CANONICAL_SCOPE** by construction (advisory per-run runtime output, NOT part of the
-  corpus). It feeds the operator + `id-sync`/`id-rollback`, not an automated PASS, and it is
+  finding + the diverging resources). This is a `.foundry/` runtime/work partition — (advisory per-run runtime
+  output). It feeds the operator + `id-sync`/`id-rollback`, not an automated PASS, and it is
   recorded as a plain step-report note.
 
 The **empty-plan seam** is **`tofu plan == ∅` (the empty plan)**: an empty plan ⇒ DRIFT-FREE (reality

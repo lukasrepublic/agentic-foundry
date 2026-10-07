@@ -62,7 +62,7 @@ class ApplyDecision:
     `runbook` is None for VERIFY_ONLY and REFUSE (nothing is emitted/run). For EXECUTE it is a
     RunbookPayload whose `command` is the FROZEN `infra_binding.apply` and whose `verify` is the
     distinct read-only `infra_binding.verify` — never freeform. `reason` is a human-readable trace of
-    which table row fired (audit-ledger evidence). The operator's AWS-context IAM restrictions bound
+    which table row fired (audit evidence). The operator's AWS-context IAM restrictions bound
     what an EXECUTE command may do; this record carries no judgement about that and no field records
     one — there is nothing here for the framework to attest to beyond which row fired."""
     action: str
@@ -306,7 +306,7 @@ def _scrub(value):
 
 
 def render_decision(decision):
-    """Render an `ApplyDecision` for DISPLAY, a log line, or audit-ledger evidence (AC-IDAGR-11). The
+    """Render an `ApplyDecision` for DISPLAY, a log line, or audit evidence (AC-IDAGR-11). The
     returned dict's `command` / `verify` / `reason` strings are secret-scrubbed copies — NEVER the
     bytes `decide_apply` returned in `decision.runbook.command`, which the EXECUTE branch runs
     verbatim. Call this ONLY for the rendered/logged form; never substitute its output for

@@ -82,12 +82,11 @@ Run these steps **in order**. Each is a step, not reference prose.
 
 ## Outputs (the named hand-offs)
 
-- **The verification report** — the human/`id-review`-readable post-merge report: the empty-plan
+- **The verification report** — the human-readable post-merge report: the empty-plan
   re-check result (the headline observation), plus the **advisory** ArgoCD synced+healthy and
   deployed-artifact-identity observations.
 - **The `.foundry/`-partitioned post-merge step-report note** — the `.foundry/id-verify-report`
-  observation record, a sibling of the other `.foundry/` runtime partitions (NOT under
-  the citation-scope roots (`docs/`, `foundry/`, `specs/`); runtime output, not part of the citation-gate corpus). No live component
+  observation record, advisory per-run runtime output. No live component
   currently reads it to decide GREEN — that adjudication step (`derive_infra_walk_verdict` over a
   FROZEN contract) was retired; the operator/reviewer at the merge floor
   is the authority.

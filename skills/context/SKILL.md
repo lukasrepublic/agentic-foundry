@@ -56,11 +56,9 @@ The handoff procedure:
    authoritative-artifact pointers load-bearing).
 2. **End the session** — at mandate completion, or on the over-budget nudge, whichever comes first. Do
    not compact through it; a compaction pays the summarization-loss + cache-read tax the snapshot avoids.
-3. **Boot the successor** from the snapshot plus the release run-state summary
-   (`/foundry:release run-state <id> --summary`) — the snapshot
-   supplies the distilled arc-state, the run-state summary supplies the machine-derived per-atom ledger
-   (`authorized` / `dispatched` / `merged_on_main` / `runnable` / `blocked`), so the successor cold-starts
-   grounded in both "what happened in this arc" and "what the release actually needs next" without
+3. **Boot the successor** from the snapshot plus the open tickets (`gh issue list`) — the snapshot
+   supplies the distilled arc-state, the tickets supply what is still to do, so the successor
+   cold-starts grounded in both "what happened in this arc" and "what is needed next" without
    re-deriving either from a live transcript.
 
 ### Autonomous-driver variant

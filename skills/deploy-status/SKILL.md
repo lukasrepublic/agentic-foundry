@@ -41,7 +41,7 @@ repo); Foundry does NOT own the deploy action — it observes. Production deploy
    incident forensics) — but do NOT mutate cluster state.
 3. **Escalate** a `STALE/NOT-ROLLED`, Degraded, or OutOfSync prod app by notifying the
    operator; resolution is forward-fix (re-trigger the build / merge) or
-   `/foundry:revert` — never a silent cluster edit.
+   `git revert` through a PR — never a silent cluster edit.
 
 ## Boundary
 

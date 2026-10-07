@@ -1,6 +1,6 @@
 ---
 name: mode
-description: Set the session operating posture (/foundry:mode <name>) — set mode <name> — a closed set of exactly {factory, noninteractive, interactive}, default factory (the heavy, spec-first, fully-gated lane); noninteractive and interactive are the light lane. Trigger on "switch to noninteractive mode", "go interactive", "back to factory", "factory mode", "set mode noninteractive", "what mode am I in". Persists for the rest of the session (survives /compact) and is surfaced on the statusline (⚙️ factory / ⚡ noninteractive / ⏸ interactive). Posture-only — does NOT relax any gate, change authorization, or enable self-merge. ALSO sets the session's fork policy (/foundry:mode --fork-policy <value>) — set fork policy <value> — a second closed set of exactly {park, two-way-auto}, default park; two-way-auto lets the autonomous driver auto-answer a reversible question fork instead of stopping the loop (security/authorization-adjacent/irreversible forks always park). Trigger on "set fork policy two-way-auto", "set fork policy park", "what is my fork policy". Surfaced on the statusline appended to the mode glyph, e.g. ⚡ noninteractive+auto.
+description: Set the session operating posture (/foundry:mode <name>) — set mode <name> — a closed set of exactly {factory, noninteractive, interactive}, default factory (the heavy, spec-first, fully-gated lane); noninteractive and interactive are the light lane. Trigger on "switch to noninteractive mode", "go interactive", "back to factory", "factory mode", "set mode noninteractive", "what mode am I in". Persists for the rest of the session (survives /compact) and is surfaced on the statusline (⚙️ factory / ⚡ noninteractive / ⏸ interactive). Posture-only — does NOT relax any gate, change authorization, or enable self-merge. ALSO sets the session's fork policy (/foundry:mode --fork-policy <value>) — set fork policy <value> — a second closed set of exactly {park, two-way-auto}, default park; two-way-auto lets the session auto-answer a reversible question fork instead of stopping (security/authorization-adjacent/irreversible forks always park). Trigger on "set fork policy two-way-auto", "set fork policy park", "what is my fork policy". Surfaced on the statusline appended to the mode glyph, e.g. ⚡ noninteractive+auto.
 ---
 
 # /foundry:mode — the session posture selector
@@ -9,10 +9,6 @@ A first-class **session posture** — exactly three modes,
 **`factory`** (the full lane: front-authorization → build → the merge floor → certification),
 **`noninteractive`**, and **`interactive`** (the light lane; the who-merges differentiation between
 the latter two is a downstream atom — M1 stores and surfaces the posture only).
-
-This is a **different axis** from `skills/mode-autonomous` / `skills/mode-interactive` (the
-*implementation-driver* posture — who paces the loop / who approves the merge). Naming adjacency
-(`interactive` posture ↔ the `mode-interactive` driver) is intentional; the artifacts stay separate.
 
 ## When to trigger
 
@@ -38,8 +34,7 @@ This is a **different axis** from `skills/mode-autonomous` / `skills/mode-intera
 
 - **Relax any gate, change authorization, or enable self-merge.** The posture is stored + surfaced
   only; downstream mode-aware behaviors read it to differentiate the lane's merge authority.
-- **Drive an implementation loop.** Use `mode-autonomous` / `mode-interactive` for that (a
-  different, orthogonal axis).
+- **Drive an implementation loop.** Use `/foundry:dispatch` and the native `/loop` for that.
 
 ## Anti-patterns
 
@@ -50,22 +45,16 @@ This is a **different axis** from `skills/mode-autonomous` / `skills/mode-intera
 
 ## What each posture means in practice (the three-mode model)
 
-- **`factory`** — spec-driven release delivery: specs (with UI/UX artifacts) → single-pass
-  review → operator merge = authorization → wave-planned build → local certify → operator
-  acceptance → staging. The heavy lane, and the default.
-- **`noninteractive`** — one atom on a one-page **charter**: see
-  `${CLAUDE_PLUGIN_ROOT}/context/charter-template.md`. Charter committed to the workspace →
-  isolated-worktree build → PR (CI green + fresh-context review) → operator merges (or
-  auto-merge-on-green when the charter opts in). Requirement changes = edit the charter. **The
-  charter lane is the DEFAULT LANE for product work** (`.foundry/decisions/2026-09-18-spec-is-a-living-document.md`):
-  `/foundry:intake` routes an atom here unless it lands in the security set (`security: true`,
-  or its scope names auth, secrets, custody, a production mutation, or a cross-repo pin, or its
-  contract's `mandatory_review` names a security review) — see `skills/intake/SKILL.md` "Lane
-  routing". The security set is what the **factory lane** (spec + frozen acceptance-contract +
-  `/foundry:authorize` + mandatory review) is reserved for.
-- **`interactive`** — zero-process vibe/debug session. No spec, no charter needed for
-  exploration; work lands by ordinary commit/PR at the operator's discretion. Git discipline
-  (protected `main`, no destructive ops) still applies — it is floor #4, not ceremony.
+- **`factory`** — the default posture: a ticket with a runnable `Done means` is the unit of work
+  (`context/operating-model.md`); branch protection + CI is the gate; the operator merges.
+- **`noninteractive`** — one ticket built in an isolated worktree → PR (CI green + fresh-context
+  review) → operator merges (or `/foundry:merge-when-green` on an explicit instruction). A
+  `security: true` change, or one whose scope names auth, secrets, custody, a production
+  mutation, or a cross-repo pin, takes the opt-in spec lane instead (`/foundry:intake`,
+  `/foundry:authorize`) — see `skills/intake/SKILL.md` "Lane routing".
+- **`interactive`** — zero-process vibe/debug session. No ticket needed for exploration; work
+  lands by ordinary commit/PR at the operator's discretion. Git discipline (protected `main`, no
+  destructive ops) still applies — it is floor #4, not ceremony.
 
 ## Native permission-mode pairing (recommendation, not enforcement)
 
@@ -87,9 +76,8 @@ for this posture"); a workspace can pin its default via `permissions.defaultMode
 ## Fork policy (two-way-door auto-answer) — AC-AFP-1/-5
 
 A second, orthogonal closed-set field on the **same** session-mode store: `fork_policy` ∈
-`{park, two-way-auto}`, default `park`. Governs whether the autonomous driver
-(`skills/mode-autonomous/SKILL.md`) auto-answers a reversible ("two-way-door") question fork
-instead of stopping the loop — see that skill for the full carve-out (security-flagged,
+`{park, two-way-auto}`, default `park`. Governs whether the session auto-answers a
+reversible ("two-way-door") question fork instead of stopping to ask (security-flagged,
 authorization-adjacent, or irreversible forks always park, fail-closed on ambiguous
 classification).
 
@@ -120,9 +108,8 @@ classification).
    — the operator always sees when a session may auto-answer.
 
 **Posture is advisory, not authority.** `two-way-auto` only changes which reversible question
-forks the autonomous driver auto-answers; it grants no authorization and does not touch the merge
+forks the session auto-answers; it grants no authorization and does not touch the merge
 floor or the self-authorization classifier.
 
-**Interim surface for auto-answers.** Every auto-answer a driver makes is appended, append-only,
-to `.foundry/auto-answers.jsonl` — inspect that file directly (the run-state summary consumer
-surfacing unacknowledged entries is a follow-on; see the spec residual).
+**Interim surface for auto-answers.** Every auto-answer a session makes is appended, append-only,
+to `.foundry/auto-answers.jsonl` — inspect that file directly.

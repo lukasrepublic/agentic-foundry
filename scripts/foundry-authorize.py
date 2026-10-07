@@ -25,7 +25,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import foundry_contract as fc          # noqa: E402
 import foundry_authz as az             # noqa: E402
 import foundry_audit_log as al         # noqa: E402
-import foundry_audit_ledger as ledger  # noqa: E402
 
 
 def _print_checkpoints(contract_path: str) -> None:
@@ -42,32 +41,6 @@ def _print_checkpoints(contract_path: str) -> None:
         exp = cp.get("expect", {})
         print(f"    - [{cp.get('ac_id')}] {cp.get('surface')} @ {cp.get('locator')}")
         print(f"        expect: {exp.get('op')} {exp.get('value','')} (baseline={exp.get('baseline')})")
-
-
-def _latest_audit_row(spec_hash: str) -> dict | None:
-    """The most recent audit-ledger row for this spec hash, ANY verdict (informational display
-    only — never a gate). Malformed lines are skipped; a missing ledger is None. Distinct from
-    `ledger.find_audit`, which is the passing-verdict query and returns None for non-pass rows."""
-    import json
-    path = ledger.ledger_path()
-    if not os.path.exists(path):
-        return None
-    latest = None
-    try:
-        with open(path, encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(row, dict) and row.get("spec_sha256") == spec_hash:
-                    latest = row
-    except OSError:
-        return None
-    return latest
 
 
 def _front_authz_main() -> int:
@@ -244,23 +217,10 @@ def _front_authz_main() -> int:
         print("Already AUTHORIZED and hashes match — nothing to do (idempotent).")
         return 0
 
-    # 3.5 §8 audit — INFORMATIONAL ONLY (feat-foundry-authorization-authorize-drops-audit-
-    # precondition, AC-ADAP-1..4). The audit ledger is no longer a precondition of authorization:
-    # a missing row, a non-existent row, or a row with a non-passing verdict never blocks the
-    # freeze — authorize proceeds exactly the same either way. Single-read spec hash: this SAME
-    # value binds the (informational) audit-evidence lookup AND the freeze below (kills the
-    # recorder↔authorize↔freeze TOCTOU; unrelated to the audit itself).
+    # 3.5 The §8 audit ledger is not a precondition of authorization and is no longer read here.
+    # Single-read spec hash: this SAME value binds the freeze below (kills the
+    # recorder↔authorize↔freeze TOCTOU).
     spec_hash = fc.spec_sha256(args.spec)
-    # Read the LATEST row for this hash regardless of verdict. `ledger.find_audit` is the
-    # passing-verdict query (audit-ledger-allowlist, AC-ALAL-1/2 — it returns None for a killed/
-    # refused/needs-operator row by design); the informational line must still NAME a non-pass
-    # verdict (AC-ADAP-3), so it reads the raw rows here rather than the allowlisted query.
-    audit_rec = _latest_audit_row(spec_hash)
-    if audit_rec:
-        # The row is agent-written data: strip control characters before echoing the verdict.
-        import re as _re
-        verdict = _re.sub(r"[\x00-\x1f\x7f]", "", str(audit_rec.get("verdict")))[:64]
-        print(f"§8 audit: recorded (verdict={verdict}) — informational")
     # --skip-audit-reason is a DEPRECATED no-op (kept for one release so operator muscle memory
     # and existing callers don't break): the audit was never re-enforced after this atom, so
     # there is nothing left for the flag to skip. Still logged (a forensic breadcrumb) below.

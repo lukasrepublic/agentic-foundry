@@ -1,19 +1,19 @@
 ---
 name: repos
-description: The governed-repo fleet verbs (/foundry:repos <sync|status|foreach|validate>) over the repos{} registry — clone the not-cloned, fetch the matching, report the rest; never confused with /foundry:fleet, the SESSION ROSTER (one row per active Claude Code session, no repository governed at all). Trigger to bring a fresh clone of the workspace up to date, check every hosted repo's status at a glance, run a command across them, or catch an undeclared checkout.
+description: The governed-repo verbs (/foundry:repos <sync|status|foreach|validate>) over the repos{} registry — clone the not-cloned, fetch the matching, report the rest; never confused with /list-agents, the SESSION ROSTER (one row per active Claude Code session, no repository governed at all). Trigger to bring a fresh clone of the workspace up to date, check every hosted repo's status at a glance, run a command across them, or catch an undeclared checkout.
 ---
 
 # /foundry:repos
 
-The control plane's fleet verbs over `.claude/foundry-project.json`'s `repos{}` — the
+The control plane's repo verbs over `.claude/foundry-project.json`'s `repos{}` — the
 repo/vcstool/meta/myrepos category's universal triad (`sync` / `status` / `foreach`), plus the
 round-trip validator (`validate`). `scripts/foundry_repo_fleet.py` consumes
 `scripts/foundry_repo_registry.py`'s read-only classification — it does not re-derive it — and
 adds the one thing the registry atom deliberately left out: verbs that **act**.
 
-**Not to be confused with `/foundry:fleet`.** `/foundry:fleet` is the **session roster** — one row
+**Not to be confused with `/list-agents`.** `/list-agents` is the **session roster** — one row
 per active Claude Code session, governing no repository at all. `/foundry:repos` governs the
-`repos{}` manifest's hosted repositories. The two are fleet-shaped and share nothing else.
+`repos{}` manifest's hosted repositories. The two share nothing else.
 
 ## The four verbs
 

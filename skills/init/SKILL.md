@@ -105,7 +105,7 @@ standalone plugin repo) so the gates are live + fail-closed.
 
    ```
    python3 scripts/foundry_tier_preflight.py --repo <owner>/<repo> \
-     --context spec-link-base --context security-path-base [--apply]
+     --context security-path-base [--apply]
    ```
 
    Read-only without `--apply` (reports the current tier); `--apply` installs the ruleset first.
@@ -149,7 +149,7 @@ standalone plugin repo) so the gates are live + fail-closed.
 
    This framework's own `main` is in the second state — verified 2026-08-08 against the admin
    endpoint: classic protection requiring `selftests`, `secret-scan`, `release-acceptance`,
-   `shell-parse-bash32`, `spec-link-base` and `security-path-base`, with `strict: true`,
+   `shell-parse-bash32` and `security-path-base`, with `strict: true`,
    `enforce_admins: true`, `allow_force_pushes: false`, and NO required reviews (a solo operator
    cannot supply a distinct approving principal, so the checks are the gate). Re-read it rather
    than trusting this list, which is a point-in-time observation. **`enforce_admins: true` is
@@ -157,17 +157,16 @@ standalone plugin repo) so the gates are live + fail-closed.
    discouraged, and why even a release cut must route its `main` write through a PR.
 
    **An adopter with no protection applied is on Tier B (advisory) only** — the `ci.yml` command
-   battery + `btb-gates`' always-reporting `spec-link`/`security-path` checks report on every PR
+   battery + `btb-gates`' always-reporting `security-path` check report on every PR
    but are NOT a server-enforced required status, and `hooks/foundry-git-discipline.sh`'s `gh`
    clause blocks a Foundry-session `gh pr merge --admin` outright and requires `gh pr checks`
    all-green for a plain `gh pr merge` — but a human `git push` / the web UI / the REST API are
    not gated. Applying Tier A is the step that closes those three.
 
-6. **App-exercise binding (the live-seam driver).** Declare the adopter's boot
-   command (the generic analog of `make dev`) + the `surface → how-to-exercise` map
-   (`ui:`/`api:`/`cli:`/`pipeline:`/`binary:`/…). A contract surface with no usable driver
-   surfaces at certification time — `/foundry:certify-local` REFUSES naming it (the thin
-   doctor carries no driver check).
+6. **App-exercise binding.** Declare the adopter's boot command (the generic analog of
+   `make dev`) and how each surface is exercised (`ui:`/`api:`/`cli:`/`pipeline:`/`binary:`/…) so a
+   ticket's `Done means` command can drive the running app; `/foundry:verify` runs the stack
+   profile's commands (the thin doctor carries no driver check).
 7. **Env/identity mapping.** Map the adopter's own vars onto `FOUNDRY_*` (Foundry owns
    the `FOUNDRY_*` namespace; never bake a project-specific var into a primitive).
 8. **Mechanical-rename port (extraction only).** Copy the adopter's `.claude/` primitives
@@ -176,7 +175,7 @@ standalone plugin repo) so the gates are live + fail-closed.
    generification is a separate review pass.
 9. **Stack-profile lock (opt-in adoption, `feat-foundry-stack-profile-lock-create`, AC-SPLC-7).**
    Foundry ships four stack profiles under `packs/stack-profiles/` (`aws-eks-karpenter`, `node-web`,
-   `python-uv-lib`, `python-uv-service`) — `/foundry:verify`, `/foundry:certify-local`, and the
+   `python-uv-lib`, `python-uv-service`) — `/foundry:verify` and the
    `id-*` lane's `infra_binding` all gate on an ACTIVE `.foundry/stack-profile.lock`. Offer the
    operator a choice of the shipped ids (or "none"). **On a choice**, invoke the SCRIPTED create
    path below — never hand-write a lock in prose (a hand-written lock skips the trusted-resolve
@@ -263,7 +262,7 @@ standalone plugin repo) so the gates are live + fail-closed.
 13. **Runtime-partition `.gitignore` (default-deny, leak-prevention).** Run `scripts/foundry-apply-runtime-gitignore.sh <repo-root>`
     against the adopter repo. It installs the
     default-deny `.foundry/*` block (re-including only the small designed-tracked set:
-    `README.md`, `build-provenance.yaml`, the `/foundry:relock` pin, `stack-profile.lock`) as an idempotent
+    `README.md`, the `/foundry:relock` pin, `stack-profile.lock`) as an idempotent
     managed block in the repo's root `.gitignore`, so a routine `git add -A` after a factory session
     can no longer sweep an unlisted runtime artifact into a commit — the class of leak recorded in
     [Doc: GO-PUBLIC.md] §5.4. `scripts/foundry-bootstrap.sh` already invokes this on the real target
@@ -274,22 +273,19 @@ standalone plugin repo) so the gates are live + fail-closed.
     (working tree, full history, tracked `.foundry/` state, and a remote direct-SHA probe) to run
     clean; see the script's own `--help` for its remote/known-bad-SHA options.
 
-14. **Guided first atom (the hello-loop).** Close onboarding by walking the operator through
-    ONE small, throwaway atom end-to-end, so the first real run of the loop happens before you
+14. **Guided first ticket (the hello-loop).** Close onboarding by walking the operator through
+    ONE small, throwaway ticket end-to-end, so the first real run of the loop happens before you
     need it for something that matters:
 
-    - **`/foundry:intake`** — describe one trivial capability (e.g. "print a greeting") and let
-      it produce a spec + acceptance contract under `specs/**`.
-    - **`/foundry:spec-review`** — get that spec reviewed and recorded.
-    - **`/foundry:authorize`** — this is the one-keypress ask: a native confirmation prompt
-      fires here, and the operator answers it. Explain it as it fires — it is the front gate. This
-      session never answers it on the operator's behalf; only a human keypress can.
-    - **`/foundry:dispatch`** — an implementer builds the toy atom on its own branch.
+    - **Open an issue** — describe one trivial capability (e.g. "print a greeting") with a
+      `## Done means` fenced command that exits 0 when it works.
+    - **`scripts/foundry-ticket.py start <issue>`** — make it the active ticket.
+    - **`/foundry:dispatch`** — an implementer builds it on its own branch and runs
+      `scripts/foundry-test.sh` until green.
     - **merge** — the operator merges the resulting change through their own normal review flow.
 
-    **Cleanup.** The whole walk lives on a scratch branch carrying a throwaway spec under
-    `specs/**` — once the operator has seen the loop end to end, delete it: remove the scratch
-    branch and its spec files rather than leaving toy content behind.
+    **Cleanup.** The whole walk lives on a scratch branch — once the operator has seen the loop end
+    to end, delete it rather than leaving toy content behind.
 
 ## What init verifies — and what it no longer does
 
