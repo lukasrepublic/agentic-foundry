@@ -1,5 +1,5 @@
 {
-  "//": "TeammateIdle (an observer, exit 0 always) is wired the same direct-invoked way. Foundry hook wiring. Hooks are ADDITIVE with the consuming repo's .claude/hooks (both fire; dedup by command string). All commands resolve sibling scripts via ${CLAUDE_PLUGIN_ROOT}. There is no merge-gate PreToolUse hook and no PR-create provenance-marker hook; the merge-gate/provenance-chain stack they wired to does not ship. TaskCreated/TaskCompleted are direct-invoked (exec-bit + shebang), matching every OTHER command entry here (review round 1 item 3 considered an explicit python3 prefix; rejected \u2014 scripts/foundry-doctor.py's check_hooks/_hook_command_scripts resolves a command's SCRIPT as its first whitespace token, with no interpreter-prefix awareness, and the doctor is a frozen probe outside this atom's contract scope, so a python3 prefix would make the doctor itself report the two hooks as a missing script). tests/test_floor_hooks.py::test_hooks_json_commands_resolve_to_executable_scripts asserts both scripts stay X_OK so a lost exec bit is caught by CI rather than silently exiting 126/127 (neither of which is exit 2 \u2014 non-blocking).",
+  "//": "Foundry hook wiring (ticket-first, v2.0.0). Hooks are ADDITIVE with the consuming repo's .claude/hooks (both fire; dedup by command string). All commands resolve sibling scripts via ${CLAUDE_PLUGIN_ROOT} and are direct-invoked (exec-bit + shebang); scripts/foundry-doctor.py's check_hooks resolves a command's SCRIPT as its first whitespace token, so no interpreter prefix is used. The doctor's check_hooks fails when a wired script is missing or not executable. Wired: PreToolUse Bash (git-discipline, plugin-scripts-allow), PreToolUse Edit|Write (cwd-enforce, paper-guard), SessionStart (doctor --heal / --session-start, compact-reinject), Stop (ticket-stop), SessionEnd (env-reap), WorktreeCreate/Remove. There is no merge-gate hook, no learnings capture, and no task/teammate hook.",
   "hooks": {
     "PreToolUse": [
       {
@@ -7,15 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/foundry-harvest-learnings.sh pretooluse"
-          },
-          {
-            "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/foundry-git-discipline.sh --protected main"
-          },
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/foundry-cloud-cli-exec-guard.sh"
           },
           {
             "type": "command",
@@ -37,17 +29,6 @@
         ]
       }
     ],
-    "PostToolUse": [
-      {
-        "matcher": "Agent|Workflow",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/foundry-harvest-learnings.sh posttooluse"
-          }
-        ]
-      }
-    ],
     "SessionStart": [
       {
         "hooks": [
@@ -58,10 +39,6 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/foundry-doctor.py --session-start"
-          },
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/foundry-native-todo-discipline.py --session-start"
           }
         ]
       },
@@ -76,14 +53,6 @@
       }
     ],
     "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/foundry-session-learnings.sh stop"
-          }
-        ]
-      },
       {
         "hooks": [
           {
@@ -104,16 +73,6 @@
         ]
       }
     ],
-    "PreCompact": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/foundry-session-learnings.sh precompact"
-          }
-        ]
-      }
-    ],
     "WorktreeCreate": [
       {
         "hooks": [
@@ -130,36 +89,6 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/foundry-worktree-remove.sh"
-          }
-        ]
-      }
-    ],
-    "TaskCreated": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/foundry-task-created.py"
-          }
-        ]
-      }
-    ],
-    "TaskCompleted": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/foundry-task-completed.py"
-          }
-        ]
-      }
-    ],
-    "TeammateIdle": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/foundry-teammate-idle.py"
           }
         ]
       }

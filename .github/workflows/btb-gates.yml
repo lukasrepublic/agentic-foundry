@@ -6,11 +6,8 @@
 # instruction in the header of the file whose whole point is not to ship false merge-floor claims
 # is the same defect one level up.
 #
-# THREE ALWAYS-REPORTING gate jobs (a required context that never reports blocks a PR forever —
+# TWO ALWAYS-REPORTING gate jobs (`security-path` lives in `btb-gates-base.yml`) (a required context that never reports blocks a PR forever —
 # each job always concludes, reporting `not applicable` when its condition doesn't bind):
-#   * spec-link          — floor #1 as CI: a factory-lane PR must name its authorizing spec
-#                          (`Spec:` trailer in the PR body); light-lane and docs-only PRs are
-#                          not-applicable. Replaces the provenance-marker chain as the lane signal.
 #   * security-path      — floor #3 routing as CI: a diff touching auth/secrets/supply-chain paths
 #                          requires a `security-reviewed:<head12>-<base8>` label naming THE HEAD COMMIT
 #                          BEING GATED (posted after a security-reviewer subagent pass); clean
@@ -43,8 +40,6 @@
 #     requires code-owner review only when `require_code_owner_review` is set on the branch rule,
 #     and it is NOT set here (a solo maintainer cannot approve their own PR, so requiring it would
 #     make merges unsatisfiable). The file is a prerequisite in place, not a control in force;
-#   * label-only lane signals — spec-link no longer reads `Lane: light` from the fork-controlled
-#     PR body;
 #   * stale-label TOCTOU — the review label is BOUND TO THE HEAD SHA
 #     (`security-reviewed:<head12>-<base8>`), so a label earned on an earlier commit cannot describe a later
 #     one. `security-label-reset.yml` additionally strips stale labels. The first attempt at this
@@ -58,17 +53,17 @@
 # signals, the head+base-bound review label) closed a fork's control of the PR *body*, and none of
 # it closed a fork's control of the *gate definition*.
 #
-# CLOSED for the two metadata gates. `spec-link` and `security-path` no longer live in this file.
-# They are `spec-link-base` / `security-path-base` in `.github/workflows/btb-gates-base.yml`, on
+# CLOSED for the metadata gate. `security-path` no longer lives in this file.
+# It is `security-path-base` in `.github/workflows/btb-gates-base.yml`, on
 # `pull_request_target`, whose definition GitHub takes from the base repository's DEFAULT BRANCH
-# rather than the merge commit. A fork cannot alter what grades it there. Both were already
+# rather than the merge commit. A fork cannot alter what grades it there. It was already
 # checkout-free and API-metadata-only — the profile that makes that trigger safe.
 #
 # STILL OPEN for `shell-parse-bash32`, and it is NOT going to be closed the same way. This job
 # CHECKS OUT FORK CODE, which is the one thing `pull_request_target` must never do with a
 # privileged token; moving it would trade a gate-definition hole for a code-execution hole, which
 # is strictly worse. So a fork PR CAN still rewrite this job and make it report green under its
-# own name. Saying "the fork surface is closed" because two of three moved would be exactly the
+# own name. Saying "the fork surface is closed" because the metadata gate moved would be exactly the
 # overclaim this header was rewritten to remove — the same class as the hardcoded tier line that
 # was true when written and false the moment the repo went public.
 #
@@ -81,7 +76,7 @@
 # E2E-journeys gate: not present for this repo (no app runtime); the adopter template ships
 # with the Phase-5 certification path.
 #
-# Checkout: `spec-link` and `security-path` remain pure-API (gh) — no repo code is fetched or
+# Checkout: `security-path-base` remains pure-API (gh) — no repo code is fetched or
 # executed there (floor-#3 review finding 6: no token-in-.git/config, no fetch-and-execute).
 # `shell-parse-bash32` DOES check out the repo (feat-foundry-bash32-parse-guard, AC-B32-12) — a
 # parse gate over the repository's own shipped scripts cannot avoid it. The reversal is bounded:
