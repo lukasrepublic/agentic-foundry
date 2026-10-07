@@ -104,6 +104,10 @@ surface_set:
   - '.github/workflows/*.yml'
   - 'skills/*/SKILL.md'
   - 'agents/*.md'
+  # v2.0.0 PR 2 review: context/docs/cli prose surfaces (stale citations of deleted modules).
+  - 'context/*.md'
+  - 'docs/**/*.md'
+  - 'cli/src/*.mjs'
 
 # absent_paths — the AC-SUB-1 set (32 paths, unchanged, not renumbered) PLUS
 # scripts/foundry-branch-protection.sh (Block 2, AC-SCW-6), PLUS the four fleet-session scripts +
@@ -333,3 +337,9 @@ allowlist:
     reason: >-
       Same self-documenting retirement note as the foundry-merge-gate entry above (both retired
       together); not an invocation instruction.
+  - path: cli/src/amendmentsBackfill.mjs
+    token: 'foundry[_-]amend'
+    reason: >-
+      Comments in the (upgrade-surface-frozen) updater phase that backfills the empty Amendments
+      table cite the deleted foundry-amend.py's row shape; documented follow-up, prose only, not an
+      import or invocation.

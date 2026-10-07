@@ -45,9 +45,9 @@ branch behind even when it is run.
 `skills/cut-release/SKILL.md`'s R/R2 procedure is otherwise unchanged; it now runs on
 `release/<version>` instead of directly on a bespoke feature branch.
 
-The rule that a ticket's PR targets `release/<version>`, never `main`, is a convention carried by
-`context/branch-discipline.md` and the dispatch prompt; the merge floor on `main` is what stops a
-direct merge.
+The rule that a ticket's PR targets `release/<version>`, never `main`, is a convention:
+`context/branch-discipline.md` is the rule set, and the platform's branch protection on `main` is
+the merge gate. No script checks a PR's base.
 
 ### The security-review label re-pins on retarget, and the release branch's own merge-floor tier
 
@@ -59,8 +59,7 @@ derived from the **base ref name itself** (`.github/workflows/btb-gates-base.yml
 BASE_TAG="$(printf '%s' "$BASE" | sha256sum | cut -c1-8)"
 ```
 
-Retargeting a PR from `main` to `release/<version>` (`gh pr edit <n> --base release/<version>`, the
-remediation above) therefore changes the expected label — a security-reviewed label pinned against
+Retargeting a PR from `main` to `release/<version>` (`gh pr edit <n> --base release/<version>`) therefore changes the expected label — a security-reviewed label pinned against
 `main`'s own `base8` hash does not carry over to the new base and needs re-pinning against the
 release branch's own hash.
 

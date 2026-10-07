@@ -148,7 +148,7 @@ events 11 → 6. Each line names what replaces it.
   agent when the ticket is `security: true` or touches auth, secrets or custody paths — as does
   `/foundry:merge-when-green`.
 - `plugin.json` `description` and `keywords` describe the ticket-first model.
-- `cli/retired-artifacts.json` gains 13 `.foundry/` entries the removed machinery wrote into adopter
+- `cli/retired-artifacts.json` gains 11 `.foundry/` entries the removed machinery wrote into adopter
   workspaces (`retired_in: 2.0.0`); `cli/permission-floor.json` and `docs/permission-floor.json` lose
   the rows of every deleted script.
 - `tests/test_subtraction_absence.py` pins this wave's deleted modules so they cannot creep back.

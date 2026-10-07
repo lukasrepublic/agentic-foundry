@@ -67,7 +67,7 @@ The default loop, as you'd actually run it:
   … ticket.md: ## What / ## Why / ## Done means (one fenced command) / ## Paper allowed
 
 > python3 "$CLAUDE_PLUGIN_ROOT/scripts/foundry-ticket.py" start 42
-  … records the ticket in .claude/foundry-ticket.json (gitignored)
+  … records the ticket in the repository's git dir (`git rev-parse --git-path foundry-ticket.json`), never in the tree
 
 > /foundry:dispatch 42
   … an implementer persona builds it in an isolated worktree, runs foundry-test.sh until green,

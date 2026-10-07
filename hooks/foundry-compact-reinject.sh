@@ -2,7 +2,7 @@
 # foundry-compact-reinject — the SessionStart pinned-context re-injection hook
 # (feat-foundry-compact-reinjection, AC-CRI-1..6).
 #
-# Fires ONLY on a SessionStart event whose `source` is `compact` (checked inline, defense-in-depth
+# Fires ONLY on a SessionStart event whose `source` is `compact` or `fork` (checked inline, defense-in-depth
 # against the `hooks.json` matcher, which admits the other sources too). Emits a <=2048-UTF-8-byte
 # pinned-context manifest to stdout — the session posture (`foundry_session_mode.resolve`) and the
 # active atom's contract path (from the `.agent/assignment.json` dispatch/work marker) — every field
@@ -63,8 +63,10 @@ def _assemble(posture_line, contract_line):
 
 def main():
     payload = _payload()
-    if payload.get("source") != "compact":
-        return   # defense-in-depth; the hooks.json matcher is wider than this hook's scope
+    # `fork` (a forked background session) receives the same re-inject as `compact`: it starts from a
+    # copy of the parent's context and must be told the state it inherits.
+    if payload.get("source") not in ("compact", "fork"):
+        return   # startup/resume/clear: nothing to re-inject; the matcher is wider than this scope
     project_dir = os.environ.get("_CRI_PROJECT_DIR") or os.getcwd()
     plugin_root = os.environ.get("_CRI_PLUGIN_ROOT") or project_dir
     scripts_dir = os.path.join(plugin_root, "scripts")

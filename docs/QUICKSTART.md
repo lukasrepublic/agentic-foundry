@@ -15,7 +15,7 @@ What you'll produce, artifact by artifact:
 
  gh issue create          ──▶  a ticket: What / Why / Done means (a command) / Paper allowed
 
- foundry-ticket.py start  ──▶  .claude/foundry-ticket.json      (gitignored; scopes the paper guard
+ foundry-ticket.py start  ──▶  <git-dir>/foundry-ticket.json   (not in the tree; scopes the paper guard
                                                                   and the Stop hook)
 
  /foundry:dispatch        ──▶  an isolated worktree → foundry-test.sh green → one PR →
@@ -275,7 +275,7 @@ runbook is in **[troubleshooting.md](troubleshooting.md)**, symptom-first.
 
 | Artifact | Path |
 |---|---|
-| Tickets | GitHub issues (the record); the active one in `.claude/foundry-ticket.json` (gitignored) |
+| Tickets | GitHub issues (the record); the active one in the git dir (`git rev-parse --git-path foundry-ticket.json`), never committed |
 | Opt-in specs + contracts | `specs/features/<product>/<domain>/<capability>/` |
 | Operator registry / project config | `.claude/foundry-operators.json` / `.claude/foundry-project.json` |
 | Decisions + research | `.foundry/decisions/`, `.foundry/research/` + your git history (the ledger) |

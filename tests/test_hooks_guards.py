@@ -520,12 +520,35 @@ def test_compact_reinject_no_longer_summarizes_release_manifests(tmp_path):
     (release_dir / "release.yaml").write_text(yaml.safe_dump(release_doc, sort_keys=False), encoding="utf-8")
     (release_dir / "state.yaml").write_text("next_action: do the thing\n", encoding="utf-8")
 
-    for source in ("compact", "startup"):
+    for source in ("compact", "fork", "startup", "resume", "clear"):
         payload = json.dumps({"source": source, "session_id": "scw-14-smoke-session"})
         p = _run_hook("foundry-compact-reinject.sh", stdin_text=payload,
                      extra_env={"CLAUDE_PROJECT_DIR": str(project_dir)})
         assert p.returncode == 0, p.stdout + p.stderr
         assert p.stdout == "", f"{source}: the re-injector still emitted a release summary: {p.stdout!r}"
+
+
+def test_compact_reinject_fork_emits_like_compact_and_startup_resume_clear_stay_silent(tmp_path):
+    """A forked background session gets the same re-inject as `compact` (posture + the worktree's
+    contract path). startup/resume/clear are deliberately silent: the session is not inheriting a
+    compacted/forked context, so there is nothing to restore."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    cwd_dir = tmp_path / "worktree"
+    (cwd_dir / ".agent").mkdir(parents=True)
+    contract_ref = "specs/features/foundry/fixture/acceptance-contract.yaml"
+    (cwd_dir / ".agent" / "assignment.json").write_text(json.dumps({"contract_ref": contract_ref}), encoding="utf-8")
+    outs = {}
+    for source in ("compact", "fork", "startup", "resume", "clear"):
+        payload = json.dumps({"source": source, "session_id": "fork-session", "cwd": str(cwd_dir)})
+        p = _run_hook("foundry-compact-reinject.sh", stdin_text=payload,
+                     extra_env={"CLAUDE_PROJECT_DIR": str(project_dir)})
+        assert p.returncode == 0, p.stdout + p.stderr
+        outs[source] = p.stdout
+    assert "[foundry:compact-reinject]" in outs["fork"] and contract_ref in outs["fork"], outs["fork"]
+    assert outs["fork"] == outs["compact"]
+    for source in ("startup", "resume", "clear"):
+        assert outs[source] == "", f"{source}: {outs[source]!r}"
 
 
 # ---------------------------------------------------------------- uncovered hook selftests
@@ -864,3 +887,27 @@ def test_v118_review_r1_a_mirror_remote_keeps_the_push_refused(tmp_path):
     repo = _make_repo(tmp_path / "r", branch="feature/x", config={"remote.origin.mirror": "true"})
     p = _discipline("git push --force", cwd=repo)
     assert p.returncode == 2, p.stdout + p.stderr
+
+
+# ---------------------------------------------------------------- doctor: wired hooks must be executable
+def test_doctor_check_hooks_fails_when_a_wired_hook_loses_its_exec_bit(tmp_path):
+    import importlib.util
+    repo = Path(__file__).resolve().parent.parent
+    spec = importlib.util.spec_from_file_location("foundry_doctor_hooks_x", repo / "scripts" / "foundry-doctor.py")
+    doctor = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(doctor)
+
+    root = tmp_path / "plugin"
+    (root / "hooks").mkdir(parents=True)
+    shutil.copy(repo / "hooks" / "hooks.json", root / "hooks" / "hooks.json")
+    shutil.copytree(repo / "scripts", root / "scripts")
+    for p in (repo / "hooks").iterdir():
+        if p.is_file() and p.name != "hooks.json":
+            shutil.copy(p, root / "hooks" / p.name)
+    ok, detail = doctor.check_hooks(str(root))
+    assert ok is True, detail
+
+    victim = root / "hooks" / "foundry-git-discipline.sh"
+    victim.chmod(victim.stat().st_mode & ~(stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH))
+    ok, detail = doctor.check_hooks(str(root))
+    assert ok is False and "foundry-git-discipline.sh" in detail and "executable" in detail, detail

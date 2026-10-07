@@ -53,7 +53,8 @@ downstream pipeline.
 7. **Integration branch — ONLY when this intake opens a brand-new release.** From `main`:
    `git checkout main && git pull && git checkout -b release/<version> && git push -u origin
    release/<version>`; every ticket this release dispatches then PRs into THIS branch, never
-   `main` (`context/branch-discipline.md`).
+   `main`. `context/branch-discipline.md` is the rule set and the platform's branch protection is the
+   merge gate; nothing here checks a PR's base.
 
 ## Lane routing (the game test)
 

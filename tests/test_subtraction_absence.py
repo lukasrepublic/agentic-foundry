@@ -41,7 +41,7 @@ def absent_check(root, absent_paths):
 def surface_files(root, surface_set):
     files = []
     for pat in surface_set:
-        files.extend(sorted(glob.glob(os.path.join(root, pat))))
+        files.extend(sorted(glob.glob(os.path.join(root, pat), recursive=True)))
     return files
 
 
@@ -174,6 +174,8 @@ _EXPECTED_SURFACE_SET = [
     'scripts/*.py', 'scripts/*.sh', 'scripts/foundry_checks/*.py', 'hooks/*.sh',
     'hooks/hooks.json', 'workflows/*.js', '.github/workflows/*.yml', 'skills/*/SKILL.md',
     'agents/*.md',
+    # v2.0.0 PR 2 review: prose surfaces whose stale citations the first sweep missed.
+    'context/*.md', 'docs/**/*.md', 'cli/src/*.mjs',
 ]
 
 

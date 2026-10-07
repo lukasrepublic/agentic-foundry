@@ -103,4 +103,4 @@ fail-closed by design: no CI reporting at all means there is no merge floor to h
 
 - `hooks/foundry-git-discipline.sh` — the `gh pr merge` clause this CLI's own merge call is
   admitted by; never a new exemption.
-- `context/branch-discipline.md` — atom PRs target the release integration branch; retargeting re-pins the `security-reviewed` label (`docs/how-to/branching-and-cleanup.md`).
+- `context/branch-discipline.md` — the rule set for branches (ticket PRs target the release branch; the platform's branch protection is the merge gate). Retargeting re-pins the `security-reviewed` label (`docs/how-to/branching-and-cleanup.md`).

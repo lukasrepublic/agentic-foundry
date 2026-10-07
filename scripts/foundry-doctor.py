@@ -169,10 +169,14 @@ def check_hooks(plugin_root=None):
             data = json.load(f)
     except Exception as e:
         return False, f"hooks.json invalid JSON: {e}"
-    missing = [s for s in _hook_command_scripts(data, root) if not os.path.isfile(s)]
+    scripts = _hook_command_scripts(data, root)
+    missing = [s for s in scripts if not os.path.isfile(s)]
     if missing:
         return False, f"hooks.json references missing script(s): {missing}"
-    return True, "hooks.json parses; every referenced hook command script exists"
+    not_exec = [s for s in scripts if not os.access(s, os.X_OK)]
+    if not_exec:
+        return False, f"hooks.json references non-executable script(s) (lost exec bit): {not_exec}"
+    return True, "hooks.json parses; every referenced hook command script exists and is executable"
 
 
 # --------------------------------------------------------------------------------------- #

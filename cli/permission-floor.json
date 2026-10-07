@@ -255,7 +255,7 @@
     },
     {
       "script": "foundry_yaml_load.py",
-      "rationale": "library: no argparse/__main__; shared C-accelerated safe-YAML loader + per-process file memo imported by the doctor, the capability preflight and the release loader"
+      "rationale": "library: no argparse/__main__; shared C-accelerated safe-YAML loader + per-process file memo imported by the doctor and the capability preflight"
     },
     {
       "script": "foundry_authz.py",
@@ -287,7 +287,7 @@
     },
     {
       "script": "foundry_plan_model.py",
-      "rationale": "the shipped __main__ is a convenience CLI (parse a plan JSON on stdin); the shipped workflow only imports its parsers"
+      "rationale": "the shipped __main__ is a convenience CLI (parse a plan JSON on stdin); the id-* skills only import its parsers"
     },
     {
       "script": "foundry_realization.py",
@@ -299,7 +299,7 @@
     },
     {
       "script": "foundry_system_snapshot.py",
-      "rationale": "the shipped __main__/CLI is never instructed; the workflow only imports build_system_snapshot"
+      "rationale": "the shipped __main__/CLI is never instructed; the id-* skills only import build_system_snapshot"
     },
     {
       "script": "foundry-statusline-wrapper.sh",
@@ -315,7 +315,7 @@
     },
     {
       "script": "foundry_ticket_store.py",
-      "rationale": "library: no argparse/__main__; the git-dir ticket location + output redactor imported by foundry-ticket.py and the two ticket hooks"
+      "rationale": "library: no argparse/__main__; the git-dir ticket location + output redactor imported by foundry-ticket.py and the ticket hooks"
     }
   ]
 }
