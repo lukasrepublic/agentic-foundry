@@ -8,6 +8,66 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 > Every release is itself specced, authorized, floor-gated, and certified through the tool
 > (Foundry is built with Foundry), and each section records its security-review disposition.
 
+## v2.0.0 — unreleased (the delivery rebase)
+
+### One artifact per change: a ticket with a runnable "Done means". The platform is the gate.
+
+`create-agentic-workspace` and `update-agentic-workspace` ship with this release (versions set at the cut).
+**Upgrading:** run the `npx update-agentic-workspace@<version>` the cut names, then start a new session on a ticket.
+
+Measured over 60 days on two adopter workspaces (ticket #269): paper — specs, acceptance
+contracts, manifests, status reports — outweighed shipped code 1.5:1 to 8:1 by lines; the
+authorize script ran 473 times, about as often as `tofu apply`; 76% of all agent file edits were
+to paper; one operator turn in ten was a frustration turn, most caused by governance ceremony or
+by the agent stopping instead of doing; 890 PRs in 56 days on one app repo each ran a 32-minute CI
+pipeline and every merge deployed to staging. Branch protection + CI and the security lane were
+not implicated. This release makes the ticket the unit of work and deletes the rest from the
+default path.
+
+**Added (ticket-first default, PR 1):**
+- `scripts/foundry-ticket.py start|allow|done|status|clear` — the GitHub issue is the ticket;
+  its `## Done means` fenced command and `## Paper allowed` list are recorded in the repository's
+  git dir (`git rev-parse --git-path foundry-ticket.json`, per worktree — never in the work tree,
+  so a fork branch cannot ship one). A command is adopted only from an issue author with write
+  access to the issue's repository; `--trust-author` is the operator's override and such a ticket
+  is never auto-run by the Stop hook. The command's digest is recorded and re-checked before every
+  run; output is redacted before it reaches the transcript.
+- `hooks/foundry-paper-guard.py` (PreToolUse Edit/Write) — a write under `specs/`, `intake/`,
+  `.foundry/`, `docs/`, `status-reports/`, `charters/`, or to a contract / manifest file, is
+  refused unless the active ticket allows the path. Code, infra, tests and config are never gated.
+- `hooks/foundry-ticket-stop.py` (Stop) — while the ticket's `Done means` fails, the session may
+  not stop (three refusals per ticket, then it may end with the failure named). The
+  "don't stop on reversible work" rule, mechanical at last.
+- `scripts/foundry-test.sh` — runs the repository's own CI command locally and records
+  `<git-dir>/foundry-local-green` for HEAD.
+- git-discipline clause (j): `git push` (except delete / dry-run / tags) and a non-draft
+  `gh pr create` are refused without local-green for HEAD. `--local-green=off` in `hooks.json`
+  is the only opt-out. CI confirms; it does not discover.
+- `scripts/foundry-delivery-metrics.py` — one measured line per repo per week (paper:code,
+  PRs merged, lead time; frustration and silent-yield rates from transcripts when given).
+  Replaces status reports.
+- `context/operating-model.md` — the whole model on one page; `cli/templates/CLAUDE.md.tmpl`
+  and `context/branch-discipline.md` rewritten to it.
+
+**Changed:**
+- `/foundry:authorize` is opt-in (`security: true` or an operator-chosen spec lane); the
+  standing grant in `.claude/foundry-operators.json` is the authorization.
+- `/foundry:merge-when-green` merges only on explicit instruction, re-arms a native `Monitor`
+  past its 30-minute deadline, and no longer needs a release manifest.
+- `/foundry:cut-release` refuses a tag less than 30 days after the previous one unless
+  `--hotfix` (34 tags in the preceding 60 days).
+- SessionStart re-inject also fires on `fork` sessions.
+- `docs/how-to/plugin-evals.md`: judge and model repinned off a retiring model
+  (`claude-haiku-4-5` retirable from 2026-10-15).
+
+**Security review (separate context, two rounds):** the ticket moved from `.claude/` into the git dir
+(a committed ticket on a fork branch would otherwise have run on `gh pr checkout`); `foundry-test.sh`,
+`foundry-ticket.py done` and `--trust-author` are never silently allowed by the plugin-scripts hook —
+the session's own permission flow decides (floor tier `ask`); Done-means runs are clamped to 300 s,
+their process group is killed after every run and on SIGTERM. hooks/ and skills/ are touched; the
+operator-applied `security-reviewed` label applies. No clause of the git-discipline hook admits
+anything it previously refused.
+
 ## v1.18.5 — 2026-10-01
 
 ### The status line no longer walks the working tree

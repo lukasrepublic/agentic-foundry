@@ -21,6 +21,20 @@ single release, plus one permanent deadlock where no check ever reported at all.
   checks-green query (`gh pr merge <pr> --squash`, never `--admin`). It grants nothing the clause
   did not already allow; it only waits correctly before asking.
 
+## When this may run (v2.0.0, the delivery rebase)
+
+- **Only on an explicit instruction** — the operator's, or a ticket whose body says `merge: auto`.
+  Never from a loop, a watcher tick, or "the PR looks done". Measured: automatic landing produced
+  15 merges a day on one adopter repo, each a staging deploy.
+- **The PR must be non-draft with local-green recorded for its head** (the git-discipline hook's
+  clause (j) already refused the push otherwise).
+- **Monitor re-arm.** A native `Monitor` watch now expires after at most 30 minutes (10 in `-p`).
+  A deadline event is **not** a result: re-arm the watch on the still-running process until the
+  CLI prints its terminal line (`merged` / `blocked` / `escalate`). Never treat a deadline as a
+  stall or a failure.
+- `--release <id>` is optional; without a release manifest the base-branch check is skipped
+  (the ticket-first model has no manifests).
+
 ## Procedure
 
 1. **Run the CLI directly for a short wait**, or **arm a native `Monitor` in `--watch` mode** for
