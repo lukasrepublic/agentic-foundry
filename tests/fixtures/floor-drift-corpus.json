@@ -208,6 +208,18 @@
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-worktree-gc.py --dry-run:*)",
             "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-test.sh:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-delivery-metrics.py:*)",
+            "origin": "settings.json"
           }
         ],
         "ask": [
@@ -511,6 +523,18 @@
           },
           {
             "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-worktree-gc.py --dry-run:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-ticket.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-test.sh:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-delivery-metrics.py:*)",
             "origin": "settings.json"
           }
         ],

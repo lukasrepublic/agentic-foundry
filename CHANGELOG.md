@@ -12,6 +12,9 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 
 ### One artifact per change: a ticket with a runnable "Done means". The platform is the gate.
 
+`create-agentic-workspace` and `update-agentic-workspace` ship with this release (versions set at the cut).
+**Upgrading:** run the `npx update-agentic-workspace@<version>` the cut names, then start a new session on a ticket.
+
 Measured over 60 days on two adopter workspaces (ticket #269): paper — specs, acceptance
 contracts, manifests, status reports — outweighed shipped code 1.5:1 to 8:1 by lines; the
 authorize script ran 473 times, about as often as `tofu apply`; 76% of all agent file edits were
