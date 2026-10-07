@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """foundry-ticket — the unit of work is a GitHub issue with a runnable "Done means".
 
-    foundry-ticket.py start <issue> [--repo OWNER/NAME] [--trust-author]
+    foundry-ticket.py start <issue|url> [--repo OWNER/NAME] [--trust-author]
     foundry-ticket.py allow <path> [<path>...]        permit writing a paper path for this ticket
     foundry-ticket.py done                            run the ticket's Done-means command
     foundry-ticket.py status                          print the active ticket
     foundry-ticket.py clear                           forget the active ticket
 
-The active ticket lives at `<project>/.claude/foundry-ticket.json` (excluded via .git/info/exclude).
+The active ticket lives in the repository's GIT DIR (per worktree; never checked out, never committed).
 Two hooks read it: `hooks/foundry-paper-guard.py` (a write to specs/, .foundry/, docs/, status-reports/,
 charters/ is refused unless the ticket allows the path) and `hooks/foundry-ticket-stop.py` (the session
 may not stop while the Done-means command fails). That is the whole governance model: one ticket, one
@@ -22,44 +22,37 @@ Issue body conventions (both optional, both plain Markdown):
     ## Paper allowed
     CHANGELOG.md, docs/how-to/x.md
 
-Only the FENCED block under `## Done means` is ever executed. Because the Stop hook runs that command
-unattended, `start` refuses an issue whose author lacks write access to the repository unless
-`--trust-author` is given. Only stdlib. `gh` must be authenticated for `start`.
+Only the FENCED block under `## Done means` is ever executed, and only after `start` confirmed the
+issue's author has write access to the issue's own repository. `--trust-author` overrides that for a
+command the OPERATOR has read; it is not silently allowed by the plugin's permission hook, and neither
+is `done` (both execute input). Only stdlib. `gh` must be authenticated for `start`.
 """
 from __future__ import annotations
 
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-TICKET_REL = Path(".claude") / "foundry-ticket.json"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import foundry_ticket_store as store  # noqa: E402
+
 STOP_CAP = 3  # how many times the Stop hook may refuse before it lets the session end
 TRUSTED_PERMISSIONS = {"admin", "maintain", "write"}
+project_root = store.project_root
 
 
-def project_root() -> Path:
-    env = os.environ.get("CLAUDE_PROJECT_DIR")
-    if env and Path(env).is_dir():
-        return Path(env).resolve()
-    try:
-        top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True,
-                             text=True, check=True).stdout.strip()
-        return Path(top).resolve()
-    except Exception:
-        return Path.cwd().resolve()
-
-
-def ticket_path(root: Path | None = None) -> Path:
-    return (root or project_root()) / TICKET_REL
+def ticket_path(root: Path | None = None) -> Path | None:
+    return store.ticket_file(root)
 
 
 def load(root: Path | None = None) -> dict | None:
     p = ticket_path(root)
-    if not p.is_file():
+    if not p or not p.is_file():
         return None
     try:
         return json.loads(p.read_text(encoding="utf-8"))
@@ -68,34 +61,12 @@ def load(root: Path | None = None) -> dict | None:
 
 
 def save(doc: dict, root: Path | None = None) -> Path:
-    root = root or project_root()
     p = ticket_path(root)
+    if not p:
+        sys.exit("foundry-ticket: not a git repository — a ticket needs one (it lives in the git dir)")
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
-    _ensure_excluded(root)
     return p
-
-
-def _ensure_excluded(root: Path) -> None:
-    """Hide the ticket file from git via .git/info/exclude — never by editing the tracked .gitignore."""
-    line = ".claude/foundry-ticket.json"
-    try:
-        gp = subprocess.run(["git", "-C", str(root), "rev-parse", "--git-path", "info/exclude"],
-                            capture_output=True, text=True, timeout=10)
-        if gp.returncode != 0:
-            return
-        ex = Path(gp.stdout.strip())
-        if not ex.is_absolute():
-            ex = root / ex
-        existing = ex.read_text(encoding="utf-8") if ex.is_file() else ""
-        if line not in existing.splitlines():
-            ex.parent.mkdir(parents=True, exist_ok=True)
-            with ex.open("a", encoding="utf-8") as fh:
-                if existing and not existing.endswith("\n"):
-                    fh.write("\n")
-                fh.write(line + "\n")
-    except Exception:
-        pass
 
 
 def norm_path(entry: str, root: Path | None = None) -> str:
@@ -124,6 +95,7 @@ _DONE_RE = re.compile(r"^##+[ \t]*done[ \t]+means\b.*?$", re.I | re.M)
 _PAPER_RE = re.compile(r"^##+[ \t]*paper[ \t]+allowed\b.*?$", re.I | re.M)
 _FENCE_RE = re.compile(r"^(```+|~~~+)[^\n]*\n(.*?)^\1[ \t]*$", re.S | re.M)
 _HEADING_RE = re.compile(r"^##+[ \t]", re.M)
+_ISSUE_URL_RE = re.compile(r"https?://[^/]+/([^/]+/[^/]+)/issues/\d+")
 
 
 def parse_body(body: str) -> tuple[str, list[str]]:
@@ -161,16 +133,24 @@ def _gh_json(args: list[str]) -> dict | None:
         return None
 
 
+def repo_of_issue(issue: dict, explicit: str | None) -> str | None:
+    """OWNER/NAME of the issue itself (from its URL) — the permission check must run against the
+    repository the issue lives in, never the local checkout (security review of #270, R5)."""
+    m = _ISSUE_URL_RE.match(issue.get("url") or "")
+    if m:
+        return m.group(1)
+    return explicit
+
+
 def author_trusted(repo: str | None, login: str, gh_json=_gh_json) -> tuple[bool, str]:
-    """True when `login` has write/maintain/admin on the repo (or is the authenticated user)."""
+    """True when `login` has write/maintain/admin on `repo` (or is the authenticated user)."""
+    if not login:
+        return False, "issue author unknown"
     me = gh_json(["api", "user"]) or {}
     if me.get("login") and me["login"] == login:
         return True, "issue author is the authenticated user"
     if not repo:
-        rv = gh_json(["repo", "view", "--json", "nameWithOwner"]) or {}
-        repo = rv.get("nameWithOwner")
-    if not repo:
-        return False, "repository could not be determined"
+        return False, "the issue's repository could not be determined"
     perm = gh_json(["api", f"repos/{repo}/collaborators/{login}/permission"]) or {}
     level = perm.get("permission") or ""
     if level in TRUSTED_PERMISSIONS:
@@ -180,7 +160,7 @@ def author_trusted(repo: str | None, login: str, gh_json=_gh_json) -> tuple[bool
 
 def cmd_start(args: list[str]) -> int:
     if not args:
-        sys.exit("usage: foundry-ticket.py start <issue> [--repo OWNER/NAME] [--trust-author]")
+        sys.exit("usage: foundry-ticket.py start <issue|url> [--repo OWNER/NAME] [--trust-author]")
     number = args[0]
     repo = None
     if "--repo" in args:
@@ -197,19 +177,26 @@ def cmd_start(args: list[str]) -> int:
         sys.exit("foundry-ticket: gh issue view failed (is gh authenticated, and is the issue number right?)")
     done, paper = parse_body(issue.get("body") or "")
     login = ((issue.get("author") or {}).get("login")) or ""
+    issue_repo = repo_of_issue(issue, repo)
+    trusted_by = "author"
     if done and not trust:
-        ok, why = author_trusted(repo, login)
+        ok, why = author_trusted(issue_repo, login)
         if not ok:
-            sys.exit("foundry-ticket: refusing to adopt a Done-means command from an untrusted issue author "
-                     f"({why}). The Stop hook would run it unattended. Re-run with --trust-author if you "
-                     "have read the command and accept it:\n    " + done.replace("\n", "\n    "))
+            sys.exit("foundry-ticket: the Done-means command in this issue was not adopted — " + why +
+                     ". The Stop hook would run it unattended, so a command from outside the repository's "
+                     "write team needs the OPERATOR to read it and start the ticket themselves. Nothing was recorded.")
+    elif done and trust:
+        trusted_by = "flag"
     doc = {
         "issue": issue["number"],
         "url": issue.get("url", ""),
+        "repo": issue_repo or "",
         "title": issue.get("title", ""),
         "author": login,
         "state": issue.get("state", ""),
         "done": done,
+        "done_sha256": store.command_digest(done),
+        "trusted_by": trusted_by,
         "paper_allowed": paper,
         "status": "open",
         "stop_blocks": 0,
@@ -217,7 +204,7 @@ def cmd_start(args: list[str]) -> int:
     }
     p = save(doc)
     print(f"ticket #{doc['issue']} active: {doc['title']}")
-    print(f"  done means : {done or '(none declared — add a fenced block under `## Done means`)'}")
+    print(f"  done means : {store.redact(done) or '(none declared — add a fenced block under `## Done means`)'}")
     print(f"  paper      : {', '.join(paper) if paper else '(none — paper writes are refused)'}")
     print(f"  recorded   : {p}")
     return 0
@@ -245,22 +232,33 @@ def run_done(doc: dict, root: Path, timeout: int = 1800) -> tuple[int, str]:
     cmd = (doc.get("done") or "").strip()
     if not cmd:
         return 0, "no Done-means command declared"
+    if store.command_digest(cmd) != doc.get("done_sha256"):
+        return 125, "the recorded Done-means command does not match its digest; re-run `start`"
+    proc = None
     try:
         proc = subprocess.Popen(["/bin/bash", "-c", cmd], cwd=str(root), stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True, start_new_session=True)
         try:
             out, _ = proc.communicate(timeout=timeout)
+            rc = proc.returncode
         except subprocess.TimeoutExpired:
-            try:
-                os.killpg(proc.pid, 9)
-            except Exception:
-                pass
-            proc.communicate()
-            return 124, f"timed out after {timeout}s"
+            out, rc = "", 124
     except OSError as e:
         return 127, str(e)
+    finally:
+        if proc is not None:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)   # nothing the check started outlives it
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+            try:
+                proc.communicate(timeout=5)
+            except Exception:
+                pass
+    if rc == 124:
+        return 124, f"timed out after {timeout}s"
     tail = (out or "").strip().splitlines()[-20:]
-    return proc.returncode, "\n".join(tail)
+    return rc, store.redact("\n".join(tail))
 
 
 def cmd_done(_args: list[str]) -> int:
@@ -291,7 +289,7 @@ def cmd_status(_args: list[str]) -> int:
 
 def cmd_clear(_args: list[str]) -> int:
     p = ticket_path()
-    if p.is_file():
+    if p and p.is_file():
         p.unlink()
         print("ticket cleared")
     return 0

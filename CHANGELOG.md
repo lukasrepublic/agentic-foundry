@@ -26,8 +26,12 @@ default path.
 
 **Added (ticket-first default, PR 1):**
 - `scripts/foundry-ticket.py start|allow|done|status|clear` — the GitHub issue is the ticket;
-  its `## Done means` fenced command and `## Paper allowed` list are recorded in
-  `.claude/foundry-ticket.json` (gitignored).
+  its `## Done means` fenced command and `## Paper allowed` list are recorded in the repository's
+  git dir (`git rev-parse --git-path foundry-ticket.json`, per worktree — never in the work tree,
+  so a fork branch cannot ship one). A command is adopted only from an issue author with write
+  access to the issue's repository; `--trust-author` is the operator's override and such a ticket
+  is never auto-run by the Stop hook. The command's digest is recorded and re-checked before every
+  run; output is redacted before it reaches the transcript.
 - `hooks/foundry-paper-guard.py` (PreToolUse Edit/Write) — a write under `specs/`, `intake/`,
   `.foundry/`, `docs/`, `status-reports/`, `charters/`, or to a contract / manifest file, is
   refused unless the active ticket allows the path. Code, infra, tests and config are never gated.
@@ -56,8 +60,13 @@ default path.
 - `docs/how-to/plugin-evals.md`: judge and model repinned off a retiring model
   (`claude-haiku-4-5` retirable from 2026-10-15).
 
-**Security review:** hooks/ and skills/ are touched; the security lane (operator-applied
-`security-reviewed` label) applies to this PR. No credential, permission or network surface changes.
+**Security review (separate context, two rounds):** the ticket moved from `.claude/` into the git dir
+(a committed ticket on a fork branch would otherwise have run on `gh pr checkout`); `foundry-test.sh`,
+`foundry-ticket.py done` and `--trust-author` are never silently allowed by the plugin-scripts hook —
+the session's own permission flow decides (floor tier `ask`); Done-means runs are clamped to 300 s,
+their process group is killed after every run and on SIGTERM. hooks/ and skills/ are touched; the
+operator-applied `security-reviewed` label applies. No clause of the git-discipline hook admits
+anything it previously refused.
 
 ## v1.18.5 — 2026-10-01
 

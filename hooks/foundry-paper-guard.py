@@ -3,7 +3,7 @@
 
 Paper is written only when the ticket asks for it. A write under a PAPER path — specs/, intake/,
 .foundry/, status-reports/, charters/, docs/, or an acceptance-contract.yaml / release.yaml /
-state.yaml anywhere — is refused unless the active ticket (`.claude/foundry-ticket.json`, see
+state.yaml anywhere — is refused unless the active ticket (in the repository's git dir, see
 scripts/foundry-ticket.py) lists that path or a parent directory under `paper_allowed`.
 
 Measured reason this exists: over 60 days on two adopter workspaces 76% of all agent file edits
@@ -20,6 +20,9 @@ import json
 import os
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import foundry_ticket_store as store  # noqa: E402
 
 PAPER_DIRS = ("specs", "intake", ".foundry", "status-reports", "charters", "docs")
 PAPER_FILES = ("acceptance-contract.yaml", "release.yaml", "state.yaml")
@@ -89,9 +92,9 @@ def main() -> int:
     if not _is_paper(rel):
         return 0
 
-    ticket_file = root / ".claude" / "foundry-ticket.json"
+    ticket_file = store.ticket_file(root)   # git dir only — never the work tree
     doc = None
-    if ticket_file.is_file():
+    if ticket_file and ticket_file.is_file():
         try:
             doc = json.loads(ticket_file.read_text(encoding="utf-8"))
         except Exception:

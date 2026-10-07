@@ -48,13 +48,14 @@ def _hook(script, payload, root, args=()):
                           text=True, env=_env(root), cwd=str(root), timeout=120)
 
 
-def _ticket(root, done="true", paper=(), status="open", blocks=0):
-    d = root / ".claude"
-    d.mkdir(exist_ok=True)
+def _ticket(root, done="true", paper=(), status="open", blocks=0, trusted_by="author", digest=True):
+    # the ticket lives in the GIT DIR (never the work tree) — security review of #270, B1
+    tf = Path(_git(root, "rev-parse", "--absolute-git-dir")) / "foundry-ticket.json"
     doc = {"issue": 7, "title": "t", "done": done, "paper_allowed": list(paper),
-           "status": status, "stop_blocks": blocks}
-    (d / "foundry-ticket.json").write_text(json.dumps(doc))
-    return d / "foundry-ticket.json"
+           "status": status, "stop_blocks": blocks, "trusted_by": trusted_by,
+           "done_sha256": foundry_ticket.store.command_digest(done) if digest else "bogus"}
+    tf.write_text(json.dumps(doc))
+    return tf
 
 
 # --- parse_body ---------------------------------------------------------------------------
@@ -158,6 +159,53 @@ def test_stop_hook_counts_a_timeout_as_a_refusal(tmp_path):
                        env=env, cwd=str(root), timeout=60)
     assert p.returncode == 2 and "timed out" in p.stderr
     assert json.loads(tf.read_text())["stop_blocks"] == 1
+
+
+def test_stop_hook_ignores_a_work_tree_ticket_file_and_digest_mismatch(tmp_path):
+    root = _repo(tmp_path)
+    # a committed/checked-out .claude/foundry-ticket.json (a fork could ship one) is never read
+    (root / ".claude").mkdir()
+    (root / ".claude" / "foundry-ticket.json").write_text(json.dumps(
+        {"issue": 1, "done": "touch " + str(root / "PWNED"), "status": "open", "stop_blocks": 0,
+         "done_sha256": foundry_ticket.store.command_digest("touch " + str(root / "PWNED"))}))
+    assert _hook("foundry-ticket-stop.py", {}, root).returncode == 0
+    assert not (root / "PWNED").exists()
+    p = _hook("foundry-paper-guard.py", {"tool_name": "Write", "tool_input": {"file_path": str(root / "docs/x.md")}}, root)
+    assert p.returncode == 2 and "no active ticket" in p.stderr
+    # a git-dir ticket whose command no longer matches its digest is not run
+    _ticket(root, done="touch " + str(root / "PWNED2"), digest=False)
+    p = _hook("foundry-ticket-stop.py", {}, root)
+    assert p.returncode == 0 and "digest" in p.stderr and not (root / "PWNED2").exists()
+    # a --trust-author ticket is not auto-run by the Stop hook
+    _ticket(root, done="touch " + str(root / "PWNED3"), trusted_by="flag")
+    p = _hook("foundry-ticket-stop.py", {}, root)
+    assert p.returncode == 0 and "trust-author" in p.stderr and not (root / "PWNED3").exists()
+
+
+def test_stop_hook_kills_the_process_group_and_clamps_the_timeout(tmp_path):
+    root = _repo(tmp_path)
+    marker = root / "still-running"
+    _ticket(root, done=f"(sleep 20; touch {marker}) >/dev/null 2>&1 & exit 1")
+    env = _env(root)
+    env["FOUNDRY_TICKET_STOP_TIMEOUT"] = "99999"   # clamped to 300; irrelevant here, command exits fast
+    p = subprocess.run([str(HOOKS / "foundry-ticket-stop.py")], input="{}", capture_output=True, text=True,
+                       env=env, cwd=str(root), timeout=60)
+    assert p.returncode == 2
+    import time as _t
+    _t.sleep(1.5)
+    assert not marker.exists()   # the background sleep was killed with the group
+
+
+def test_plugin_scripts_allow_gives_no_silent_decision_for_executing_shapes():
+    import importlib.util as iu
+    spec = iu.spec_from_file_location("psa", HOOKS / "foundry-plugin-scripts-allow.py")
+    psa = iu.module_from_spec(spec)
+    spec.loader.exec_module(psa)
+    root = str(ROOT)
+    assert psa.allowed(f"python3 {root}/scripts/foundry-ticket.py status", root) is True
+    assert psa.allowed(f"python3 {root}/scripts/foundry-ticket.py done", root) is False
+    assert psa.allowed(f"python3 {root}/scripts/foundry-ticket.py start 7 --trust-author", root) is False
+    assert psa.allowed(f"{root}/scripts/foundry-test.sh", root) is False
 
 
 def test_stop_hook_is_fail_open_without_ticket_or_command(tmp_path):

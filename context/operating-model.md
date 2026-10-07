@@ -26,7 +26,10 @@ docs/runbooks/dns.md
 - Assignment of the ticket **is** the authorization. The operator's standing grant is recorded
   once in `.claude/foundry-operators.json` (`standing_authorization: true`), not re-asked per change.
 
-Start it in the session: `python3 "$CLAUDE_PLUGIN_ROOT/scripts/foundry-ticket.py" start <issue>`.
+Start it in the session: `python3 "$CLAUDE_PLUGIN_ROOT/scripts/foundry-ticket.py" start <issue>`. The ticket is
+recorded in the repository's git dir (never checked out, never committed); a Done-means command is adopted
+only from an issue author with write access to the issue's repository — anything else needs the operator to
+read it and start the ticket with `--trust-author`, which the Stop hook then never auto-runs.
 
 ## The loop
 

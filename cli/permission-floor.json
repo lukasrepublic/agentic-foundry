@@ -359,19 +359,39 @@
       "rationale": "absolute anti-pattern: unattended destructive infra apply with no plan review"
     },
     {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py:*)",
-      "tier": "allow",
-      "rationale": "the ticket-first unit of work (v2.0.0): reads a GitHub issue via gh, writes only .claude/foundry-ticket.json (gitignored) and runs the ticket's own declared Done-means command; the session's operating record, never a repo mutation"
-    },
-    {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-test.sh:*)",
-      "tier": "allow",
-      "rationale": "runs the repository's OWN test command locally and writes <git-dir>/foundry-local-green for HEAD; the clause-(j) precondition for push, so it must never need a prompt"
-    },
-    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-delivery-metrics.py:*)",
       "tier": "allow",
       "rationale": "read-only: git log numstat + gh pr list over the window; prints one measured line per repo (paper:code, PRs, lead time); replaces status reports"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py start:*)",
+      "tier": "allow",
+      "rationale": "adopts a GitHub issue as the active ticket: writes only the git-dir ticket file; refuses a Done-means command from an author without write access on the issue's repo unless --trust-author (which the plugin-scripts-allow hook never auto-allows \u2014 the session's own permission mode decides)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py allow:*)",
+      "tier": "allow",
+      "rationale": "records a paper path on the active ticket (git-dir file only)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py status:*)",
+      "tier": "allow",
+      "rationale": "read-only"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py clear:*)",
+      "tier": "allow",
+      "rationale": "deletes the git-dir ticket file only"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py done:*)",
+      "tier": "ask",
+      "rationale": "EXECUTES the ticket's Done-means command (input taken from an issue body): the session's permission flow decides, never a silent allow (security review of #270, R1)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-test.sh:*)",
+      "tier": "ask",
+      "rationale": "EXECUTES the repository's own test command (Taskfile/Makefile/npm/pytest \u2014 code the branch defines): the session's permission flow decides; local-green is a delivery convenience, not a reason for a silent allow (security review of #270, R2)"
     }
   ],
   "not_invoked": [
@@ -482,6 +502,10 @@
     {
       "script": "foundry-direnv-lib.sh",
       "rationale": "direnv global-lib file, sourced by direnv, definitions only; not owner-executable, outside the AC-PFM-2 closed world"
+    },
+    {
+      "script": "foundry_ticket_store.py",
+      "rationale": "library: no argparse/__main__; the git-dir ticket location + output redactor imported by foundry-ticket.py and the two ticket hooks"
     }
   ]
 }
