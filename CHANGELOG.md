@@ -152,6 +152,8 @@ events 11 → 6. Each line names what replaces it.
   workspaces (`retired_in: 2.0.0`); `cli/permission-floor.json` and `docs/permission-floor.json` lose
   the rows of every deleted script.
 - `tests/test_subtraction_absence.py` pins this wave's deleted modules so they cannot creep back.
+- `btb-gates.yml`'s `shell-parse-bash32` discovery floor for `hooks/*.sh` moved 11 → 7, the shipped
+  count after the four shell hooks above went; a collapsed discovery still fails the job.
 
 **Security review (separate context, two rounds):** the ticket moved from `.claude/` into the git dir
 (a committed ticket on a fork branch would otherwise have run on `gh pr checkout`); `foundry-test.sh`,

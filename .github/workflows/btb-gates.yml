@@ -184,11 +184,13 @@ jobs:
           # Per-directory minima guard a collapsed discovery query (an empty/short covered set is
           # itself a failure: a gate that checks nothing must not report green); the ACTUAL
           # covered set driven through `bash -n` below is the full shipped-shell-script set,
-          # a strict superset of the two directories the minima bound.
+          # a strict superset of the two directories the minima bound. (v2.0.0: the hooks minimum
+          # moved 11 -> 7 with the four shell hooks the delivery rebase deleted; it still equals the
+          # shipped count, so a collapsed discovery still fails.)
           hook_count="$(git ls-files hooks | grep -c -e '[.]sh$' || true)"
           script_count="$(git ls-files scripts | grep -c -e '[.]sh$' || true)"
-          if [ "${hook_count:-0}" -lt 11 ]; then
-            summary "shell-parse-bash32: FAIL — discovery found only ${hook_count:-0} hooks/*.sh (minimum 11) — discovery collapsed"
+          if [ "${hook_count:-0}" -lt 7 ]; then
+            summary "shell-parse-bash32: FAIL — discovery found only ${hook_count:-0} hooks/*.sh (minimum 7) — discovery collapsed"
             exit 1
           fi
           if [ "${script_count:-0}" -lt 5 ]; then

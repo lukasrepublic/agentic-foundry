@@ -214,8 +214,8 @@ def test_job_present_structurally_shaped_and_never_skippable():
 # ==================================================================== AC-B32-4 (tier honesty) ==
 
 def test_states_tier_advisory(tmp_path):
-    """AC-B32-4(c): this job states its enforcement tier "as `spec-link` and `security-path`
-    already do" — and what those two do, since the 2026-08-04 tier-honesty pass, is DERIVE it from
+    """AC-B32-4(c): this job states its enforcement tier "as the other gate
+    jobs do" — and what those two do, since the 2026-08-04 tier-honesty pass, is DERIVE it from
     the live protection state rather than print a literal.
 
     This test used to assert the literal `tier: B`, which is precisely how the job came to ship
@@ -287,7 +287,7 @@ def test_fails_closed_on_a_single_parse_failure(tmp_path):
 # ==================================================================== AC-B32-6 (discovery) =====
 
 def test_discovers_new_script(tmp_path):
-    repo = _make_scratch_repo(tmp_path, hook_count=11, script_count=5)
+    repo = _make_scratch_repo(tmp_path, hook_count=7, script_count=5)
     # Add the new file AFTER the initial tree is built and tracked — proving discovery is a
     # run-time query, not a snapshot taken once.
     new_file = repo / "hooks" / "brand-new-hook.sh"
@@ -323,7 +323,7 @@ def test_no_enumerated_filenames():
 
 
 def test_enforces_directory_minimums(tmp_path):
-    # Below both minima: 3 hooks/*.sh (< 11), 2 scripts/*.sh (< 5).
+    # Below both minima: 3 hooks/*.sh (< 7), 2 scripts/*.sh (< 5).
     repo = _make_scratch_repo(tmp_path, hook_count=3, script_count=2)
     docker_bin = _install_docker_stub(tmp_path)
     log_path = tmp_path / "docker-log.txt"
