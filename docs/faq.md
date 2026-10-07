@@ -14,7 +14,7 @@ first-class lane. Small changes deserve small process.
 
 **Does Foundry write worse/slower code than plain Claude Code?**
 Foundry doesn't write code at all — the same Claude Code agents do. It governs what they
-build (a ticket), where (an isolated worktree), and what "done" means (a command that exits 0,
+build (a ticket), where (an isolated worktree), and what "done" means (a command that exits zero,
 run locally before the push and again in CI).
 
 **What happens if the agent tries to merge anyway?**

@@ -18,27 +18,7 @@
       "effective": {
         "allow": [
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-acceptance-contract-validate.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-apply-runtime-gitignore.sh:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-audit-prepare.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-audit-record.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-build-citation-graph.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-coherence-check.py:*)",
             "origin": "settings.json"
           },
           {
@@ -46,19 +26,7 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-content-conformance.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-dashboard-fidelity.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-deploy-status.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-distill.py:*)",
             "origin": "settings.json"
           },
           {
@@ -70,22 +38,6 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-graph-mcp.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-index.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-manifest-to-tasklist.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-native-todo-discipline.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-permissions-compile.py --check:*)",
             "origin": "settings.json"
           },
@@ -94,15 +46,7 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-project-rtm.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-release-acceptance.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-spec-lint.py:*)",
             "origin": "settings.json"
           },
           {
@@ -126,27 +70,11 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-wave-plan.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-wt:*)",
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_blocker_check.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_ceremony_tier.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_command_deck.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_command_deck_watch.py:*)",
             "origin": "settings.json"
           },
           {
@@ -162,15 +90,7 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_grounding_conformance.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_intake_grounding.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_message_kind.py:*)",
             "origin": "settings.json"
           },
           {
@@ -191,18 +111,6 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-capability-preflight.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-routine-wake-prompt.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-done-when-backfill.py --dry-run:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-governance-budget.py:*)",
             "origin": "settings.json"
           },
           {
@@ -240,10 +148,6 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-amend.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-bootstrap.sh:*)",
             "origin": "settings.json"
           },
@@ -252,31 +156,11 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-decommission.py gate-check:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-decommission.py record:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-doctor.py --heal:*)",
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-project-sync.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-stack-profile.py --relock:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-upstream-submit.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_release.py accept:*)",
             "origin": "settings.json"
           },
           {
@@ -305,10 +189,6 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-merge-when-green.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-done-when-backfill.py --apply:*)",
             "origin": "settings.json"
           },
           {
@@ -350,27 +230,7 @@
       "effective": {
         "allow": [
           {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-acceptance-contract-validate.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-apply-runtime-gitignore.sh:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-audit-prepare.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-audit-record.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-build-citation-graph.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-coherence-check.py:*)",
             "origin": "settings.json"
           },
           {
@@ -378,19 +238,7 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-content-conformance.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-dashboard-fidelity.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-deploy-status.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-distill.py:*)",
             "origin": "settings.json"
           },
           {
@@ -402,22 +250,6 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-graph-mcp.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-index.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-manifest-to-tasklist.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-native-todo-discipline.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-permissions-compile.py --check:*)",
             "origin": "settings.json"
           },
@@ -426,15 +258,7 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-project-rtm.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-release-acceptance.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-spec-lint.py:*)",
             "origin": "settings.json"
           },
           {
@@ -458,27 +282,11 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-wave-plan.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-wt:*)",
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry_blocker_check.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry_ceremony_tier.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry_command_deck.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry_command_deck_watch.py:*)",
             "origin": "settings.json"
           },
           {
@@ -494,15 +302,7 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry_grounding_conformance.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry_intake_grounding.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry_message_kind.py:*)",
             "origin": "settings.json"
           },
           {
@@ -523,18 +323,6 @@
           },
           {
             "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-capability-preflight.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-routine-wake-prompt.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-done-when-backfill.py --dry-run:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-governance-budget.py:*)",
             "origin": "settings.json"
           },
           {
@@ -572,10 +360,6 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-amend.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-bootstrap.sh:*)",
             "origin": "settings.json"
           },
@@ -584,31 +368,11 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-decommission.py gate-check:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-decommission.py record:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-doctor.py --heal:*)",
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-project-sync.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-stack-profile.py --relock:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-upstream-submit.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_release.py accept:*)",
             "origin": "settings.json"
           },
           {
@@ -637,10 +401,6 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-merge-when-green.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-done-when-backfill.py --apply:*)",
             "origin": "settings.json"
           },
           {
@@ -686,39 +446,7 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-audit-prepare.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-audit-record.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-build-citation-graph.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-coherence-check.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-config.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-content-conformance.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-dashboard-fidelity.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-deploy-status.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-distill.py:*)",
             "origin": "settings.json"
           },
           {
@@ -730,35 +458,11 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-graph-mcp.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-index.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-manifest-to-tasklist.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-native-todo-discipline.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-prepublication-leak-scan.py:*)",
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-project-rtm.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-release-acceptance.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-spec-lint.py:*)",
             "origin": "settings.json"
           },
           {
@@ -782,15 +486,7 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-wave-plan.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-wt:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_blocker_check.py:*)",
             "origin": "settings.json"
           },
           {
@@ -807,10 +503,6 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_env_isolation.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_grounding_conformance.py:*)",
             "origin": "settings.json"
           },
           {
@@ -832,19 +524,11 @@
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_session_mode.py:*)",
             "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-done-when-backfill.py --dry-run:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-governance-budget.py:*)",
-            "origin": "settings.json"
           }
         ],
         "ask": [
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-acceptance-contract-validate.py:*)",
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-deploy-status.py:*)",
             "origin": "settings.json"
           },
           {
@@ -856,10 +540,6 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-amend.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-bootstrap.sh:*)",
             "origin": "settings.json"
           },
@@ -868,31 +548,11 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-decommission.py gate-check:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-decommission.py record:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-doctor.py --heal:*)",
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-project-sync.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-stack-profile.py --relock:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-upstream-submit.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_release.py accept:*)",
             "origin": "settings.json"
           },
           {
@@ -913,10 +573,6 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_tier_preflight.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-done-when-backfill.py --apply:*)",
             "origin": "settings.json"
           },
           {
@@ -982,27 +638,7 @@
       "effective": {
         "allow": [
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-acceptance-contract-validate.py:*)",
-            "origin": "settings.local.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-apply-runtime-gitignore.sh:*)",
-            "origin": "settings.local.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-audit-prepare.py:*)",
-            "origin": "settings.local.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-audit-record.py:*)",
-            "origin": "settings.local.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-build-citation-graph.py:*)",
-            "origin": "settings.local.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-coherence-check.py:*)",
             "origin": "settings.local.json"
           },
           {
@@ -1010,19 +646,7 @@
             "origin": "settings.local.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-content-conformance.py:*)",
-            "origin": "settings.local.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-dashboard-fidelity.py:*)",
-            "origin": "settings.local.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-deploy-status.py:*)",
-            "origin": "settings.local.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-distill.py:*)",
             "origin": "settings.local.json"
           },
           {
@@ -1034,35 +658,11 @@
             "origin": "settings.local.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-graph-mcp.py:*)",
-            "origin": "settings.local.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-index.py:*)",
-            "origin": "settings.local.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-manifest-to-tasklist.py:*)",
-            "origin": "settings.local.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-native-todo-discipline.py:*)",
-            "origin": "settings.local.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-prepublication-leak-scan.py:*)",
             "origin": "settings.local.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-project-rtm.py:*)",
-            "origin": "settings.local.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-release-acceptance.py:*)",
-            "origin": "settings.local.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-spec-lint.py:*)",
             "origin": "settings.local.json"
           },
           {
@@ -1086,15 +686,7 @@
             "origin": "settings.local.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-wave-plan.py:*)",
-            "origin": "settings.local.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-wt:*)",
-            "origin": "settings.local.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_blocker_check.py:*)",
             "origin": "settings.local.json"
           },
           {
@@ -1111,10 +703,6 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_env_isolation.py:*)",
-            "origin": "settings.local.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_grounding_conformance.py:*)",
             "origin": "settings.local.json"
           },
           {
@@ -1136,14 +724,6 @@
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_session_mode.py:*)",
             "origin": "settings.local.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-done-when-backfill.py --dry-run:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-governance-budget.py:*)",
-            "origin": "settings.json"
           }
         ],
         "ask": [
@@ -1156,10 +736,6 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-amend.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-bootstrap.sh:*)",
             "origin": "settings.json"
           },
@@ -1168,31 +744,11 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-decommission.py gate-check:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-decommission.py record:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-doctor.py --heal:*)",
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-project-sync.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-stack-profile.py --relock:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-upstream-submit.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_release.py accept:*)",
             "origin": "settings.json"
           },
           {
@@ -1213,10 +769,6 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_tier_preflight.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-done-when-backfill.py --apply:*)",
             "origin": "settings.json"
           },
           {
@@ -1268,27 +820,7 @@
       "effective": {
         "allow": [
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-acceptance-contract-validate.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-apply-runtime-gitignore.sh:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-audit-prepare.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-audit-record.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-build-citation-graph.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-coherence-check.py:*)",
             "origin": "settings.json"
           },
           {
@@ -1296,19 +828,7 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-content-conformance.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-dashboard-fidelity.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-deploy-status.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-distill.py:*)",
             "origin": "settings.json"
           },
           {
@@ -1320,35 +840,11 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-graph-mcp.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-index.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-manifest-to-tasklist.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-native-todo-discipline.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-prepublication-leak-scan.py:*)",
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-project-rtm.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-release-acceptance.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-spec-lint.py:*)",
             "origin": "settings.json"
           },
           {
@@ -1372,15 +868,7 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-wave-plan.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-wt:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_blocker_check.py:*)",
             "origin": "settings.json"
           },
           {
@@ -1397,10 +885,6 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_env_isolation.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_grounding_conformance.py:*)",
             "origin": "settings.json"
           },
           {
@@ -1422,14 +906,6 @@
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_session_mode.py:*)",
             "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-done-when-backfill.py --dry-run:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-governance-budget.py:*)",
-            "origin": "settings.json"
           }
         ],
         "ask": [
@@ -1442,10 +918,6 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-amend.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-bootstrap.sh:*)",
             "origin": "settings.json"
           },
@@ -1454,31 +926,11 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-decommission.py gate-check:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-decommission.py record:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-doctor.py --heal:*)",
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-project-sync.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-stack-profile.py --relock:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-upstream-submit.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_release.py accept:*)",
             "origin": "settings.json"
           },
           {
@@ -1499,10 +951,6 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_tier_preflight.py:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-done-when-backfill.py --apply:*)",
             "origin": "settings.json"
           },
           {

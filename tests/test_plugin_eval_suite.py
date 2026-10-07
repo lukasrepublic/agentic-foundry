@@ -18,7 +18,7 @@ constraint). Every field name and grader `type` checked here is quoted verbatim 
   Grader `type` ("Grader types" reference table): one of exactly `regex`, `tool_used`,
   `tool_order`, `file_exists`, `llm`, `baseline` — no custom-code graders exist.
 
-AC-PES-1 also requires the six named cases to exist, each with at least one grader.
+AC-PES-1 also requires the named case(s) to exist, each with at least one grader.
 """
 from __future__ import annotations
 
@@ -66,13 +66,11 @@ GRADER_TYPE_OPTION_FIELDS = {
 # "Of the six types" -- the closed set, verbatim.
 GRADER_TYPES = frozenset(GRADER_TYPE_OPTION_FIELDS)
 
+# v2.0.0 (the delivery rebase): five of the six original cases exercised deleted machinery (the
+# directive-question stop rule, the blocker shape, the message-kind linter, the release state read,
+# the authorize refusal); `merge-waits-with-primitive` is the one that still measures a shipped skill.
 REQUIRED_CASE_NAMES = (
-    "keep-going",
-    "blocker-with-evidence",
     "merge-waits-with-primitive",
-    "unauthorized-claim-refused",
-    "message-kind-lint",
-    "state-read-first",
 )
 
 
@@ -196,8 +194,8 @@ def test_evals_dir_exists():
     assert os.path.isdir(EVALS_DIR), f"evals/ does not exist at {EVALS_DIR}"
 
 
-def test_required_six_cases_exist():
-    """AC-PES-1: at least six cases, one per measured failure, with these exact names."""
+def test_required_cases_exist():
+    """AC-PES-1: every required case exists under evals/ with its exact name."""
     present = {os.path.basename(d) for d in _case_dirs()}
     missing = [n for n in REQUIRED_CASE_NAMES if n not in present]
     assert not missing, f"required case(s) missing under evals/: {missing} (found: {sorted(present)})"
@@ -318,7 +316,7 @@ def test_add_dirs_referenced_from_context_exist():
 
 
 def test_regex_graders_never_use_python_inline_flag_groups():
-    """Base-RED evidence (this atom's own `claude plugin eval . --case keep-going` try): the
+    """Base-RED evidence (this atom's own `claude plugin eval . --case <case>` try): the
     engine's regex is JavaScript, which has no `(?i)`/`(?s)`/etc inline-flag-group syntax --
     `no-stop-and-ask` shipped with `pattern: (?i)\\b...` and the run reported `grader threw:
     Invalid regular expression: unrecognized character after (?`. Case-insensitivity and

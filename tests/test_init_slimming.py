@@ -73,12 +73,14 @@ UNTOUCHED_STEPS = (1, 3, 5, 6, 7, 8, 9, 10, 13)
 # once this atom is in the merge base, comparing against that base is comparing text to itself, so
 # the standing anchor becomes this literal. A legitimate edit to any of the nine steps MUST update
 # it in the SAME reviewed diff — the MERGE_BASE_ENTRIES_DIGEST convention, applied here.
-UNTOUCHED_STEPS_DIGEST = "89be3276f88d999902a8b58cd00104f2b1c470509a3fbd8846b687cd82fd8405"
+UNTOUCHED_STEPS_DIGEST = "7e1283ddb40fd6fec3362c56fe7e75f1fb0bda8e600a1f8fe3069de28f56679a"
 
 BYPASS_TOKENS = ["--yes", "--dangerously", "bypassPermissions", "acceptEdits", "auto-approve", "allow rule"]
-HELLO_VERBS_IN_ORDER = ["/foundry:intake", "/foundry:spec-review", "/foundry:authorize", "/foundry:dispatch", "merge"]
-ALLOWED_HELLO_VERBS = {"/foundry:intake", "/foundry:spec-review", "/foundry:authorize", "/foundry:dispatch"}
-FOREIGN_PATH_PREFIXES = (".claude/", "scripts/", "docs/", "hooks/", "schema/", ".github/", ".foundry/", "packs/", "skills/")
+# v2.0.0 (the delivery rebase): the hello-loop walks a throwaway TICKET, not a spec — the four stages
+# below replace intake -> spec-review -> authorize -> dispatch -> merge.
+HELLO_VERBS_IN_ORDER = ["Open an issue", "foundry-ticket.py", "/foundry:dispatch", "merge"]
+ALLOWED_HELLO_VERBS = {"/foundry:dispatch"}
+FOREIGN_PATH_PREFIXES = (".claude/", "docs/", "hooks/", "schema/", ".github/", ".foundry/", "packs/", "skills/", "specs/")
 # Word-boundary patterns (never naive substrings — "gh " is a substring of "through ").
 FOREIGN_COMMAND_PATTERNS = [re.compile(r"\b%s\b" % tok) for tok in
                             ("git", "gh", "python3", "pytest", "bash", "sh")]
@@ -151,7 +153,7 @@ def _step_slices(text):
 
 
 def _step14_slice(text):
-    marker = "Guided first atom (the hello-loop)"
+    marker = "Guided first ticket (the hello-loop)"
     idx = text.index(marker)
     line_start = text.rfind("\n", 0, idx) + 1
     m = re.search(r"^## ", text[idx:], re.MULTILINE)
@@ -222,12 +224,10 @@ def check_tiering_owners(text):
 
 def check_hello_loop_stages_in_order_and_cleanup(text):
     slice_ = _step14_slice(text)
-    assert "Guided first atom (the hello-loop)" in slice_
+    assert "Guided first ticket (the hello-loop)" in slice_
     positions = [slice_.index(s) for s in HELLO_VERBS_IN_ORDER]
     assert positions == sorted(positions), f"hello-loop stages out of order: {positions}"
-    assert "one-keypress" in slice_
-    assert "the operator answers it" in slice_
-    assert "never answers it on the operator's behalf" in slice_
+    assert "Done means" in slice_
     assert "scratch branch" in slice_
     assert "delete it" in slice_
     return slice_
@@ -238,8 +238,8 @@ def check_hello_loop_no_bypass_or_foreign_path(text):
     for tok in BYPASS_TOKENS:
         assert tok not in slice_, f"step 14 slice carries forbidden literal {tok!r}"
     for prefix in FOREIGN_PATH_PREFIXES:
-        assert prefix not in slice_, f"step 14 slice names a path outside specs/**: {prefix!r}"
-    assert "specs/**" in slice_, "step 14 slice never names specs/**"
+        assert prefix not in slice_, f"step 14 slice names a path outside the ticket scripts: {prefix!r}"
+    assert "scripts/foundry-ticket.py" in slice_, "step 14 slice never names scripts/foundry-ticket.py"
     found_verbs = set(re.findall(r"/foundry:[a-z-]+", slice_))
     assert found_verbs <= ALLOWED_HELLO_VERBS, f"step 14 names an unexpected verb: {found_verbs - ALLOWED_HELLO_VERBS}"
     for pat in FOREIGN_COMMAND_PATTERNS:
@@ -473,7 +473,7 @@ def test_negative_controls_all_fire():
         check_tiering_owners(mutated_c)
 
     # (d) a step-14 slice carrying bypassPermissions.
-    marker = "Guided first atom (the hello-loop)."
+    marker = "Guided first ticket (the hello-loop)."
     idx = text.index(marker)
     mutated_d = text[:idx] + marker + " bypassPermissions" + text[idx + len(marker):]
     with pytest.raises(AssertionError):

@@ -12,7 +12,7 @@ are an **opt-in lane** the operator chooses, not the default path.
 > to earn its keep. A gate ships only if it names the observed failure it prevents; the
 > operator's own judgment is what the automation serves, never what it replaces.
 
-**Status: v1.18.5 (v2.0.0, the delivery rebase, is in progress).** Built solo, dogfooded daily.
+**Status: v1.18.5.** The 2.0 delivery rebase is in progress. Built solo, dogfooded daily.
 The default path is on one page: **[context/operating-model.md](context/operating-model.md)**.
 
 ## The loop, in one picture
@@ -232,8 +232,8 @@ Honest full comparison: **[docs/comparison.md](docs/comparison.md)**.
 
 More than 1500 pytest tests · doctor green in under a second · every third-party GitHub Action
 SHA-pinned · the changelog documents every security-review disposition per release. The 2.0 rebase
-came from measuring this very workflow over 60 days on two adopter workspaces (paper outweighed
-shipped code 1.5:1 to 8:1 by lines) and deleting the paper.
+came from measuring this very workflow on two adopter workspaces (paper outweighed shipped
+code by lines, several times over) and deleting the paper.
 These claims are **CI-locked** — a doc-drift test fails the build when they stop being true.
 
 ## Docs

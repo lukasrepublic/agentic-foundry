@@ -60,7 +60,7 @@ verb-object form and the model learns the natural-language aliases.
 | Machinery | How it triggers | Explicit / slash form | Natural-language trigger (lives in the `description`) |
 |---|---|---|---|
 | **Playbook** (guarded looping skill) | Model-invoked by `description` match; loops to its exit criteria | `/foundry:cut-release v0.7.0` | "cut the v0.7.0 release" · "ship the release" |
-| **Skill** (model-invoked) | Model reads `description`, decides to load | `/foundry:intake` (also user-invocable) | "turn this PRD into a ticket" → `intake` · "wait for the checks and merge PR 87" → `merge-when-green` |
+| **Skill** (model-invoked) | Model reads `description`, decides to load | `/foundry:intake` (also user-invocable) | "turn this PRD into a ticket" → `intake` · "wait for the checks and merge the PR" → `merge-when-green` |
 | **Slash-command** (explicit) | The **user** decides; deterministic | `/foundry:authorize <spec-path>` | "authorize the spec at `<path>`" (the natural-language alias of the same skill) |
 | **Subagent** (delegated) | Dispatched into an isolated context; summary returns | (via the dispatch/Agent path) | "run a security review on the PR #51 diff" → `security-reviewer` · "give me a fresh code-review pass" → `pr-reviewer` |
 

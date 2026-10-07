@@ -45,7 +45,7 @@ three verbs (`init`, `dispatch`, `merge-when-green`); see the `## Start here` ta
 
 | Verb | What it produces |
 |---|---|
-| `/foundry:cut-release` | Verifies the release preconditions you staged (both manifests bumped, the changelog section written), refuses until the acceptance gate is green, then emits a publish plan **for you to run** — it never tags or pushes. Refuses a tag less than 30 days after the previous one unless `--hotfix` |
+| `/foundry:cut-release` | Verifies the release preconditions you staged (both manifests bumped, the changelog section written), refuses until the acceptance gate is green, then emits a publish plan **for you to run** — it never tags or pushes. Refuses a tag less than a month after the previous one unless `--hotfix` |
 | `/foundry:upgrade` | After a `claude plugin update`, reports whether your adopter config has drifted from the current shape or gone malformed |
 | `/foundry:post-upgrade` | After `npx update-agentic-workspace`, reads its report and walks the judgement half of the upgrade — grants into policy, `requires_capabilities` on unfrozen contracts, a truth pass over your own prose, branch gc, one PR |
 | `/foundry:relock` | Re-locks your **already-locked** stack profiles after a trusted profile-version advance, refusing a downgrade or an incompatible profile |

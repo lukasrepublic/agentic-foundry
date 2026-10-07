@@ -23,8 +23,8 @@ we do. **They all stop at the documents.** No enforcement at the merge seam, no 
 before the push — with Kiro's honorable exception (property-based tests from specs; its approvals
 stay IDE-local and its specs stay mutable). Foundry's default path is deliberately lighter than
 theirs: one artifact per change, a ticket whose `Done means` is a command, with the platform as the
-gate. Measured over 60 days on two adopter workspaces, spec-and-contract paper outweighed shipped
-code 1.5:1 to 8:1, so Foundry made the spec an **opt-in lane** (frozen, hash-bound contracts and an
+gate. Measured on two adopter workspaces, spec-and-contract paper outweighed shipped
+code several times over, so Foundry made the spec an **opt-in lane** (frozen, hash-bound contracts and an
 operator authorization with no skip, for `security: true` work). If you already use Spec Kit-shaped
 artifacts, they map onto that lane naturally — the pipelines are complementary, not rivals.
 

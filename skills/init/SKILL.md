@@ -280,8 +280,8 @@ standalone plugin repo) so the gates are live + fail-closed.
     - **Open an issue** — describe one trivial capability (e.g. "print a greeting") with a
       `## Done means` fenced command that exits 0 when it works.
     - **`scripts/foundry-ticket.py start <issue>`** — make it the active ticket.
-    - **`/foundry:dispatch`** — an implementer builds it on its own branch and runs
-      `scripts/foundry-test.sh` until green.
+    - **`/foundry:dispatch`** — an implementer builds it on its own branch and runs the
+      local-green step until it passes.
     - **merge** — the operator merges the resulting change through their own normal review flow.
 
     **Cleanup.** The whole walk lives on a scratch branch — once the operator has seen the loop end

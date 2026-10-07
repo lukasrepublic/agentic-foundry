@@ -1,19 +1,18 @@
-"""Regression coverage for the two LIVE PreToolUse security guards + the uncovered hook
+"""Regression coverage for the LIVE PreToolUse security guard + the uncovered hook
 selftests (PR #270 floor-#3 review findings 1/2), PLUS the subtraction-contract-widening atom's
 Block-1 fail-closed enumeration for the `gh pr merge` clause (AC-SCW-1..5) and the
 compact-reinject removal smoke (AC-SCW-14). These drive the real shipped hooks:
 
-- hooks/foundry-cloud-cli-exec-guard.sh via its hermetic `--eval` seam (block / allow-wrapped /
-  no-wrapper-inert — the same evaluator the live path runs).
 - hooks/foundry-git-discipline.sh via real hook-JSON stdin (destructive-git block, benign allow,
   `gh pr merge --admin` outright block, plain `gh pr merge` admitted only on a checks-green
   `gh pr checks` query — exercised against tests/fixtures/gh-stub/gh, the ONE committed stub
   `gh` binary the evidence rule requires, placed first on PATH and driven entirely by env vars;
   fail-closed when the query cannot complete or the internal evaluator itself misbehaves).
-- hooks/foundry-compact-reinject.sh via real `source: compact` hook-JSON stdin, post the
-  AC-SCW-8 dead-spawn removal, proving the surviving (a)/(b) sections still assemble.
-- The three previously-uncovered hook selftests (env-reap / worktree-remove /
-  harvest-learnings) as sentinel wrappers.
+- hooks/foundry-compact-reinject.sh via real `source: compact` hook-JSON stdin, proving the
+  surviving posture / contract-path sections still assemble and the release summary is gone.
+- The previously-uncovered hook selftests (env-reap / worktree-remove) as sentinel wrappers.
+(The cloud-cli exec guard, its separator matrix and live-seam tests, and the harvest-learnings
+selftest went with those hooks in v2.0.0.)
 """
 import json
 import os
@@ -37,114 +36,6 @@ def _run_hook(script, stdin_text="", extra_env=None, args=()):
         [str(HOOKS / script), *args],
         input=stdin_text, capture_output=True, text=True, env=env, timeout=60,
     )
-
-
-# ---------------------------------------------------------------- cloud-cli-exec-guard
-def _eval_guard(cmd, wrapper, tools="aws,kubectl,tofu,terraform,helm,argocd", exempt=""):
-    p = _run_hook("foundry-cloud-cli-exec-guard.sh",
-                  args=("--eval", cmd, wrapper, tools, exempt))
-    return p.stdout.strip().splitlines()[-1] if p.stdout.strip() else f"rc={p.returncode}"
-
-
-def test_cloud_guard_blocks_bare_cloud_cli():
-    assert _eval_guard("aws s3 ls", wrapper="exec-wrapper run --").startswith("BLOCK")
-
-
-def test_cloud_guard_allows_wrapped_invocation():
-    assert _eval_guard("exec-wrapper run -- aws s3 ls", wrapper="exec-wrapper run --") == "ALLOW"
-
-
-def test_cloud_guard_inert_without_wrapper():
-    # No adopter wrapper configured => the guard is INERT by design (fail-inert, documented).
-    assert _eval_guard("aws s3 ls", wrapper="") == "ALLOW"
-
-
-# ==================================================================== AC-B32-3 ==================
-# feat-foundry-bash32-parse-guard: the guard's command-position coverage over ALL ELEVEN members
-# of SEPARATORS (line 235 — the code is authoritative; the guard's own header comment miscounts
-# nine, omitting `)` and `}`), each row in the GLUED (no-whitespace) separator form — a spaced row
-# still passes with the whole connector-normalization pass (lines 189-208) deleted, proving
-# nothing about the defence that exists. This convicts the specific wrong "fix" for the
-# bash-3.2 parse defect: dropping the backtick from SEPARATORS (or narrowing the set to the nine
-# the stale header names), which would clear the parse error and silently widen the blind spot.
-#
-# The newline row is `\n` GLUED directly to the front of the guarded tool with nothing else
-# before it (no separator preceding "x", unlike the other ten rows) — the shipped tokenizer
-# (shlex, whitespace_split mode) treats an embedded "\n" purely as inter-token whitespace and
-# never yields it as a standalone token, so a MID-command newline can never satisfy `is_sep`; this
-# is a measured, pre-existing property of the unmodified evaluator (present before AND after this
-# atom's parse-only fix — verified against the merge-base file), not something this atom may
-# change (no behavioural change to any guard clause). A leading "\naws …" is still a literal,
-# faithfully-glued newline-introduced command position (nothing between the separator and the
-# adjacent token) and is what the shipped guard actually blocks on.
-_SEPARATOR_MATRIX_GLUED = [
-    ("&&", "true&&aws s3 ls"),
-    ("||", "false||aws s3 ls"),
-    (";", "true;aws s3 ls"),
-    ("|", "echo hi|aws s3 ls"),
-    ("&", "sleep.1&aws s3 ls"),
-    ("(", "x(aws s3 ls)"),
-    (")", "(true)aws s3 ls"),
-    ("{", "x{aws s3 ls"),
-    ("}", "true}aws s3 ls"),
-    ("`", "x`aws s3 ls`"),
-    ("\\n", "\naws s3 ls"),
-]
-
-
-@pytest.mark.parametrize("sep,cmd", _SEPARATOR_MATRIX_GLUED,
-                         ids=[f"separator_matrix_glued[{sep}]" for sep, _ in _SEPARATOR_MATRIX_GLUED])
-def test_separator_matrix_glued(sep, cmd):
-    # Raw stdout, not the `_eval_guard` last-non-empty-LINE helper: the newline row's glued
-    # separator is itself embedded (as `cmd`) inside the guard's own printed message, which would
-    # otherwise corrupt a last-line split. The verdict word is always the message's FIRST token
-    # (`cmd` is substituted only at the tail, after "Command: "), so a prefix check on raw stdout
-    # is robust for every row, embedded newline included.
-    p = _run_hook("foundry-cloud-cli-exec-guard.sh",
-                  args=("--eval", cmd, "exec-wrapper run --", "aws,kubectl,tofu,terraform,helm,argocd", ""))
-    assert p.stdout.startswith("BLOCK"), (
-        f"separator {sep!r} (glued form {cmd!r}) did not BLOCK: stdout={p.stdout!r} stderr={p.stderr!r}"
-    )
-    assert p.returncode == 2, p.stdout + p.stderr
-
-
-# ==================================================================== AC-B32-11 =================
-# feat-foundry-bash32-parse-guard: the LIVE PreToolUse path (hook-JSON on stdin, no `--eval`) —
-# the payload reader (lines 58-68), the config-seam resolution + three-line base64 protocol
-# (lines 77-118) — none of which `--eval` exercises. `--eval` bypasses this path structurally, and
-# every existing guard test above uses it; a restructuring that broke the live seam (or the
-# payload reader) would make the guard a silent allow-all in production with the whole `--eval`
-# suite green. The BLOCK half and the no-seam ADMIT half are the pair: a silent allow-all passes
-# the second and fails the first.
-
-def _write_exec_guard_seam(project_dir, wrapper, guarded_tools=None, offline_exempt=None):
-    claude_dir = project_dir / ".claude"
-    claude_dir.mkdir(parents=True, exist_ok=True)
-    doc = {"cloud_cli_exec_guard": {"wrapper": wrapper}}
-    if guarded_tools is not None:
-        doc["cloud_cli_exec_guard"]["guarded_tools"] = guarded_tools
-    if offline_exempt is not None:
-        doc["cloud_cli_exec_guard"]["offline_exempt"] = offline_exempt
-    (claude_dir / "foundry-project.json").write_text(json.dumps(doc), encoding="utf-8")
-
-
-def test_live_seam_blocks_configured(tmp_path):
-    project_dir = tmp_path / "project-with-seam"
-    project_dir.mkdir()
-    _write_exec_guard_seam(project_dir, wrapper="exec-wrapper run --")
-    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "aws s3 ls"}})
-    p = _run_hook("foundry-cloud-cli-exec-guard.sh", stdin_text=payload,
-                 extra_env={"CLAUDE_PROJECT_DIR": str(project_dir)})
-    assert p.returncode == 2, p.stdout + p.stderr
-
-
-def test_live_seam_inert_without_seam(tmp_path):
-    project_dir = tmp_path / "project-no-seam"
-    project_dir.mkdir()  # no .claude/foundry-project.json at all
-    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": "aws s3 ls"}})
-    p = _run_hook("foundry-cloud-cli-exec-guard.sh", stdin_text=payload,
-                 extra_env={"CLAUDE_PROJECT_DIR": str(project_dir)})
-    assert p.returncode == 0, p.stdout + p.stderr
 
 
 # ==================================================================== AC-B32-13 =================
@@ -480,49 +371,6 @@ def test_block_emits_structured_observation_with_remediation():
     assert obs["remediation"] in p.stderr
 
 
-def test_cloud_guard_block_emits_structured_observation_with_remediation(tmp_path):
-    project_dir = tmp_path / "project-with-seam"
-    project_dir.mkdir()
-    _write_exec_guard_seam(project_dir, wrapper="exec-wrapper run --")
-    payload_in = json.dumps({"tool_name": "Bash", "tool_input": {"command": "aws s3 ls"}})
-    p = _run_hook("foundry-cloud-cli-exec-guard.sh", stdin_text=payload_in,
-                 extra_env={"CLAUDE_PROJECT_DIR": str(project_dir)})
-    assert p.returncode == 2, p.stdout + p.stderr
-    payload = json.loads(p.stdout.strip().splitlines()[0])
-    hso = payload["hookSpecificOutput"]
-    assert hso["hookEventName"] == "PreToolUse"
-    assert hso["permissionDecision"] == "deny"
-    obs = payload["observation"]
-    assert obs["status"] == "blocked"
-    assert obs["guard"] == "cloud-cli-exec-guard"
-    assert "exec-wrapper run -- exec aws" in obs["remediation"]
-    assert "run it yourself outside the agent" not in p.stderr
-
-
-# ==================================================================== PR #178 round 2 ===========
-# feat-foundry-guards-guard-structured-observations: the bash wrapper built `observation.evidence`
-# from its own RAW, unredacted `$cmd` shell variable while `reason`/`permissionDecisionReason`
-# (built in python via `_redact()`) were already correctly scrubbed — a secret redacted out of
-# the reason text leaked verbatim through the sibling `evidence` field. Mirrors
-# `tests/test_cloud_guard_verb_path.py::test_refusal_redacts_inline_secrets`.
-
-def test_cloud_guard_observation_json_redacts_inline_secrets(tmp_path):
-    project_dir = tmp_path / "project-with-seam"
-    project_dir.mkdir()
-    _write_exec_guard_seam(project_dir, wrapper="exec-wrapper run --")
-    payload_in = json.dumps({"tool_name": "Bash",
-                              "tool_input": {"command": "AWS_SECRET_ACCESS_KEY=s3cr3tvalue aws s3 ls"}})
-    p = _run_hook("foundry-cloud-cli-exec-guard.sh", stdin_text=payload_in,
-                 extra_env={"CLAUDE_PROJECT_DIR": str(project_dir)})
-    assert p.returncode == 2, p.stdout + p.stderr
-    assert "s3cr3tvalue" not in p.stdout, f"the observation JSON leaked a secret: {p.stdout}"
-    assert "s3cr3tvalue" not in p.stderr, f"stderr leaked a secret: {p.stderr}"
-    payload = json.loads(p.stdout.strip().splitlines()[0])
-    obs = payload["observation"]
-    assert obs["evidence"] == ["AWS_SECRET_ACCESS_KEY=*** aws s3 ls"], obs["evidence"]
-    assert "AWS_SECRET_ACCESS_KEY=***" in obs["reason"]
-
-
 # ---- the EVIDENCE-RULE stub: the ONE committed tests/fixtures/gh-stub/gh, driven by env vars.
 # `_stub_gh` (the old per-test ad hoc shell-body generator) is retired in favor of this single
 # fixture for every AC-SCW-1..5 row — a reimplemented/bespoke mock does not satisfy the atom's
@@ -656,33 +504,28 @@ def test_discipline_blocks_on_unrecognized_evaluator_verdict(tmp_path, mode):
 
 # ==================================================================== AC-SCW-14 =================
 
-def test_compact_reinject_still_emits_release_and_posture_after_removal(tmp_path):
-    """Post the AC-SCW-8 dead run-ledger-spawn removal: the real hook, driven as a subprocess
-    over a `source: compact` payload against a fixture project dir holding exactly one active
-    release, still exits 0 and still writes a manifest carrying both the release line and the
-    posture line — the surviving (a)/(b) sections assemble unchanged."""
+def test_compact_reinject_no_longer_summarizes_release_manifests(tmp_path):
+    """v2.0.0: the re-injector keeps only the posture line and the active worktree's contract path.
+    A project dir holding an ACTIVE release manifest and a default (`factory`) posture, with no
+    `.agent/assignment.json` marker, therefore emits NOTHING — the release/programme summary is gone."""
     project_dir = tmp_path / "project"
     release_dir = project_dir / ".foundry" / "releases" / "scw-fixture"
     release_dir.mkdir(parents=True)
     release_doc = {
         "id": "scw-fixture",
-        "description": "AC-SCW-14 fixture release for the compact-reinject smoke.",
+        "description": "fixture release the re-injector must no longer read.",
         "state": "active",
-        "atoms": [{
-            "id": "atom-one",
-            "spec_ref": "specs/features/foundry/fixture/feat-fixture.md",
-            "contract_ref": "specs/features/foundry/fixture/acceptance-contract.yaml",
-            "depends_on": [],
-        }],
+        "atoms": [],
     }
     (release_dir / "release.yaml").write_text(yaml.safe_dump(release_doc, sort_keys=False), encoding="utf-8")
+    (release_dir / "state.yaml").write_text("next_action: do the thing\n", encoding="utf-8")
 
-    payload = json.dumps({"source": "compact", "session_id": "scw-14-smoke-session"})
-    p = _run_hook("foundry-compact-reinject.sh", stdin_text=payload,
-                 extra_env={"CLAUDE_PROJECT_DIR": str(project_dir)})
-    assert p.returncode == 0, p.stdout + p.stderr
-    assert "release: scw-fixture" in p.stdout, p.stdout
-    assert "posture: " in p.stdout, p.stdout
+    for source in ("compact", "startup"):
+        payload = json.dumps({"source": source, "session_id": "scw-14-smoke-session"})
+        p = _run_hook("foundry-compact-reinject.sh", stdin_text=payload,
+                     extra_env={"CLAUDE_PROJECT_DIR": str(project_dir)})
+        assert p.returncode == 0, p.stdout + p.stderr
+        assert p.stdout == "", f"{source}: the re-injector still emitted a release summary: {p.stdout!r}"
 
 
 # ---------------------------------------------------------------- uncovered hook selftests
@@ -693,11 +536,6 @@ def test_env_reap_selftest_green():
 
 def test_worktree_remove_selftest_green():
     p = _run_hook("foundry-worktree-remove.sh", args=("--selftest",))
-    assert p.returncode == 0, p.stdout + p.stderr
-
-
-def test_harvest_learnings_selftest_green():
-    p = _run_hook("foundry-harvest-learnings.sh", args=("--selftest",))
     assert p.returncode == 0, p.stdout + p.stderr
 
 

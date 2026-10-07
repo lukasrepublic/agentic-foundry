@@ -91,20 +91,6 @@ def test_id_apply_states_saved_plan_apply_as_correctness(case):
         )
 
 
-# ══════════════════════════════════════════════════════════════════════════════════ AC-CXD-5 ═════
-
-def test_glossary_defines_the_guarded_exec_wrapper():
-    text = _read("docs/glossary.md")
-    norm = _norm(text)
-    assert "guarded-exec wrapper" in norm.lower()
-    assert "cloud_cli_exec_guard" in norm
-    assert re.search(r"adopter-supplied", norm, re.I)
-    assert re.search(r"config-gated.{0,20}fail-INERT", norm, re.I)
-    assert re.search(r"defense-in-depth", norm, re.I)
-    assert re.search(r"not a security boundary", norm, re.I)
-    assert re.search(r"IAM restrictions", norm, re.I)
-
-
 # ══════════════════════════════════════════════════════════════════════════════════ AC-CXD-6 ═════
 
 @pytest.mark.parametrize("relpath", [
@@ -128,39 +114,12 @@ def test_stack_profile_loader_comments_reattribute_the_read_verb_allowlist():
     assert re.search(r"no external runtime enforcement backs it", norm, re.I)
 
 
-# ══════════════════════════════════════════════════════════════════════════════════ AC-CXD-8 ═════
-
-@pytest.mark.parametrize("relpath", [
-    "hooks/foundry-cloud-cli-exec-guard.sh",
-    "scripts/foundry-decommission.py",
-])
-def test_exec_guard_and_decommission_classify_the_guard_as_defense_in_depth(relpath):
-    norm = _norm(_read(relpath))
-    assert re.search(r"adopter-configured", norm, re.I)
-    assert re.search(r"config-gated", norm, re.I)
-    assert re.search(r"fail-INERT", norm, re.I)
-    assert re.search(r"defense-in-depth against the framework.s own mistakes", norm, re.I)
-    assert re.search(r"not a security boundary", norm, re.I)
-    assert re.search(r"IAM", norm)
-    assert re.search(r"(load-bearing control|credential scoping)", norm, re.I)
-
-
-# ══════════════════════════════════════════════════════════════════════════════════ AC-CXD-9 ═════
-
-def test_wrapper_reference_examples_use_the_generic_placeholder():
-    guard = _read("hooks/foundry-cloud-cli-exec-guard.sh")
-    fixtures = _read("tests/test_hooks_guards.py")
-    assert "exec-wrapper" in guard
-    assert "exec-wrapper" in fixtures
-
-
 # ═══════════════════════════════════════════════════════════════════════════════ AC-CXD-11 ═════
 
 @pytest.mark.parametrize("relpath,heading_needle", [
     ("skills/id-validate/SKILL.md", "Offline (no-guarded-exec) mode"),
     ("skills/id-test/SKILL.md", "Offline (no-guarded-exec) mode"),
     ("skills/id-simulate/SKILL.md", "OFFLINE"),
-    ("skills/id-architect/SKILL.md", None),
 ])
 def test_offline_steps_restate_the_offline_truth_without_a_session(relpath, heading_needle):
     text = _read(relpath)
@@ -246,7 +205,6 @@ SURFACE_FILES = [
     "skills/id-test/SKILL.md",
     "skills/id-validate/SKILL.md",
     "skills/id-drift/SKILL.md",
-    "skills/id-architect/SKILL.md",
     "skills/id-rollback/SKILL.md",
     "skills/id-discover/SKILL.md",
     "skills/id-plan/SKILL.md",
@@ -255,15 +213,11 @@ SURFACE_FILES = [
     "skills/id-implement/SKILL.md",
     "skills/id-baseline/SKILL.md",
     "skills/id-sync/SKILL.md",
-    "skills/infra-sandboxed-apply/SKILL.md",
-    "skills/fleet/SKILL.md",
     "agents/infra-engineer.md",
     "docs/glossary.md",
     "packs/stack-profiles/aws-eks-karpenter/conventions.md",
     "packs/stack-profiles/aws-eks-karpenter/skills/implement-aws-eks-karpenter.md",
     "scripts/foundry-stack-profile.py",
-    "scripts/foundry-decommission.py",
-    "hooks/foundry-cloud-cli-exec-guard.sh",
     "tests/test_hooks_guards.py",
 ]
 
