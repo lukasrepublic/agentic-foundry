@@ -66,6 +66,34 @@ def test_a_stale_lock_does_not_wedge_the_line_forever(tmp_path):
     assert not lock.exists(), "the render must release its lock"
 
 
+def test_an_empty_stale_lock_does_not_wedge_the_line_forever(tmp_path):
+    """A holder killed between `rm ts` and `rmdir` leaves an EMPTY lock. Read as "a render just
+    started", it was fresh forever: every refresh waited, then printed one day-old cached line (another
+    session's, at 86%) — /compact never changed the bar. No ts → the lock's own mtime decides."""
+    env, counter = _setup(tmp_path)
+    env["FOUNDRY_STATUSLINE_TTL"] = "0"
+    key = "".join(c if (c.isascii() and c.isalnum()) else "_" for c in env["CLAUDE_PROJECT_DIR"])
+    lock = Path(env["XDG_CACHE_HOME"]) / "foundry-statusline" / f"{key}.lock"
+    lock.mkdir(parents=True)
+    old = time.time() - 3600
+    os.utime(lock, (old, old))
+    out = _run(env).communicate(input="{}", timeout=10)[0]
+    assert out == "LINE"
+    assert counter.read_text().count("x") == 1
+    assert not lock.exists(), "the render must release its lock"
+
+
+def test_a_young_empty_lock_is_still_respected(tmp_path):
+    """The other half: an empty lock made a moment ago IS a render that just started — the refresh
+    must not steal it (no second render)."""
+    env, counter = _setup(tmp_path)
+    key = "".join(c if (c.isascii() and c.isalnum()) else "_" for c in env["CLAUDE_PROJECT_DIR"])
+    lock = Path(env["XDG_CACHE_HOME"]) / "foundry-statusline" / f"{key}.lock"
+    lock.mkdir(parents=True)
+    _run(env).communicate(input="{}", timeout=10)
+    assert not counter.exists(), "a fresh empty lock must not be treated as stale"
+
+
 def _payload(sid="s1", cwd="/w", rem=None):
     cw = {} if rem is None else {"remaining_percentage": rem}
     return json.dumps({"session_id": sid, "workspace": {"current_dir": cwd}, "context_window": cw})

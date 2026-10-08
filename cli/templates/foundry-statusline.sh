@@ -68,8 +68,13 @@ if [ -z "${FOUNDRY_STATUSLINE_INNER:-}" ]; then
   fi
   _tries=0
   while ! mkdir "$_lock" 2>/dev/null; do
-    # a lock whose ts is not written yet is FRESH (a render just started), never stale
-    _lt="$_now"; [ -r "$_lock/ts" ] && read -r _lt < "$_lock/ts" 2>/dev/null
+    # a lock whose ts is not written yet is FRESH (a render just started) — but only while the lock
+    # itself is young: a holder killed between its `rm ts` and `rmdir` (or between mkdir and the ts
+    # write) leaves an EMPTY lock, and treating that as fresh wedged the line on one stale cached render
+    # for a day — another session's, at 86%, through /compact. No ts → the lock dir's own mtime.
+    _lt="$_now"
+    if [ -r "$_lock/ts" ]; then read -r _lt < "$_lock/ts" 2>/dev/null
+    else _lt="$(stat -c %Y "$_lock" 2>/dev/null || stat -f %m "$_lock" 2>/dev/null)"; fi
     case "$_lt" in ''|*[!0-9]*) _lt="$_now" ;; esac
     # a stale lock is cleared once; one that cannot be removed (a stray file inside it) is never
     # retried in a tight loop (security review R1) — the refresh falls through to the bounded wait
