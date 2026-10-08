@@ -366,6 +366,40 @@
             "type": "string",
             "minLength": 1,
             "description": "OPTIONAL non-empty free-text rationale."
+          },
+          "outcome": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["status", "reviewed_at", "reviewed_by"],
+            "description": "OPTIONAL record that the declared review HAPPENED, and what it concluded. Omitted ⇒ the review is declared but its outcome is unrecorded (back-compat, unchanged). WHY THIS EXISTS: `review`/`required`/`rationale` can state only that a review is REQUIRED — nothing could state that one was PERFORMED, by whom, when, or with what conclusion. An adopter governed by a control that asks for security requirements to be identified, specified AND APPROVED (ISO/IEC 27001:2022 A.8.26, SOC 2 CC8.1) could therefore evidence the first two and structurally could not evidence the third. Measured in one adopter 2026-10-08: 21 of the 31 contracts declaring a security review carried the outcome as PROSE inside `rationale` (`STATUS: PERFORMED`), because that was the only free-text field available — prose is not machine-checkable, and a typo in it reads as approved to a human while convicting as unperformed to a detector. THE THIRD STATE IS THE POINT: `performed-blocked` records a review that HAPPENED and WITHHELD approval. Without it the only expressible states read as approved or as never-reviewed, and neither is true of an atom whose review returned a Block — so the honest record has nowhere to live. This block sits in the contract-proper region, so it is hash-covered into contract_sha256, and `mandatory_review` is already in the amend verb's BOUNDARY_FIELDS: writing an outcome therefore routes through /foundry:authorize (AC-AMND-3) and the operator ATTESTS it. That is deliberate — an outcome editable without re-attestation is a weaker record than one that is not, and `approved` is exactly the fact that needs attesting.",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["performed-approved", "performed-blocked", "not-performed", "waived"],
+                "description": "The closed outcome vocabulary. `performed-approved` the review happened and approved; `performed-blocked` it happened and withheld approval (name the findings in `blocks`); `not-performed` it is declared and has not happened yet; `waived` a named decision that it is not needed, which `rationale` must justify. A closed enum rather than free text so a consumer can gate on it and so a typo cannot read as approval."
+              },
+              "reviewed_at": {
+                "type": "string",
+                "format": "date",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                "description": "ISO-8601 calendar date the review concluded. `pattern` as well as `format` because `format` is annotation-only in most validators — and quote it in YAML, since a loader coerces an unquoted date to a native date object and then `type: string` fails."
+              },
+              "reviewed_by": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Who performed it — an operator id, a team, or a named separate-context reviewer. Deliberately not an enum: the set of legitimate reviewers is the adopter's, not this schema's."
+              },
+              "review_evidence": {
+                "type": "string",
+                "minLength": 1,
+                "description": "OPTIONAL pointer to the review record itself — a repo-relative path, a PR URL, or a finding id. An outcome with no retrievable record is an assertion; this is where it stops being one."
+              },
+              "blocks": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+                "description": "OPTIONAL finding identifiers that withheld approval. Expected alongside `performed-blocked`, so the reason approval is pending is named in the contract rather than only in a review document that may not travel with it."
+              }
+            }
           }
         }
       }
