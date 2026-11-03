@@ -46,7 +46,7 @@ _ws_root() {
 
 _lock()   { local l="$1" t="${2:-5}" i=0; while ! mkdir "$l" 2>/dev/null; do i=$((i+1)); [ "$i" -gt $((t*20)) ] && return 1; sleep 0.05; done; return 0; }
 _unlock() { rmdir "$1" 2>/dev/null || true; }
-_log()    { mkdir -p "$1/.foundry" 2>/dev/null || true; printf '%s worktree-create: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)" "$2" >> "$1/.foundry/dispatch.log" 2>/dev/null || true; }
+_log()    { mkdir -p "$1/.foundry" 2>/dev/null || true; local _m="${2//[^A-Za-z0-9._\/:@ -]/}"; printf '%s worktree-create: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)" "$_m" >> "$1/.foundry/dispatch.log" 2>/dev/null || true; }
 
 # --------------------------------------------------------------------- AC-WNI-1/-2
 # _stage_and_preflight <workspace-root> <worktree-path> <contract_ref> — stages the
@@ -206,6 +206,117 @@ sys.exit(0)
 PY
 }
 
+# gn-11 _assignment_check <manifest> <workspace> — prints OK or a typed reason. A complete issue assignment
+# names issue_url (https://host/owner/repo/issues/<issue_number>), issue_number, a registered operator, a
+# lane (charter|factory), repo_key (== target_repo) and an acceptance_revision with a 64-hex body_sha256 +
+# documents[] (https urls).
+_assignment_check() {
+  python3 - "$1" "$2" <<'PY' 2>/dev/null || echo "unreadable"
+import json, re, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    a = d.get("assignment")
+except Exception:
+    print("unreadable"); sys.exit(0)
+def s(v): return isinstance(v, str) and v.strip() != ""
+if not isinstance(a, dict):
+    print("no-assignment"); sys.exit(0)
+n = a.get("issue_number")
+if isinstance(n, bool) or not (isinstance(n, int) and n > 0 or isinstance(n, str) and re.fullmatch(r"[1-9][0-9]*", n)):
+    print("issue_number"); sys.exit(0)
+u = a.get("issue_url")
+if not isinstance(u, str) or not re.fullmatch(
+        r"https://[A-Za-z0-9.-]+/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/" + str(n), u):
+    print("issue_url"); sys.exit(0)
+if a.get("lane") not in ("charter", "factory"):
+    print("lane"); sys.exit(0)
+rk = a.get("repo_key")
+if not s(rk) or rk != d.get("target_repo"):
+    print("repo_key"); sys.exit(0)
+op = a.get("operator")
+if not s(op):
+    print("operator"); sys.exit(0)
+try:
+    ops = json.load(open(sys.argv[2] + "/.claude/foundry-operators.json")).get("operators")
+    known = isinstance(ops, dict) and op in ops
+except Exception:
+    known = False
+if not known:
+    print("operator-unknown"); sys.exit(0)
+r = a.get("acceptance_revision")
+if not isinstance(r, dict) or not isinstance(r.get("body_sha256"), str) \
+        or not re.fullmatch(r"[0-9A-Fa-f]{64}", r["body_sha256"]) or not isinstance(r.get("documents"), list):
+    print("acceptance_revision"); sys.exit(0)
+for x in r["documents"]:
+    if not isinstance(x, dict) or not s(x.get("url")) or not re.fullmatch(r"https://[^\s]+", x["url"]) \
+            or not s(x.get("revision")):
+        print("acceptance_revision.documents"); sys.exit(0)
+print("OK")
+PY
+}
+
+# gn-11 _write_binding <worktree> <manifest-json> <tr> <task> <agent> <contract_ref> <product-path> —
+# writes .agent/assignment.json (no-follow) and, when the manifest carries an assignment,
+# <git-dir>/foundry-assignment.json ONCE (assignment fields + `worktree`, plus `issue`, the key gn-05's
+# usage binding reads; a pre-existing binding with the same issue_url is kept). Refuses a symlinked
+# `.agent` / `.agent/assignment.json`, and a git dir that is not under <product>/.git/worktrees/
+# (or the common dir itself). Prints OK or a typed reason.
+_write_binding() {
+  python3 - "$1" "$2" "$3" "$4" "$5" "$6" "$7" <<'PY' 2>/dev/null || echo "write-error"
+import json, os, stat, subprocess, sys
+wt, raw, tr, task, agent, contract, product = sys.argv[1:8]
+try:
+    a = json.loads(raw).get("assignment")
+    a = dict(a) if isinstance(a, dict) else None
+    gd = os.path.realpath(subprocess.check_output(["git", "-C", wt, "rev-parse", "--absolute-git-dir"], text=True).strip())
+except Exception:
+    print("git-dir"); sys.exit(0)
+common = os.path.realpath(os.path.join(product, ".git"))
+if not (gd == common or gd.startswith(common + os.sep + "worktrees" + os.sep)):
+    print("git-dir-escape"); sys.exit(0)
+agent_dir = os.path.join(wt, ".agent")
+try:
+    st = os.lstat(agent_dir)
+    if not stat.S_ISDIR(st.st_mode):
+        print("agent-dir-not-a-directory"); sys.exit(0)
+except FileNotFoundError:
+    os.mkdir(agent_dir)
+except Exception:
+    print("agent-dir"); sys.exit(0)
+ap = os.path.join(agent_dir, "assignment.json")
+try:
+    if stat.S_ISLNK(os.lstat(ap).st_mode):
+        print("agent-file-symlink"); sys.exit(0)
+except FileNotFoundError:
+    pass
+if a is not None:
+    rec = dict(a); rec["worktree"] = wt; rec["issue"] = a.get("issue_number")
+    bp = os.path.join(gd, "foundry-assignment.json")
+    try:
+        fd = os.open(bp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    except FileExistsError:
+        try:
+            same = json.load(open(bp)).get("issue_url") == a.get("issue_url")
+        except Exception:
+            same = False
+        if not same:
+            print("binding-exists"); sys.exit(0)
+    else:
+        with os.fdopen(fd, "w") as fh:
+            json.dump(rec, fh)
+out = {"target_repo": tr, "task": task, "agent": agent, "contract_ref": contract}
+if a is not None:
+    out["issue_url"] = a.get("issue_url")
+try:
+    fd = os.open(ap, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
+except OSError:
+    print("agent-file-open"); sys.exit(0)
+with os.fdopen(fd, "w") as fh:
+    json.dump(out, fh)
+print("OK")
+PY
+}
+
 # Consume oldest manifest + redirect. stdout = worktree path on success (rc 0).
 # Return-code taxonomy (AC-WNP-1/-2 — the load-bearing routing signal for the dispatcher below):
 #   0  = product path emitted (unchanged product-redirect success)
@@ -215,8 +326,9 @@ PY
 #   3  = malformed / empty-target_repo manifest (a manifest IS present but corrupt)
 #   2  = bind-mismatch or claim-failure
 #   4  = AC-WNI-2 staged spec/contract preflight hard-fail (typed diagnostic logged)
-#   5  = AC-WNI-2/RISK-4 manifest carries no contract_ref — staging/preflight skipped
-#        would silently re-open gap G7; fail closed instead
+#   5  = manifest names neither a contract_ref nor a COMPLETE issue assignment (gn-11) — fail closed
+#        (a complete assignment with no contract_ref is the issue-bound launch: binding, no staging)
+#   6  = gn-11 binding file could not be written (or a different one already exists)
 # Every code other than 0 and 10 stays fail-closed at the dispatcher (AC-WNP-2 floor): a
 # contended or corrupt PRODUCT manifest is never misread as "empty" and relanded native.
 _redirect() {
@@ -231,21 +343,87 @@ _redirect() {
   _lock "$LOCK" 5 || return 1                        # lock-acquisition failure: fail-closed (NOT empty)
   local m; m="$(ls -1t "$QUEUE"/*.json 2>/dev/null | tail -1)"   # ls -t newest-first; tail -1 = oldest (FIFO)
   if [ -z "$m" ] || [ ! -f "$m" ]; then _unlock "$LOCK"; return 3; fi   # present-but-vanished race: malformed fail-closed
-  local tr task agent contract
-  read -r tr task agent contract < <(python3 - "$m" <<'PY' 2>/dev/null
+  local tr task agent contract mstate lane hasa
+  # B2: the manifest is parsed as JSON into SEPARATE NUL-delimited values (never one whitespace-joined
+  # `read`), so an embedded newline/space can never shift a field onto another lane. The lane is chosen
+  # by KEY PRESENCE: contract_ref present+non-empty string -> contract lane; present but empty/non-string
+  # -> fail closed; absent + assignment present -> issue lane; neither -> fail closed.
+  local -a _f
+  mapfile -d '' -t _f < <(python3 - "$m" <<'PY' 2>/dev/null
 import json,sys
-try: d=json.load(open(sys.argv[1]))
-except Exception: d={}
-print(d.get("target_repo","") or "", d.get("task","") or "", d.get("agent","") or "", d.get("contract_ref","") or "")
+def out(*v): sys.stdout.write("".join(x + "\0" for x in v))
+try:
+    d = json.load(open(sys.argv[1]))
+    assert isinstance(d, dict)
+except Exception:
+    out("malformed", "", "", "", "", "", "0"); sys.exit(0)
+def f(k):
+    v = d.get(k)
+    return v if isinstance(v, str) and v != "" and "\0" not in v else None
+tr, task, agent = f("target_repo"), f("task"), f("agent")
+if tr is None or task is None or agent is None:
+    out("malformed", "", "", "", "", "", "0"); sys.exit(0)
+a = d.get("assignment") if "assignment" in d else None
+ha = "1" if "assignment" in d else "0"
+lane = a.get("lane") if isinstance(a, dict) and isinstance(a.get("lane"), str) else ""
+if "contract_ref" in d:
+    c = d["contract_ref"]
+    if not isinstance(c, str) or c == "" or "\0" in c:
+        out("contract-invalid", tr, task, agent, "", lane, ha)
+    else:
+        out("contract", tr, task, agent, c, lane, ha)
+elif "assignment" in d:
+    out("issue", tr, task, agent, "", lane, ha)
+else:
+    out("none", tr, task, agent, "", lane, ha)
 PY
 )
-  if [ -z "$tr" ] || [ -z "$task" ] || [ -z "$agent" ]; then
+  mstate="${_f[0]:-malformed}"; tr="${_f[1]:-}"; task="${_f[2]:-}"; agent="${_f[3]:-}"; contract="${_f[4]:-}"; lane="${_f[5]:-}"; hasa="${_f[6]:-0}"
+  if [ "$mstate" = "malformed" ]; then
     # audit remediation (F3): a denied/corrupt PRODUCT manifest is never SILENTLY destroyed — log
     # before the poison-removal (the rm still runs; it correctly unwedges the queue, and the
     # encountering spawn already fails closed — this is a trail, not a confinement change).
     _log "$WS" "DROPPED-MALFORMED-MANIFEST $(basename "$m")"
     rm -f "$m"; _unlock "$LOCK"; return 3   # malformed manifest: fail-closed (AC-WNP-2)
   fi
+  if [ "$mstate" = "contract-invalid" ]; then
+    _log "$WS" "DROPPED-CONTRACT-REF-INVALID $(basename "$m")"
+    rm -f "$m"; _unlock "$LOCK"; return 3
+  fi
+  if [ "$mstate" = "none" ]; then
+    _log "$WS" "DROPPED-ASSIGNMENT-INCOMPLETE no-assignment $(basename "$m")"
+    rm -f "$m"; _unlock "$LOCK"; return 3
+  fi
+  # B1: both labels are validated on BOTH lanes before anything reaches `foundry-wt claim`.
+  if ! _label_ok "$task" || ! _label_ok "$agent"; then
+    _log "$WS" "DROPPED-UNSAFE-LABEL $(basename "$m")"
+    rm -f "$m"; _unlock "$LOCK"; return 5
+  fi
+  # gn-11: an assignment (issue lane, or a contract-lane manifest that also carries one) must be
+  # COMPLETE, and the repo key must resolve, BEFORE anything is claimed.
+  if [ "$hasa" = "1" ]; then
+    local aerr; aerr="$(_assignment_check "$m" "$WS")"
+    if [ "$aerr" != "OK" ]; then
+      if [ "$aerr" = "operator-unknown" ]; then
+        _log "$WS" "DROPPED-OPERATOR-UNKNOWN $(basename "$m")"
+      else
+        _log "$WS" "DROPPED-ASSIGNMENT-INCOMPLETE $aerr $(basename "$m")"
+      fi
+      rm -f "$m"; _unlock "$LOCK"; return 5
+    fi
+  fi
+  if [ "$mstate" = "issue" ]; then
+    if [ "$lane" = "factory" ]; then
+      # R1: a factory/spec-lane issue REQUIRES contract_ref (the gn-07/gn-16 authority boundary).
+      _log "$WS" "DROPPED-FACTORY-LANE-NO-CONTRACT $(basename "$m")"
+      rm -f "$m"; _unlock "$LOCK"; return 3
+    fi
+    if ! "$WTBIN" resolve "$tr" >/dev/null 2>&1; then
+      _log "$WS" "DROPPED-UNKNOWN-REPO-KEY tr=$tr $(basename "$m")"
+      rm -f "$m"; _unlock "$LOCK"; return 2
+    fi
+  fi
+  contract="${contract:-}"
   # AC-5: deterministic bind — manifest target_repo MUST equal the authorized contract target_repo.
   if [ -n "$contract" ]; then
     local cpath; case "$contract" in /*) cpath="$contract" ;; *) cpath="$WS/$contract" ;; esac
@@ -263,6 +441,7 @@ PY
     _log "$WS" "CLAIM-FAILED $tr/$task (manifest retained for retry: $(basename "$m"))"
     _unlock "$LOCK"; return 2
   fi
+  local mcopy; mcopy="$(cat "$m" 2>/dev/null || true)"
   rm -f "$m"; _unlock "$LOCK"                        # consume only AFTER a successful claim
   _log "$WS" "redirect $tr/$task -> $path"
 
@@ -284,17 +463,28 @@ PY
     fi
     _log "$WS" "preflight-ok $tr/$task: $diag"
   else
-    _log "$WS" "PREFLIGHT-SKIP-NO-CONTRACT $tr/$task"
-    return 5
+    _log "$WS" "assignment-bound $tr/$task (no contract_ref; staging skipped)"
   fi
 
-  mkdir -p "$path/.agent"
-  python3 - "$path/.agent/assignment.json" "$tr" "$task" "$agent" "$contract" <<'PY' 2>/dev/null || true
-import json,sys
-p,tr,task,agent,contract=sys.argv[1:6]
-json.dump({"target_repo":tr,"task":task,"agent":agent,"contract_ref":contract}, open(p,"w"))
-PY
+  # .agent/assignment.json (write-jail) on BOTH lanes, written no-follow; the per-worktree binding
+  # <git-dir>/foundry-assignment.json is written whenever the manifest carries an assignment (so a
+  # contract-lane manifest that also names one is still bound). R3: refuses a symlinked .agent.
+  local product; product="$("$WTBIN" resolve "$tr" 2>/dev/null)"
+  local bdiag; bdiag="$(_write_binding "$path" "$mcopy" "$tr" "$task" "$agent" "$contract" "$product")"
+  if [ "$bdiag" != "OK" ]; then
+    _log "$WS" "BINDING-FAILED $tr/$task: $bdiag"
+    return 6
+  fi
   printf '%s\n' "$path"
+  return 0
+}
+
+# B1: the label floor applied to manifest task/agent on both lanes: the AC-WNP-5 sanitizer plus
+# ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ (so never empty, never starts with - or ., <= 64 chars, no "..").
+_label_ok() {
+  _sanitize_label "$1" || return 1
+  [ "${#1}" -le 64 ] || return 1
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || return 1
   return 0
 }
 
