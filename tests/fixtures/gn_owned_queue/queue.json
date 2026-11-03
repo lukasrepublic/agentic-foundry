@@ -4,7 +4,14 @@
    "owner": "example-org"
   },
   "repos": {
-   "app": "example-org/app"
+   "app": {
+    "path": "app",
+    "kind": "single-app"
+   },
+   "legacy": {
+    "path": "legacy",
+    "kind": "single-app"
+   }
   }
  },
  "priority_options": [
@@ -55,7 +62,8 @@
    },
    "parent": null,
    "closedByPullRequestsReferences": {
-    "nodes": []
+    "nodes": [],
+    "totalCount": 0
    },
    "projectItems": {
     "totalCount": 0,
@@ -104,7 +112,8 @@
    },
    "parent": null,
    "closedByPullRequestsReferences": {
-    "nodes": []
+    "nodes": [],
+    "totalCount": 0
    },
    "projectItems": {
     "totalCount": 0,
@@ -146,7 +155,8 @@
    },
    "parent": null,
    "closedByPullRequestsReferences": {
-    "nodes": []
+    "nodes": [],
+    "totalCount": 0
    },
    "projectItems": {
     "totalCount": 0,
@@ -192,7 +202,8 @@
    },
    "parent": null,
    "closedByPullRequestsReferences": {
-    "nodes": []
+    "nodes": [],
+    "totalCount": 0
    },
    "projectItems": {
     "totalCount": 0,
@@ -238,7 +249,8 @@
    },
    "parent": null,
    "closedByPullRequestsReferences": {
-    "nodes": []
+    "nodes": [],
+    "totalCount": 0
    },
    "projectItems": {
     "totalCount": 0,
@@ -292,7 +304,8 @@
    },
    "parent": null,
    "closedByPullRequestsReferences": {
-    "nodes": []
+    "nodes": [],
+    "totalCount": 0
    },
    "projectItems": {
     "totalCount": 0,
@@ -338,7 +351,8 @@
    },
    "parent": null,
    "closedByPullRequestsReferences": {
-    "nodes": []
+    "nodes": [],
+    "totalCount": 0
    },
    "projectItems": {
     "totalCount": 0,
@@ -381,12 +395,17 @@
    },
    "parent": null,
    "closedByPullRequestsReferences": {
-    "nodes": []
+    "nodes": [],
+    "totalCount": 0
    },
    "projectItems": {
     "totalCount": 0,
     "nodes": []
    }
   }
- ]
+ ],
+ "_remotes": {
+  "app": "git@personal-github:example-org/app.git",
+  "legacy": null
+ }
 }

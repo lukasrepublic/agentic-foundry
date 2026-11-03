@@ -44,6 +44,7 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -316,18 +317,30 @@ DEFAULT_WIP_LIMIT = 2
 DEFAULT_STALE_AFTER = 600          # seconds; >= 3x the deck cadence
 STARTED_STATUSES = ("in progress", "review")
 SKIP_REASONS = ("unassigned", "other-owner", "backlog", "blocked", "no-acceptance", "no-repo-key")
-STOP_REASONS = ("reassigned", "cancelled", "duplicate", "withdrawn", "acceptance_changed")
+# Every `reason` a stop_dispatch verdict can carry (reconcile output + the `stop-dispatch:<reason>` skip in `next`).
+STOP_REASONS = ("reassigned", "cancelled", "duplicate", "withdrawn", "acceptance_changed",
+                "closed", "not_started", "unverified")
 _PRIORITY_WORDS = {"critical": 0, "urgent": 0, "blocker": 0, "high": 1, "medium": 2, "normal": 2, "low": 3}
 _ACCEPT_RE = re.compile(r"^##+[ \t]*acceptance[ \t]+criteria\b.*?$", re.I | re.M)
 _ITEM_RE = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\S", re.M)
 _REF_RE = re.compile(r"^(?:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#)?(\d+)$")
 
+# GraphQL fields used below that are NOT in the vendor record of the issue API (docs.github.com/en/graphql/reference/objects):
+#   Issue.closedByPullRequestsReferences, ProjectV2Item.fieldValueByName, ProjectV2SingleSelectField.options
+# [U] unverified — confirm in the pilot: no offline copy of GitHub's GraphQL schema is available in this
+# environment, so these names were NOT schema-verified at implementation (2026-11-03). A wrong name fails
+# the whole query -> GhError -> QueueUnavailable (fail-closed), so a mistake here is loud, never silent.
+#
+# OVER-LIMIT BEHAVIOUR (fail-closed): every connection below is fetched with a fixed `first:N` and carries
+# `totalCount`; `_nodes` raises GhError when totalCount > the nodes returned, so an issue with more than
+# 30 assignees / 60 labels / 50 blockers / 20 linked PRs / 20 project items is UNREADABLE (-> QueueUnavailable,
+# `unverified`), never silently truncated. closedByPullRequestsReferences is covered the same way via its totalCount.
 _ISSUE_FIELDS = """number title body url state stateReason author{login}
 assignees(first:30){totalCount nodes{login}} labels(first:60){totalCount nodes{name}}
 blockedBy(first:50){totalCount nodes{number state repository{nameWithOwner}}}
 blocking(first:50){totalCount nodes{number state repository{nameWithOwner}}}
 parent{number repository{nameWithOwner}}
-closedByPullRequestsReferences(first:20){nodes{number state url}}
+closedByPullRequestsReferences(first:20){totalCount nodes{number state url}}
 projectItems(first:20){totalCount nodes{project{number}
 status:fieldValueByName(name:"Status"){... on ProjectV2ItemFieldSingleSelectValue{name}}
 priority:fieldValueByName(name:"Priority"){... on ProjectV2ItemFieldSingleSelectValue{name}}}}"""
@@ -380,24 +393,70 @@ def _norm_status(s) -> str:
     return re.sub(r"[\s_-]+", " ", str(s or "")).strip().lower()
 
 
-def load_config(root: Path) -> dict:
-    """`github_scope` + `repos{}` from <root>/.claude/foundry-project.json → {scope, repos, owner, project_number}."""
+_SLUG_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+_REMOTE_RE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.-]*://)?(?:[^@/\s]+@)?[^/:\s]+(?::\d+)?[:/]([^/:\s]+)/([^/\s]+?)(?:\.git)?/?$")
+
+
+def default_git(args: list[str]) -> str:
+    r = subprocess.run(["git", *args], capture_output=True, text=True, timeout=20)
+    if r.returncode != 0:
+        raise OSError(r.stderr.strip()[:200])
+    return r.stdout
+
+
+def parse_remote(url: str) -> str | None:
+    """`OWNER/NAME` from an origin URL: https://host/o/n(.git), ssh://git@host/o/n.git, git@alias:o/n.git
+    (the host may be an ssh alias such as `personal-github` — it is not required to be github.com)."""
+    m = _REMOTE_RE.match((url or "").strip())
+    return f"{m.group(1)}/{m.group(2)}" if m else None
+
+
+def origin_slug(git, checkout: Path) -> str | None:
+    try:
+        return parse_remote(git(["-C", str(checkout), "remote", "get-url", "origin"]))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
+def load_config(root: Path, git=None) -> dict:
+    """The queue's scope from <root>/.claude/foundry-project.json → {scope, repos, owner, project_number, dropped}.
+
+    The manifest's `repos{key: {path, kind, ...}}` carries NO slug: each repo's `OWNER/NAME` is derived from the
+    `origin` of its checkout (`git -C <root>/<path> remote get-url origin`, via the injectable `git` runner
+    `git(args) -> str`). A checkout with no readable origin is dropped and reported in `dropped`. A literal
+    `OWNER/NAME` string (or a `repo`/`slug` field) is still accepted. `owner` = `github_scope.owner`, else the
+    planning repo's owner (`github_scope.planning_repo`, else the workspace's own origin). `project_number`
+    absent -> None -> label mode."""
+    git = git or default_git
     p = root / ".claude" / "foundry-project.json"
     try:
         doc = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         raise QueueUnavailable(f"project config unreadable ({p}): {e}")
+    if not isinstance(doc, dict):
+        raise QueueUnavailable(f"project config unreadable ({p}): not an object")
     scope = doc.get("github_scope") or {}
     repos: dict[str, str] = {}
+    dropped: list[dict] = []
     for key, val in (doc.get("repos") or {}).items():
-        slug = val if isinstance(val, str) else ((val or {}).get("repo") or (val or {}).get("slug") or "")
-        if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", slug or ""):
+        explicit = val if isinstance(val, str) else ((val or {}).get("repo") or (val or {}).get("slug") or "")
+        if _SLUG_RE.fullmatch(explicit or ""):
+            repos[key] = explicit
+            continue
+        rel = (val or {}).get("path") if isinstance(val, dict) else None
+        slug = origin_slug(git, root / rel) if rel else None
+        if slug:
             repos[key] = slug
+        else:
+            dropped.append({"key": key, "path": rel, "reason": "no GitHub origin" if rel else "no path"})
     if not repos:
-        raise QueueUnavailable("no repos{} with OWNER/NAME entries in .claude/foundry-project.json")
-    owner = scope.get("owner") or next(iter(repos.values())).split("/")[0]
+        raise QueueUnavailable("no repos{} entry in .claude/foundry-project.json resolves to a GitHub origin"
+                               + (f" (dropped: {', '.join(d['key'] for d in dropped)})" if dropped else ""))
+    planning = scope.get("planning_repo") or origin_slug(git, root) or ""
+    owner = scope.get("owner") or (planning.split("/")[0] if "/" in planning else "") \
+        or next(iter(repos.values())).split("/")[0]
     pn = scope.get("project_number")
-    return {"scope": scope, "repos": repos, "owner": owner,
+    return {"scope": scope, "repos": repos, "owner": owner, "dropped": dropped, "planning_repo": planning or None,
             "project_number": int(pn) if isinstance(pn, (int, str)) and str(pn).isdigit() else None}
 
 
@@ -482,10 +541,14 @@ def normalize(node: dict, repo: str, project_number: int | None) -> dict:
 def parse_ref(arg: str, default_repo: str | None, repos: dict | None = None) -> tuple[str, int]:
     m = _ISSUE_URL_RE.match(arg or "")
     if m:
+        if default_repo and default_repo != m.group(1):
+            raise ValueError(f"--repo {default_repo} contradicts the issue URL's repository {m.group(1)}")
         return m.group(1), int(arg.rstrip("/").rsplit("/", 1)[1])
     m = _REF_RE.match(arg or "")
     if not m:
         raise ValueError(f"{arg!r} is not an issue number, OWNER/NAME#N, or an issue URL")
+    if m.group(1) and default_repo and default_repo != m.group(1):
+        raise ValueError(f"--repo {default_repo} contradicts {arg!r}")
     repo = m.group(1) or default_repo
     if not repo and repos and len(set(repos.values())) == 1:
         repo = next(iter(repos.values()))
@@ -601,7 +664,10 @@ def save_claim(root: Path, key: str, rec: dict) -> Path:
 
 
 def judge(issue: dict, login: str, claim: dict | None, withdrawn_by: tuple | None = None) -> dict:
-    """The reconcile verdict from CURRENT GitHub state alone. A local claim supplies only the baseline body
+    """The reconcile verdict from CURRENT GitHub state alone. `authorized` ONLY for an open, assigned-to-operator
+    issue in a started status (In progress / Review); anything else stops dispatch: `closed` (closed, or Project
+    status Done), `cancelled`/`duplicate`, `reassigned`, `withdrawn`, `not_started` (Backlog, Ready, blocked,
+    no status, unknown status), `acceptance_changed`. A local claim supplies only the baseline body
     hash to compare against — never an authorization. `withdrawn_by`: (True, actor) when history shows a
     return to Backlog after start."""
     key = f"{issue['repo']}#{issue['number']}"
@@ -614,6 +680,10 @@ def judge(issue: dict, login: str, claim: dict | None, withdrawn_by: tuple | Non
     if issue["status"] == "backlog":
         if withdrawn_by and withdrawn_by[0]:
             return {**base, "stop_dispatch": True, "reason": "withdrawn", "actor": withdrawn_by[1]}
+        return {**base, "stop_dispatch": True, "reason": "not_started"}
+    if issue["status"] == "done":
+        return {**base, "stop_dispatch": True, "reason": "closed"}
+    if issue["status"] not in STARTED_STATUSES:       # Ready / blocked / none / unknown: nothing was started
         return {**base, "stop_dispatch": True, "reason": "not_started"}
     if claim and claim.get("body_sha256") and claim["body_sha256"] != issue["body_sha256"]:
         return {**base, "stop_dispatch": True, "reason": "acceptance_changed"}
@@ -703,10 +773,13 @@ def select_next(run, root: Path, now: float) -> dict:
         pick.pop("_has_acceptance", None)
         sel = pick
     return {"queue": "available", "operator": login, "mode": mode, "selected": sel, "skipped": skipped,
-            "wip": wip_count(issues, login, claims)}
+            "wip": wip_count(issues, login, claims), "dropped_repos": cfg.get("dropped", [])}
 
 
 def wip_count(issues: list[dict], login: str, claims: dict, exclude: str | None = None) -> int:
+    """Started, unfinished issues assigned to `login`. `blocked` is a PSEUDO-status: the normalized value of a
+    `status:blocked` label / a Project `Blocked` option — an in-flight issue parked on something, which still
+    occupies WIP; so does a Ready issue with an open blocker that this machine has claimed before."""
     n = 0
     for i in issues:
         key = f"{i['repo']}#{i['number']}"
@@ -736,6 +809,8 @@ def cmd_next(args: list[str], run, now: float) -> int:
         print(f"next ({res['mode']}): {s['repo']}#{s['number']} — {s['title']}  [status: {s['status']}, repo key: {s['repo_key']}]")
     else:
         print("next: nothing eligible (assigned to you, Ready, unblocked, with acceptance criteria and a repo key)")
+        for d in res.get("dropped_repos", []):
+            print(f"  dropped repo {d['key']}: {d['reason']}")
         for sk in res["skipped"]:
             print(f"  skipped {sk['issue']}: {sk['reason']}")
     return 0
@@ -747,7 +822,10 @@ def cmd_claim(args: list[str], run, now: float) -> int:
     ap.add_argument("issue")
     ap.add_argument("--repo")
     ap.add_argument("--limit", type=int, default=DEFAULT_WIP_LIMIT)
-    ap.add_argument("--allow-exception", metavar="REASON", default=None)
+    ap.add_argument("--allow-exception", metavar="REASON", default=None,
+                    help="a visible exception for the WIP limit, a Backlog issue or a blocked issue")
+    ap.add_argument("--rebase-acceptance", action="store_true",
+                    help="on a re-claim, adopt the issue's CURRENT body as the acceptance baseline")
     a = ap.parse_args(args)
     root = project_root()
     try:
@@ -771,25 +849,49 @@ def cmd_claim(args: list[str], run, now: float) -> int:
     key = f"{repo}#{number}"
     claims = load_claims(root)
     wip = wip_count(issues, login, claims, exclude=key)
-    reason = (a.allow_exception or "").strip() or None
-    if wip >= a.limit and not reason:
-        print(f"claim refused: {login} already has {wip} started, unfinished issue(s) (limit {a.limit}); "
-              f"pass --allow-exception \"<reason>\" to record a visible exception", file=sys.stderr)
-        return 2
+    reason = store.redact((a.allow_exception or "").strip()) or None
+    exceptions = []
+    if wip >= a.limit:
+        if not reason:
+            print(f"claim refused: {login} already has {wip} started, unfinished issue(s) (limit {a.limit}); "
+                  f"pass --allow-exception \"<reason>\" to record a visible exception", file=sys.stderr)
+            return 2
+        exceptions.append("wip-limit")
+    st = target["status"]
+    if st not in STARTED_STATUSES and st != "ready":
+        why = "blocked (status: blocked)" if st == "blocked" else f"not Ready (status: {st or 'none'})"
+        if not reason:
+            print(f"claim refused: {key} is {why}; pass --allow-exception \"<reason>\" to record a visible exception",
+                  file=sys.stderr)
+            return 2
+        exceptions.append("backlog" if st in (None, "backlog") else st.replace(" ", "-"))
+    if _open_blockers(target):
+        if not reason:
+            nums = ", ".join(f"#{b['number']}" for b in _open_blockers(target))
+            print(f"claim refused: {key} is blocked by open issue(s) {nums}; pass --allow-exception \"<reason>\" "
+                  f"to record a visible exception", file=sys.stderr)
+            return 2
+        exceptions.append("blocked")
+    exc_text = f"{'+'.join(dict.fromkeys(exceptions))}: {reason}" if exceptions else None
+    # The WIP-exception record is the human line of the `start` comment + the local claim record: gn-04's
+    # marker fields are closed (and `evidence` must be shared references), so the reason rides in `note`.
     payload = {"by": login, "target": key,
-               "note": f"start recorded by {login} for {key}" + (f" (WIP exception: {reason})" if wip >= a.limit and reason else "")}
-    if wip >= a.limit and reason:
-        payload["exception"] = reason
+               "note": store.redact(f"start recorded by {login} for {key}" + (f" (exception, {exc_text})" if exc_text else ""))}
     try:
         ev = deck.emit(key, "start", payload, adapter=_Adapter(run))
     except (ValueError, RuntimeError) as e:
         print(f"claim refused: recording `start` failed: {store.redact(str(e))}", file=sys.stderr)
         return 2
-    rec = {"issue": key, "number": number, "repo": repo, "operator": login, "body_sha256": target["body_sha256"],
-           "claimed_at": _iso(now), "start_idempotency_key": ev.idempotency_key,
-           "exception": reason if wip >= a.limit and reason else None}
+    prior = claims.get(key) or {}
+    keep = bool(prior.get("body_sha256")) and not a.rebase_acceptance
+    rec = {"issue": key, "number": number, "repo": repo, "operator": login,
+           "body_sha256": prior["body_sha256"] if keep else target["body_sha256"],
+           "claimed_at": prior.get("claimed_at") or _iso(now) if keep else _iso(now),
+           "start_idempotency_key": ev.idempotency_key, "exception": exc_text}
     path = save_claim(root, key, rec)
-    print(f"claimed {key} for {login} (wip {wip + 1}/{a.limit}{', EXCEPTION: ' + reason if rec['exception'] else ''}); recorded {path}")
+    note = " [acceptance baseline kept: pass --rebase-acceptance to adopt the current body]" \
+        if keep and prior["body_sha256"] != target["body_sha256"] else ""
+    print(f"claimed {key} for {login} (wip {wip + 1}/{a.limit}{', EXCEPTION: ' + exc_text if exc_text else ''}); recorded {path}{note}")
     return 0
 
 
@@ -849,7 +951,14 @@ def cmd_reconcile(args: list[str], run, now: float) -> int:
                             "reason": "unverified", "cause": store.redact(cause or "")})
         else:
             results.append(reconcile_one(run, cfg, login, repo, number, claim, now))
-    out = {"results": results, "complete": cause is None}
+    # a claim record for an issue GitHub reports closed is dead weight: prune it (a cache, never authority)
+    closed = {r["issue"] for r in results if r["reason"] in ("closed", "cancelled", "duplicate")}
+    pruned = [k for k in closed if k in claims]
+    if pruned:
+        p = store.claims_file(root)
+        if p:
+            store.atomic_write_json(p, {k: v for k, v in claims.items() if k not in pruned})
+    out = {"results": results, "complete": cause is None, "pruned_claims": sorted(pruned)}
     if cause:
         out["cause"] = store.redact(cause)
     if a.json:
@@ -893,6 +1002,51 @@ def _epoch(iso) -> float:
         return 0.0
 
 
+def _session_id(root: Path, flag: str | None, host: str) -> str:
+    """Stable across invocations of the CLI: CLAUDE_CODE_SESSION_ID, else --session-id, else a per-user id
+    generated once and kept in the git dir (`foundry-lead-session`). Never derived from a parent pid."""
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID") or flag
+    if sid:
+        return sid
+    p = store._git_path("foundry-lead-session", root)
+    if p is None:
+        return f"{host}:{getpass.getuser()}"
+    try:
+        got = p.read_text(encoding="utf-8").strip()
+        if got:
+            return got
+    except OSError:
+        pass
+    new = uuid.uuid4().hex
+    try:
+        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(new + "\n")
+        return new
+    except FileExistsError:
+        try:
+            return p.read_text(encoding="utf-8").strip() or new
+        except OSError:
+            return new
+    except OSError:
+        return new
+
+
+def _create_exclusive(path: Path, rec: dict) -> bool:
+    """Create `path` only if it does not exist (write a temp file, then os.link — atomic and exclusive).
+    True when this call created it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.new")
+    tmp.write_text(json.dumps(rec, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    try:
+        os.link(tmp, path)
+        return True
+    except FileExistsError:
+        return False
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def cmd_lead(args: list[str], now: float) -> int:
     ap = argparse.ArgumentParser(prog="foundry-ticket.py lead",
                                  description="The local duplicate-lead lease (.foundry/runtime/lead.json).")
@@ -909,10 +1063,11 @@ def cmd_lead(args: list[str], now: float) -> int:
     root = project_root()
     path = store.lease_file(root)
     host = socket.gethostname()
-    sid = a.session_id or os.environ.get("CLAUDE_CODE_SESSION_ID") or f"{host}:{os.getppid()}"
-    cur = _read_lease(path) if path.exists() else None
+    sid = _session_id(root, a.session_id, host)
+    exists = path.exists()
+    cur = _read_lease(path) if exists else None
     age = (now - _epoch(cur.get("heartbeat_at"))) if cur else None
-    live = cur is not None and age is not None and age < stale
+    live = cur is not None and age is not None and 0 <= age < stale     # a future heartbeat (age < 0) is stale
     mine = cur is not None and cur.get("session_id") == sid and cur.get("hostname") == host
     ts = _iso(now)
 
@@ -921,7 +1076,7 @@ def cmd_lead(args: list[str], now: float) -> int:
                 f"pid {cur.get('pid')}), heartbeat {int(age)}s ago (stale after {int(stale)}s); {LOCAL_ONLY}")
 
     if a.action == "check":
-        state = "none" if cur is None else ("mine" if mine and live else ("held" if live else "stale"))
+        state = "none" if not exists else ("mine" if mine and live else ("held" if live else "stale"))
         print(json.dumps({"lease": state, "path": str(path), "record": cur, "age_seconds": age,
                           "stale_after": stale, "note": LOCAL_ONLY}, indent=2))
         return 1 if state == "held" else 0
@@ -930,17 +1085,35 @@ def cmd_lead(args: list[str], now: float) -> int:
             print("lead acquire refused: " + held_msg(), file=sys.stderr)
             return 1
         rec = {"op_id": a.op_id or os.environ.get("FOUNDRY_OP_ID") or getpass.getuser(), "hostname": host,
-               "pid": os.getppid(), "session_id": sid,
+               "pid": os.getpid(), "session_id": sid,
                "acquired_at": cur["acquired_at"] if (mine and live and cur.get("acquired_at")) else ts, "heartbeat_at": ts}
-        store.atomic_write_json(path, rec)
+        if mine and live:
+            store.atomic_write_json(path, rec)            # re-acquire of my own live lease: refresh in place
+        else:
+            if exists:
+                # take over a stale/unreadable lease: only ONE contender can rename it away, then create-exclusive
+                gone = path.with_name(f"{path.name}.stale.{uuid.uuid4().hex[:8]}")
+                try:
+                    os.rename(path, gone)
+                except FileNotFoundError:
+                    pass
+                else:
+                    taken = _read_lease(gone)
+                    gone.unlink(missing_ok=True)
+                    if taken != cur:       # it was renewed/replaced between our read and the rename
+                        print("lead acquire refused: the lease changed while taking it over; " + LOCAL_ONLY, file=sys.stderr)
+                        return 1
+            if not _create_exclusive(path, rec):
+                print("lead acquire refused: lost a race to another session; " + LOCAL_ONLY, file=sys.stderr)
+                return 1
         back = _read_lease(path)
         if not back or back.get("session_id") != sid:
             print("lead acquire refused: lost a race to another session; " + LOCAL_ONLY, file=sys.stderr)
             return 1
-        print(f"lead lease acquired by {sid}" + (" (took over a stale lease)" if cur and not live and not mine else ""))
+        print(f"lead lease acquired by {sid}" + (" (took over a stale lease)" if exists and not (mine and live) and not mine else ""))
         return 0
     if cur is None or not mine:
-        print(f"lead {a.action}: no lease owned by this session ({'none exists' if cur is None else 'held by ' + str(cur.get('session_id'))})",
+        print(f"lead {a.action}: no lease owned by this session ({'none exists' if not exists else 'held by ' + str(cur.get('session_id') if cur else 'unreadable')})",
               file=sys.stderr)
         return 1
     if a.action == "renew":
@@ -948,7 +1121,7 @@ def cmd_lead(args: list[str], now: float) -> int:
         store.atomic_write_json(path, cur)
         print("lead lease renewed")
         return 0
-    path.unlink()
+    path.unlink(missing_ok=True)
     print("lead lease released")
     return 0
 

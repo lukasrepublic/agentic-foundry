@@ -113,7 +113,7 @@ def mk_issue(n, assignees=("alice",), labels=("status:ready", "repo:app"), body=
             "blockedBy": {"totalCount": len(blocked), "nodes": [
                 {"number": b, "state": "OPEN", "repository": {"nameWithOwner": "example-org/app"}} for b in blocked]},
             "blocking": {"totalCount": 0, "nodes": []}, "parent": None,
-            "closedByPullRequestsReferences": {"nodes": []}, "projectItems": {"totalCount": 0, "nodes": []}}
+            "closedByPullRequestsReferences": {"totalCount": 0, "nodes": []}, "projectItems": {"totalCount": 0, "nodes": []}}
 
 
 @pytest.fixture
@@ -123,7 +123,13 @@ def ws(tmp_path, monkeypatch):
     subprocess.run(["git", "init", "-q", "-b", "main", str(r)], check=True)
     (r / ".claude").mkdir()
     (r / ".claude" / "foundry-project.json").write_text(json.dumps(FIX["config"]))
+    for key, remote in FIX["_remotes"].items():      # checkouts under the workspace; `legacy` has NO origin
+        d = r / FIX["config"]["repos"][key]["path"]
+        subprocess.run(["git", "init", "-q", "-b", "main", str(d)], check=True)
+        if remote:
+            subprocess.run(["git", "-C", str(d), "remote", "add", "origin", remote], check=True)
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(r))
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
     return r
 
 
@@ -308,7 +314,7 @@ def test_claim_at_wip_limit_counts_review_and_blocked_then_allows_a_recorded_exc
     assert rc != 0 and gh.comments == [] and ft.load_claims(ws) == {}
     rc, _, err = run_cli(["claim", "2", "--allow-exception", "customer outage"], gh)
     assert rc == 0, err
-    assert ft.load_claims(ws)["example-org/app#2"]["exception"] == "customer outage"
+    assert ft.load_claims(ws)["example-org/app#2"]["exception"] == "wip-limit: customer outage"
     start = next(c for c in gh.comments if "foundry-deck" in c["body"])["body"]
     assert "customer outage" in start.splitlines()[1]        # the reason rides the human line of the start record
     assert [e.event for e in gh.markers()] == ["start"]
@@ -458,3 +464,183 @@ def test_existing_verbs_are_still_dispatched(ws):
     assert rc == 1 and "no active ticket" in out
     with pytest.raises(SystemExit):
         ft.main(["bogus"])
+
+
+# ---- review round 1 -----------------------------------------------------------------------------------
+
+def test_parse_remote_forms():
+    for url in ("https://github.com/example-org/app.git", "https://tok@github.com/example-org/app",
+                "git@github.com:example-org/app.git", "git@personal-github:example-org/app.git",
+                "ssh://git@github.com/example-org/app.git", "ssh://git@host:2222/example-org/app.git/"):
+        assert ft.parse_remote(url) == "example-org/app", url
+    assert ft.parse_remote("") is None and ft.parse_remote("not a url") is None
+
+
+def test_load_config_reads_the_real_repos_shape_via_origin(ws):
+    cfg = ft.load_config(ws)
+    assert cfg["repos"] == {"app": "example-org/app"}                  # alias origin parsed
+    assert [(d["key"], d["reason"]) for d in cfg["dropped"]] == [("legacy", "no GitHub origin")]
+    assert cfg["owner"] == "example-org" and cfg["project_number"] is None
+    res = nxt(ws, FakeGh())[1]
+    assert res["dropped_repos"][0]["key"] == "legacy"
+
+
+def test_load_config_owner_falls_back_to_the_planning_repo_and_accepts_explicit_planning_repo(ws):
+    cfg = json.loads((ws / ".claude" / "foundry-project.json").read_text())
+    cfg["github_scope"] = {"planning_repo": "plan-org/plan"}
+    (ws / ".claude" / "foundry-project.json").write_text(json.dumps(cfg))
+    out = ft.load_config(ws)
+    assert out["owner"] == "plan-org" and out["planning_repo"] == "plan-org/plan"
+    cfg["github_scope"] = {}
+    (ws / ".claude" / "foundry-project.json").write_text(json.dumps(cfg))
+    subprocess.run(["git", "-C", str(ws), "remote", "add", "origin", "https://github.com/ws-org/ws.git"], check=True)
+    assert ft.load_config(ws)["owner"] == "ws-org"
+
+
+def test_load_config_uses_the_injected_git_runner_and_fails_when_nothing_resolves(ws):
+    seen = []
+
+    def git(args):
+        seen.append(args)
+        raise OSError("no origin")
+    with pytest.raises(ft.QueueUnavailable):
+        ft.load_config(ws, git)
+    assert ["-C", str(ws / "app"), "remote", "get-url", "origin"] in seen
+
+
+def test_over_limit_labels_are_unreadable_not_truncated(ws):
+    gh = FakeGh()
+    gh.node(1)["labels"]["totalCount"] = 61          # more than the 60 fetched
+    rc, res = nxt(ws, gh)
+    assert rc != 0 and res["queue"] == "unavailable" and res["selected"] is None
+    with pytest.raises(ft.GhError):
+        ft.read_issue(gh, "example-org/app", 1)
+    gh2 = FakeGh()
+    gh2.node(1)["closedByPullRequestsReferences"]["totalCount"] = 21
+    with pytest.raises(ft.GhError):
+        ft.read_issue(gh2, "example-org/app", 1)
+
+
+def test_label_mode_priority_orders_by_priority_label(ws):
+    gh = FakeGh(issues=[mk_issue(10, labels=("status:ready", "priority:p2", "repo:app")),
+                        mk_issue(11, labels=("status:ready", "priority:p0", "repo:app")),
+                        mk_issue(12, labels=("status:ready", "priority:high", "repo:app"))])
+    assert nxt(ws, gh)[1]["selected"]["number"] == 11     # p0 (0) < high (1) < p2 (2)
+
+
+@pytest.mark.parametrize("status,expect", [("ready", "not_started"), ("backlog", "not_started"), ("done", "closed"),
+                                           (None, "not_started"), ("blocked", "not_started"), ("weird", "not_started"),
+                                           ("in progress", "authorized"), ("review", "authorized")])
+def test_reconcile_authorizes_only_started_work(ws, status, expect):
+    gh = FakeGh()
+    node = gh.node(1)
+    node["labels"]["nodes"] = [l for l in node["labels"]["nodes"] if not l["name"].startswith("status:")]
+    if status:
+        node["labels"]["nodes"].append({"name": f"status:{status}"})
+    node["labels"]["totalCount"] = len(node["labels"]["nodes"])
+    rc, r = rec_one(ws, gh)
+    assert r["reason"] == expect and r["stop_dispatch"] is (expect != "authorized")
+    assert r["reason"] in ft.STOP_REASONS or r["reason"] == "authorized"
+
+
+def test_reconcile_prunes_claim_records_of_closed_issues(ws):
+    gh = FakeGh()
+    claimed(ws, gh, 1)
+    claimed(ws, gh, 2)
+    gh.node(1)["state"] = "CLOSED"
+    rc, out, _ = run_cli(["reconcile", "--json"], gh)
+    assert json.loads(out)["pruned_claims"] == ["example-org/app#1"]
+    assert set(ft.load_claims(ws)) == {"example-org/app#2"}
+
+
+def test_claim_refuses_backlog_and_blocked_unless_an_exception_names_it(ws):
+    gh = FakeGh()
+    for n in (5, 6):                                 # 5 Backlog, 6 Ready but blocked
+        rc, _, err = run_cli(["claim", str(n)], gh)
+        assert rc != 0 and err and gh.comments == [] and ft.load_claims(ws) == {}
+    assert "Ready" in run_cli(["claim", "5"], gh)[2] and "blocked" in run_cli(["claim", "6"], gh)[2]
+    rc, _, err = run_cli(["claim", "6", "--allow-exception", "unblocking it now"], gh)
+    assert rc == 0, err
+    assert ft.load_claims(ws)["example-org/app#6"]["exception"] == "blocked: unblocking it now"
+    assert "unblocking it now" in gh.comments[0]["body"].splitlines()[1]
+
+
+def test_exception_reason_is_redacted_in_the_human_line_and_the_record(ws):
+    gh = FakeGh()
+    rc, _, err = run_cli(["claim", "5", "--allow-exception", "hotfix API_TOKEN=abcd1234xyz"], gh)
+    assert rc == 0, err
+    assert "abcd1234xyz" not in json.dumps(gh.comments) and "abcd1234xyz" not in json.dumps(ft.load_claims(ws))
+
+
+def test_reclaim_keeps_the_original_acceptance_baseline_unless_rebased(ws):
+    gh = FakeGh()
+    assert run_cli(["claim", "2"], gh)[0] == 0
+    first = ft.load_claims(ws)["example-org/app#2"]["body_sha256"]
+    gh.node(2)["body"] += "- a late criterion\n"
+    label_status(gh.node(2), "in progress")
+    assert run_cli(["claim", "2"], gh)[0] == 0
+    assert ft.load_claims(ws)["example-org/app#2"]["body_sha256"] == first
+    assert rec_one(ws, gh, 2)[1]["reason"] == "acceptance_changed"        # not erased by the re-claim
+    assert run_cli(["claim", "2", "--rebase-acceptance"], gh)[0] == 0
+    assert rec_one(ws, gh, 2)[1]["reason"] == "authorized"
+
+
+def test_repo_flag_is_honoured_or_rejected_for_explicit_refs(ws):
+    gh = FakeGh()
+    rc, _, err = run_cli(["claim", "https://github.com/example-org/app/issues/2", "--repo", "other/repo"], gh)
+    assert rc != 0 and gh.comments == []
+    rc, _, err = run_cli(["claim", "example-org/app#2", "--repo", "other/repo"], gh)
+    assert rc != 0 and gh.comments == []
+    assert run_cli(["claim", "https://github.com/example-org/app/issues/2", "--repo", "example-org/app"], gh)[0] == 0
+
+
+# ---- the lease, hardened -------------------------------------------------------------------------------
+
+def test_lead_acquire_is_create_exclusive(ws, monkeypatch):
+    path = ws / ".foundry" / "runtime" / "lead.json"
+    real_link = ft.os.link
+    calls = []
+
+    def racing(src, dst, *a, **k):
+        if not calls:                      # another session wins between our check and our create
+            calls.append(1)
+            path.write_text(json.dumps({"session_id": "rival", "hostname": ft.socket.gethostname(),
+                                        "heartbeat_at": ft._iso(NOW), "acquired_at": ft._iso(NOW)}))
+        return real_link(src, dst, *a, **k)
+    monkeypatch.setattr(ft.os, "link", racing)
+    rc, _, err = lead(ws, "acquire", "s1")
+    assert rc != 0 and "race" in err
+    assert json.loads(path.read_text())["session_id"] == "rival"
+    assert not [p for p in path.parent.iterdir() if p.name != "lead.json"]
+
+
+def test_lead_future_heartbeat_is_stale(ws):
+    assert lead(ws, "acquire", "s1", now=NOW + 10_000)[0] == 0
+    rc, out, _ = lead(ws, "check", "s2", now=NOW)           # heartbeat is 10000s in the future
+    assert json.loads(out)["lease"] == "stale"
+    assert lead(ws, "acquire", "s2", now=NOW)[0] == 0
+
+
+def test_lead_records_the_real_pid_and_release_tolerates_a_missing_file(ws):
+    import os
+    assert lead(ws, "acquire", "s1")[0] == 0
+    path = ws / ".foundry" / "runtime" / "lead.json"
+    assert json.loads(path.read_text())["pid"] == os.getpid()
+    path.unlink()
+    rc, _, err = lead(ws, "release", "s1")
+    assert rc != 0 and "Traceback" not in err
+
+
+def test_lead_session_id_is_stable_without_flags(ws):
+    rc1, _, _ = run_cli(["lead", "acquire"], None)
+    sid = json.loads((ws / ".foundry" / "runtime" / "lead.json").read_text())["session_id"]
+    assert rc1 == 0 and sid and ":" not in sid
+    assert run_cli(["lead", "renew"], None)[0] == 0 and run_cli(["lead", "release"], None)[0] == 0
+    assert run_cli(["lead", "acquire"], None)[0] == 0
+    assert json.loads((ws / ".foundry" / "runtime" / "lead.json").read_text())["session_id"] == sid
+
+
+def test_lead_session_id_prefers_the_env_var(ws, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-env")
+    assert lead(ws, "acquire", "ignored")[0] == 0
+    assert json.loads((ws / ".foundry" / "runtime" / "lead.json").read_text())["session_id"] == "sess-env"
