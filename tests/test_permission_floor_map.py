@@ -572,7 +572,7 @@ def test_doctor_green_regression(tmp_path):
 # --------------------------------------------------------------------------------------------- #
 # v1.18.0 (AC-V118A-2): re-pinned for the two dropped rows (deny `Bash(git push --force:*)`, ask
 # `Bash(claude plugin tag:*)`).
-MERGE_BASE_ENTRIES_DIGEST = "d5f9c3ecd25dc53b08a75fcd8fe4b065ddc2ec8f19c2d9cc7f5b7be69b1100ae"  # gn-03+gn-04 rows (foundry_github_capabilities.py allow, foundry_deck_events.py ask) + gn-09 foundry_inbox.py per-subcommand rows (scan allow; check/ack/schedule/resolve ask); v2.0.0: +foundry-ticket.py, foundry-test.sh, foundry-delivery-metrics.py (ticket #269); -30 rows of the deleted spec/manifest/deck/learnings scripts (PR 2)
+MERGE_BASE_ENTRIES_DIGEST = "6311b4c12d24469f7b6c93cfefd390f0ce6e620c71b0ba3b89d38e5ecb469103"  # gn/integration: gn-03 + gn-04 + gn-08 + gn-09 rows; v2.0.0: +foundry-ticket.py, foundry-test.sh, foundry-delivery-metrics.py (ticket #269); -30 rows of the deleted spec/manifest/deck/learnings scripts (PR 2)
 
 
 def _entries_digest(entries):

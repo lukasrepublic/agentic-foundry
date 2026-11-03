@@ -274,6 +274,26 @@
       "rationale": "deletes the git-dir ticket file only"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py next:*)",
+      "tier": "allow",
+      "rationale": "read-only: reads the operator's assigned issues from GitHub (gh api graphql/user, queries only) and prints the selection; writes nothing"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py claim:*)",
+      "tier": "ask",
+      "rationale": "POSTs a structured `start` comment on a GitHub issue under the operator's identity (a content-creating write) and writes the git-dir claim record; refuses unassigned / other-owned issues and the WIP limit; never self-assigns (gn-08)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py reconcile:*)",
+      "tier": "allow",
+      "rationale": "read-only: reads current GitHub issue state + timeline and reports stop_dispatch per started issue; writes nothing"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py lead:*)",
+      "tier": "allow",
+      "rationale": "local file only: acquire/renew/release/check the lease at <workspace>/.foundry/runtime/lead.json; no network, no GitHub write"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py done:*)",
       "tier": "ask",
       "rationale": "EXECUTES the ticket's Done-means command (input taken from an issue body): the session's permission flow decides, never a silent allow (security review of #270, R1)"
