@@ -705,3 +705,41 @@ def test_rescheduled_carries_a_structured_original_target_marker_field(ws):
     view = inbox._schedule_view(inbox._markers(inbox.RunnerAdapter(gh), "example-org/planning#1"),
                                 "example-org/planning#1")
     assert view["original_target"] == "next-iteration" and view["target"] == "2026-11-10"
+
+
+# ---- R8 follow-up: max_age bounds the staleness of the covering check ----------------------------------
+
+def test_unnamed_failure_denies_regardless_of_a_recent_clean_anchor(ws):
+    set_policy(ws, {"sources": ["approvals"], "max_age_min": 10, "scope": "example-org"})
+    gh = FakeGh()
+    run(ws, gh)                                            # clean check
+    gh.now = T0 + timedelta(minutes=3)
+    gh.notif_fail = R(rc=1, stderr="HTTP 403 forbidden")
+    gh.search_fail["assigned"] = R(rc=1, stderr="HTTP 502")
+    res = run(ws, gh)
+    assert res["sources"]["approvals"]["status"] == "uncovered"
+    assert res["sources"]["assigned"]["status"] == "error"
+    assert res["dispatch_allowed"] is False                 # `assigned` is not named: subset rule fails
+
+
+def test_a_fresh_covered_check_allows_and_the_same_state_read_11_min_later_is_stale(ws, capsys):
+    gh = FakeGh()
+    assert run(ws, gh)["dispatch_allowed"] is True
+    assert state(ws)["last_covered_check_at"] == "2026-11-03T12:00:00Z"
+    gh.now = T0 + timedelta(minutes=9)
+    assert inbox.main(["pending", "--json", "--project-dir", str(ws)], runner=gh, clock=gh.clock) == 0
+    assert json.loads(capsys.readouterr().out)["dispatch_allowed"] is True
+    gh.now = T0 + timedelta(minutes=11)
+    assert inbox.main(["pending", "--json", "--project-dir", str(ws)], runner=gh, clock=gh.clock) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["dispatch_allowed"] is False and out["decision_needed"] == "inbox check is stale"
+
+
+def test_staleness_uses_the_policy_max_age_and_a_covered_degraded_check_ages_too(ws, capsys):
+    set_policy(ws, {"sources": ["approvals"], "max_age_min": 3, "scope": "example-org"})
+    gh = FakeGh()
+    gh.notif_fail = R(rc=1, stderr="HTTP 403 forbidden")
+    assert run(ws, gh)["dispatch_allowed"] is True
+    gh.now = T0 + timedelta(minutes=4)
+    inbox.main(["pending", "--json", "--project-dir", str(ws)], runner=gh, clock=gh.clock)
+    assert json.loads(capsys.readouterr().out)["decision_needed"] == "inbox check is stale"

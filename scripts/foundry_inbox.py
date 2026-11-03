@@ -39,12 +39,14 @@ each other (last writer wins). A lost update is repaired by the next scan, becau
 re-read from GitHub's own record (markers, relations); nothing authoritative lives only in inbox.json.
 
 Degraded-dispatch policy (`github_scope.degraded_policy`, charter-facing): `dispatch_allowed` is permitted
-despite a failed source only if the policy NAMES every failed source, matches the scope, and the
-`max_age_min` window is met. The window is anchored to the most recent check in which every source NOT
-named by the policy was `ok` - so a permanently uncovered source (e.g. `approvals` under a fine-grained
-token) that the policy names does not deny forever, and a failure outside the named set always denies. A
-check that itself finds the unnamed sources ok is that anchor, so with this reading the age bound only
-rejects a nonsensical (negative / non-numeric) `max_age_min`; it is a declared limit, not a staleness probe.
+despite a failed source only if the policy NAMES every failed source (the failed set must be a SUBSET of
+`policy.sources`) and matches the scope. The subset rule alone makes a failure of an unnamed source deny,
+whatever the age; a permanently uncovered source the policy names (e.g. `approvals` under a fine-grained
+token) never denies forever. `max_age_min` (default 10) bounds only the STALENESS of the current full-or-
+covered check itself: `last_covered_check_at` is persisted, and `dispatch_allowed` is computed at check
+time AND re-evaluated by `pending` against `now - last_covered_check_at <= max_age_min`, so a stale runtime
+file (e.g. the deck resumed after sleeping) reads false with decision_needed "inbox check is stale" until a
+fresh check runs. `scan`/`check` always run fresh.
 
 `resolve` evidence is a practice, not a control: it must be an https URL WITH a path (issue / PR / commit
 shape), which rejects a bare host or a typo, but nothing verifies that the dependency is truly satisfied
@@ -80,6 +82,8 @@ KINDS = {"assigned": "request", "mentions": "mention", "review_requests": "revie
 APPROVAL_REASONS = ("approval_requested", "review_requested")
 DEFAULT_POLL = 60
 DEFAULT_TARGET = "next-iteration"
+DEFAULT_MAX_AGE_MIN = 10.0
+STALE_TEXT = "inbox check is stale"
 QUEUE_STATUSES = ("ok", "stale", "error")
 RUNTIME_REL = os.path.join(".foundry", "runtime", "inbox.json")
 SCHEMA = 1
@@ -106,7 +110,7 @@ def runtime_path(project_dir):
 
 def _empty_state():
     return {"schema": SCHEMA, "checked_at": None, "scope": None, "coverage": "partial",
-            "last_full_check_at": None, "sources": {}, "notifications": {}, "pending": {},
+            "last_full_check_at": None, "last_covered_check_at": None, "sources": {}, "notifications": {}, "pending": {},
             "dispatch_allowed": False, "decision_needed": "no check has run"}
 
 
@@ -353,9 +357,8 @@ def _blocker_key(ref, b):
 # ------------------------------------------------------------------ scan / check -----------------------
 
 def _policy_covers(policy, failed, scope):
-    """The degraded policy covers `failed` iff it names every failed source, matches the scope and carries a
-    valid max_age_min. The age is measured from the anchor (the check in which every source NOT named by the
-    policy was ok): when `failed` is a subset of the named sources, the current check IS that anchor."""
+    """The degraded policy covers `failed` iff it names every failed source (subset rule), matches the scope
+    and carries a valid max_age_min (which bounds the covering check's staleness, see `_max_age`)."""
     if not isinstance(policy, dict):
         return False
     srcs = policy.get("sources")
@@ -365,6 +368,24 @@ def _policy_covers(policy, failed, scope):
         return False
     return (isinstance(srcs, list) and set(failed) <= set(srcs) and policy.get("scope") == scope
             and 0 <= max_age)
+
+
+def _max_age(policy):
+    """max_age_min of a well-formed policy, else the default."""
+    try:
+        v = float(policy.get("max_age_min")) if isinstance(policy, dict) else DEFAULT_MAX_AGE_MIN
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_AGE_MIN
+    return v if v >= 0 else DEFAULT_MAX_AGE_MIN
+
+
+def _staleness(state, policy, now):
+    """(allowed, decision_needed) of a persisted state re-evaluated at `now`: a stale covering check never allows."""
+    allowed, needed = state.get("dispatch_allowed"), state.get("decision_needed")
+    covered = state.get("last_covered_check_at")
+    if allowed and (not covered or now - _dt(covered) > timedelta(minutes=_max_age(policy))):
+        return False, STALE_TEXT
+    return bool(allowed), needed
 
 
 def _escalations(pending, emitted=()):
@@ -525,6 +546,8 @@ def _run(project_dir, runner, timeout, queue_status, clock, record):
     else:
         needed = (f"required source(s) {', '.join(failed)} not fully covered and github_scope.degraded_policy "
                   f"does not cover them for scope {scope}; decide whether to dispatch")
+    covered = coverage == "full" or _policy_covers(policy, failed, scope)
+    state.update(last_covered_check_at=_iso(now) if covered else state.get("last_covered_check_at"))
     state.update(checked_at=_iso(now), scope=scope, coverage=coverage, last_full_check_at=last_full,
                  sources=rows, dispatch_allowed=allowed, decision_needed=needed, queue_status=queue_status)
     save_state(project_dir, state)
@@ -667,8 +690,11 @@ def main(argv=None, runner=default_runner, clock=None):
             res = (scan if a.cmd == "scan" else check)(pd, runner, a.timeout, a.queue_status, clock)
         elif a.cmd == "pending":
             st = load_state(pd)
+            _, cfg = load_scope(pd)
+            now = (clock or (lambda: datetime.now(timezone.utc)))()
+            allowed, needed = _staleness(st, (cfg or {}).get("degraded_policy"), now)
             res = {"pending": sorted(st["pending"].values(), key=lambda i: i["url"]),
-                   "coverage": st["coverage"], "dispatch_allowed": st["dispatch_allowed"],
+                   "coverage": st["coverage"], "dispatch_allowed": allowed, "decision_needed": needed,
                    "last_full_check_at": st["last_full_check_at"],
                    "escalate": _escalations(st["pending"])}
         elif a.cmd == "ack":
