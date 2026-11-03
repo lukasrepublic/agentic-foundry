@@ -640,7 +640,14 @@ def test_lead_session_id_is_stable_without_flags(ws):
     assert json.loads((ws / ".foundry" / "runtime" / "lead.json").read_text())["session_id"] == sid
 
 
-def test_lead_session_id_prefers_the_env_var(ws, monkeypatch):
+def test_lead_session_id_explicit_flag_beats_the_env_var(ws, monkeypatch):
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-env")
-    assert lead(ws, "acquire", "ignored")[0] == 0
+    assert lead(ws, "acquire", "explicit")[0] == 0
+    assert json.loads((ws / ".foundry" / "runtime" / "lead.json").read_text())["session_id"] == "explicit"
+
+
+def test_lead_session_id_falls_back_to_the_env_var(ws, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-env")
+    rc = run_cli(["lead", "acquire", "--op-id", "op_example"], None, now=NOW)[0]
+    assert rc == 0
     assert json.loads((ws / ".foundry" / "runtime" / "lead.json").read_text())["session_id"] == "sess-env"
