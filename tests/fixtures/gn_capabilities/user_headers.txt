@@ -1,0 +1,5 @@
+HTTP/2.0 200 OK
+X-Oauth-Scopes: repo, read:org, gist
+X-Github-Request-Id: ABCD
+
+{"login":"alice"}

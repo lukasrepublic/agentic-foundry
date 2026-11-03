@@ -199,6 +199,36 @@
       "rationale": "`emit` posts a structured comment on a GitHub issue under the operator's identity (a content-creating write); `parse` is read-only. One rule for the script: the write verb decides the tier (gn-04 deck events)."
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_github_capabilities.py:*)",
+      "tier": "allow",
+      "rationale": "read-only discovery-coverage probe: REST GET, search and GraphQL `query` only, every call timeout-bounded; writes nothing to GitHub or the workspace (gn-03 capability check)."
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py check:*)",
+      "tier": "allow",
+      "rationale": "reads GitHub (search, notifications, issue views) and writes only the gitignored runtime inbox.json — but it also posts `scheduled`/`blocker_ack` marker comments on the operator's own request issues via the gn-04 writer; classed allow because those are the inbox's own bookkeeping on already-assigned requests (gn-09 operator inbox)."
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py pending:*)",
+      "tier": "allow",
+      "rationale": "reads the persisted runtime inbox.json only; no network, no writes (gn-09)."
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py ack:*)",
+      "tier": "ask",
+      "rationale": "posts an `ack` marker comment on a GitHub issue/PR under the operator's identity (gn-09)."
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py schedule:*)",
+      "tier": "ask",
+      "rationale": "posts a `scheduled`/`rescheduled` marker comment on a GitHub issue under the operator's identity (gn-09)."
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py resolve:*)",
+      "tier": "ask",
+      "rationale": "posts a `resolved` marker comment with evidence on a GitHub issue under the operator's identity (gn-09)."
+    },
+    {
       "rule": "Bash(docker system prune:*)",
       "tier": "deny",
       "rationale": "absolute anti-pattern: unattended bulk local-state destruction"
