@@ -206,6 +206,66 @@ sys.exit(0)
 PY
 }
 
+# gn-11 _assignment_check <manifest> — prints OK or a typed reason. A complete issue assignment
+# names issue_url, issue_number, operator, and an acceptance_revision with body_sha256 + documents[].
+_assignment_check() {
+  python3 - "$1" <<'PY' 2>/dev/null || echo "unreadable"
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    a = d.get("assignment")
+except Exception:
+    print("unreadable"); sys.exit(0)
+def s(v): return isinstance(v, str) and v.strip() != ""
+if not isinstance(a, dict):
+    print("no-assignment"); sys.exit(0)
+if not s(a.get("issue_url")) or not str(a.get("issue_url")).startswith("https://"):
+    print("issue_url"); sys.exit(0)
+n = a.get("issue_number")
+if isinstance(n, bool) or not (isinstance(n, int) and n > 0 or s(n) and str(n).isdigit()):
+    print("issue_number"); sys.exit(0)
+if not s(a.get("operator")):
+    print("operator"); sys.exit(0)
+r = a.get("acceptance_revision")
+if not isinstance(r, dict) or not s(r.get("body_sha256")) or not isinstance(r.get("documents"), list):
+    print("acceptance_revision"); sys.exit(0)
+for x in r["documents"]:
+    if not isinstance(x, dict) or not s(x.get("url")) or not s(x.get("revision")):
+        print("acceptance_revision.documents"); sys.exit(0)
+print("OK")
+PY
+}
+
+# gn-11 _write_binding <worktree> <manifest-json> <tr> <task> <agent> — writes
+# <git-dir>/foundry-assignment.json ONCE (assignment fields + `worktree`, plus `issue`, the key gn-05's
+# usage binding reads) and .agent/assignment.json. Prints OK or a typed reason.
+_write_binding() {
+  python3 - "$1" "$2" "$3" "$4" "$5" <<'PY' 2>/dev/null || echo "write-error"
+import json, os, subprocess, sys
+wt, raw, tr, task, agent = sys.argv[1:6]
+try:
+    a = dict(json.loads(raw)["assignment"])
+    gd = subprocess.check_output(["git", "-C", wt, "rev-parse", "--absolute-git-dir"], text=True).strip()
+except Exception:
+    print("git-dir"); sys.exit(0)
+rec = dict(a); rec["worktree"] = wt; rec["issue"] = a.get("issue_number")
+bp = os.path.join(gd, "foundry-assignment.json")
+try:
+    fd = os.open(bp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+except FileExistsError:
+    try:
+        same = json.load(open(bp)).get("issue_url") == a.get("issue_url")
+    except Exception:
+        same = False
+    print("OK" if same else "binding-exists"); sys.exit(0)
+with os.fdopen(fd, "w") as fh:
+    json.dump(rec, fh)
+json.dump({"target_repo": tr, "task": task, "agent": agent, "contract_ref": "",
+           "issue_url": a.get("issue_url")}, open(os.path.join(wt, ".agent", "assignment.json"), "w"))
+print("OK")
+PY
+}
+
 # Consume oldest manifest + redirect. stdout = worktree path on success (rc 0).
 # Return-code taxonomy (AC-WNP-1/-2 — the load-bearing routing signal for the dispatcher below):
 #   0  = product path emitted (unchanged product-redirect success)
@@ -215,8 +275,9 @@ PY
 #   3  = malformed / empty-target_repo manifest (a manifest IS present but corrupt)
 #   2  = bind-mismatch or claim-failure
 #   4  = AC-WNI-2 staged spec/contract preflight hard-fail (typed diagnostic logged)
-#   5  = AC-WNI-2/RISK-4 manifest carries no contract_ref — staging/preflight skipped
-#        would silently re-open gap G7; fail closed instead
+#   5  = manifest names neither a contract_ref nor a COMPLETE issue assignment (gn-11) — fail closed
+#        (a complete assignment with no contract_ref is the issue-bound launch: binding, no staging)
+#   6  = gn-11 binding file could not be written (or a different one already exists)
 # Every code other than 0 and 10 stays fail-closed at the dispatcher (AC-WNP-2 floor): a
 # contended or corrupt PRODUCT manifest is never misread as "empty" and relanded native.
 _redirect() {
@@ -246,6 +307,19 @@ PY
     _log "$WS" "DROPPED-MALFORMED-MANIFEST $(basename "$m")"
     rm -f "$m"; _unlock "$LOCK"; return 3   # malformed manifest: fail-closed (AC-WNP-2)
   fi
+  # gn-11: an issue-assignment manifest (no contract_ref) must carry a COMPLETE assignment and a
+  # resolvable repo key BEFORE anything is claimed; otherwise fail closed with a typed log line.
+  if [ -z "$contract" ]; then
+    local aerr; aerr="$(_assignment_check "$m")"
+    if [ "$aerr" != "OK" ]; then
+      _log "$WS" "DROPPED-ASSIGNMENT-INCOMPLETE $aerr $(basename "$m")"
+      rm -f "$m"; _unlock "$LOCK"; return 5
+    fi
+    if ! "$WTBIN" resolve "$tr" >/dev/null 2>&1; then
+      _log "$WS" "DROPPED-UNKNOWN-REPO-KEY tr=$tr $(basename "$m")"
+      rm -f "$m"; _unlock "$LOCK"; return 2
+    fi
+  fi
   # AC-5: deterministic bind — manifest target_repo MUST equal the authorized contract target_repo.
   if [ -n "$contract" ]; then
     local cpath; case "$contract" in /*) cpath="$contract" ;; *) cpath="$WS/$contract" ;; esac
@@ -263,6 +337,7 @@ PY
     _log "$WS" "CLAIM-FAILED $tr/$task (manifest retained for retry: $(basename "$m"))"
     _unlock "$LOCK"; return 2
   fi
+  local mcopy; mcopy="$(cat "$m" 2>/dev/null || true)"
   rm -f "$m"; _unlock "$LOCK"                        # consume only AFTER a successful claim
   _log "$WS" "redirect $tr/$task -> $path"
 
@@ -284,8 +359,17 @@ PY
     fi
     _log "$WS" "preflight-ok $tr/$task: $diag"
   else
-    _log "$WS" "PREFLIGHT-SKIP-NO-CONTRACT $tr/$task"
-    return 5
+    # gn-11: issue-assignment launch — no spec/contract staging. The per-worktree binding is
+    # written once here; .agent/assignment.json (write-jail) is kept.
+    mkdir -p "$path/.agent"
+    local bdiag; bdiag="$(_write_binding "$path" "$mcopy" "$tr" "$task" "$agent")"
+    if [ "$bdiag" != "OK" ]; then
+      _log "$WS" "BINDING-FAILED $tr/$task: $bdiag"
+      return 6
+    fi
+    _log "$WS" "assignment-bound $tr/$task (no contract_ref; staging skipped)"
+    printf '%s\n' "$path"
+    return 0
   fi
 
   mkdir -p "$path/.agent"
