@@ -12,12 +12,15 @@ is not a git repository has no ticket.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import subprocess
 from pathlib import Path
 
 TICKET_BASENAME = "foundry-ticket.json"
+CLAIMS_BASENAME = "foundry-claims.json"   # gn-08: the local execution record of claimed issues (a cache, never authority)
+LEASE_RELPATH = Path(".foundry") / "runtime" / "lead.json"   # gn-08: the local duplicate-lead lease
 
 _SECRET_ASSIGN = re.compile(
     r"(?i)\b([A-Za-z_][A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|APIKEY|API_KEY|_KEY|_PAT))=(\S+)")
@@ -45,9 +48,30 @@ def project_root() -> Path:
 
 def ticket_file(root: Path | None = None) -> Path | None:
     """The git-dir path of the ticket for `root` (None when root is not a git repository)."""
+    return _git_path(TICKET_BASENAME, root)
+
+
+def claims_file(root: Path | None = None) -> Path | None:
+    """The git-dir path of the claim records for `root` (None when root is not a git repository)."""
+    return _git_path(CLAIMS_BASENAME, root)
+
+
+def lease_file(root: Path | None = None) -> Path:
+    return (root or project_root()) / LEASE_RELPATH
+
+
+def atomic_write_json(path: Path, doc: dict) -> None:
+    """temp file in the same directory + rename, so a reader never sees a half-written file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _git_path(basename: str, root: Path | None = None) -> Path | None:
     root = root or project_root()
     try:
-        out = subprocess.run(["git", "-C", str(root), "rev-parse", "--git-path", TICKET_BASENAME],
+        out = subprocess.run(["git", "-C", str(root), "rev-parse", "--git-path", basename],
                              capture_output=True, text=True, timeout=10)
     except Exception:
         return None

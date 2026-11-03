@@ -134,6 +134,22 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py next:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py claim:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py reconcile:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py lead:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py clear:*)",
             "origin": "settings.json"
           }
@@ -347,6 +363,22 @@
           },
           {
             "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-ticket.py status:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-ticket.py next:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-ticket.py claim:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-ticket.py reconcile:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-ticket.py lead:*)",
             "origin": "settings.json"
           },
           {
