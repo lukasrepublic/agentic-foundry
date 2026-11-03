@@ -99,6 +99,11 @@
       "rationale": "advisory context-diet lint over an assembled dispatch prompt; fail-open, flags-only"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py:*)",
+      "tier": "allow",
+      "rationale": "writes only six fixed filenames under the directory named by `--dataset`/`usage.dataset`; reads collector/transcript dirs the operator names; stores numeric fields only"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_env_isolation.py:*)",
       "tier": "allow",
       "rationale": "read-only per-worker env-isolation check consumed by the env-reap hook"

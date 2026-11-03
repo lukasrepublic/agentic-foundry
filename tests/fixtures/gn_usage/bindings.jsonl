@@ -1,0 +1,4 @@
+{"agent_id": "sub-a", "at": "2026-11-02T08:59:00Z", "issue": "101", "operator": "alice", "session_id": "sess-1", "worktree": "/w/a"}
+{"agent_id": null, "at": "2026-11-02T08:58:00Z", "issue": "101", "operator": "alice", "session_id": "sess-1", "worktree": "/w/a"}
+{"agent_id": "x1", "at": "2026-11-02T08:00:00Z", "issue": "201", "operator": "alice", "session_id": "sess-2", "worktree": "/w/x1"}
+{"agent_id": "x2", "at": "2026-11-02T08:00:00Z", "issue": "202", "operator": "alice", "session_id": "sess-2", "worktree": "/w/x2"}
