@@ -12,10 +12,14 @@ Design decisions (charter gn-04):
     it (i.e. it is at/after the MOST RECENT `blocked` as of its own time). A later re-block opens a new
     episode the earlier ack does not cover: the target is listed in `unacknowledged` again. An ordinary
     `ack` never satisfies a blocker acknowledgement.
-  * `BlockingAddedEvent` / `BlockingRemovedEvent` arrive on the BLOCKER issue (this issue blocks another).
-    They do not make this issue blocked, so `parse` SKIPS them (no `blocked` event, no `blocking` note:
-    the vocabulary stays the fixed fifteen). They remain listed in MAPPING["blocked"] as recognised
-    native records. Only `BlockedByAddedEvent` / `BlockedByRemovedEvent` open/close a blocked episode.
+  * Two native records open a blocked episode, distinguished by `Event.relation`:
+    `BlockedByAddedEvent` (on the BLOCKED issue; relation "blocked_by") and `BlockingAddedEvent` (on the
+    BLOCKER issue, e.g. an operator-inbox request issue; relation "blocking"). Both record a `blocked`
+    event whose target = blocking = the OTHER issue, and both close on their `...RemovedEvent`. The
+    vocabulary stays the fixed fifteen. The blocker issue is the acknowledgeable thing: an inbox posts a
+    `blocker_ack` on the request with target = the blocked issue, so `unacknowledged` covers both
+    relations. A `relation: "blocking"` event does NOT mean this issue is itself blocked: consumers use
+    `is_blocked(history)` (relation == "blocked_by", episode still open).
   * Default idempotency keys for start/ack/accepted carry an EPOCH (count of prior withdrawn+reopened
     events on the issue) and for blocker_ack the latest `blocked` time for its (target, blocking) pair, so
     a restart after withdrawal, a re-ack after re-block, or a re-acceptance after reopen is not swallowed.
@@ -100,6 +104,7 @@ class Event:
     idempotency_key: str | None = None
     detail: str | None = None       # unparsed reason
     when: str | None = None
+    relation: str = "blocked_by"    # blocked events only: "blocked_by" (this issue is blocked) | "blocking"
 
     def as_dict(self):
         return asdict(self)
@@ -117,7 +122,8 @@ class History:
     events: list            # ordered Event list (unparsed markers included, event == "unparsed")
     intervals: list         # [{"assignee", "start", "end"(None = open at cutoff)}]
     closures: list          # completed closes — not acceptances
-    unacknowledged: list    # blocker targets whose latest blocked record has no valid blocker_ack
+    unacknowledged: list    # targets (either relation) whose latest blocked record has no valid blocker_ack
+    open_blocks: dict = field(default_factory=dict)   # target -> relation of each still-open episode
 
     @property
     def unparsed(self):
@@ -259,6 +265,7 @@ def parse(timeline, comments, as_of) -> History:
     st = {"ready_open": False, "started": False, "ever_started": False, "ever_ready": False,
           "accepted_seen": False, "dup_open": False}
     blocked_open = {}   # target -> time of latest blocked record
+    block_rel = {}      # target -> relation of the open episode
     seen_keys = set()
 
     for t, _, _, kind, rec in recs:
@@ -289,13 +296,16 @@ def parse(timeline, comments, as_of) -> History:
                                                       _norm((n.get("label") or {}).get("name")).startswith("status:")):
             status = _norm(n.get("status")) if tn != "LabeledEvent" else _norm(n["label"]["name"])[len("status:"):]
             _status(status, mk, events, st)
-        elif tn == "BlockedByAddedEvent":
-            target = _ref(n.get("blockingIssue"))
-            events.append(mk("blocked", target=target, blocking=target))
+        elif tn in ("BlockedByAddedEvent", "BlockingAddedEvent"):
+            rel = "blocked_by" if tn == "BlockedByAddedEvent" else "blocking"
+            target = _ref(n.get("blockingIssue" if rel == "blocked_by" else "blockedIssue"))
+            events.append(mk("blocked", target=target, blocking=target, relation=rel))
             blocked_open[target] = t
-        elif tn == "BlockedByRemovedEvent":
-            blocked_open.pop(_ref(n.get("blockingIssue")), None)
-        # BlockingAdded/RemovedEvent: this issue is the BLOCKER; it is not itself blocked — skipped.
+            block_rel[target] = rel
+        elif tn in ("BlockedByRemovedEvent", "BlockingRemovedEvent"):
+            tg = _ref(n.get("blockingIssue" if tn == "BlockedByRemovedEvent" else "blockedIssue"))
+            blocked_open.pop(tg, None)
+            block_rel.pop(tg, None)
         elif tn == "ReopenedEvent":
             events.append(mk("reopened"))
             st["started"] = False
@@ -330,7 +340,14 @@ def parse(timeline, comments, as_of) -> History:
     unack = sorted(tg for tg in blocked_open if not any(
         e.event == "blocker_ack" and e.invalid is None and e.target == tg and _dt(e.at) >= blocked_open[tg]
         for e in events))
-    return History(events=events, intervals=intervals, closures=closures, unacknowledged=unack)
+    return History(events=events, intervals=intervals, closures=closures, unacknowledged=unack,
+                   open_blocks=dict(block_rel))
+
+
+def is_blocked(history):
+    """True iff THIS issue is itself blocked: an open episode with relation "blocked_by". A
+    relation "blocking" episode (this issue blocks another) never counts."""
+    return any(rel == "blocked_by" for rel in history.open_blocks.values())
 
 
 def _do_start(ev, st):

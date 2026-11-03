@@ -355,11 +355,34 @@ def test_blocked_ack_reblocked_is_unacknowledged_and_flag_agrees():
     assert h2.unacknowledged == []
 
 
-def test_blocking_added_event_on_blocker_does_not_block_this_issue():
-    tl = [{"__typename": "BlockingAddedEvent", "createdAt": "2026-10-01T00:00:00Z", "actor": {"login": "a"},
-           "blockedIssue": {"number": 7, "repository": {"nameWithOwner": "example-org/example-repo"}}}]
-    h = de.parse(tl, [], END)
-    assert h.events == [] and h.unacknowledged == []
+def _blocking(day, typ="BlockingAddedEvent"):
+    return {"__typename": typ, "createdAt": f"2026-10-{day:02d}T00:00:00Z", "actor": {"login": "a"},
+            "blockedIssue": {"number": 7, "repository": {"nameWithOwner": "example-org/example-repo"}}}
+
+
+def test_blocking_added_event_records_blocking_relation_not_is_blocked():
+    h = de.parse([_blocking(1)], [], END)
+    assert [(e.event, e.relation, e.target, e.blocking) for e in h.events] == [
+        ("blocked", "blocking", OTHER, OTHER)]
+    assert h.unacknowledged == [OTHER]
+    assert de.is_blocked(h) is False
+    assert len(de.EVENTS) == 15
+
+
+def test_blocked_by_event_keeps_default_relation_and_is_blocked():
+    h = de.parse([_blocked(1)], [], END)
+    assert h.events[0].relation == "blocked_by" and de.is_blocked(h) is True
+
+
+def test_inbox_shaped_blocker_ack_on_blocking_episode_is_valid():
+    h = de.parse([_blocking(1)], [_ack_marker("c1", 2, "k1")], END)
+    assert [(e.event, e.invalid) for e in h.events] == [("blocked", None), ("blocker_ack", None)]
+    assert h.unacknowledged == []
+
+
+def test_blocking_removed_event_closes_the_episode():
+    h = de.parse([_blocking(1), _blocking(3, "BlockingRemovedEvent")], [], END)
+    assert h.unacknowledged == [] and h.open_blocks == {}
 
 
 def test_parse_dedupes_same_key_first_by_time_wins():
