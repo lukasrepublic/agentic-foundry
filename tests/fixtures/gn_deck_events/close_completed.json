@@ -1,0 +1,22 @@
+{
+ "timeline": [
+  {
+   "__typename": "ProjectV2ItemStatusChangedEvent",
+   "createdAt": "2026-10-01T10:00:00Z",
+   "actor": {
+    "login": "bob"
+   },
+   "status": "In progress",
+   "previousStatus": null
+  },
+  {
+   "__typename": "ClosedEvent",
+   "createdAt": "2026-10-03T10:00:00Z",
+   "actor": {
+    "login": "bob"
+   },
+   "stateReason": "COMPLETED"
+  }
+ ],
+ "comments": []
+}

@@ -1,0 +1,38 @@
+{
+ "timeline": [
+  {
+   "__typename": "ProjectV2ItemStatusChangedEvent",
+   "createdAt": "2026-10-01T10:00:00Z",
+   "actor": {
+    "login": "bob"
+   },
+   "status": "In progress",
+   "previousStatus": null
+  },
+  {
+   "__typename": "ReopenedEvent",
+   "createdAt": "2026-10-06T10:00:00Z",
+   "actor": {
+    "login": "alice"
+   }
+  }
+ ],
+ "comments": [
+  {
+   "id": "IC_1",
+   "createdAt": "2026-10-04T10:00:00Z",
+   "author": {
+    "login": "alice"
+   },
+   "body": "<!-- foundry-deck: {\"v\":1,\"event\":\"accepted\",\"idempotency_key\":\"k-1\",\"target\":\"alice\",\"blocking\":null,\"at\":\"2026-10-04T10:00:00Z\",\"by\":\"alice\",\"evidence\":[\"example-org/example-repo#12\"]} -->\naccepted recorded by alice\n"
+  },
+  {
+   "id": "IC_2",
+   "createdAt": "2026-10-08T10:00:00Z",
+   "author": {
+    "login": "alice"
+   },
+   "body": "<!-- foundry-deck: {\"v\":1,\"event\":\"accepted\",\"idempotency_key\":\"k-2\",\"target\":\"alice\",\"blocking\":null,\"at\":\"2026-10-08T10:00:00Z\",\"by\":\"alice\",\"evidence\":[\"https://example.org/r/2\"]} -->\naccepted recorded by alice\n"
+  }
+ ]
+}

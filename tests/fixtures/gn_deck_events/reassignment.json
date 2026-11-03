@@ -1,0 +1,45 @@
+{
+ "timeline": [
+  {
+   "__typename": "AssignedEvent",
+   "createdAt": "2026-10-01T10:00:00Z",
+   "actor": {
+    "login": "alice"
+   },
+   "assignee": {
+    "login": "alice"
+   }
+  },
+  {
+   "__typename": "UnassignedEvent",
+   "createdAt": "2026-10-05T10:00:00Z",
+   "actor": {
+    "login": "alice"
+   },
+   "assignee": {
+    "login": "alice"
+   }
+  },
+  {
+   "__typename": "AssignedEvent",
+   "createdAt": "2026-10-05T10:00:00Z",
+   "actor": {
+    "login": "alice"
+   },
+   "assignee": {
+    "login": "bob"
+   }
+  },
+  {
+   "__typename": "LabeledEvent",
+   "createdAt": "2026-10-06T10:00:00Z",
+   "actor": {
+    "login": "alice"
+   },
+   "label": {
+    "name": "bug"
+   }
+  }
+ ],
+ "comments": []
+}

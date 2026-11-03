@@ -1,0 +1,473 @@
+"""foundry_deck_events — the deck's canonical workflow-event vocabulary and its GitHub records (gn-04).
+
+One vocabulary (`EVENTS`), the durable GitHub record that establishes each (`MAPPING`), an idempotent
+writer (`emit`) for the events native history lacks, and a pure reader (`parse`) that rebuilds history
+as of a cutoff from already-fetched GraphQL `timelineItems` nodes and issue comments.
+
+Design decisions (charter gn-04):
+  * Event time is GitHub's `createdAt` (timeline node or comment), never the marker's self-declared `at`.
+  * Native-only events (ready, blocked, reopened, withdrawn, cancelled, duplicate) cannot be `emit`ted.
+  * A `completed` close is a `Closure`, not an acceptance (native close never marks a decision accepted).
+  * A `blocker_ack` is valid only if a `blocked` record for its target exists at or before it; an
+    ordinary `ack` never satisfies a blocker acknowledgement.
+  * Every `gh` call lives in ONE adapter object (`GhAdapter`); tests inject a stub. `parse` is pure.
+
+Marker comment:
+  <!-- foundry-deck: {"v":1,"event":..,"idempotency_key":..,"target":..,"blocking":..,"at":..,
+                       "by":..,"evidence":[..]} -->  followed by one human-readable line.
+
+CLI: `foundry_deck_events.py parse OWNER/REPO#N --as-of ISO` | `emit OWNER/REPO#N EVENT --payload JSON`.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import subprocess
+import sys
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+
+MARKER_VERSION = 1
+
+EVENTS = (
+    "ready", "start", "ack", "scheduled", "rescheduled", "blocker_ack", "resolved", "review_ready",
+    "accepted", "handoff", "blocked", "reopened", "withdrawn", "cancelled", "duplicate",
+)
+
+# event -> {"native": [native records that establish it], "marker": bool (a marker comment may establish it)}
+MAPPING = {
+    "ready": {"native": ["ProjectV2ItemStatusChangedEvent(status=Ready)", "LabeledEvent(status:ready)"], "marker": False},
+    "start": {"native": ["ProjectV2ItemStatusChangedEvent(status=In progress)", "LabeledEvent(status:in-progress)"], "marker": True},
+    "ack": {"native": [], "marker": True},
+    "scheduled": {"native": [], "marker": True},
+    "rescheduled": {"native": [], "marker": True},
+    "blocker_ack": {"native": [], "marker": True},
+    "resolved": {"native": [], "marker": True},
+    "review_ready": {"native": [], "marker": True},
+    "accepted": {"native": [], "marker": True},
+    "handoff": {"native": [], "marker": True},
+    "blocked": {"native": ["BlockedByAddedEvent", "BlockingAddedEvent"], "marker": False},
+    "reopened": {"native": ["ReopenedEvent"], "marker": False},
+    "withdrawn": {"native": ["ProjectV2ItemStatusChangedEvent(status=Backlog, after first start)",
+                             "LabeledEvent(status:backlog, after first start)"], "marker": False},
+    "cancelled": {"native": ["ClosedEvent(stateReason=NOT_PLANNED)"], "marker": False},
+    "duplicate": {"native": ["ClosedEvent(stateReason=DUPLICATE)", "MarkedAsDuplicateEvent"], "marker": False},
+}
+assert tuple(MAPPING) == EVENTS
+
+EVIDENCE_REQUIRED = frozenset({"review_ready", "handoff", "resolved", "accepted"})
+# payload fields (besides issue+event) that define an event for the default idempotency key
+KEY_FIELDS = {"scheduled": ("target", "when"), "rescheduled": ("target", "when"),
+              "blocker_ack": ("target", "blocking"), "ack": ("target",), "start": ("target",),
+              "review_ready": ("target", "evidence"), "handoff": ("target", "evidence"),
+              "resolved": ("target", "evidence"), "accepted": ("target", "evidence")}
+MARKER_FIELDS = ("v", "event", "idempotency_key", "target", "blocking", "at", "by", "evidence")
+
+_MARKER_RE = re.compile(r"<!--\s*foundry-deck:\s*(.*?)\s*-->", re.DOTALL)
+_MARKER_PREFIX = re.compile(r"<!--\s*foundry-deck:")
+_ISSUE_RE = re.compile(r"^([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)#([0-9]+)$")
+_URL_RE = re.compile(r"^https?://[^\s/]+\S*$")
+_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
+
+
+@dataclass
+class Event:
+    event: str
+    at: str
+    by: str | None = None
+    target: str | None = None
+    blocking: str | None = None
+    evidence: list = field(default_factory=list)
+    first: bool = False
+    invalid: str | None = None
+    source: str = "marker"          # marker | timeline
+    comment_id: str | None = None
+    author: str | None = None       # comment author (marker) — `by` is the claimed actor
+    idempotency_key: str | None = None
+    detail: str | None = None       # unparsed reason
+    when: str | None = None
+
+    def as_dict(self):
+        return asdict(self)
+
+
+@dataclass
+class Closure:
+    at: str
+    by: str | None
+    state_reason: str = "completed"
+
+
+@dataclass
+class History:
+    events: list            # ordered Event list (unparsed markers included, event == "unparsed")
+    intervals: list         # [{"assignee", "start", "end"(None = open at cutoff)}]
+    closures: list          # completed closes — not acceptances
+    unacknowledged: list    # blocker targets whose latest blocked record has no valid blocker_ack
+
+    @property
+    def unparsed(self):
+        return [e for e in self.events if e.event == "unparsed"]
+
+
+# ---- time ------------------------------------------------------------------------------------------
+
+def _dt(value) -> datetime:
+    if isinstance(value, datetime):
+        d = value
+    else:
+        d = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    if d.tzinfo is None:
+        raise ValueError(f"timestamp {value!r} has no timezone")
+    return d.astimezone(timezone.utc)
+
+
+def _iso(d: datetime) -> str:
+    return d.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# ---- evidence / payload validation -------------------------------------------------------------------
+
+def is_shared_reference(s) -> bool:
+    return isinstance(s, str) and bool(_URL_RE.match(s) or _ISSUE_RE.match(s) or _SHA_RE.match(s))
+
+
+def _check_issue(issue: str):
+    if not isinstance(issue, str) or not _ISSUE_RE.match(issue):
+        raise ValueError(f"issue must be 'owner/repo#n', got {issue!r}")
+
+
+def _norm(s) -> str:
+    return re.sub(r"[\s_-]+", " ", str(s or "")).strip().lower().replace("status: ", "status:")
+
+
+def default_key(issue: str, event: str, payload: dict) -> str:
+    fields = KEY_FIELDS.get(event, ("target",))
+    body = {}
+    for f in fields:
+        v = payload.get(f)
+        body[f] = sorted(v) if f == "evidence" and isinstance(v, list) else v
+    raw = json.dumps([issue, event, body], sort_keys=True, ensure_ascii=True)
+    return hashlib.sha256(raw.encode()).hexdigest()[:24]
+
+
+# ---- marker rendering / parsing ---------------------------------------------------------------------
+
+def render_marker(event: Event, line: str) -> str:
+    obj = {"v": MARKER_VERSION, "event": event.event, "idempotency_key": event.idempotency_key,
+           "target": event.target, "blocking": event.blocking, "at": event.at, "by": event.by,
+           "evidence": list(event.evidence)}
+    if event.when is not None:
+        obj["when"] = event.when
+    # '>' only occurs inside JSON strings; escaping it keeps a payload from closing the comment early.
+    js = json.dumps(obj, ensure_ascii=True, separators=(",", ":")).replace(">", "\\u003e")
+    line = " ".join(str(line).split()).replace("<!--", "").replace("-->", "")
+    return f"<!-- foundry-deck: {js} -->\n{line}\n"
+
+
+def _unparsed(c, why):
+    return Event(event="unparsed", at=_iso(_dt(c["createdAt"])), source="marker", comment_id=str(c.get("id")),
+                 author=((c.get("author") or {}).get("login")), detail=why)
+
+
+def _markers_in(comment) -> list:
+    """Every marker in one comment, as Event (parsed) or Event('unparsed')."""
+    body = comment.get("body") or ""
+    out = []
+    n_prefix = len(_MARKER_PREFIX.findall(body))
+    found = _MARKER_RE.findall(body)
+    for raw in found:
+        try:
+            obj = json.loads(raw)
+        except (ValueError, TypeError):
+            out.append(_unparsed(comment, "malformed_json"))
+            continue
+        if not isinstance(obj, dict):
+            out.append(_unparsed(comment, "not_an_object"))
+        elif type(obj.get("v")) is not int or obj.get("v") != MARKER_VERSION:
+            out.append(_unparsed(comment, "unknown_version"))
+        elif any(f not in obj for f in MARKER_FIELDS):
+            out.append(_unparsed(comment, "missing_fields"))
+        elif obj["event"] not in EVENTS or not MAPPING[obj["event"]]["marker"]:
+            out.append(_unparsed(comment, "event_not_markable"))
+        elif not isinstance(obj["evidence"], list) or not isinstance(obj["idempotency_key"], str):
+            out.append(_unparsed(comment, "bad_field_type"))
+        else:
+            out.append(Event(event=obj["event"], at=_iso(_dt(comment["createdAt"])), by=obj["by"],
+                             target=obj["target"], blocking=obj["blocking"], evidence=list(obj["evidence"]),
+                             source="marker", comment_id=str(comment.get("id")),
+                             author=((comment.get("author") or {}).get("login")),
+                             idempotency_key=obj["idempotency_key"],
+                             when=obj.get("when") if isinstance(obj.get("when"), str) else None))
+    if n_prefix > len(found):   # a prefix with no closing `-->`
+        out.append(_unparsed(comment, "unterminated_marker"))
+    return out
+
+
+# ---- the pure reader --------------------------------------------------------------------------------
+
+def _ref(node) -> str | None:
+    if not isinstance(node, dict):
+        return None
+    repo = (node.get("repository") or {}).get("nameWithOwner")
+    return f"{repo}#{node['number']}" if repo and node.get("number") is not None else None
+
+
+def parse(timeline, comments, as_of) -> History:
+    """Rebuild history from fetched `timelineItems` nodes + comments, using only records <= as_of. Pure."""
+    cutoff = _dt(as_of)
+    recs = []   # (time, source_rank, index, kind, payload)
+    for i, n in enumerate(timeline or []):
+        if isinstance(n, dict) and n.get("createdAt") and _dt(n["createdAt"]) <= cutoff:
+            recs.append((_dt(n["createdAt"]), 0, i, "tl", n))
+    for i, c in enumerate(comments or []):
+        if isinstance(c, dict) and c.get("createdAt") and _dt(c["createdAt"]) <= cutoff:
+            for j, ev in enumerate(_markers_in(c)):
+                recs.append((_dt(c["createdAt"]), 1, i * 1000 + j, "mk", ev))
+    recs.sort(key=lambda r: r[:3])
+
+    events, closures = [], []
+    open_iv, intervals = {}, []
+    st = {"ready_open": False, "started": False, "ever_started": False, "ever_ready": False,
+          "accepted_seen": False, "dup_open": False}
+    blocked_open = {}   # target -> time of latest blocked record
+
+    for t, _, _, kind, rec in recs:
+        if kind == "mk":
+            ev = rec
+            if ev.event == "start":
+                if st["started"]:
+                    continue    # already started; a repeat start marker is not a new start
+                _do_start(ev, st)
+            elif ev.event == "accepted":
+                ev.first = not st["accepted_seen"]
+                st["accepted_seen"] = True
+            events.append(ev)
+            continue
+        n = rec
+        tn = n.get("__typename")
+        actor = (n.get("actor") or {}).get("login")
+        at = _iso(t)
+
+        def mk(name, **kw):
+            return Event(event=name, at=at, by=actor, source="timeline", **kw)
+
+        if tn == "ProjectV2ItemStatusChangedEvent" or (tn == "LabeledEvent" and
+                                                      _norm((n.get("label") or {}).get("name")).startswith("status:")):
+            status = _norm(n.get("status")) if tn != "LabeledEvent" else _norm(n["label"]["name"])[len("status:"):]
+            _status(status, mk, events, st)
+        elif tn in ("BlockedByAddedEvent", "BlockingAddedEvent"):
+            target = _ref(n.get("blockingIssue") if tn == "BlockedByAddedEvent" else n.get("blockedIssue"))
+            events.append(mk("blocked", target=target, blocking=target))
+            blocked_open[target] = t
+        elif tn in ("BlockedByRemovedEvent", "BlockingRemovedEvent"):
+            target = _ref(n.get("blockingIssue") if tn == "BlockedByRemovedEvent" else n.get("blockedIssue"))
+            blocked_open.pop(target, None)
+        elif tn == "ReopenedEvent":
+            events.append(mk("reopened"))
+            st["started"] = False
+            st["dup_open"] = False
+        elif tn == "ClosedEvent":
+            reason = str(n.get("stateReason") or "COMPLETED").upper()
+            if reason == "NOT_PLANNED":
+                events.append(mk("cancelled"))
+            elif reason == "DUPLICATE":
+                if not st["dup_open"]:
+                    events.append(mk("duplicate"))
+                st["dup_open"] = True
+            else:
+                closures.append(Closure(at=at, by=actor))
+        elif tn == "MarkedAsDuplicateEvent":
+            if not st["dup_open"]:
+                events.append(mk("duplicate"))
+            st["dup_open"] = True
+        elif tn == "AssignedEvent":
+            who = (n.get("assignee") or {}).get("login")
+            if who and who not in open_iv:
+                iv = {"assignee": who, "start": at, "end": None}
+                open_iv[who] = iv
+                intervals.append(iv)
+        elif tn == "UnassignedEvent":
+            who = (n.get("assignee") or {}).get("login")
+            if who in open_iv:
+                open_iv.pop(who)["end"] = at
+        # LabeledEvent (non-status), CrossReferencedEvent and others carry no deck event.
+
+    _validate_blockers(events, blocked_open)
+    unack = sorted(tg for tg in blocked_open if not any(
+        e.event == "blocker_ack" and e.invalid is None and e.target == tg and _dt(e.at) >= blocked_open[tg]
+        for e in events))
+    return History(events=events, intervals=intervals, closures=closures, unacknowledged=unack)
+
+
+def _do_start(ev, st):
+    ev.first = not st["ever_started"]
+    st["ever_started"] = True
+    st["started"] = True
+    st["ready_open"] = False
+
+
+def _status(status, mk, events, st):
+    if status == "ready":
+        if not st["ready_open"]:
+            e = mk("ready", target=None)
+            e.first = (not st["ever_ready"]) and (not st["ever_started"])
+            st["ever_ready"] = True
+            st["ready_open"] = True
+            events.append(e)
+    elif status == "in progress":
+        if not st["started"]:
+            e = mk("start")
+            _do_start(e, st)
+            events.append(e)
+    elif status == "backlog":
+        st["ready_open"] = False
+        if st["ever_started"] and st["started"]:
+            events.append(mk("withdrawn"))
+            st["started"] = False
+
+
+def _validate_blockers(events, blocked_open):
+    """Flag each blocker_ack that has no blocked record for its target at or before it."""
+    seen = {}   # target -> times of blocked records so far (events are time-ordered)
+    for e in events:
+        if e.event == "blocked":
+            seen.setdefault(e.target, []).append(_dt(e.at))
+        elif e.event == "blocker_ack":
+            if not any(bt <= _dt(e.at) for bt in seen.get(e.target, [])):
+                e.invalid = "before_blocking"
+
+
+# ---- the gh adapter (the ONLY place a subprocess runs) ----------------------------------------------
+
+_TIMELINE_QUERY = """
+query($owner:String!,$repo:String!,$number:Int!,$after:String){repository(owner:$owner,name:$repo){
+issue(number:$number){timelineItems(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{
+__typename
+... on BlockedByAddedEvent{createdAt actor{login} blockingIssue{number repository{nameWithOwner}}}
+... on BlockingAddedEvent{createdAt actor{login} blockedIssue{number repository{nameWithOwner}}}
+... on BlockedByRemovedEvent{createdAt actor{login} blockingIssue{number repository{nameWithOwner}}}
+... on BlockingRemovedEvent{createdAt actor{login} blockedIssue{number repository{nameWithOwner}}}
+... on ClosedEvent{createdAt actor{login} stateReason}
+... on ReopenedEvent{createdAt actor{login}}
+... on MarkedAsDuplicateEvent{createdAt actor{login}}
+... on ProjectV2ItemStatusChangedEvent{createdAt actor{login} status previousStatus}
+... on AssignedEvent{createdAt actor{login} assignee{... on User{login}}}
+... on UnassignedEvent{createdAt actor{login} assignee{... on User{login}}}
+... on LabeledEvent{createdAt actor{login} label{name}}
+... on CrossReferencedEvent{createdAt actor{login}}
+}}}}}
+"""
+
+
+class GhAdapter:
+    """Production adapter: the single object through which `gh` is invoked. Tests substitute a stub with
+    the same three methods: timeline(issue), comments(issue), post_comment(issue, body)."""
+
+    def _run(self, args, stdin=None):
+        r = subprocess.run(["gh", *args], input=stdin, capture_output=True, text=True, timeout=120)
+        if r.returncode != 0:
+            raise RuntimeError(f"gh {' '.join(args[:2])} failed: {r.stderr.strip()[:300]}")
+        return r.stdout
+
+    def comments(self, issue):
+        owner_repo, num = issue.split("#")
+        out = self._run(["issue", "view", num, "-R", owner_repo, "--json", "comments"])
+        return json.loads(out).get("comments", [])
+
+    def post_comment(self, issue, body):
+        owner_repo, num = issue.split("#")
+        self._run(["issue", "comment", num, "-R", owner_repo, "--body-file", "-"], stdin=body)
+
+    def timeline(self, issue):
+        m = _ISSUE_RE.match(issue)
+        owner, repo, num = m.groups()
+        nodes, after = [], None
+        while True:
+            args = ["api", "graphql", "-f", f"query={_TIMELINE_QUERY}", "-f", f"owner={owner}",
+                    "-f", f"repo={repo}", "-F", f"number={num}"]
+            if after:
+                args += ["-f", f"after={after}"]
+            data = json.loads(self._run(args))["data"]["repository"]["issue"]["timelineItems"]
+            nodes += data["nodes"]
+            if not data["pageInfo"]["hasNextPage"]:
+                return nodes
+            after = data["pageInfo"]["endCursor"]
+
+
+# ---- the idempotent writer --------------------------------------------------------------------------
+
+def emit(issue, event, payload, adapter=None, clock=None) -> Event:
+    """Record `event` on `issue` as a marker comment unless a marker with the same idempotency key exists.
+
+    Raises ValueError for an unknown or native-only event, or evidence that is not shared references.
+    `payload`: target, blocking, by (required), evidence, when, key (explicit idempotency_key), at, note.
+    """
+    if event not in EVENTS or not MAPPING[event]["marker"]:
+        raise ValueError(f"event {event!r} cannot be emitted"
+                         + (" (native-only: GitHub's own record establishes it)" if event in EVENTS else ""))
+    _check_issue(issue)
+    payload = dict(payload or {})
+    evidence = payload.get("evidence") or []
+    if not isinstance(evidence, list):
+        raise ValueError("evidence must be a list")
+    if event in EVIDENCE_REQUIRED and not evidence:
+        raise ValueError(f"{event} requires evidence (a shared reference)")
+    bad = [x for x in evidence if not is_shared_reference(x)]
+    if bad:
+        raise ValueError(f"evidence must be a URL, owner/repo#n or commit SHA (not a local path): {bad!r}")
+    by = payload.get("by")
+    if not isinstance(by, str) or not by:
+        raise ValueError("by (the recording actor) is required")
+    adapter = adapter or GhAdapter()
+    key = payload.get("key") or default_key(issue, event, payload)
+    for c in adapter.comments(issue):
+        for ex in _markers_in(c):
+            if ex.event != "unparsed" and ex.idempotency_key == key:
+                return ex
+    at = payload.get("at") or _iso((clock or (lambda: datetime.now(timezone.utc)))())
+    blocking = payload.get("blocking")
+    if event == "blocker_ack" and blocking is None:
+        blocking = payload.get("target")
+    ev = Event(event=event, at=_iso(_dt(at)), by=by, target=payload.get("target"), blocking=blocking,
+               evidence=list(evidence), source="marker", idempotency_key=key, when=payload.get("when"))
+    note = payload.get("note") or f"{event} recorded by {by}" + (f" for {ev.target}" if ev.target else "")
+    adapter.post_comment(issue, render_marker(ev, note))
+    return ev
+
+
+def fetch_history(issue, as_of, adapter=None) -> History:
+    _check_issue(issue)
+    adapter = adapter or GhAdapter()
+    return parse(adapter.timeline(issue), adapter.comments(issue), as_of)
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("parse")
+    p.add_argument("issue")
+    p.add_argument("--as-of", required=True)
+    e = sub.add_parser("emit")
+    e.add_argument("issue")
+    e.add_argument("event")
+    e.add_argument("--payload", default="{}")
+    a = ap.parse_args(argv)
+    try:
+        if a.cmd == "parse":
+            h = fetch_history(a.issue, a.as_of)
+            print(json.dumps({"events": [x.as_dict() for x in h.events], "intervals": h.intervals,
+                              "closures": [asdict(c) for c in h.closures], "unacknowledged": h.unacknowledged},
+                             indent=2))
+        else:
+            print(json.dumps(emit(a.issue, a.event, json.loads(a.payload)).as_dict(), indent=2))
+    except (ValueError, RuntimeError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
