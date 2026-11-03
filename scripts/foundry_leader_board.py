@@ -134,6 +134,13 @@ def _label(labels, prefix):
     return None
 
 
+def _field_text(v):
+    """A Project single-select value: a plain string or {"name": ...}; anything else is absent."""
+    if isinstance(v, dict):
+        v = v.get("name")
+    return v.strip() if isinstance(v, str) and v.strip() else None
+
+
 def _owner_at(intervals, t):
     act = sorted(iv["assignee"] for iv in intervals
                  if _d(iv["start"]) <= t and (iv["end"] is None or _d(iv["end"]) > t))
@@ -175,10 +182,10 @@ def _facts(iss, cutoff):
     f.created = created
     f.title = iss.get("title")
     f.author = iss.get("author")
-    f.work_type = _label(labels, "type:") or "unclassified"
+    f.work_type = (_label(labels, "work:") or _field_text(iss.get("work_type")) or "unclassified").lower()
     f.service = iss.get("service") or _label(labels, "service:")
     f.project = iss.get("project")
-    f.is_request = any(lb.lower() in ("request", "kind:request") for lb in labels)
+    f.is_request = any(lb.lower() == "request" for lb in labels)
     f.deliverable = any(lb.lower() == "deliverable" for lb in labels)
     f.request_type = _label(labels, "request:") or "unspecified"
     f.parent = iss.get("parent")
@@ -227,16 +234,18 @@ def _observations(facts, cutoff, mapping):
     parents = {f.parent for f in facts if f.parent} | {f.ref for f in facts if f.children}
     byref = {f.ref: f for f in facts}
     o = {k: [] for k in ("accepted", "reopen", "reaccept", "regression", "revert", "blocker_ack",
-                         "blocker_res", "turnaround", "reliability", "request_done")}
+                         "blocker_res", "turnaround", "reliability", "request_done", "invalid_ack",
+                         "excluded_cancelled")}
     wip, queue = [], {"blockers": [], "overdue": [], "never_responded": [], "unscheduled": [],
                       "reviews": []}
-    notes = {"unparseable_targets": [], "excluded_cancelled_from_cohort": []}
+    notes = {"unparseable_targets": [], "original_target_unavailable": []}
     unmapped = set()
 
     def op(login):
         if login is not None and login not in mapping:
             unmapped.add(login)
         return _opkey(login, mapping)
+    op.mapping = mapping
 
     for f in facts:
         meta = {"project": f.project, "work_type": f.work_type, "service": f.service}
@@ -258,7 +267,8 @@ def _observations(facts, cutoff, mapping):
                         "cycle": _sec(t - _d(f.start.at)) if f.start and _d(f.start.at) <= t else None,
                         "ready_lead": (_sec(t - _d(f.ready.at))
                                        if f.ready and _d(f.ready.at) <= t else None),
-                        "start": f.start.at if f.start else None, "ready": f.ready.at if f.ready else None}
+                        "start": f.start.at if f.start else None, "ready": f.ready.at if f.ready else None,
+                        "created": _s(f.created) if f.created else None}
                 o["accepted"].append(item)
             for e in f.reopened:
                 if f.accepted is not None:
@@ -288,11 +298,11 @@ def _observations(facts, cutoff, mapping):
                 o[kind].append({"id": f.ref, "at": f.created, "op": aff_op or UNATTRIBUTED, "affects": tgt,
                                 "meta": meta})
         if f.is_request:
-            _request_obs(f, cutoff, o, queue, notes, op, meta)
+            _request_obs(f, cutoff, o, queue, notes, op, meta, byref)
     return o, wip, queue, notes, unmapped, parents
 
 
-def _request_obs(f, cutoff, o, queue, notes, op, meta):
+def _request_obs(f, cutoff, o, queue, notes, op, meta, byref):
     ev = f.h.events
     req_at = f.created
     cands = [_d(e.at) for e in f.of("resolved")] + [_d(c.at) for c in f.h.closures]
@@ -314,16 +324,28 @@ def _request_obs(f, cutoff, o, queue, notes, op, meta):
         nxt = next((_d(x.at) for x in blocks[i + 1:] if x.target == b.target), None)
         inside = lambda t: t >= tb and (nxt is None or t < nxt)  # noqa: E731
         bid = f"{f.ref}->{b.target}@{b.at}"
-        ack_b = next((e for e in f.of("blocker_ack") if e.target == b.target and inside(_d(e.at))), None)
-        res = next((e for e in f.of("resolved") if inside(_d(e.at))), None)
-        end = _d(res.at) if res else (_d(ack_b.at) if ack_b else None)
+        acks_in = [e for e in f.of("blocker_ack") if e.target == b.target and inside(_d(e.at))]
+        # a resolution closes the episode when it names the blocked issue or the request itself
+        res = next((e for e in f.of("resolved") if inside(_d(e.at)) and e.target in (b.target, f.ref, None)), None)
+        end = _d(res.at) if res else (_d(acks_in[0].at) if acks_in else None)
         login, t0, amb = _attrib(f.intervals, tb, end)
         opk = op(login)
+        # an acknowledgement before the request targeted anyone is invalid: excluded and listed, never clamped
+        for e in acks_in:
+            if _d(e.at) < t0:
+                o["invalid_ack"].append({"id": bid, "at": _d(e.at), "op": opk, "meta": meta})
+        ack_b = next((e for e in acks_in if _d(e.at) >= t0), None)
         if ack_b is not None:
             o["blocker_ack"].append({"id": bid, "at": _d(ack_b.at), "op": opk, "ambiguous_handoff": amb,
-                                     "value": max(0, _sec(_d(ack_b.at) - t0)), "meta": meta})
-        cross = f.author is not None and login is not None and f.author != login
-        if res is not None and f.of("resolved"):
+                                     "value": _sec(_d(ack_b.at) - t0), "meta": meta})
+        # cross-engineer: the blocked issue's owner when blocking began differs from the targeted operator
+        bf = byref.get(b.target)
+        blocked_owner = _owner_at(bf.intervals, tb)[0] if bf is not None else None
+        if blocked_owner is None or login is None:
+            cross = None                       # unattributed: listed, in neither the count nor the pooled times
+        else:
+            cross = _opkey(blocked_owner, op.mapping) != opk
+        if res is not None:
             o["blocker_res"].append({"id": bid, "at": _d(res.at), "op": opk, "ambiguous_handoff": amb,
                                      "value": max(0, _sec(_d(res.at) - t0)), "cross_engineer": cross,
                                      "meta": meta})
@@ -346,15 +368,24 @@ def _request_obs(f, cutoff, o, queue, notes, op, meta):
             queue["unscheduled"].append({"id": f.ref, "op": op(owner_now), "meta": meta})
         return
     structured = [e.original_target for e in sched if e.original_target]
-    firsts = [e for e in sched if e.event == "scheduled"] or sched
-    original = structured[0] if structured else firsts[0].when
+    firsts = [e for e in sched if e.event == "scheduled"]
+    original = structured[0] if structured else (firsts[0].when if firsts else None)
     current = sched[-1].when
+    if original is None:
+        # a rescheduled-only history never recorded the first target: say so, never guess it from the new one
+        notes["original_target_unavailable"].append(f.ref)
+        cur_dl = parse_deadline(current)
+        if open_now and cur_dl is not None and cur_dl < cutoff:
+            queue["overdue"].append({"id": f.ref, "op": op(owner_now), "target": current,
+                                     "overdue_by": _sec(cutoff - cur_dl), "original_target": "unavailable",
+                                     "meta": meta})
+        return
     dl = parse_deadline(original)
     if dl is None:
         notes["unparseable_targets"].append(f.ref)
         return
     if f.terminal:
-        notes["excluded_cancelled_from_cohort"].append(f.ref)
+        o["excluded_cancelled"].append({"id": f.ref, "at": dl, "op": op(owner_now), "meta": meta})
         return
     login, _, _ = _attrib(f.intervals, req_at or dl, completed)
     done_on_time = completed is not None and completed <= dl
@@ -380,16 +411,20 @@ def _norm_issue(v, default_repo):
 
 
 def _usage_rows(rows, cutoff, default_repo):
-    """Deduplicate by request id; drop rows after the cutoff or with no parseable time."""
+    """Deduplicate by request id; drop rows after the cutoff. A row with no request id or no parseable time
+    cannot be deduplicated or placed in a window: it is kept as `unplaced` (listed, left out of every total)."""
     seen, out, unplaced = {}, [], []
-    for r in sorted(rows or [], key=lambda r: (str(r.get("at")), str(r.get("request_id")))):
+    for k, r in enumerate(sorted(rows or [], key=lambda r: (str(r.get("at")), str(r.get("request_id"))))):
         rid = r.get("request_id")
+        if rid in (None, ""):
+            unplaced.append(f"(no request_id) #{k + 1} at {r.get('at')}")
+            continue
         if rid in seen:
             continue
         seen[rid] = True
         t = us.parse_ts(r.get("at"))
         if t is None:
-            unplaced.append(rid)
+            unplaced.append(str(rid))
             continue
         if t > cutoff:
             continue
@@ -549,9 +584,11 @@ def compute(inputs, as_of, filters=None, sort=None):
         why = []
         if not usage_present or not ucov:
             why.append("no usage coverage record")
-        if earliest is None or not acc["start"] or _d(acc["start"]) < earliest:
-            why.append("usage collection began after the outcome started" if acc["start"]
-                       else "no start timestamp to compare with the collection start")
+        firsts = [_d(v) for v in (acc["ready"], acc["created"], acc["start"]) if v]
+        if not firsts:
+            why.append("no Ready, created or Start timestamp to compare with the collection start")
+        elif earliest is None or min(firsts) < earliest:
+            why.append("usage collection began after the outcome was first ready, created or started")
         gone = sorted({mapping.get(x, x) for x in [acc["login"]] + acc["previous_owners"] if x} & silent)
         if gone:
             why.append("contributing operators with no usage records: " + ", ".join(gone))
@@ -576,11 +613,13 @@ def compute(inputs, as_of, filters=None, sort=None):
                 rolled.setdefault(x["parent"], []).append(x["id"])
         accp = [a["id"] for a in acc]
         res = sel("blocker_res")
-        resolved = [x for x in res if x["cross_engineer"]]
+        attributed = [x for x in res if x["cross_engineer"] is not None]
+        resolved = [x for x in attributed if x["cross_engineer"]]
         ta = {}
         for x in sel("turnaround"):
             ta.setdefault(x["rtype"], []).append(x)
         rel = sel("reliability")
+        excl = sorted(x["id"] for x in sel("excluded_cancelled"))
         done_on_time = [x for x in rel if x["on_time"]]
         m = {
             "throughput": {"count": len(acc), "ids": sorted(accp),
@@ -596,9 +635,13 @@ def compute(inputs, as_of, filters=None, sort=None):
                                      if x["ready_lead"] is not None], population=accp,
                                     source="Ready timestamp", empty_reason="no outcome first accepted in the window"),
             "blockers_resolved": {"count": len(resolved), "ids": sorted(x["id"] for x in resolved),
-                                  "excluded_not_cross_engineer": sorted(x["id"] for x in res if not x["cross_engineer"])},
-            "blocker_ack_time": dist(sel("blocker_ack"), empty_reason="no blocker acknowledged in the window"),
-            "blocker_resolution_time": dist(res, empty_reason="no blocker resolved in the window"),
+                                  "excluded_not_cross_engineer": sorted(x["id"] for x in attributed
+                                                                        if not x["cross_engineer"]),
+                                  "unattributed": sorted(x["id"] for x in res if x["cross_engineer"] is None)},
+            "blocker_ack_time": dist(sel("blocker_ack"), empty_reason="no blocker acknowledged in the window")
+            | {"invalid_acks": sorted(x["id"] for x in sel("invalid_ack"))},
+            "blocker_resolution_time": dist(attributed, empty_reason="no blocker resolved in the window")
+            | {"unattributed_ids": sorted(x["id"] for x in res if x["cross_engineer"] is None)},
             "turnaround_by_request_type": {k: dist(v) for k, v in sorted(ta.items())} or
             {"status": "unavailable", "reason": "no request response completed in the window"},
             "scheduled_request_reliability": (
@@ -607,17 +650,18 @@ def compute(inputs, as_of, filters=None, sort=None):
                  "on_time_ids": sorted(x["id"] for x in done_on_time),
                  "late_or_open_ids": sorted(x["id"] for x in rel if not x["on_time"]),
                  "rescheduled_ids": sorted(x["id"] for x in rel if x["rescheduled"]),
-                 "label": "small sample" if len(rel) < SMALL_SAMPLE_N else None}
-                if rel else {"status": "unavailable", "reason": "no scheduled request had its original target in the window"}),
+                 "label": "small sample" if len(rel) < SMALL_SAMPLE_N else None,
+                 "excluded_cancelled_from_cohort": excl}
+                if rel else {"status": "unavailable", "reason": "no scheduled request had its original target in the window",
+                             "excluded_cancelled_from_cohort": excl}),
             "routine_requests_completed": {"count": len(sel("request_done")),
                                            "ids": sorted(x["id"] for x in sel("request_done"))},
-            "quality_follow_up": {k: {"count": len(sel(k)), "ids": sorted(x["id"] for x in sel(k)),
-                                      "affected_outcomes": sorted({x.get("affects") or x["id"] for x in sel(k)})}
-                                  for k in ("reopen", "reaccept", "regression", "revert")},
+            "quality_follow_up": {name: {"count": len(sel(k)), "ids": sorted(x["id"] for x in sel(k)),
+                                         "affected_outcomes": sorted({x.get("affects") or x["id"] for x in sel(k)})}
+                                  for k, name in (("reopen", "reopenings"), ("reaccept", "reacceptances"),
+                                                  ("regression", "linked_regressions"),
+                                                  ("revert", "linked_reverts"))},
         }
-        m["quality_follow_up"] = {{"reopen": "reopenings", "reaccept": "reacceptances",
-                                   "regression": "linked_regressions", "revert": "linked_reverts"}[k]: v
-                                  for k, v in m["quality_follow_up"].items()}
         # ---- tokens
         if not usage_present:
             m["tokens"] = {"status": "unavailable", "reason": "no usage dataset configured (gn-05)"}
@@ -722,7 +766,11 @@ def compute(inputs, as_of, filters=None, sort=None):
     if unmapped:
         reasons.append("assignees with no operator mapping: " + ", ".join(sorted(unmapped)))
     if unplaced:
-        reasons.append(f"usage: {len(unplaced)} records with no parseable timestamp")
+        reasons.append(f"usage: {len(unplaced)} records with no request id or parseable timestamp "
+                       "(unplaced, excluded from every total)")
+    if notes["original_target_unavailable"]:
+        reasons.append("requests rescheduled with no recorded original target (excluded from the reliability "
+                       "cohort): " + ", ".join(sorted(notes["original_target_unavailable"])))
     if notes["unparseable_targets"]:
         reasons.append("requests with an unparseable schedule target: " + ", ".join(sorted(notes["unparseable_targets"])))
     reasons = sorted(set(reasons))
@@ -745,6 +793,8 @@ def compute(inputs, as_of, filters=None, sort=None):
         "overhead": {"note": "lead overhead and unallocated usage stay visible beside attributed usage; "
                              "nothing is allocated to outcomes"},
         "usage_coverage": ucov,
+        "usage_unplaced": {"count": len(unplaced), "ids": sorted(unplaced)},
+        "original_target_unavailable": sorted(notes["original_target_unavailable"]),
         "no_composite_score": True,
     }
     out = {"header": header, "windows": windows_out, "queue_panel": panel,
@@ -880,7 +930,15 @@ def _scope_lines(m, ind):
     L.append(f"{p}ready lead time: {_rd(m['ready_lead_time'])}")
     b = m["blockers_resolved"]
     L.append(f"{p}blockers resolved: {b['count']} ids: {', '.join(b['ids']) or '-'}")
+    if b["excluded_not_cross_engineer"]:
+        L.append(f"{p}  excluded (not cross-engineer): {', '.join(b['excluded_not_cross_engineer'])}")
+    if b["unattributed"]:
+        L.append(f"{p}  unattributed (blocked issue or targeted operator has no single owner; "
+                 f"not counted, not in the pooled times): {', '.join(b['unattributed'])}")
     L.append(f"{p}blocker acknowledgement time: {_rd(m['blocker_ack_time'])}")
+    if m["blocker_ack_time"]["invalid_acks"]:
+        L.append(f"{p}  invalid acknowledgements (before the request targeted anyone; excluded): "
+                 f"{', '.join(m['blocker_ack_time']['invalid_acks'])}")
     L.append(f"{p}blocker resolution time: {_rd(m['blocker_resolution_time'])}")
     ta = m["turnaround_by_request_type"]
     if "status" in ta:
@@ -895,6 +953,9 @@ def _scope_lines(m, ind):
         L.append(f"{p}scheduled-request reliability (original-target cohort): {r['on_time']}/{r['due_cohort']} "
                  f"= {r['rate']}" + (" [small sample]" if r.get("label") else "")
                  + f" ids: {', '.join(r['on_time_ids'] + r['late_or_open_ids'])}")
+    if r["excluded_cancelled_from_cohort"]:
+        L.append(f"{p}  cancelled/duplicate requests excluded from the cohort: "
+                 f"{', '.join(r['excluded_cancelled_from_cohort'])}")
     rq = m["routine_requests_completed"]
     L.append(f"{p}routine requests completed (not throughput): {rq['count']} ids: {', '.join(rq['ids']) or '-'}")
     q = m["quality_follow_up"]
@@ -1000,6 +1061,11 @@ def render_text(rep):
         L.append(f"usage records {uc.get('records')}, attributed {uc.get('attributed_records')}, "
                  f"unknown-shape {((uc.get('unknown_shape') or {}).get('records'))} (tokens unknown), "
                  f"complete: {'yes' if uc.get('complete') else 'no'}")
+    up = h["usage_unplaced"]
+    L.append(f"usage records unplaced (no request id or parseable time; excluded from totals): {up['count']}"
+             + (f" ids: {', '.join(up['ids'])}" if up["ids"] else ""))
+    L.append("requests rescheduled with no recorded original target: "
+             + (", ".join(h["original_target_unavailable"]) or "none"))
     L.append(h["overhead"]["note"])
     return "\n".join(L) + "\n"
 
@@ -1033,8 +1099,31 @@ def _body_link(body, words):
     return m.group(1) if m else None
 
 
+def _json_stream(text):
+    """`gh api --paginate` prints one JSON array per page back to back: flatten them into one list."""
+    dec, i, out, text = json.JSONDecoder(), 0, [], (text or "").strip()
+    while i < len(text):
+        val, i = dec.raw_decode(text, i)
+        out += val if isinstance(val, list) else [val]
+        while i < len(text) and text[i].isspace():
+            i += 1
+    return out
+
+
+def _project_work_type(items):
+    """The Project `Work type` field value, when the fetched project item carries it."""
+    for it in items or []:
+        if isinstance(it, dict):
+            for k in ("Work type", "workType", "work_type"):
+                v = _field_text(it.get(k))
+                if v:
+                    return v
+    return None
+
+
 def fetch_issues(cfg, runner, timeout, as_of):
-    """-> (issues, inaccessible, truncated_sources). Open issues + closed since the lookback."""
+    """-> (issues, inaccessible). Open issues + closed since the lookback. A list that reaches LIST_LIMIT
+    is reported as truncated (so the header says `collection complete: no`)."""
     repos = [r for r in (cfg.get("repos") or []) if isinstance(r, str)] or [f"{cfg['owner']}/{cfg['planning_repo']}"]
     since = _s(as_of - timedelta(days=LOOKBACK_DAYS))[:10]
     adapter = _RunnerAdapter(runner, timeout)
@@ -1052,7 +1141,7 @@ def fetch_issues(cfg, runner, timeout, as_of):
                 bad.append({"source": f"{repo} {state} issues", "detail": str(exc)})
                 continue
             if len(rows) >= LIST_LIMIT:
-                bad.append({"source": f"{repo} {state} issues", "detail": f"list truncated at {LIST_LIMIT}"})
+                bad.append({"source": f"{repo} {state} issues", "detail": f"list truncated at {LIST_LIMIT}; issues beyond it are not counted"})
             for r in rows:
                 ref = f"{repo}#{r['number']}"
                 if ref in seen:
@@ -1065,14 +1154,15 @@ def fetch_issues(cfg, runner, timeout, as_of):
                     bad.append({"source": ref, "detail": str(exc)[:200]})
                     continue
                 kids = []
-                sub = runner(["gh", "api", f"repos/{repo}/issues/{r['number']}/sub_issues"], timeout)
+                sub = runner(["gh", "api", "--paginate", f"repos/{repo}/issues/{r['number']}/sub_issues?per_page=100"],
+                             timeout)
                 if sub.rc == 0:
                     try:
-                        for c in json.loads(sub.stdout or "[]"):
+                        for c in _json_stream(sub.stdout):
                             cr = (c.get("repository_url") or "").split("repos/")[-1]
                             if cr and c.get("number"):
                                 kids.append(f"{cr}#{c['number']}")
-                    except (ValueError, AttributeError):
+                    except (ValueError, AttributeError, TypeError):
                         bad.append({"source": f"{ref} sub-issues", "detail": "unparseable"})
                 else:
                     bad.append({"source": f"{ref} sub-issues", "detail": "parent roll-up unavailable"})
@@ -1082,10 +1172,15 @@ def fetch_issues(cfg, runner, timeout, as_of):
                 issues.append({"ref": ref, "title": r.get("title"), "created_at": r.get("createdAt"),
                                "author": (r.get("author") or {}).get("login"),
                                "labels": sorted(lb.get("name", "") for lb in r.get("labels") or []),
-                               "project": proj, "children": sorted(kids), "timeline": tl, "comments": cm,
+                               "project": proj, "work_type": _project_work_type(items),
+                               "children": sorted(kids), "timeline": tl, "comments": cm,
                                "regression_of": _body_link(body, "regression of|regresses"),
                                "revert_of": _body_link(body, "reverts|revert of")})
-    return sorted(issues, key=lambda i: i["ref"]), bad, []
+    parent_of = {c: i["ref"] for i in issues for c in i["children"]}
+    for i in issues:
+        if i["ref"] in parent_of:
+            i["parent"] = parent_of[i["ref"]]
+    return sorted(issues, key=lambda i: i["ref"]), bad
 
 
 def load_usage(project_dir, dataset, as_of):
@@ -1111,7 +1206,7 @@ def fetch_inputs(project_dir, as_of, runner=default_runner, timeout=30, dataset=
     if cfg is None:
         raise ValueError("no github_scope configured in .claude/foundry-project.json")
     lb = manifest.get("leader_board") if isinstance(manifest.get("leader_board"), dict) else {}
-    issues, bad, _ = fetch_issues(cfg, runner, timeout, as_of)
+    issues, bad = fetch_issues(cfg, runner, timeout, as_of)
     rows, cov = load_usage(project_dir, dataset, as_of)
     deployments = None
     dpath = deployments_path or lb.get("deployments")

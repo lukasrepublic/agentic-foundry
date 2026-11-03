@@ -28,7 +28,7 @@
    ],
    "created_at": "2026-10-20T08:00:00Z",
    "labels": [
-    "type:feature"
+    "work:code"
    ],
    "project": "Delivery",
    "ref": "example-org/planning#1",
@@ -96,7 +96,7 @@
    ],
    "created_at": "2026-10-24T08:00:00Z",
    "labels": [
-    "type:feature"
+    "work:code"
    ],
    "project": "Delivery",
    "ref": "example-org/planning#2",
@@ -127,7 +127,7 @@
    "comments": [],
    "created_at": "2026-10-29T08:00:00Z",
    "labels": [
-    "type:feature"
+    "work:code"
    ],
    "project": "Delivery",
    "ref": "example-org/planning#3",
@@ -183,7 +183,7 @@
    ],
    "created_at": "2026-10-01T08:00:00Z",
    "labels": [
-    "type:fix"
+    "work:operations"
    ],
    "project": "Delivery",
    "ref": "example-org/planning#4",
