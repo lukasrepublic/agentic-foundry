@@ -1003,9 +1003,9 @@ def _epoch(iso) -> float:
 
 
 def _session_id(root: Path, flag: str | None, host: str) -> str:
-    """Stable across invocations of the CLI: CLAUDE_CODE_SESSION_ID, else --session-id, else a per-user id
+    """Stable across invocations of the CLI: --session-id (explicit beats ambient), else CLAUDE_CODE_SESSION_ID, else a per-user id
     generated once and kept in the git dir (`foundry-lead-session`). Never derived from a parent pid."""
-    sid = os.environ.get("CLAUDE_CODE_SESSION_ID") or flag
+    sid = flag or os.environ.get("CLAUDE_CODE_SESSION_ID")
     if sid:
         return sid
     p = store._git_path("foundry-lead-session", root)
