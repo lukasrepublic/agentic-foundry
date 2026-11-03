@@ -101,7 +101,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py:*)",
       "tier": "allow",
-      "rationale": "native usage ingest/attribute/coverage: reads collector files, writes numeric usage + correlation records only into the operator-named usage.dataset directory; no network, no prompts or tool content"
+      "rationale": "writes only six fixed filenames under the directory named by `--dataset`/`usage.dataset`; reads collector/transcript dirs the operator names; stores numeric fields only"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_env_isolation.py:*)",

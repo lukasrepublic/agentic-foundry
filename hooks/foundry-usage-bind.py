@@ -20,7 +20,8 @@ def _git_dir(cwd):
             return g, cur
         if os.path.isfile(g):
             try:
-                first = open(g, encoding="utf-8").readline().strip()
+                with open(g, encoding="utf-8") as fh:
+                    first = fh.readline().strip()
             except OSError:
                 return None, cur
             if first.startswith("gitdir:"):

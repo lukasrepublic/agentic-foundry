@@ -1,29 +1,26 @@
 # Reference OpenTelemetry Collector config for Foundry usage collection (gn-05).
-# version: PINNED IN docs/standing-versions.md (workspace) — research timestamp 2026-11-03
-# Run the collector-contrib distribution (the `file` exporter lives in contrib), by exact pinned version
-# or digest; never `latest`. Pipeline: OTLP/HTTP receiver -> file exporter writing OTLP JSON lines.
+# pinned: otelcol-contrib 0.164.0 — image ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.164.0@sha256:340c9ca6a36617084c6661bdc4f0fe92b7cda5a805d61673ec8db375fddc522b — the pin's source of truth is the adopter workspace's standing-versions matrix (researched 2026-11-03); do not float :latest
+# Pipeline: OTLP/HTTP receiver -> file exporter writing newline-delimited OTLP JSON (one resourceLogs batch per line).
+# The `file` exporter lives in the contrib distribution and is ALPHA stability: re-verify its keys on every pin bump.
 receivers:
   otlp:
     protocols:
       http:
-        endpoint: 127.0.0.1:4318
+        endpoint: 0.0.0.0:4318  # inside the container (a published port cannot reach container loopback); host exposure is loopback-only via `-p 127.0.0.1:4318:4318`. Running the binary directly on the host: use 127.0.0.1:4318
 
 exporters:
   file:
-    # One file per day: the date is part of the file name. The collector's file exporter has no
-    # strftime-style path templating that we have verified; rotate by size/age below and let a daily
-    # scheduler (cron/launchd) restart or rename, OR point `path` at a directory the operator rotates.
-    # UNCERTAIN (verify against the pinned version's file exporter README before relying on it):
-    # the rotation keys `rotation.max_megabytes`, `rotation.max_days`, `rotation.max_backups`,
-    # `rotation.localtime`, and `format: json`. `foundry_usage.py ingest` reads every *.jsonl in the
-    # directory and dedupes by request_id, so any rotation scheme (or none) is safe for correctness.
-    path: ./collector/otlp-logs.jsonl
-    format: json
+    path: /var/lib/otelcol/otlp-logs.jsonl  # required; the dataset-side directory is mounted at /var/lib/otelcol
+    format: json                            # default; newline-delimited OTLP JSON
+    flush_interval: 1s                      # always with a unit
+    # `append: true` cannot be combined with `rotation`; rotation is chosen, so `append` is omitted.
     rotation:
-      max_megabytes: 50
-      max_days: 7
-      max_backups: 30
-      localtime: false
+      max_megabytes: 100   # default 100
+      max_backups: 100     # default 100
+      max_days: 7          # optional
+      localtime: false     # default false -> UTC timestamps in rotated file names
+    # `foundry_usage.py ingest` reads every *.jsonl in the directory and dedupes by request_id, so
+    # rotation (or none) is safe for correctness.
 
 processors:
   batch: {}

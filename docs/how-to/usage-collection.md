@@ -21,9 +21,18 @@ and set `OTEL_RESOURCE_ATTRIBUTES=foundry.operator=<your op_id>`. Do not enable 
 
 ## 2. Start the pinned collector
 
-Run the OpenTelemetry Collector (contrib distribution) with `context/otelcol-usage.yaml`. The version is pinned in
-the workspace's `docs/standing-versions.md` and `.lock.yaml`; use that exact version, never `latest`. The config
-receives OTLP/HTTP on `127.0.0.1:4318` and writes OTLP JSON lines to `./collector/`.
+Run the pinned collector-contrib image (the `file` exporter lives in contrib and is alpha) with
+`context/otelcol-usage.yaml`. The pin's source of truth is the workspace's standing-versions matrix; never `latest`.
+Collector output is newline-delimited OTLP JSON, one `resourceLogs` batch per line; `ingest` reads that shape.
+
+```
+docker run --rm -p 127.0.0.1:4318:4318 \
+  -v <dataset>/collector:/var/lib/otelcol \
+  -v "$PWD/context/otelcol-usage.yaml":/etc/otelcol-contrib/config.yaml:ro \
+  ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.164.0@sha256:340c9ca6a36617084c6661bdc4f0fe92b7cda5a805d61673ec8db375fddc522b
+```
+
+The receiver is published on host loopback only; files land in `<dataset>/collector/` (ingest that directory).
 
 ## 3. Run one session
 
@@ -38,7 +47,7 @@ python3 scripts/foundry_usage.py bind --session <session_id> [--agent <agent_id>
 ## 4. Ingest and check coverage
 
 ```
-python3 scripts/foundry_usage.py ingest ./collector
+python3 scripts/foundry_usage.py ingest <dataset>/collector
 python3 scripts/foundry_usage.py attribute [--since 2026-10-28T00:00:00Z --until 2026-11-04T00:00:00Z]
 python3 scripts/foundry_usage.py coverage  [--since ... --until ...] [--operator op_a --operator op_b]
 ```
@@ -64,3 +73,15 @@ to A or B; Bob's acceptance of A does not move Alice's 60k into his own total.
 `foundry_usage.py fallback-transcripts --cli-version <installed>` imports `~/.claude/projects/**/*.jsonl`, an
 internal, version-unstable format: only lines stamped with that CLI version, only numeric fields. Records are marked
 `source: transcript-fallback` and coverage stays `complete: false`.
+
+## Attribution timing and source precedence
+
+- Joins are time-guarded: a request is attributed only from bindings whose `at` is at or before the request. A
+  request earlier than every binding in its session is `lead-overhead` when the session later binds an outcome,
+  else `unallocated`; adding a binding later never changes the rows before it. `bind --at ISO` back-dates one.
+- An OTEL record replaces a `transcript-fallback` record with the same request id, never the reverse. Transcript
+  `requestId` and OTEL `request_id` are assumed to share the provider request id format; if they differ the same
+  request is counted twice, so `coverage` reports `fallback-overlap-unverified` whenever both sources contributed.
+- `coverage.complete` is also false (with a named reason) for an empty window, `export-not-arriving`, records with
+  no operator, and CLI versions without agent lineage that contributed records: missing evidence is unavailable,
+  not zero.

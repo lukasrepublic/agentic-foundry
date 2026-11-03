@@ -22,6 +22,7 @@ import argparse
 import datetime as _dt
 import glob
 import json
+import math
 import os
 import sys
 
@@ -128,7 +129,7 @@ def read_jsonl(path):
 
 def write_jsonl(path, rows):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
+    tmp = "%s.%d.tmp" % (path, os.getpid())
     with open(tmp, "w", encoding="utf-8") as f:
         for r in rows:
             f.write(json.dumps(r, sort_keys=True) + "\n")
@@ -143,7 +144,7 @@ def append_jsonl(path, row):
 
 def write_json(path, obj):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
+    tmp = "%s.%d.tmp" % (path, os.getpid())
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(obj, f, indent=2, sort_keys=True)
         f.write("\n")
@@ -195,10 +196,13 @@ def _as_count(v):
         return None
     if isinstance(v, int):
         return v if v >= 0 else None
-    if isinstance(v, float) and v >= 0 and v == int(v):
-        return int(v)
-    if isinstance(v, str) and v.strip().isdigit():
-        return int(v.strip())
+    try:
+        if isinstance(v, float) and math.isfinite(v) and v >= 0 and v == int(v):
+            return int(v)
+        if isinstance(v, str) and v.strip().isascii() and v.strip().isdigit():
+            return int(v.strip())
+    except (ValueError, OverflowError):  # huge digit strings, non-finite floats: unknown shape, never a crash
+        pass
     return None
 
 
@@ -287,9 +291,13 @@ def ingest(collector_dir, dataset, now=None):
     collector_dir = os.path.abspath(os.path.expanduser(collector_dir))
     usage = read_jsonl(os.path.join(dataset, USAGE))
     unknown = read_jsonl(os.path.join(dataset, UNKNOWN))
-    seen = {r["request_id"] for r in usage if r.get("request_id")}
+    # request_id -> index in `usage`. Source precedence: an OTEL record replaces a transcript-fallback record
+    # with the same id (never the reverse). ASSUMPTION: transcript `requestId` and OTEL `request_id` share the
+    # provider request id format; if they do not, the same request is double-counted (coverage reports
+    # `fallback-overlap-unverified` whenever both sources contribute).
+    seen = {r["request_id"]: i for i, r in enumerate(usage) if r.get("request_id")}
     unknown_keys = {(u.get("request_id"), u.get("at"), tuple(u.get("missing") or ())) for u in unknown}
-    new = dup = new_unknown = events = 0
+    new = dup = new_unknown = events = replaced = 0
     files = _export_files(collector_dir)
     for path in files:
         for doc in read_jsonl(path):
@@ -299,10 +307,15 @@ def ingest(collector_dir, dataset, now=None):
                     continue
                 events += 1
                 if kind == "usage":
-                    if rec["request_id"] in seen:
-                        dup += 1
+                    idx = seen.get(rec["request_id"])
+                    if idx is not None:
+                        if usage[idx].get("source") == "transcript-fallback":
+                            usage[idx] = rec
+                            replaced += 1
+                        else:
+                            dup += 1
                         continue
-                    seen.add(rec["request_id"])
+                    seen[rec["request_id"]] = len(usage)
                     usage.append(rec)
                     new += 1
                 else:
@@ -312,9 +325,11 @@ def ingest(collector_dir, dataset, now=None):
                     unknown_keys.add(key)
                     unknown.append(rec)
                     new_unknown += 1
-    usage.sort(key=lambda r: (r.get("at") or "", r.get("request_id") or ""))
-    write_jsonl(os.path.join(dataset, USAGE), usage)
-    write_jsonl(os.path.join(dataset, UNKNOWN), unknown)
+    if new or replaced:
+        usage.sort(key=lambda r: (r.get("at") or "", r.get("request_id") or ""))
+        write_jsonl(os.path.join(dataset, USAGE), usage)
+    if new_unknown:
+        write_jsonl(os.path.join(dataset, UNKNOWN), unknown)
     state = read_json(os.path.join(dataset, STATE))
     state["collector_dir"] = collector_dir
     state["last_ingest"] = _iso(now or _now())
@@ -324,6 +339,7 @@ def ingest(collector_dir, dataset, now=None):
         "files_read": len(files),
         "events_seen": events,
         "records_new": new,
+        "fallback_replaced": replaced,
         "duplicates_skipped": dup,
         "unknown_shape_new": new_unknown,
         "records_total": len(usage),
@@ -403,14 +419,18 @@ def attribute_records(usage, bindings):
     rows = []
     for u in usage:
         sid, aid = u.get("session_id"), u.get("agent_id")
-        bs = by_session.get(sid, [])
+        all_bs = by_session.get(sid, [])
+        ts = parse_ts(u.get("at"))
+        # time guard: only bindings that existed at request time (a binding with no parseable time is kept);
+        # a later binding therefore never re-attributes an earlier request
+        bs = [b for b in all_bs if ts is None or (parse_ts(b.get("at")) or ts) <= ts]
         bucket, issue, basis = "unallocated", None, "no-binding"
         exact = [b for b in bs if aid and b.get("agent_id") == aid]
         if exact:
-            ts = parse_ts(u.get("at"))
-            before = [b for b in exact if (parse_ts(b.get("at")) or ts) <= ts] if ts else exact
-            chosen = sorted(before or exact, key=lambda b: b.get("at") or "")[-1]
+            chosen = sorted(exact, key=lambda b: b.get("at") or "")[-1]
             bucket, issue, basis = "outcome", chosen["issue"], "session+agent"
+        elif all_bs and not bs:
+            bucket, basis = "lead-overhead", "before-first-binding"
         else:
             issues = sorted({b["issue"] for b in bs})
             if len(issues) == 1:
@@ -511,8 +531,22 @@ def coverage(dataset, since=None, until=None, operators=None, now=None):
     versions = {(r.get("config") or {}).get("cli_version") for r in usage if r.get("source") == "otel"}
     lineage_missing = sorted(v for v in versions if v and (parse_version(v) or (0,)) < LINEAGE_MIN_VERSION)
     reasons = []
+    export = export_status(dataset, now=now)
+    if not usage:
+        reasons.append("no-records-in-window")
+    if export.get("export") == "not-arriving":
+        reasons.append("export-not-arriving")
+    if any(r.get("operator") in (None, "") for r in usage):
+        reasons.append("records-with-null-operator")
+    contributing = sorted(v for v in lineage_missing
+                          if any(r.get("source") == "otel" and (r.get("config") or {}).get("cli_version") == v
+                                 for r in usage))
+    if contributing:
+        reasons.append("agent-lineage-unavailable-cli-versions: " + ", ".join(contributing))
     if fallback:
         reasons.append("transcript-fallback records present")
+    if fallback and any(r.get("source") == "otel" for r in usage):
+        reasons.append("fallback-overlap-unverified")
     if unknown:
         reasons.append("unknown_shape records present")
     if silent:
@@ -537,7 +571,7 @@ def coverage(dataset, since=None, until=None, operators=None, now=None):
         "transcript_fallback_records": len(fallback),
         "complete": not reasons,
         "incomplete_reasons": reasons,
-        "export": export_status(dataset, now=now),
+        "export": export,
     }
     return out
 
@@ -617,6 +651,7 @@ def main(argv=None):
     s.add_argument("--operator")
     s.add_argument("--issue", required=True)
     s.add_argument("--worktree")
+    s.add_argument("--at", help="binding time, ISO-8601 (default: now); requests before it are not attributed to it")
     for name in ("attribute", "coverage"):
         s = sub.add_parser(name)
         s.add_argument("--since")
@@ -635,7 +670,7 @@ def main(argv=None):
     if args.verb == "ingest":
         out = ingest(args.collector_dir, ds)
     elif args.verb == "bind":
-        out = bind(ds, args.session, args.operator, args.issue, args.worktree, args.agent)
+        out = bind(ds, args.session, args.operator, args.issue, args.worktree, args.agent, at=args.at)
     elif args.verb == "attribute":
         out = attribute(ds, *_window(args))
     elif args.verb == "coverage":

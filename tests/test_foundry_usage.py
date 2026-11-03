@@ -136,7 +136,7 @@ def test_worked_example_from_doc_03(ds):
     assert life["outcomes"]["A"]["tokens"]["total"] == 100_000
     assert life["outcomes"]["A"]["by_operator"] == {"alice": 60_000, "bob": 40_000}
     accepted = [life["outcomes"][k]["tokens"]["total"] for k in ("A", "B")]
-    assert sum(accepted) == 300_000 and sum(accepted) / len(accepted) == 150_000
+    assert sum(accepted) == 100_000 + 200_000 and sum(accepted) / len(accepted) == 150_000
     # categories stay separate and sum to the displayed total
     t = life["outcomes"]["B"]["tokens"]
     assert t["total"] == t["input"] + t["output"] + t["cache_read"] + t["cache_creation"]
@@ -187,9 +187,94 @@ def test_transcript_fallback_is_labelled_and_never_complete(ds):
     assert "SECRET" not in json.dumps(rows)
     cov = fu.coverage(ds, now=NOW)
     assert cov["complete"] is False and cov["transcript_fallback_records"] == 1
-    # an OTEL record for the same request id wins; the transcript line is skipped as a duplicate
+    # re-running the fallback adds nothing
     out2 = fu.fallback_transcripts(ds, "2.1.317", projects_dir=os.path.join(FIX, "transcripts"))
     assert out2["records_new"] == 0
+
+
+def _otlp_line(rid, sid="tsess", at_nano="1793610000000000000"):
+    def a(k, v):
+        return {"key": k, "value": {"stringValue": v}}
+    attrs = [a("event.name", "api_request"), a("request_id", rid), a("session.id", sid), a("model", "m")]
+    attrs += [{"key": k, "value": {"intValue": "7"}} for k in
+              ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")]
+    res = [a("foundry.operator", "alice"), a("service.version", "2.1.317")]
+    return json.dumps({"resourceLogs": [{"resource": {"attributes": res}, "scopeLogs": [{"logRecords": [
+        {"timeUnixNano": at_nano, "attributes": attrs}]}]}]}) + "\n"
+
+
+def test_otel_replaces_fallback_with_same_request_id_never_the_reverse(ds, tmp_path):
+    tdir = os.path.join(FIX, "transcripts")
+    col = tmp_path / "col"
+    col.mkdir()
+    (col / "a.jsonl").write_text(_otlp_line("treq-1"))
+    # fallback first, then OTEL for the same id: OTEL replaces it
+    fu.fallback_transcripts(ds, "2.1.317", projects_dir=tdir, now=NOW)
+    assert rj(os.path.join(ds, "usage.jsonl"))[0]["source"] == "transcript-fallback"
+    out = fu.ingest(str(col), ds, now=NOW)
+    rows = rj(os.path.join(ds, "usage.jsonl"))
+    assert out["fallback_replaced"] == 1 and len(rows) == 1 and rows[0]["source"] == "otel"
+    # OTEL first, then the fallback: the fallback line is a duplicate and changes nothing
+    out2 = fu.fallback_transcripts(ds, "2.1.317", projects_dir=tdir, now=NOW)
+    assert out2["records_new"] == 0 and out2["duplicates_skipped"] == 2
+    assert [r["source"] for r in rj(os.path.join(ds, "usage.jsonl"))] == ["otel"]
+
+
+def test_coverage_reports_fallback_overlap_unverified_when_both_sources_contribute(ds, tmp_path):
+    col = tmp_path / "col"
+    col.mkdir()
+    (col / "a.jsonl").write_text(_otlp_line("other-id"))
+    fu.ingest(str(col), ds, now=NOW)
+    fu.fallback_transcripts(ds, "2.1.317", projects_dir=os.path.join(FIX, "transcripts"), now=NOW)
+    assert "fallback-overlap-unverified" in fu.coverage(ds, now=NOW)["incomplete_reasons"]
+
+
+def test_coverage_named_reasons_for_empty_window_export_null_operator_and_lineage(ds, tmp_path):
+    cov = fu.coverage(ds, now=NOW)
+    assert cov["complete"] is False
+    assert {"no-records-in-window", "export-not-arriving"} <= set(cov["incomplete_reasons"])
+    # null operator
+    fu.write_jsonl(os.path.join(ds, "usage.jsonl"), [{
+        "request_id": "r", "at": "2026-11-02T10:00:00Z", "session_id": "s", "agent_id": None, "operator": None,
+        "source": "otel", "config": {"cli_version": "2.1.100"}, "tokens": {c: 1 for c in fu.CATEGORIES}}])
+    cov = fu.coverage(ds, now=NOW)
+    assert "records-with-null-operator" in cov["incomplete_reasons"]
+    assert any(r.startswith("agent-lineage-unavailable-cli-versions: 2.1.100") for r in cov["incomplete_reasons"])
+    # a window that excludes the old-version record no longer carries the lineage reason
+    cov = fu.coverage(ds, fu.parse_ts("2026-11-03T00:00:00Z"), None, now=NOW)
+    assert not any(r.startswith("agent-lineage") for r in cov["incomplete_reasons"])
+
+
+def test_session_join_is_time_guarded_and_stable_when_a_binding_is_added_later():
+    def u(rid, at, aid=None):
+        return {"request_id": rid, "at": at, "session_id": "s", "agent_id": aid, "operator": "o",
+                "tokens": {c: 1 for c in fu.CATEGORIES}}
+    usage = [u("early", "2026-11-02T08:00:00Z"), u("mid", "2026-11-02T10:00:00Z"), u("late", "2026-11-02T12:00:00Z")]
+    b1 = [{"session_id": "s", "agent_id": None, "issue": "1", "at": "2026-11-02T09:00:00Z"}]
+    before = {r["request_id"]: r for r in fu.attribute_records(usage, b1)}
+    assert (before["early"]["bucket"], before["early"]["basis"]) == ("lead-overhead", "before-first-binding")
+    assert (before["mid"]["bucket"], before["mid"]["issue"]) == ("outcome", "1")
+    b2 = b1 + [{"session_id": "s", "agent_id": None, "issue": "2", "at": "2026-11-02T11:00:00Z"}]
+    after = {r["request_id"]: r for r in fu.attribute_records(usage, b2)}
+    assert after["early"] == before["early"] and after["mid"] == before["mid"]
+    assert after["late"]["bucket"] == "lead-overhead"  # now two outcomes are live
+    # no binding in the session at all stays unallocated
+    assert fu.attribute_records(usage, [])[0]["bucket"] == "unallocated"
+
+
+def test_as_count_never_crashes_on_odd_numerics():
+    for bad in ("\u00b2", "\u0663", float("inf"), float("nan"), "9" * 5000, -1, True, 1.5):
+        assert fu._as_count(bad) is None
+    assert fu._as_count("12") == 12 and fu._as_count(3.0) == 3
+
+
+def test_ingest_skips_rewrite_when_nothing_is_new(ds):
+    col, _ = _basic(ds)
+    path = os.path.join(ds, "usage.jsonl")
+    old = (time.time() - 1000,) * 2
+    os.utime(path, old)
+    fu.ingest(col, ds, now=NOW)
+    assert os.stat(path).st_mtime == old[0]
 
 
 def test_export_not_arriving_reports_env_keys(ds, tmp_path):
@@ -262,6 +347,29 @@ def test_hook_is_fail_open(stdin, tmp_path):
     assert p.returncode == 0 and p.stderr == ""
 
 
+def test_hook_is_fail_open_on_unwritable_dataset_and_corrupt_assignment(tmp_path):
+    root = tmp_path / "proj"
+    gitdir = tmp_path / "gitdirs" / "wt"
+    wt = root / "wt"
+    (root / ".claude").mkdir(parents=True)
+    gitdir.mkdir(parents=True)
+    wt.mkdir()
+    (wt / ".git").write_text("gitdir: %s\n" % gitdir)
+    (gitdir / "foundry-assignment.json").write_text("{not json")
+    blocker = tmp_path / "afile"
+    blocker.write_text("x")  # a dataset path under a regular file can never be created
+    (root / ".claude" / "foundry-project.json").write_text(json.dumps({"usage": {"dataset": str(blocker / "ds")}}))
+    payload = json.dumps({"session_id": "s1", "agent_id": "a1", "cwd": str(wt)})
+    p, _ = _hook(payload, str(wt))
+    assert p.returncode == 0 and len(p.stderr.strip().splitlines()) <= 1
+    # corrupt assignment with a writable dataset: still one binding, no issue
+    (root / ".claude" / "foundry-project.json").write_text(json.dumps({"usage": {"dataset": str(tmp_path / "ds")}}))
+    p, _ = _hook(payload, str(wt))
+    assert p.returncode == 0 and len(p.stderr.strip().splitlines()) <= 1
+    rows = rj(str(tmp_path / "ds" / "bindings.jsonl"))
+    assert len(rows) == 1 and rows[0]["issue"] is None
+
+
 def test_hooks_json_wires_subagent_start_to_an_executable_script():
     h = json.load(open(os.path.join(REPO, "hooks", "hooks.json")))["hooks"]["SubagentStart"]
     cmd = h[0]["hooks"][0]["command"]
@@ -271,8 +379,10 @@ def test_hooks_json_wires_subagent_start_to_an_executable_script():
 
 def test_collector_config_and_env_example_shape():
     cfg = open(os.path.join(REPO, "context", "otelcol-usage.yaml")).read()
-    assert "# version: PINNED IN docs/standing-versions.md (workspace) — research timestamp 2026-11-03" in cfg
-    assert "latest" not in cfg.replace("never `latest`", "")
+    assert "# pinned: otelcol-contrib 0.164.0" in cfg
+    assert "@sha256:340c9ca6a36617084c6661bdc4f0fe92b7cda5a805d61673ec8db375fddc522b" in cfg
+    assert "latest" not in cfg.replace("do not float :latest", "")
+    assert "UNCERTAIN" not in cfg and "append:" not in cfg.replace("`append: true`", "")
     keys = {l.split("=", 1)[0] for l in open(os.path.join(REPO, "context", "usage-export.env.example"))
             if "=" in l and not l.startswith("#")}
     assert keys == set(fu.EXPORT_ENV_KEYS)
@@ -285,7 +395,7 @@ def test_cli_roundtrip(ds):
         assert p.returncode == 0, p.stderr
         return json.loads(p.stdout)
     assert run("ingest", os.path.join(FIX, "collector"))["records_total"] == 4
-    run("bind", "--session", "sess-1", "--operator", "alice", "--issue", "101")
+    run("bind", "--session", "sess-1", "--operator", "alice", "--issue", "101", "--at", "2026-11-01T00:00:00Z")
     summ = run("attribute")
     assert "101" in summ["outcomes"]
     cov = run("coverage", "--operator", "alice")
