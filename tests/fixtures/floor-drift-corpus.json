@@ -220,10 +220,6 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_events.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py ack:*)",
             "origin": "settings.json"
           },
@@ -464,10 +460,6 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_events.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py ack:*)",
             "origin": "settings.json"
           },
@@ -661,10 +653,6 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-test.sh:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_events.py:*)",
             "origin": "settings.json"
           },
           {
@@ -892,10 +880,6 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_events.py:*)",
-            "origin": "settings.json"
-          },
-          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py ack:*)",
             "origin": "settings.json"
           },
@@ -1103,10 +1087,6 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-test.sh:*)",
-            "origin": "settings.json"
-          },
-          {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_events.py:*)",
             "origin": "settings.json"
           },
           {
