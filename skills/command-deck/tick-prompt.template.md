@@ -7,12 +7,12 @@ otherwise. Source work, requests and progress only from GitHub.
 
 Run these steps in this order:
 
-1. Run `foundry_inbox.py check` and reconcile pending (`foundry_inbox.py pending`).
-2. Escalate each returned `escalate` item with one `PushNotification` and begin permitted resolution ahead of routine work.
-3. Ack or schedule the other requests.
-4. Review workers, CI, review feedback and ownership via `foundry-ticket.py reconcile`.
-5. Record meaningful changes and verify claimed results, keeping a Done-means run distinct from acceptance.
-6. Resume owned work or select the next task within capacity; the narrowing above applies here only, the inbox always covers the full `github_scope`.
+1. Begin with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-ticket.py" lead renew`; if it exits non-zero ("no lease owned"), STOP this tick and report that the lease is lost (do nothing else). Then run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_inbox.py" check --queue-status <ok|error|stale>` and reconcile pending (`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_inbox.py" pending`). The `--queue-status` value is `ok` if the previous tick's `next` succeeded, `error` if it exited 3 or reported `queue: unavailable`, `stale` if the last successful `next` is older than three times the cadence (on the first tick, `ok` only after the successful `next --json` dry read made in `start`).
+2. Send ONE `PushNotification` per NEW `escalate` key `(request_url, affected.url)` since the last tick, then begin permitted resolution ahead of routine work. Keep the set of already-notified keys in this session and do not re-push a key already in it; persisted blockers reappear in `pending` every tick but are not re-pushed. Re-notify a key only when gn-09 reports a material change (a new blocking relation time). `event_emitted: false` means the ack could not be posted: say so in the step 7 summary.
+3. Ack or schedule the other requests: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_inbox.py" ack <url>` or `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_inbox.py" schedule <url> --target <when>`.
+4. Review workers, CI, review feedback and ownership via `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-ticket.py" reconcile`.
+5. Record meaningful changes through `foundry_deck_events` and verify claimed results, keeping a Done-means run (`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-ticket.py" done`) distinct from acceptance. Event evidence is URLs only.
+6. Resume owned work or select the next task within capacity (`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-ticket.py" next --json`); only when `dispatch_allowed` is true and `lead renew` succeeded, run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-ticket.py" claim <issue>` and then launch the worker per `skills/dispatch/SKILL.md` (Issue-assignment launch, gn-11). The narrowing above applies here only, the inbox always covers the full `github_scope`.
 7. Emit one operator summary: done / running / waiting / decisions.
 
 If the latest inbox result has `dispatch_allowed: false`, or the delivery queue is stale or unreadable, skip new
