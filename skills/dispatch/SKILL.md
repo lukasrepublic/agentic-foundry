@@ -180,17 +180,28 @@ no shared "current ticket" file names it. Procedure:
    stays offline.
 2. **Write the manifest** to `<workspace>/.foundry/dispatch-queue/<task>.json` (atomic temp+rename):
    `{target_repo, task, agent, dispatcher_session_id, assignment: {issue_url, issue_number, repo_key,
-   operator, acceptance_revision: {body_sha256, documents: [{url, revision}]}}}`. `contract_ref` is
-   OPTIONAL: name it only for a factory-lane atom (the hook then stages and preflights the spec and
-   contract exactly as in *Multi-repo dispatch*). Without it no staging occurs; repo binding, isolation
-   and the cwd write-jail stay in force. An incomplete assignment, or a `target_repo` key that does not
-   resolve, makes the hook exit non-zero with no stdout and a typed `.foundry/dispatch.log` line.
+   operator, lane: charter|factory, acceptance_revision: {body_sha256, documents: [{url, revision}]}}}`.
+   `contract_ref` is OPTIONAL: name it only for a factory-lane atom (the hook then stages and preflights
+   the spec and contract exactly as in *Multi-repo dispatch*). The lane is chosen by key presence:
+   `contract_ref` a non-empty string selects the contract lane (and the binding is still written when an
+   assignment is also present); `contract_ref` present but empty or non-string is refused; absent with an
+   `assignment` selects the issue lane. A `security: true` / spec-lane issue (`lane: factory`) REQUIRES
+   `contract_ref`; the hook refuses it otherwise - this is the gn-07/gn-16 authority boundary. `task` and
+   `agent` must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` (no `..`); `issue_url` must be
+   `https://<host>/<owner>/<repo>/issues/<issue_number>`; `repo_key` must equal `target_repo`; `operator`
+   must be a key in `.claude/foundry-operators.json`. Without `contract_ref` no staging occurs; repo
+   binding, isolation and the cwd write-jail stay in force. An incomplete or invalid assignment, an unsafe
+   label, or a `target_repo` key that does not resolve, makes the hook exit non-zero with no stdout and a
+   typed `.foundry/dispatch.log` line.
 3. **Record `start`** with accessible https evidence only: the issue, branch and draft-PR URL
    (`foundry_deck_events.emit`).
 4. **Launch** the native `Agent` (`isolation: "worktree"`). The `WorktreeCreate` hook claims the worktree
    of `target_repo` (including `workspace`), writes the per-worktree binding
    `<git-dir>/foundry-assignment.json` once (the assignment fields plus the worktree path; gn-05 reads it
-   for attribution), keeps `.agent/assignment.json` for the write-jail, and emits the path.
+   for attribution), keeps `.agent/assignment.json` for the write-jail, and emits the path. A pre-existing
+   binding with the same `issue_url` is kept as is (reconcile in step 5 catches a changed acceptance
+   revision); a different one is refused. A symlinked `.agent` or `.agent/assignment.json`, or a git dir
+   outside the product repo's `worktrees/`, is refused (`BINDING-FAILED`).
 5. **Late-result procedure.** When a worker result arrives:
    1. Run `python3 scripts/foundry-ticket.py reconcile <issue>` FIRST, before integrating anything.
    2. Proceed only if the issue is still owned by the operator, is not cancelled, duplicate or withdrawn,
