@@ -194,6 +194,11 @@
       "rationale": "--apply POSTs repository rulesets with an Administration (write) token; it writes the merge floor itself"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_events.py:*)",
+      "tier": "ask",
+      "rationale": "`emit` posts a structured comment on a GitHub issue under the operator's identity (a content-creating write); `parse` is read-only. One rule for the script: the write verb decides the tier (gn-04 deck events)."
+    },
+    {
       "rule": "Bash(docker system prune:*)",
       "tier": "deny",
       "rationale": "absolute anti-pattern: unattended bulk local-state destruction"
@@ -216,7 +221,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py start:*)",
       "tier": "allow",
-      "rationale": "adopts a GitHub issue as the active ticket: writes only the git-dir ticket file; refuses a Done-means command from an author without write access on the issue's repo unless --trust-author (which the plugin-scripts-allow hook never auto-allows \u2014 the session's own permission mode decides)"
+      "rationale": "adopts a GitHub issue as the active ticket: writes only the git-dir ticket file; refuses a Done-means command from an author without write access on the issue's repo unless --trust-author (which the plugin-scripts-allow hook never auto-allows — the session's own permission mode decides)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py allow:*)",
@@ -241,7 +246,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-test.sh:*)",
       "tier": "ask",
-      "rationale": "EXECUTES the repository's own test command (Taskfile/Makefile/npm/pytest \u2014 code the branch defines): the session's permission flow decides; local-green is a delivery convenience, not a reason for a silent allow (security review of #270, R2)"
+      "rationale": "EXECUTES the repository's own test command (Taskfile/Makefile/npm/pytest — code the branch defines): the session's permission flow decides; local-green is a delivery convenience, not a reason for a silent allow (security review of #270, R2)"
     }
   ],
   "not_invoked": [
