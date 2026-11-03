@@ -36,6 +36,9 @@ class FakeGh:
         self.comments = {}                    # ref -> [comment]
         self.calls = []
         self.view_fail = set()                # refs whose blocking read fails
+        self.pr_state = {}                    # url -> state for `gh pr view`
+        self.notif_pages = None               # optional list of raw responses served page by page
+        self.me_fail = False
 
     def clock(self):
         return self.now
@@ -53,8 +56,15 @@ class FakeGh:
                 return self.search_fail[name]
             return R(stdout=json.dumps(self.search[name]))
         if argv[:3] == ["gh", "api", "user"]:
+            if self.me_fail:
+                return R(rc=1, stderr="not logged in")
             return R(stdout='{"login":"alice"}')
-        if "notifications?per_page=50" in j:
+        if argv[:3] == ["gh", "pr", "view"]:
+            return R(stdout=json.dumps({"state": self.pr_state.get(argv[3], "OPEN")}))
+        if is_notif(argv):
+            if self.notif_pages is not None:
+                m = re.search(r"&page=(\d+)", j)
+                return R(stdout=self.notif_pages[int(m.group(1)) - 1 if m else 0])
             if self.notif_fail:
                 return self.notif_fail
             if "304 Not Modified" in self.notif:
@@ -104,6 +114,14 @@ class FakeGh:
         self.timeline.setdefault(request_ref, []).append(
             {"__typename": "BlockingAddedEvent", "createdAt": created, "actor": {"login": "alice"},
              "blockedIssue": {"number": int(m.group(2)), "repository": {"nameWithOwner": m.group(1)}}})
+
+
+def is_notif(argv):
+    return any(a.startswith("notifications?") or "api.github.com/notifications" in a for a in argv)
+
+
+def notif_calls(gh):
+    return [c for c in gh.calls if is_notif(c)]
 
 
 def req_item(url, n, created="2026-11-01T00:00:00Z"):
@@ -170,21 +188,23 @@ def test_a_scope_refusal_is_uncovered(ws):
 def test_notifications_sends_if_modified_since_treats_304_as_no_change_and_honors_poll_interval(ws):
     gh = FakeGh()
     run(ws, gh)
-    first = [c for c in gh.calls if "notifications?per_page=50" in " ".join(c)]
+    first = notif_calls(gh)
     assert len(first) == 1 and not any("If-Modified-Since" in x for x in first[0])
+    assert "notifications?all=true&per_page=50" in first[0]            # first poll: all=true
     st = state(ws)["notifications"]
     assert st["last_modified"] == "Tue, 03 Nov 2026 10:00:00 GMT" and st["poll_interval"] == 60
 
     gh.now = T0 + timedelta(seconds=30)           # inside the interval: no call at all
     res = run(ws, gh)
-    assert len([c for c in gh.calls if "notifications?per_page=50" in " ".join(c)]) == 1
+    assert len(notif_calls(gh)) == 1
     assert res["sources"]["approvals"]["status"] == "ok" and res["sources"]["approvals"]["cached"] is True
+    assert res["sources"]["approvals"]["checked_at"] == "2026-11-03T12:00:00Z"   # original, not re-stamped
 
     gh.now = T0 + timedelta(seconds=61)           # elapsed: conditional request, answered 304
     gh.notif = (FIX / "notifications_304.txt").read_text()
     res = run(ws, gh)
-    calls = [c for c in gh.calls if "notifications?per_page=50" in " ".join(c)]
-    assert len(calls) == 2
+    calls = notif_calls(gh)
+    assert len(calls) == 2 and "notifications?per_page=50" in calls[1]    # later polls: conditional, no all=true
     i = calls[1].index("If-Modified-Since: Tue, 03 Nov 2026 10:00:00 GMT")
     assert calls[1][i - 1] == "-H"
     assert res["sources"]["approvals"]["status"] == "ok"
@@ -251,7 +271,7 @@ def test_blocker_gets_blocker_ack_after_relationship_and_one_escalate(ws):
     esc = res["escalate"][0]
     assert esc["type"] == "escalate" and esc["action"]
     assert esc["affected"] == {"url": BLOCKED, "owner": "bob"}
-    assert esc["evidence"] == [REQ, BLOCKED]
+    assert esc["evidence"] == [REQ, BLOCKED] and esc["event_emitted"] is True
 
 
 def test_blocked_issue_owned_by_me_or_closed_is_not_a_blocker(ws):
@@ -283,7 +303,8 @@ def test_scheduled_request_promoted_to_blocker_gets_a_second_distinct_blocker_ac
     gh.now = T0 + timedelta(hours=2)
     gh.add_blocker(ref, "https://github.com/example-org/code/issues/42", created="2026-11-03T13:30:00Z")
     res = run(ws, gh)
-    assert len(res["escalate"]) == 1
+    assert len(res["escalate"]) == 2                                   # the first one persists (R2)
+    assert sorted(e["event_emitted"] for e in res["escalate"]) == [False, True]
     keys = {e.idempotency_key for e in gh.posted(ref, "blocker_ack")}
     assert len(keys) == 2
 
@@ -331,11 +352,12 @@ def test_unchanged_state_emits_nothing_and_survives_runtime_loss(ws):
     n = {r: len(c) for r, c in gh.comments.items()}
     gh.now = T0 + timedelta(minutes=5)
     again = run(ws, gh)
-    assert again["events"] == [] and again["escalate"] == []
+    assert again["events"] == []                                        # nothing re-emitted ...
+    assert [e["event_emitted"] for e in again["escalate"]] == [False]   # ... but still surfaced (R2)
     shutil.rmtree(ws / ".foundry")                                      # runtime file lost
     gh.now = T0 + timedelta(minutes=10)
     lost = run(ws, gh)
-    assert lost["events"] == [] and lost["escalate"] == []
+    assert lost["events"] == [] and len(lost["escalate"]) == 1
     assert {r: len(c) for r, c in gh.comments.items()} == n
 
 
@@ -346,7 +368,8 @@ def test_resolve_without_https_evidence_exits_nonzero_and_records_nothing(ws, ca
     gh.search["assigned"] = [req_item(REQ, 1)]
     run(ws, gh)
     before = {r: len(c) for r, c in gh.comments.items()}
-    for ev in ([], ["http://insecure.example/x"], ["owner/repo#3"], ["/etc/passwd"]):
+    for ev in ([], ["http://insecure.example/x"], ["owner/repo#3"], ["/etc/passwd"], ["https://github.com"],
+               ["https://github.com/"], ["https://example.org/ok", "https://github.com"]):
         args = ["resolve", REQ, "--project-dir", str(ws)] + [x for e in ev for x in ("--evidence", e)]
         assert inbox.main(args, runner=gh, clock=gh.clock) != 0
     assert {r: len(c) for r, c in gh.comments.items()} == before
@@ -413,19 +436,45 @@ def test_policy_that_does_not_cover_the_failed_source_denies(ws):
     assert res["dispatch_allowed"] is False and res["decision_needed"]
 
 
-def test_policy_for_another_scope_or_too_old_a_full_check_denies(ws):
+def test_policy_for_another_scope_denies(ws):
     set_policy(ws, {"sources": ["mentions"], "max_age_min": 30, "scope": "other-org"})
     assert run(ws, _partial_after_full(ws))["dispatch_allowed"] is False
-    set_policy(ws, {"sources": ["mentions"], "max_age_min": 5, "scope": "example-org"})
-    gh = _partial_after_full(ws)           # last full check is 10 minutes old, max_age 5
+
+
+def test_policy_with_invalid_max_age_denies(ws):
+    set_policy(ws, {"sources": ["mentions"], "max_age_min": -1, "scope": "example-org"})
+    assert run(ws, _partial_after_full(ws))["dispatch_allowed"] is False
+    set_policy(ws, {"sources": ["mentions"], "max_age_min": "soon", "scope": "example-org"})
+    assert run(ws, _partial_after_full(ws))["dispatch_allowed"] is False
+
+
+def test_permanently_uncovered_named_source_never_denies_forever(ws):
+    """R8: anchored to the check where every UNNAMED source was ok, so a named, permanently uncovered
+    `approvals` (fine-grained token) keeps dispatch allowed however long since a FULL check."""
+    set_policy(ws, {"sources": ["approvals"], "max_age_min": 5, "scope": "example-org"})
+    gh = FakeGh()
+    gh.notif_fail = R(rc=1, stderr="HTTP 403 forbidden")
+    for i in range(4):
+        gh.now = T0 + timedelta(hours=6 * i)
+        res = run(ws, gh)
+        assert res["sources"]["approvals"]["status"] == "uncovered" and res["coverage"] == "partial"
+        assert res["last_full_check_at"] is None
+        assert res["dispatch_allowed"] is True, i
+
+
+def test_failure_outside_the_named_set_always_denies(ws):
+    set_policy(ws, {"sources": ["approvals"], "max_age_min": 5, "scope": "example-org"})
+    gh = FakeGh()
+    gh.notif_fail = R(rc=1, stderr="HTTP 403 forbidden")
+    gh.search_fail["mentions"] = R(rc=1, stderr="HTTP 502")
     assert run(ws, gh)["dispatch_allowed"] is False
 
 
-def test_policy_without_any_prior_full_check_denies(ws):
+def test_policy_without_any_prior_full_check_allows_when_only_named_sources_fail(ws):
     set_policy(ws, {"sources": ["mentions"], "max_age_min": 30, "scope": "example-org"})
     gh = FakeGh()
     gh.search_fail["mentions"] = R(rc=1, stderr="HTTP 502")
-    assert run(ws, gh)["dispatch_allowed"] is False
+    assert run(ws, gh)["dispatch_allowed"] is True
 
 
 @pytest.mark.parametrize("qs", ["stale", "error"])
@@ -460,5 +509,199 @@ def test_failed_blocking_read_is_an_error_source_not_an_empty_one(ws):
 
 
 def test_the_only_subprocess_seam_is_the_injected_runner():
-    src = (ROOT / "scripts" / "foundry_inbox.py").read_text()
-    assert "import subprocess" not in src and "subprocess.run" not in src
+    """N1: AST-based - no subprocess/os.system/popen import or call anywhere, however it is spelled."""
+    import ast
+    tree = ast.parse((ROOT / "scripts" / "foundry_inbox.py").read_text())
+    banned_mods = {"subprocess", "pty", "multiprocessing"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            assert not {a.name.split(".")[0] for a in node.names} & banned_mods
+        elif isinstance(node, ast.ImportFrom):
+            assert (node.module or "").split(".")[0] not in banned_mods
+        elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "os":
+            assert node.attr not in {"system", "popen", "execv", "execvp", "spawnv", "fork"} and \
+                not node.attr.startswith(("exec", "spawn", "popen"))
+        elif isinstance(node, ast.Name):
+            assert node.id not in {"__import__", "eval", "exec"}
+
+
+# ---- gn-09 review round 1 ---------------------------------------------------------------------------------
+
+def test_end_to_end_check_then_parse_validates_ack_and_request_is_not_unacknowledged(ws):
+    """B1: a real `check` against the blocker (request) issue, then gn-04's reader over that issue."""
+    gh = FakeGh()
+    gh.search["assigned"] = [req_item(REQ, 1)]
+    gh.add_blocker("example-org/planning#1", BLOCKED, owner="bob", created="2026-11-03T11:30:00Z")
+    run(ws, gh)
+    ref = "example-org/planning#1"
+    h = de.parse(gh.timeline[ref], gh.comments[ref], "2026-12-31T00:00:00Z")
+    assert [(e.event, e.relation if e.event == "blocked" else None, e.invalid) for e in h.events] == [
+        ("blocked", "blocking", None), ("blocker_ack", None, None)]
+    assert h.unacknowledged == [] and de.is_blocked(h) is False
+
+
+def test_scan_is_read_only_never_comments_and_check_is_the_only_writer(ws):
+    gh = FakeGh()
+    gh.search["assigned"] = [req_item(REQ, 1), req_item(REQ2, 2)]
+    gh.add_blocker("example-org/planning#2", BLOCKED)
+    res = inbox.scan(str(ws), runner=gh, clock=gh.clock)
+    assert not [c for c in gh.calls if c[:3] == ["gh", "issue", "comment"]]
+    assert gh.comments == {} and res["events"] == []
+    assert {(p["event"], p["issue"]) for p in res["planned_events"]} == {
+        ("scheduled", "example-org/planning#1"), ("scheduled", "example-org/code#5"),
+        ("blocker_ack", "example-org/planning#2")}
+    assert len(res["escalate"]) == 1 and res["escalate"][0]["event_emitted"] is False
+    assert (ws / ".foundry" / "runtime" / "inbox.json").exists()
+    assert inbox.main(["scan", "--json", "--project-dir", str(ws)], runner=gh, clock=gh.clock) == 0
+    assert not [c for c in gh.calls if c[:3] == ["gh", "issue", "comment"]]
+    run(ws, gh)
+    assert [c for c in gh.calls if c[:3] == ["gh", "issue", "comment"]]
+
+
+def test_escalations_persist_until_resolve_and_pending_shows_them(ws, capsys):
+    gh = FakeGh()
+    gh.search["assigned"] = [req_item(REQ, 1)]
+    gh.add_blocker("example-org/planning#1", BLOCKED)
+    run(ws, gh)
+    for i in range(3):
+        gh.now = T0 + timedelta(minutes=5 * (i + 1))
+        res = run(ws, gh)
+        assert res["events"] == [] and len(res["escalate"]) == 1
+    assert inbox.main(["pending", "--json", "--project-dir", str(ws)], runner=gh) == 0
+    assert len(json.loads(capsys.readouterr().out)["escalate"]) == 1
+    inbox.resolve(str(ws), REQ, ["https://github.com/example-org/code/pull/99"], runner=gh, clock=gh.clock)
+    assert run(ws, gh)["escalate"] == []
+
+
+def test_failed_readback_keeps_the_persisted_escalation(ws):
+    gh = FakeGh()
+    gh.search["assigned"] = [req_item(REQ, 1)]
+    gh.add_blocker("example-org/planning#1", BLOCKED)
+    run(ws, gh)
+    gh.view_fail.add("example-org/planning#1")
+    res = run(ws, gh)
+    assert res["sources"]["assigned"]["status"] == "error" and len(res["escalate"]) == 1
+
+
+@pytest.mark.parametrize("activity", ["blocked", "reopened", "comment"])
+def test_resolved_suppresses_only_until_new_activity(ws, activity):
+    gh = FakeGh()
+    gh.search["assigned"] = [req_item(REQ, 1)]
+    run(ws, gh)
+    gh.now = T0 + timedelta(hours=1)
+    inbox.resolve(str(ws), REQ, ["https://github.com/example-org/code/pull/99"], runner=gh, clock=gh.clock)
+    gh.now = T0 + timedelta(hours=2)
+    assert REQ not in [p["url"] for p in run(ws, gh)["pending"]]          # still suppressed
+    later = (T0 + timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    ref = "example-org/planning#1"
+    if activity == "blocked":
+        gh.add_blocker(ref, BLOCKED, created=later)
+    elif activity == "reopened":
+        gh.timeline.setdefault(ref, []).append({"__typename": "ReopenedEvent", "createdAt": later,
+                                                "actor": {"login": "bob"}})
+    else:
+        gh.comments[ref].append({"id": "h1", "createdAt": later, "author": {"login": "bob"}, "body": "still needed"})
+    gh.now = T0 + timedelta(hours=4)
+    assert REQ in [p["url"] for p in run(ws, gh)["pending"]]
+
+
+def test_a_bookkeeping_marker_after_resolve_does_not_unsuppress(ws):
+    gh = FakeGh()
+    gh.search["assigned"] = [req_item(REQ, 1)]
+    run(ws, gh)
+    inbox.resolve(str(ws), REQ, ["https://github.com/example-org/code/pull/99"], runner=gh, clock=gh.clock)
+    gh.now = T0 + timedelta(hours=1)
+    inbox.ack(str(ws), REQ, runner=gh, by="alice", clock=gh.clock)
+    gh.now = T0 + timedelta(hours=2)
+    assert REQ not in [p["url"] for p in run(ws, gh)["pending"]]
+
+
+def test_resolve_failing_to_identify_the_operator_emits_nothing(ws):
+    gh = FakeGh()
+    gh.search["assigned"] = [req_item(REQ, 1)]
+    run(ws, gh)
+    gh.me_fail = True
+    n = {r: len(c) for r, c in gh.comments.items()}
+    with pytest.raises(RuntimeError, match="operator's login"):
+        inbox.resolve(str(ws), REQ, ["https://github.com/example-org/code/pull/99"], runner=gh, clock=gh.clock)
+    assert inbox.main(["check", "--project-dir", str(ws)], runner=gh, clock=gh.clock) == 2
+    assert {r: len(c) for r, c in gh.comments.items()} == n
+
+
+def _notif(i, url, reason="review_requested"):
+    return {"id": str(i), "reason": reason, "unread": True, "updated_at": "2026-11-03T09:00:00Z",
+            "subject": {"title": f"n{i}", "url": url, "type": "PullRequest"}}
+
+
+def _resp(items, link=None, lm="Tue, 03 Nov 2026 10:00:00 GMT"):
+    head = f"HTTP/2.0 200 OK\nLast-Modified: {lm}\nX-Poll-Interval: 60\n"
+    if link:
+        head += f'Link: <{link}>; rel="next"\n'
+    return head + "\n" + json.dumps(items)
+
+
+def test_unparseable_approval_has_null_ref_and_is_pruned_when_its_notification_is_gone(ws):
+    gh = FakeGh()
+    gh.notif = _resp([_notif(21, "https://api.github.com/repos/example-org/code/discussions/3")])
+    res = run(ws, gh)
+    item = {p["url"]: p for p in res["pending"]}["notification:21"]
+    assert item["ref"] is None and item["kind"] == "approval"
+    gh.now = T0 + timedelta(minutes=5)
+    gh.notif = _resp([])
+    assert "notification:21" not in [p["url"] for p in run(ws, gh)["pending"]]
+
+
+def test_unparseable_approval_survives_a_304_and_a_cached_return(ws):
+    gh = FakeGh()
+    gh.notif = _resp([_notif(21, "https://api.github.com/repos/example-org/code/discussions/3")])
+    run(ws, gh)
+    gh.now = T0 + timedelta(seconds=61)
+    gh.notif = (FIX / "notifications_304.txt").read_text()
+    assert "notification:21" in [p["url"] for p in run(ws, gh)["pending"]]
+
+
+def test_approval_on_a_merged_or_closed_pr_is_pruned(ws):
+    gh = FakeGh()
+    run(ws, gh)
+    assert PR in [p["url"] for p in run(ws, gh)["pending"]]
+    gh.pr_state[PR] = "MERGED"
+    gh.now = T0 + timedelta(minutes=5)
+    assert PR not in [p["url"] for p in run(ws, gh)["pending"]]
+
+
+def test_notifications_paginate_with_all_true_and_a_bounded_page_count(ws):
+    gh = FakeGh()
+    base = "https://api.github.com/notifications?all=true&per_page=50&page="
+    gh.notif_pages = [_resp([_notif(i, f"https://api.github.com/repos/example-org/code/pulls/{i}")],
+                            link=base + str(i + 1)) for i in range(1, 9)]
+    res = run(ws, gh)
+    assert len(notif_calls(gh)) == inbox.MAX_PAGES == 5
+    assert res["sources"]["approvals"]["truncated"] is True
+    assert len([p for p in res["pending"] if p["kind"] == "approval"]) == 5
+    assert "notifications?all=true&per_page=50" in notif_calls(gh)[0]
+    assert not any("If-Modified-Since" in x for x in notif_calls(gh)[1])   # only page 1 is conditional
+
+
+def test_notifications_follow_link_until_no_next(ws):
+    gh = FakeGh()
+    gh.notif_pages = [_resp([_notif(1, "https://api.github.com/repos/example-org/code/pulls/1")],
+                            link="https://api.github.com/notifications?all=true&per_page=50&page=2"),
+                      _resp([_notif(2, "https://api.github.com/repos/example-org/code/pulls/2")])]
+    res = run(ws, gh)
+    assert len(notif_calls(gh)) == 2 and "truncated" not in res["sources"]["approvals"]
+
+
+def test_rescheduled_carries_a_structured_original_target_marker_field(ws):
+    gh = FakeGh()
+    gh.search["assigned"] = [req_item(REQ, 1)]
+    run(ws, gh)
+    inbox.schedule(str(ws), REQ, "2026-11-10", runner=gh, by="alice", clock=gh.clock)
+    body = gh.comments["example-org/planning#1"][-1]["body"]
+    assert json.loads(re.search(r"foundry-deck: (\{.*?\}) -->", body).group(1))["original_target"] == "next-iteration"
+    assert gh.posted("example-org/planning#1", "rescheduled")[0].original_target == "next-iteration"
+    # recovery from the first `scheduled` marker is the fallback when the structured field is absent
+    gh.comments["example-org/planning#1"][-1]["body"] = body.replace(
+        ',"original_target":"next-iteration"', "").replace("\\u003e", "\\u003e")
+    view = inbox._schedule_view(inbox._markers(inbox.RunnerAdapter(gh), "example-org/planning#1"),
+                                "example-org/planning#1")
+    assert view["original_target"] == "next-iteration" and view["target"] == "2026-11-10"

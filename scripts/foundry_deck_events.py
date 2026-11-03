@@ -104,6 +104,7 @@ class Event:
     idempotency_key: str | None = None
     detail: str | None = None       # unparsed reason
     when: str | None = None
+    original_target: str | None = None   # rescheduled only: the first-scheduled target (structured, optional)
     relation: str = "blocked_by"    # blocked events only: "blocked_by" (this issue is blocked) | "blocking"
 
     def as_dict(self):
@@ -181,6 +182,8 @@ def render_marker(event: Event, line: str) -> str:
            "evidence": list(event.evidence)}
     if event.when is not None:
         obj["when"] = event.when
+    if event.original_target is not None:
+        obj["original_target"] = event.original_target
     # '<' and '>' only occur inside JSON strings; escaping them keeps a payload from closing or opening a comment.
     js = json.dumps(obj, ensure_ascii=True, separators=(",", ":")).replace(">", "\\u003e").replace("<", "\\u003c")
     line = " ".join(str(line).split()).replace("<!--", "").replace("-->", "")
@@ -232,7 +235,9 @@ def _markers_in(comment) -> list:
                              source="marker", comment_id=str(comment.get("id")),
                              author=((comment.get("author") or {}).get("login")),
                              idempotency_key=obj["idempotency_key"],
-                             when=obj.get("when") if isinstance(obj.get("when"), str) else None))
+                             when=obj.get("when") if isinstance(obj.get("when"), str) else None,
+                             original_target=(obj["original_target"]
+                                              if isinstance(obj.get("original_target"), str) else None)))
     if n_prefix > len(found):   # a prefix with no closing `-->`
         out.append(_unparsed(comment, "unterminated_marker"))
     return out
@@ -472,7 +477,7 @@ def emit(issue, event, payload, adapter=None, clock=None) -> Event:
     """Record `event` on `issue` as a marker comment unless a marker with the same idempotency key exists.
 
     Raises ValueError for an unknown or native-only event, or evidence that is not shared references.
-    `payload`: target, blocking, by (required), evidence, when, key (explicit idempotency_key), at, note.
+    `payload`: target, blocking, by (required), evidence, when, original_target, key (explicit idempotency_key), at, note.
     """
     if event not in EVENTS or not MAPPING[event]["marker"]:
         raise ValueError(f"event {event!r} cannot be emitted"
@@ -505,7 +510,8 @@ def emit(issue, event, payload, adapter=None, clock=None) -> Event:
             if ex.idempotency_key == key and ex.event in (event, "unparsed"):
                 return ex   # present (a hand-edited, unparsed marker with the key counts as present)
     ev = Event(event=event, at=_iso(_dt(at)), by=by, target=payload.get("target"), blocking=blocking,
-               evidence=list(evidence), source="marker", idempotency_key=key, when=payload.get("when"))
+               evidence=list(evidence), source="marker", idempotency_key=key, when=payload.get("when"),
+               original_target=payload.get("original_target"))
     note = payload.get("note") or f"{event} recorded by {by}" + (f" for {ev.target}" if ev.target else "")
     adapter.post_comment(issue, render_marker(ev, note))
     return ev

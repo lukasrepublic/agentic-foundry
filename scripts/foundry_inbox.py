@@ -6,20 +6,55 @@ Durable sources, each probed and reported separately (status ok|uncovered|error 
   mentions         open issues that mention @me                           (kind: mention)
   review_requests  open PRs with a review requested from @me              (kind: review)
   approvals        the notifications API, reasons approval_requested /    (kind: approval)
-                   review_requested; polled with If-Modified-Since, 304 = "no change", never faster
-                   than X-Poll-Interval. Its items are add-only: a request stays pending whatever the
-                   notification read state, until it is resolved.
+                   review_requested; the first poll uses `all=true` and follows `Link: rel="next"` up to
+                   5 pages (per_page=50; a longer listing is flagged `truncated`); later polls use
+                   If-Modified-Since, 304 = "no change", never faster than X-Poll-Interval (a cached
+                   return keeps its ORIGINAL checked_at). Its items are add-only: a request stays pending
+                   whatever the notification read state, until it is resolved. Two exceptions: a
+                   notification whose subject URL cannot be parsed is surfaced with `ref: null` and pruned
+                   once its notification id is gone from a fresh listing; a parseable approval whose PR is
+                   merged/closed is pruned.
+
+Two reach-disjoint verbs (the permission floor tiers them separately):
+  scan   READ-ONLY. Discovers sources, blockers, coverage, dispatch_allowed, pending and the escalate
+         candidates; writes only the gitignored runtime file. Tier `allow`. Never posts a comment.
+  check  scan + records the gn-04 events (`blocker_ack`, `scheduled`) as marker comments on the operator's
+         request issues. Tier `ask`, like ack / schedule / resolve.
 
 Pending requests persist in `<workspace>/.foundry/runtime/inbox.json` (the directory carries its own
 `.gitignore` of `*`; atomic temp+rename writes). A request that `blocks` an open issue owned by another
-operator gets a `blocker_ack` and one `escalate` item; any other request gets a `scheduled` event with a
-target and queue position. Events go through the gn-04 writer (`foundry_deck_events.emit`); already-recorded
-markers on the request issue are read back first, so a lost runtime file causes no duplicate event.
+operator gets a `blocker_ack` (on the request issue; gn-04 records the `BlockingAddedEvent` there as a
+`blocked` event with relation "blocking", so the ack validates) and an `escalate` item; any other request
+gets a `scheduled` event with a target and queue position. Events go through the gn-04 writer
+(`foundry_deck_events.emit`); already-recorded markers on the request issue are read back first, so a lost
+runtime file causes no duplicate event.
+
+Escalations persist: `escalate` is DERIVED on every run from the persisted blocked items (refreshed by the
+live read-back) and stays surfaced - also by `pending` - until `resolve`. "Do not re-emit the event" is
+independent of "still surface the escalation". A `resolved` marker suppresses its request only until new
+activity after it (a later blocked episode, a reopen, or a human comment on the request).
+
+State is a rebuildable cache, and there is NO file lock: two concurrent verbs may load-mutate-save over
+each other (last writer wins). A lost update is repaired by the next scan, because every durable fact is
+re-read from GitHub's own record (markers, relations); nothing authoritative lives only in inbox.json.
+
+Degraded-dispatch policy (`github_scope.degraded_policy`, charter-facing): `dispatch_allowed` is permitted
+despite a failed source only if the policy NAMES every failed source, matches the scope, and the
+`max_age_min` window is met. The window is anchored to the most recent check in which every source NOT
+named by the policy was `ok` - so a permanently uncovered source (e.g. `approvals` under a fine-grained
+token) that the policy names does not deny forever, and a failure outside the named set always denies. A
+check that itself finds the unnamed sources ok is that anchor, so with this reading the age bound only
+rejects a nonsensical (negative / non-numeric) `max_age_min`; it is a declared limit, not a staleness probe.
+
+`resolve` evidence is a practice, not a control: it must be an https URL WITH a path (issue / PR / commit
+shape), which rejects a bare host or a typo, but nothing verifies that the dependency is truly satisfied
+- the operator's own judgement is the control.
 
 Every subprocess goes through ONE injectable `runner(argv, timeout) -> Result` (tests stub it).
 
-  foundry_inbox.py check [--queue-status ok|stale|error] | pending | ack URL | schedule URL --target T
-                   | resolve URL --evidence https://...        (all accept --project-dir DIR and --json)
+  foundry_inbox.py scan [--queue-status ok|stale|error] | check [--queue-status ...] | pending
+                   | ack URL | schedule URL --target T | resolve URL --evidence https://host/path
+                                                           (all accept --project-dir DIR and --json)
 """
 from __future__ import annotations
 
@@ -48,6 +83,9 @@ DEFAULT_TARGET = "next-iteration"
 QUEUE_STATUSES = ("ok", "stale", "error")
 RUNTIME_REL = os.path.join(".foundry", "runtime", "inbox.json")
 SCHEMA = 1
+MAX_PAGES = 5
+_NEXT_RE = re.compile(r'<([^>]+)>\s*;\s*rel="next"')
+_EVIDENCE_RE = re.compile(r"^https://[^\s/?#]+/[^\s/?#]\S*$")     # https URL with a real path component
 
 _URL_REF = re.compile(r"^https://github\.com/([^/\s]+/[^/\s]+)/(?:issues|pull)/(\d+)/?$")
 _API_REF = re.compile(r"/repos/([^/\s]+/[^/\s]+)/(issues|pulls)/(\d+)$")
@@ -153,32 +191,46 @@ def _fetch_approvals(state, runner, timeout, now):
     notif = state["notifications"]
     prev = state["sources"].get("approvals")
     if prev and prev.get("status") == "ok" and notif.get("next_poll_at") and now < _dt(notif["next_poll_at"]):
-        return dict(prev, cached=True, detail="within X-Poll-Interval; not polled"), []
-    argv = ["gh", "api", "-i", "-H", f"X-GitHub-Api-Version: {API_VERSION}"]
-    if notif.get("last_modified"):
-        argv += ["-H", f"If-Modified-Since: {notif['last_modified']}"]
-    argv.append("notifications?per_page=50")
-    res = runner(argv, timeout)
-    poll = DEFAULT_POLL
+        return dict(prev, cached=True, detail="within X-Poll-Interval; not polled"), []   # checked_at preserved
+    first = not notif.get("last_modified")
+    path = "notifications?all=true&per_page=50" if first else "notifications?per_page=50"
+    data, pages, truncated, first_res = [], 0, False, None
+    while True:
+        argv = ["gh", "api", "-i", "-H", f"X-GitHub-Api-Version: {API_VERSION}"]
+        if pages == 0 and notif.get("last_modified"):
+            argv += ["-H", f"If-Modified-Since: {notif['last_modified']}"]
+        argv.append(path)
+        res = runner(argv, timeout)
+        pages += 1
+        if first_res is None:
+            first_res = res
 
-    def schedule_next():
-        raw = _header(res.stdout, "X-Poll-Interval")
-        p = int(raw) if raw and raw.isdigit() else DEFAULT_POLL
-        notif["poll_interval"] = p
-        notif["next_poll_at"] = _iso(now + timedelta(seconds=p))
+            def schedule_next(res=res):
+                raw = _header(res.stdout, "X-Poll-Interval")
+                p = int(raw) if raw and raw.isdigit() else DEFAULT_POLL
+                notif["poll_interval"] = p
+                notif["next_poll_at"] = _iso(now + timedelta(seconds=p))
 
-    if _status_of(res) == 304:      # gh exits non-zero on 304; it means "nothing changed", not failure
-        schedule_next()
-        return _row("approvals", "ok", "304 not modified", scope, http_status=304), []
-    if res.rc != 0:
-        row = _fail("approvals", res, scope)
-        if row["status"] == "uncovered":
-            row["detail"] += " (notifications API refuses fine-grained/App tokens)"
-        return row, None
-    data = _json(_body(res.stdout))
-    if not isinstance(data, list):
-        return _row("approvals", "error", "unparseable notifications response", scope), None
-    lm = _header(res.stdout, "Last-Modified")
+            if _status_of(res) == 304:   # gh exits non-zero on 304; it means "nothing changed", not failure
+                schedule_next()
+                return _row("approvals", "ok", "304 not modified", scope, http_status=304), []
+        if res.rc != 0:
+            row = _fail("approvals", res, scope)
+            if row["status"] == "uncovered":
+                row["detail"] += " (notifications API refuses fine-grained/App tokens)"
+            return row, None
+        page = _json(_body(res.stdout))
+        if not isinstance(page, list):
+            return _row("approvals", "error", "unparseable notifications response", scope), None
+        data += page
+        m = _NEXT_RE.search(_header(res.stdout, "Link") or "")
+        if not m:
+            break
+        if pages >= MAX_PAGES:
+            truncated = True
+            break
+        path = m.group(1)
+    lm = _header(first_res.stdout, "Last-Modified")
     if lm:
         notif["last_modified"] = lm
     schedule_next()
@@ -188,10 +240,16 @@ def _fetch_approvals(state, runner, timeout, now):
             url = _notif_url(n)
             signals.append({"id": n.get("id"), "reason": n["reason"], "unread": n.get("unread"), "url": url})
             items.append({"url": url, "title": (n.get("subject") or {}).get("title", ""),
-                          "created_at": n.get("updated_at", ""), "kind": "approval"})
+                          "created_at": n.get("updated_at", ""), "kind": "approval", "notif_id": n.get("id")})
     notif["signals"] = signals
-    return _row("approvals", "ok", f"HTTP 200; {len(items)} approval/review notification(s)", scope,
-                http_status=200), items
+    notif["listing_ids"] = [x["id"] for x in signals]
+    notif["listing_at"] = _iso(now)
+    detail = f"HTTP 200; {len(items)} approval/review notification(s); {pages} page(s)"
+    extra = {}
+    if truncated:
+        detail += f"; truncated at {MAX_PAGES} pages"
+        extra["truncated"] = True
+    return _row("approvals", "ok", detail, scope, http_status=200, **extra), items
 
 
 def _me(runner, timeout):
@@ -205,11 +263,37 @@ def _me(runner, timeout):
 
 # ------------------------------------------------------------------ marker read-back ---------------------
 
-def _markers(adapter, ref):
+def _read(adapter, ref):
+    """(live parsed markers, raw comments) of one issue."""
+    comments = adapter.comments(ref)
     out = []
-    for c in adapter.comments(ref):
+    for c in comments:
         out += [e for e in de._markers_in(c) if e.event != "unparsed"]
-    return out
+    return out, comments
+
+
+def _markers(adapter, ref):
+    return _read(adapter, ref)[0]
+
+
+_ACTIVITY_NODES = ("BlockingAddedEvent", "BlockedByAddedEvent", "ReopenedEvent")
+
+
+def _resolved_holds(adapter, ref, marks, comments):
+    """True iff a `resolved` marker exists AND nothing new happened after the latest one: no later blocked
+    episode, no reopen, no human (non-marker) comment. New activity un-suppresses the request."""
+    stamps = [_dt(e.at) for e in marks if e.event == "resolved" and e.target == ref]
+    if not stamps:
+        return False
+    rt = max(stamps)
+    for c in comments:
+        if isinstance(c, dict) and c.get("createdAt") and _dt(c["createdAt"]) > rt and not de._markers_in(c):
+            return False
+    for n in adapter.timeline(ref):
+        if isinstance(n, dict) and n.get("__typename") in _ACTIVITY_NODES and n.get("createdAt") \
+                and _dt(n["createdAt"]) > rt:
+            return False
+    return True
 
 
 def _schedule_view(markers, ref):
@@ -218,7 +302,10 @@ def _schedule_view(markers, ref):
     if not sched:
         return None
     firsts = [e for e in sched if e.event == "scheduled"] or sched
-    return {"target": sched[-1].when, "original_target": firsts[0].when, "count": len(sched)}
+    # a structured `original_target` on a rescheduled marker wins; the first `scheduled` marker is the fallback
+    structured = [e.original_target for e in sched if e.original_target]
+    return {"target": sched[-1].when, "original_target": structured[0] if structured else firsts[0].when,
+            "count": len(sched)}
 
 
 def _blockers(ref, adapter, runner, timeout, me, operators):
@@ -263,10 +350,13 @@ def _blocker_key(ref, b):
     return "inbox-blocker-" + hashlib.sha256(raw.encode()).hexdigest()[:20]
 
 
-# ------------------------------------------------------------------ check ------------------------------
+# ------------------------------------------------------------------ scan / check -----------------------
 
-def _policy_covers(policy, failed, scope, last_full, now):
-    if not isinstance(policy, dict) or not last_full:
+def _policy_covers(policy, failed, scope):
+    """The degraded policy covers `failed` iff it names every failed source, matches the scope and carries a
+    valid max_age_min. The age is measured from the anchor (the check in which every source NOT named by the
+    policy was ok): when `failed` is a subset of the named sources, the current check IS that anchor."""
+    if not isinstance(policy, dict):
         return False
     srcs = policy.get("sources")
     try:
@@ -274,17 +364,35 @@ def _policy_covers(policy, failed, scope, last_full, now):
     except (TypeError, ValueError):
         return False
     return (isinstance(srcs, list) and set(failed) <= set(srcs) and policy.get("scope") == scope
-            and now - _dt(last_full) <= timedelta(minutes=max_age))
+            and 0 <= max_age)
 
 
-def check(project_dir, runner=default_runner, timeout=DEFAULT_TIMEOUT, queue_status="ok", clock=None):
-    """Run one inbox check. Returns the result dict (also persisted, minus escalations, to inbox.json)."""
+def _escalations(pending, emitted=()):
+    """Escalate items derived from the persisted blocked items; they stay until `resolve` removes the request."""
+    out = []
+    for url, it in sorted(pending.items()):
+        for b in it.get("blocked") or []:
+            out.append({"type": "escalate", "request": url,
+                        "action": f"resolve or unblock {it.get('ref') or url} for {b['owner']}",
+                        "affected": {"url": b["url"], "owner": b["owner"]},
+                        "evidence": [url, b["url"]], "event_emitted": (url, b["url"]) in emitted})
+    return out
+
+
+def _pr_closed(runner, timeout, url):
+    res = runner(["gh", "pr", "view", url, "--json", "state"], timeout)
+    d = _json(res.stdout) if res.rc == 0 else None
+    return isinstance(d, dict) and str(d.get("state", "")).upper() in ("MERGED", "CLOSED")
+
+
+def _run(project_dir, runner, timeout, queue_status, clock, record):
     if queue_status not in QUEUE_STATUSES:
         raise ValueError(f"queue_status must be one of {QUEUE_STATUSES}")
     now = (clock or (lambda: datetime.now(timezone.utc)))()
     manifest, cfg = load_scope(project_dir)
     if cfg is None:
         raise ValueError("no github_scope configured in .claude/foundry-project.json")
+    by = _me(runner, timeout)            # precondition, resolved ONCE up front: fails before anything is written
     state = load_state(project_dir)
     scope = cfg["owner"]
     adapter = RunnerAdapter(runner, timeout)
@@ -299,7 +407,9 @@ def check(project_dir, runner=default_runner, timeout=DEFAULT_TIMEOUT, queue_sta
     rows, pending = {}, state["pending"]
     for name in SOURCES:
         row, items = fetched[name]
-        row = dict(row, checked_at=_iso(now))
+        row = dict(row)
+        if not row.get("cached"):
+            row["checked_at"] = _iso(now)    # a cached-within-interval row keeps its original checked_at
         rows[name] = row
         if items is None:                        # failed: keep the items, mark them stale below
             continue
@@ -316,24 +426,37 @@ def check(project_dir, runner=default_runner, timeout=DEFAULT_TIMEOUT, queue_sta
                     if not cur["sources"]:
                         del pending[url]
 
+    # ---- approvals pruning (R6) -----------------------------------------------------------------------
+    notif = state["notifications"]
+    fresh = notif.get("listing_at") == _iso(now)
+    gone = set(notif.get("listing_ids") or []) if fresh else None
+    for url, it in list(pending.items()):
+        if it["kind"] != "approval":
+            continue
+        it.setdefault("ref", ref_of(url))
+        if url.startswith("notification:"):
+            if gone is not None and it.get("notif_id") not in gone:
+                del pending[url]
+        elif "/pull/" in url and _pr_closed(runner, timeout, url):
+            del pending[url]
+
     # ---- read back durable markers, detect blockers --------------------------------------------------
-    events, escalate, ctx = [], [], {}
-    me = None
+    events, planned, emitted, ctx = [], [], set(), {}
     for url, it in list(pending.items()):
         ref = ref_of(url)
         it["ref"] = ref
         if not ref:
             continue
         try:
-            marks = _markers(adapter, ref)
-            if any(e.event == "resolved" and e.target == ref for e in marks):
+            marks, comments = _read(adapter, ref)
+            if _resolved_holds(adapter, ref, marks, comments):
                 del pending[url]
                 continue
             blockers = []
             if it["kind"] == "request":
-                me = me or _me(runner, timeout)
-                blockers = _blockers(ref, adapter, runner, timeout, me, operators)
+                blockers = _blockers(ref, adapter, runner, timeout, by, operators)
             ctx[url] = (marks, blockers)
+            it["blocked"] = [{"url": b["url"], "owner": b["owner"]} for b in blockers]   # persisted
         except RuntimeError as exc:
             for s in it["sources"]:
                 rows[s].update(status="error", detail=f"read-back failed for {url}: {exc}"[:240])
@@ -348,68 +471,78 @@ def check(project_dir, runner=default_runner, timeout=DEFAULT_TIMEOUT, queue_sta
                    key=lambda u: (pending[u].get("created_at") or "", u))
     position = {u: i + 1 for i, u in enumerate(queue)}
     default_target = str(cfg.get("default_target") or DEFAULT_TARGET)
-    by = me
 
     for url, (marks, blockers) in ctx.items():
         it, ref = pending[url], pending[url]["ref"]
-        by = by or _me(runner, timeout)
         it["acked"] = any(e.event == "ack" and e.target == ref for e in marks)
         it["blocker"] = bool(blockers)
-        it["blocked"] = [{"url": b["url"], "owner": b["owner"]} for b in blockers]
         try:
             for b in blockers:
                 key = _blocker_key(ref, b)
                 if any(e.idempotency_key == key for e in marks):
-                    continue
+                    continue        # already recorded: no new event (the escalation is still surfaced)
                 at = max(now, _dt(b["created_at"])) if b["created_at"] else now
-                ev = de.emit(ref, "blocker_ack", {"target": b["ref"], "blocking": b["ref"], "by": by, "key": key,
-                                                  "at": _iso(at), "evidence": [url, b["url"]],
-                                                  "note": f"blocker_ack: {ref} blocks {b['ref']} (owner {b['owner']})"},
-                             adapter=adapter, clock=lambda: now)
-                events.append(ev.as_dict())
-                escalate.append({"type": "escalate", "request": url,
-                                 "action": f"resolve or unblock {ref} for {b['owner']}",
-                                 "affected": {"url": b["url"], "owner": b["owner"]},
-                                 "evidence": [url, b["url"]]})
+                payload = {"target": b["ref"], "blocking": b["ref"], "by": by, "key": key, "at": _iso(at),
+                           "evidence": [url, b["url"]],
+                           "note": f"blocker_ack: {ref} blocks {b['ref']} (owner {b['owner']})"}
+                if record:
+                    ev = de.emit(ref, "blocker_ack", payload, adapter=adapter, clock=lambda: now)
+                    events.append(ev.as_dict())
+                    emitted.add((url, b["url"]))
+                else:
+                    planned.append({"issue": ref, "event": "blocker_ack", "target": b["ref"]})
             if it["kind"] != "mention" and not blockers:
                 view = _schedule_view(marks, ref)
                 if view is None:
-                    ev = de.emit(ref, "scheduled", {"target": ref, "when": default_target, "by": by,
-                                                    "note": f"scheduled for {default_target}, queue position "
-                                                            f"{position[url]}"},
-                                 adapter=adapter, clock=lambda: now)
-                    events.append(ev.as_dict())
+                    if record:
+                        ev = de.emit(ref, "scheduled", {"target": ref, "when": default_target, "by": by,
+                                                        "note": f"scheduled for {default_target}, queue "
+                                                                f"position {position[url]}"},
+                                     adapter=adapter, clock=lambda: now)
+                        events.append(ev.as_dict())
+                    else:
+                        planned.append({"issue": ref, "event": "scheduled", "target": default_target})
                     view = {"target": default_target, "original_target": default_target, "count": 1}
                 it["scheduled"] = {"target": view["target"], "original_target": view["original_target"],
                                    "position": position[url]}
         except (RuntimeError, ValueError) as exc:
             for s in it["sources"]:
                 rows[s].update(status="error", detail=f"event write failed for {url}: {exc}"[:240])
-            failed = [n for n in SOURCES if rows[n]["status"] != "ok"]
             it["stale"] = True
 
     # ---- coverage + dispatch decision ----------------------------------------------------------------
     failed = [n for n in SOURCES if rows[n]["status"] != "ok"]
     coverage = "full" if not failed else "partial"
-    prev_full = state.get("last_full_check_at")
-    last_full = _iso(now) if coverage == "full" else prev_full
+    last_full = _iso(now) if coverage == "full" else state.get("last_full_check_at")
+    policy = cfg.get("degraded_policy")
     allowed, needed = False, None
     if queue_status != "ok":
         needed = f"delivery queue is {queue_status}; decide before dispatching"
     elif coverage == "full":
         allowed = True
-    elif _policy_covers(cfg.get("degraded_policy"), failed, scope, prev_full, now):
+    elif _policy_covers(policy, failed, scope):
         allowed = True
     else:
         needed = (f"required source(s) {', '.join(failed)} not fully covered and github_scope.degraded_policy "
-                  f"does not cover them for scope {scope} within max_age_min; decide whether to dispatch")
+                  f"does not cover them for scope {scope}; decide whether to dispatch")
     state.update(checked_at=_iso(now), scope=scope, coverage=coverage, last_full_check_at=last_full,
                  sources=rows, dispatch_allowed=allowed, decision_needed=needed, queue_status=queue_status)
     save_state(project_dir, state)
     return {"coverage": coverage, "scope": scope, "sources": rows, "last_full_check_at": last_full,
             "dispatch_allowed": allowed, "decision_needed": needed, "queue_status": queue_status,
-            "pending": sorted(pending.values(), key=lambda i: i["url"]), "escalate": escalate, "events": events,
+            "pending": sorted(pending.values(), key=lambda i: i["url"]),
+            "escalate": _escalations(pending, emitted), "events": events, "planned_events": planned,
             "notifications": state["notifications"]}
+
+
+def scan(project_dir, runner=default_runner, timeout=DEFAULT_TIMEOUT, queue_status="ok", clock=None):
+    """READ-ONLY inbox scan: writes only the gitignored runtime file, never a GitHub comment."""
+    return _run(project_dir, runner, timeout, queue_status, clock, record=False)
+
+
+def check(project_dir, runner=default_runner, timeout=DEFAULT_TIMEOUT, queue_status="ok", clock=None):
+    """scan + record the `blocker_ack` / `scheduled` events as marker comments (tier ask)."""
+    return _run(project_dir, runner, timeout, queue_status, clock, record=True)
 
 
 # ------------------------------------------------------------------ ack / schedule / resolve -------------
@@ -456,6 +589,7 @@ def schedule(project_dir, url, target, runner=default_runner, timeout=DEFAULT_TI
         key = "inbox-resched-" + hashlib.sha256(
             json.dumps([ref, target, view["count"]]).encode()).hexdigest()[:20]
         ev = de.emit(ref, "rescheduled", {"target": ref, "when": target, "by": actor, "key": key,
+                                          "original_target": original,
                                           "note": f"rescheduled from {view['target']} to {target} "
                                                   f"(original target {original})"},
                      adapter=adapter, clock=clock)
@@ -469,11 +603,12 @@ def schedule(project_dir, url, target, runner=default_runner, timeout=DEFAULT_TI
 
 def resolve(project_dir, url, evidence, runner=default_runner, timeout=DEFAULT_TIMEOUT, by=None, clock=None):
     ev_urls = list(evidence or [])
-    if not ev_urls or not all(isinstance(e, str) and re.match(r"^https://[^\s/]+\S*$", e) for e in ev_urls):
-        raise ValueError("resolve needs at least one accessible https evidence URL showing the dependency is "
-                         "satisfied")
+    if not ev_urls or not all(isinstance(e, str) and _EVIDENCE_RE.match(e) for e in ev_urls):
+        raise ValueError("resolve needs at least one https evidence URL with a path (issue / PR / commit) "
+                         "showing the dependency is satisfied; a bare host is not evidence")
     ref = _ref_or_raise(url)
-    ev = de.emit(ref, "resolved", {"target": ref, "by": _actor(runner, timeout, by), "evidence": ev_urls},
+    actor = _actor(runner, timeout, by)   # precondition: resolved before anything is emitted
+    ev = de.emit(ref, "resolved", {"target": ref, "by": actor, "evidence": ev_urls},
                  adapter=RunnerAdapter(runner, timeout), clock=clock)
     state = load_state(project_dir)
     if state["pending"].pop(url, None) is not None:
@@ -484,17 +619,19 @@ def resolve(project_dir, url, evidence, runner=default_runner, timeout=DEFAULT_T
 # ------------------------------------------------------------------ CLI ------------------------------
 
 def _render(cmd, res):
-    if cmd == "check":
+    if cmd in ("check", "scan"):
         lines = [f"coverage: {res['coverage']}  dispatch_allowed: {str(res['dispatch_allowed']).lower()}"]
         lines += [f"  {n}: {r['status']} ({r['scope']})" for n, r in res["sources"].items()]
         lines += [f"  escalate: {e['action']} -> {e['affected']['url']}" for e in res["escalate"]]
+        lines += [f"  planned: {p['event']} on {p['issue']}" for p in res.get("planned_events", [])]
         lines.append(f"  pending: {len(res['pending'])}")
         if res["decision_needed"]:
             lines.append(f"  decision needed: {res['decision_needed']}")
         return "\n".join(lines)
     if cmd == "pending":
-        return "\n".join(f"{i['kind']:<9} {i['url']}{' [stale]' if i.get('stale') else ''}" for i in res["pending"]) \
-            or "no pending requests"
+        lines = [f"{i['kind']:<9} {i['url']}{' [stale]' if i.get('stale') else ''}" for i in res["pending"]]
+        lines += [f"escalate: {e['action']} -> {e['affected']['url']}" for e in res.get("escalate", [])]
+        return "\n".join(lines) or "no pending requests"
     return json.dumps(res, indent=2)
 
 
@@ -504,8 +641,9 @@ def main(argv=None, runner=default_runner, clock=None):
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    c = sub.add_parser("check")
-    c.add_argument("--queue-status", choices=QUEUE_STATUSES, default="ok")
+    for nm in ("scan", "check"):
+        c = sub.add_parser(nm)
+        c.add_argument("--queue-status", choices=QUEUE_STATUSES, default="ok")
     sub.add_parser("pending")
     for name in ("ack", "schedule", "resolve"):
         p = sub.add_parser(name)
@@ -525,13 +663,14 @@ def main(argv=None, runner=default_runner, clock=None):
     pd = a.project_dir_sub or a.project_dir
     as_json = a.json or a.json_sub
     try:
-        if a.cmd == "check":
-            res = check(pd, runner, a.timeout, a.queue_status, clock)
+        if a.cmd in ("scan", "check"):
+            res = (scan if a.cmd == "scan" else check)(pd, runner, a.timeout, a.queue_status, clock)
         elif a.cmd == "pending":
             st = load_state(pd)
             res = {"pending": sorted(st["pending"].values(), key=lambda i: i["url"]),
                    "coverage": st["coverage"], "dispatch_allowed": st["dispatch_allowed"],
-                   "last_full_check_at": st["last_full_check_at"]}
+                   "last_full_check_at": st["last_full_check_at"],
+                   "escalate": _escalations(st["pending"])}
         elif a.cmd == "ack":
             res = ack(pd, a.url, runner, a.timeout, a.by, a.note, clock)
         elif a.cmd == "schedule":

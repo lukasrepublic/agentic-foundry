@@ -142,7 +142,7 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py check:*)",
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py scan:*)",
             "origin": "settings.json"
           },
           {
@@ -229,6 +229,10 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py resolve:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py check:*)",
             "origin": "settings.json"
           }
         ],
@@ -382,7 +386,7 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry_inbox.py check:*)",
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry_inbox.py scan:*)",
             "origin": "settings.json"
           },
           {
@@ -469,6 +473,10 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py resolve:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py check:*)",
             "origin": "settings.json"
           }
         ],
@@ -586,7 +594,7 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py check:*)",
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py scan:*)",
             "origin": "settings.json"
           },
           {
@@ -665,6 +673,10 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py resolve:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py check:*)",
             "origin": "settings.json"
           }
         ],
@@ -814,7 +826,7 @@
             "origin": "settings.local.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py check:*)",
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py scan:*)",
             "origin": "settings.local.json"
           },
           {
@@ -889,6 +901,10 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py resolve:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py check:*)",
             "origin": "settings.json"
           }
         ],
@@ -1024,7 +1040,7 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py check:*)",
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py scan:*)",
             "origin": "settings.json"
           },
           {
@@ -1099,6 +1115,10 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py resolve:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py check:*)",
             "origin": "settings.json"
           }
         ],
