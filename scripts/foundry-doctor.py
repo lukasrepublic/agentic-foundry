@@ -778,7 +778,7 @@ def check_github_capabilities(project_dir=None):
         if HERE not in sys.path:
             sys.path.insert(0, HERE)
         import foundry_github_capabilities as ghc
-        line = ghc.advisory_line(pdir)
+        line = ghc.advisory_line(pdir, timeout=10, deadline=60)
     except Exception as e:  # noqa: BLE001 -- advisory: a crash is a line, not a RED
         return ADVISORY, _sanitize_detail(f"probe crashed: {type(e).__name__}: {e}")
     return (True if line == "full" or line.startswith("n/a") else ADVISORY), line

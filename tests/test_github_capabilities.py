@@ -3,6 +3,7 @@ through the injectable runner, replaced here by fixture responses."""
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -202,21 +203,226 @@ def test_usage_states(proj, tmp_path):
     assert usage("usage.jsonl", json.dumps({"ts": fresh}) + "\n")["state"] == "fresh"
 
 
+def _allowed(argv):
+    j = " ".join(argv)
+    mutating = {"-X", "--method", "-f", "-F", "--field", "--raw-field", "--input"}
+    if argv in (["gh", "auth", "status"], ["gh", "api", "user"],
+                ["gh", "issue", "edit", "--help"], ["gh", "issue", "artifact", "--help"],
+                ["claude", "--version"]):
+        return True
+    if argv[:2] == ["gh", "api"] and "graphql" not in argv:
+        if mutating & set(argv):
+            return False
+        path = argv[-1]
+        return bool(re.match(r"^(repos/|notifications|user$)", path)) and \
+            all(a in ("gh", "api", "-i", "-H", path) or a.startswith("X-GitHub-Api-Version") for a in argv)
+    if argv[:3] == ["gh", "api", "graphql"]:
+        q = [a for a in argv if a.startswith("query=")]
+        if len(q) != 1 or not q[0].startswith("query=query") or "mutation" in q[0]:
+            return False
+        rest = argv[3:]
+        flags = [a for a in rest if a in ("-f", "-F")]
+        return len(flags) * 2 == len(rest) and all(a == "-f" or a == "-F" for a in flags)
+    if argv[:2] == ["gh", "search"] and argv[2:3] in (["issues"], ["prs"]):
+        return not (mutating & set(argv)) and "--owner" in argv
+    if argv[:2] == ["git", "-C"] and argv[3:6] == ["remote", "get-url", "origin"] and len(argv) == 6:
+        return True
+    return False
+
+
 def test_read_only_and_bounded(proj):
     fake = Fake()
     ghc.collect(proj, fake, timeout=11)
     assert fake.calls
     for argv, timeout in fake.calls:
         assert timeout == 11
-        assert "-X" not in argv and "--method" not in argv
-        assert not any(a in ("create", "delete", "close", "comment", "merge") for a in argv)
-        if "graphql" in argv:
-            q = next(a for a in argv if a.startswith("query="))
-            assert q.startswith("query=query") and "mutation" not in q
-        if argv[:2] == ["gh", "issue"]:
-            assert "--help" in argv
-        if argv[:2] == ["git", "-C"]:
-            assert argv[3:] == ["remote", "get-url", "origin"]
+        assert _allowed(argv), argv
+
+
+def test_allowlist_rejects_mutations():
+    assert not _allowed(["gh", "api", "-X", "POST", "repos/a/b/issues"])
+    assert not _allowed(["gh", "api", "repos/a/b/issues", "-f", "title=x"])
+    assert not _allowed(["gh", "api", "graphql", "-f", "query=mutation{x}"])
+    assert not _allowed(["gh", "issue", "close", "1"])
+    assert _allowed(["gh", "api", "-H", "X-GitHub-Api-Version: 1", "repos/a/b"])
+
+
+def test_search_is_owner_scoped(proj):
+    fake = Fake()
+    res = ghc.collect(proj, fake)
+    searches = [a for a, _ in fake.calls if a[:2] == ["gh", "search"]]
+    assert len(searches) == 3
+    for a in searches:
+        assert a[a.index("--owner") + 1] == "example-org"
+    r = rows(res)
+    assert r["assigned"]["scope"] == "owner:example-org"
+
+
+def test_owner_passed_as_string_param(proj):
+    fake = Fake()
+    ghc.collect(proj, fake)
+    argv = next(a for a, _ in fake.calls if "graphql" in a)
+    assert argv[argv.index("o=example-org") - 1] == "-f"
+    assert argv[argv.index("n=7") - 1] == "-F"
+
+
+def test_502_authentication_service_is_error(proj):
+    res = ghc.collect(proj, Fake({"--assignee": R(rc=1, stderr="HTTP 502: authentication service unavailable")}))
+    r = rows(res)["assigned"]
+    assert r["status"] == "error" and r["http_status"] == 502
+
+
+def test_secondary_rate_limit_403_is_error(proj):
+    res = ghc.collect(proj, Fake({"--mentions": R(
+        rc=1, stderr="HTTP 403: You have exceeded a secondary rate limit")}))
+    assert rows(res)["mentions"]["status"] == "error"
+    res = ghc.collect(proj, Fake({"--mentions": R(rc=1, stderr="HTTP 403: API rate limit exceeded")}))
+    assert rows(res)["mentions"]["status"] == "error"
+
+
+def test_planning_repo_401_and_403_uncovered(proj):
+    for code in (401, 403):
+        res = ghc.collect(proj, Fake({"repos/example-org/planning": R(rc=1, stderr=f"HTTP {code}")}))
+        r = rows(res)["planning_repo"]
+        assert r["status"] == "uncovered" and r["http_status"] == code
+        assert res["required_sources_ok"] is False
+
+
+def test_project_not_found_with_rc_is_uncovered(proj):
+    res = ghc.collect(proj, Fake({"graphql": R(rc=1, stdout=json.dumps(
+        {"data": None, "errors": [{"type": "NOT_FOUND",
+                                   "message": "Could not resolve to a ProjectV2 with the number 7."}]}))}))
+    assert rows(res)["project"]["status"] == "uncovered"
+
+
+def test_project_json_errors_branches(proj):
+    def proj_row(doc):
+        return rows(ghc.collect(proj, Fake({"graphql": R(stdout=json.dumps(doc))})))["project"]
+    assert proj_row({"data": {"repositoryOwner": None},
+                     "errors": [{"type": "NOT_FOUND", "message": "Could not resolve to a User"}]}
+                    )["status"] == "uncovered"
+    sc = proj_row({"data": None, "errors": [{"type": "INSUFFICIENT_SCOPES", "message": "x"}]})
+    assert sc["status"] == "uncovered" and sc["remediation"] == ghc.REFRESH_REMEDIATION
+    assert proj_row({"data": None, "errors": [{"message": "boom"}]})["status"] == "error"
+    assert proj_row({"data": {"repositoryOwner": {"projectV2": None}}})["status"] == "uncovered"
+    assert proj_row({"unexpected": 1})["status"] == "error"
+    assert proj_row("not-a-dict")["status"] == "error"
+
+
+def test_project_timeout_is_error(proj):
+    res = ghc.collect(proj, Fake({"graphql": R(rc=124, timed_out=True)}))
+    p = rows(res)["project"]
+    assert p["status"] == "error" and p["detail"] == "timed out"
+
+
+def test_project_read_project_text_ignored_on_success(proj):
+    ok = json.loads(fx("project_ok.json"))
+    ok["data"]["repositoryOwner"]["projectV2"]["title"] = "read:project roadmap"
+    res = ghc.collect(proj, Fake({"graphql": R(stdout=json.dumps(ok))}))
+    assert rows(res)["project"]["status"] == "ok"
+
+
+def test_remediation_field_on_scope_gap(proj):
+    res = ghc.collect(proj, Fake({"graphql": R(rc=1, stderr="missing required scopes [read:project]")}))
+    assert rows(res)["project"]["remediation"] == "gh auth refresh -s read:project,project"
+
+
+@pytest.mark.parametrize("bad", [None, "abc", 0, -3, True, 1.5])
+def test_bad_project_number_is_error_row(proj, bad):
+    f = Path(proj) / ".claude/foundry-project.json"
+    m = json.loads(f.read_text())
+    if bad is None:
+        m["github_scope"].pop("project_number")
+    else:
+        m["github_scope"]["project_number"] = bad
+    f.write_text(json.dumps(m))
+    fake = Fake()
+    res = ghc.collect(proj, fake)
+    p = rows(res)["project"]
+    assert p["status"] == "error" and "project_number" in p["detail"]
+    assert not any("graphql" in a for a, _ in fake.calls)
+
+
+def test_deadline_zero_marks_rows_deadline(proj):
+    fake = Fake()
+    res = ghc.collect(proj, fake, deadline=0)
+    assert not fake.calls
+    r = rows(res)
+    assert r["assigned"]["status"] == "error" and r["assigned"]["detail"] == "deadline"
+    assert r["branch_protection:code"]["detail"] == "deadline"
+    assert res["deadline_hit"] is True and "deadline" in res["summary"]
+
+
+def test_deadline_hit_midway(proj, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(ghc.time, "monotonic", lambda: clock[0])
+
+    def slow(argv, timeout):
+        clock[0] += 40
+        return Fake()(argv, timeout)
+    res = ghc.collect(proj, slow, deadline=90)
+    r = rows(res)
+    assert r["gh"]["status"] == "ok"
+    assert any(x["detail"] == "deadline" for x in res["sources"])
+    assert res["deadline_hit"] and "deadline 90s reached" in res["summary"]
+
+
+def test_call_timeout_capped_by_remaining_deadline(proj, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(ghc.time, "monotonic", lambda: clock[0])
+    fake = Fake()
+    ghc.collect(proj, fake, timeout=30, deadline=5)
+    assert fake.calls and all(t <= 5 for _, t in fake.calls)
+
+
+def test_doctor_passes_deadline_and_timeout(proj, monkeypatch):
+    seen = {}
+
+    def adv(p, **kw):
+        seen.update(kw)
+        return "full"
+    monkeypatch.setattr(ghc, "advisory_line", adv)
+    _doctor().check_github_capabilities(proj)
+    assert seen == {"timeout": 10, "deadline": 60}
+
+
+def _cli(proj_dir, *extra):
+    return subprocess.run([sys.executable, str(ROOT / "scripts/foundry_github_capabilities.py"),
+                           "--project-dir", str(proj_dir), *extra], capture_output=True, text=True,
+                          env=dict(os.environ, PATH=str(proj_dir) + "/bin:" + os.environ["PATH"]))
+
+
+def _fake_gh(proj_dir, script):
+    b = Path(proj_dir) / "bin"
+    b.mkdir(exist_ok=True)
+    (b / "gh").write_text(script)
+    (b / "gh").chmod(0o755)
+
+
+def test_main_json_shape_and_exit_codes(proj):
+    _fake_gh(proj, "#!/bin/sh\nexit 1\n")  # every gh call fails -> error rows
+    p = _cli(proj, "--json", "--deadline", "30")
+    out = json.loads(p.stdout)
+    assert p.returncode == 1
+    assert {"coverage", "required_sources_ok", "summary", "sources"} <= set(out)
+    for r in out["sources"]:
+        assert {"name", "status", "scope", "detail"} <= set(r)
+    assert out["coverage"] == "partial"
+
+
+def test_main_exit_codes_unit(proj, monkeypatch, capsys):
+    def mk(rows_):
+        return dict(ghc.summarize(rows_), sources=rows_, deadline_hit=False)
+    ok = [{"name": n, "status": "ok", "scope": "s", "detail": "d"} for n in ghc.INBOX_ROWS]
+    unc = [dict(r) for r in ok]
+    unc[1]["status"] = "uncovered"
+    err = [dict(r) for r in ok]
+    err[0]["status"] = "error"
+    for rows_, code in ((ok, 0), (unc, 2), (err, 1)):
+        monkeypatch.setattr(ghc, "collect", lambda *a, **k: mk(rows_))
+        assert ghc.main(["--project-dir", proj]) == code
+    monkeypatch.setattr(ghc, "collect", lambda *a, **k: None)
+    assert ghc.main(["--project-dir", proj]) == 1
 
 
 def test_no_scope_configured(tmp_path):
@@ -232,7 +438,7 @@ def test_cli_help_and_no_scope(tmp_path):
     assert p.returncode == 0 and "--json" in p.stdout
     p = subprocess.run([sys.executable, str(ROOT / "scripts/foundry_github_capabilities.py"),
                         "--project-dir", str(tmp_path), "--json"], capture_output=True, text=True)
-    assert p.returncode == 0 and json.loads(p.stdout)["coverage"] == "n/a"
+    assert p.returncode == 1 and json.loads(p.stdout)["coverage"] == "n/a"
 
 
 # ------------------------------------------------ doctor advisory ------------------------------------------------ #
@@ -250,12 +456,12 @@ def test_doctor_check_na(tmp_path):
 
 def test_doctor_check_partial_and_crash(proj, monkeypatch):
     d = _doctor()
-    monkeypatch.setattr(ghc, "advisory_line", lambda p: "partial — uncovered: project, approvals")
+    monkeypatch.setattr(ghc, "advisory_line", lambda p, **kw: "partial — uncovered: project, approvals")
     assert d.check_github_capabilities(proj) == (d.ADVISORY, "partial — uncovered: project, approvals")
-    monkeypatch.setattr(ghc, "advisory_line", lambda p: "full")
+    monkeypatch.setattr(ghc, "advisory_line", lambda p, **kw: "full")
     assert d.check_github_capabilities(proj) == (True, "full")
 
-    def boom(p):
+    def boom(p, **kw):
         raise RuntimeError("kaboom")
     monkeypatch.setattr(ghc, "advisory_line", boom)
     ok, detail = d.check_github_capabilities(proj)

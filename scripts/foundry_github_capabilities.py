@@ -15,6 +15,20 @@ Every row carries `status` in {ok, uncovered, error}, its `scope` and a `detail`
   error      anything else (gh absent, timeout, 5xx, unparseable output)
 A successful probe with zero results is `ok`.
 
+Classification detail: the scope-complaint text (`_SCOPE_RE`) is consulted only when NO HTTP status
+was parsed; a parsed 401/403/404 is `uncovered` by itself, any other status (5xx, ...) is `error`, and a
+403/429 whose body names a rate limit ("rate limit", "secondary") is `error` (throttled, not refused).
+
+Overall deadline: the whole probe set is bounded by `deadline` seconds (default 90); every call after
+it is skipped and its row is `error` with detail `deadline`, and the summary says so.
+
+Exit codes of `main`: 0 full coverage; 2 partial coverage with only `uncovered` rows; 1 when no
+github_scope is configured, or any inbox row is `error` (or the deadline was hit).
+
+Deviation (recorded): branch-protection rules are read through the single injectable runner plus
+`foundry_tier_preflight.probe_has_rsc_rule`, NOT through that module's `run_gh`, so that the one-runner
+read-only/timeout/deadline discipline holds for every subprocess.
+
 READ-ONLY: only REST GET, `gh search`, `--help`, and GraphQL `query` are issued; every subprocess
 goes through ONE injectable `runner(argv, timeout)` and is bounded by a timeout. Fixing access
 (`gh auth refresh`, scope changes) is only NAMED, never performed.
@@ -29,6 +43,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -41,6 +56,7 @@ from foundry_tier_preflight import API_VERSION, probe_has_rsc_rule  # noqa: E402
 CLAUDE_CODE_FLOOR = (2, 1, 278)
 
 DEFAULT_TIMEOUT = 30
+DEFAULT_DEADLINE = 90
 REFRESH_REMEDIATION = "gh auth refresh -s read:project,project"
 REQUIRED_SOURCES = ("planning_repo", "assigned", "mentions", "review_requests", "approvals")
 INBOX_ROWS = ("planning_repo", "project", "assigned", "mentions", "review_requests", "approvals")
@@ -50,6 +66,8 @@ _HTTP_RE = re.compile(r"HTTP[/ ]?(?:\d\.\d )?(\d{3})")
 _SCOPE_RE = re.compile(r"missing required scopes|required scope|insufficient|read:project|"
                        r"resource not accessible|must have admin|bad credentials|"
                        r"not logged in|authentication", re.I)
+_RATE_RE = re.compile(r"rate limit|secondary", re.I)
+_NOT_FOUND_RE = re.compile(r"NOT_FOUND|Could not resolve to a", re.I)
 
 
 @dataclass
@@ -59,6 +77,7 @@ class Result:
     stderr: str = ""
     timed_out: bool = False
     missing: bool = False
+    deadline: bool = False
 
 
 def default_runner(argv, timeout):
@@ -90,11 +109,16 @@ def _fail(name, res, scope, **extra):
     """Classify a failed call: refusal -> uncovered, anything else -> error."""
     if res.missing:
         return _row(name, "error", "gh/executable not found on PATH", scope, exit_code=res.rc)
+    if res.deadline:
+        return _row(name, "error", "deadline", scope, exit_code=res.rc)
     if res.timed_out:
         return _row(name, "error", "timed out", scope, exit_code=res.rc)
     http = _status_of(res)
     text = " ".join(((res.stderr or "") + " " + (res.stdout or "")).split())[:200]
-    refusal = http in (401, 403, 404) or bool(_SCOPE_RE.search(text))
+    if http is None:
+        refusal = bool(_SCOPE_RE.search(text))
+    else:
+        refusal = http in (401, 403, 404) and not _RATE_RE.search(text)
     detail = (f"HTTP {http}; " if http else f"exit {res.rc}; ") + text
     return _row(name, "uncovered" if refusal else "error", detail, scope,
                 exit_code=res.rc, **({"http_status": http} if http else {}), **extra)
@@ -161,36 +185,51 @@ _PROJECT_QUERY = ("query($o:String!,$n:Int!){repositoryOwner(login:$o){... on Pr
                   "{projectV2(number:$n){id title}}}}")
 
 
+def _scope_row(scope, **extra):
+    return _row("project", "uncovered",
+                f"missing read:project/project scope; remediation: {REFRESH_REMEDIATION}",
+                scope, remediation=REFRESH_REMEDIATION, **extra)
+
+
 def probe_project(cfg, timeout, runner):
     scope = f"{cfg['owner']}/project/{cfg.get('project_number')}"
-    argv = ["gh", "api", "graphql", "-f", f"query={_PROJECT_QUERY}", "-F", f"o={cfg['owner']}",
-            "-F", f"n={int(cfg.get('project_number') or 0)}"]
+    if cfg.get("_project_number_error"):
+        return _row("project", "error", cfg["_project_number_error"], scope)
+    argv = ["gh", "api", "graphql", "-f", f"query={_PROJECT_QUERY}", "-f", f"o={cfg['owner']}",
+            "-F", f"n={int(cfg['project_number'])}"]
     res = runner(argv, timeout)
     blob = (res.stderr or "") + (res.stdout or "")
-    if res.rc != 0 or "missing required scopes" in blob or "read:project" in blob:
-        if not (res.missing or res.timed_out) and re.search(r"missing required scopes|read:project", blob, re.I):
-            return _row("project", "uncovered",
-                        f"missing read:project/project scope; remediation: {REFRESH_REMEDIATION}",
-                        scope, exit_code=res.rc, remediation=REFRESH_REMEDIATION)
+    if res.rc != 0:
+        if res.missing or res.timed_out or res.deadline:
+            return _fail("project", res, scope)
+        if re.search(r"missing required scopes|read:project|INSUFFICIENT_SCOPES", blob, re.I):
+            return _scope_row(scope, exit_code=res.rc)
+        if _NOT_FOUND_RE.search(blob):
+            return _row("project", "uncovered", "project not found or not visible to this token",
+                        scope, exit_code=res.rc)
         return _fail("project", res, scope)
     doc = _json(res.stdout)
     node = (((doc or {}).get("data") or {}).get("repositoryOwner") or {}).get("projectV2") \
         if isinstance(doc, dict) else None
     if node:
         return _row("project", "ok", f"project reachable: {node.get('title', '')}", scope)
-    errs = json.dumps((doc or {}).get("errors", "")) if isinstance(doc, dict) else ""
-    if re.search(r"INSUFFICIENT_SCOPES|read:project", errs):
-        return _row("project", "uncovered",
-                    f"missing read:project/project scope; remediation: {REFRESH_REMEDIATION}",
-                    scope, remediation=REFRESH_REMEDIATION)
-    if isinstance(doc, dict) and doc.get("data") is not None and not errs.strip('"'):
+    errs = json.dumps(doc.get("errors")) if isinstance(doc, dict) and doc.get("errors") else ""
+    if errs:
+        if re.search(r"INSUFFICIENT_SCOPES|read:project", errs):
+            return _scope_row(scope)
+        if _NOT_FOUND_RE.search(errs):
+            return _row("project", "uncovered", "project not found or not visible to this token", scope)
+        return _row("project", "error", "GraphQL errors: " + errs[:150], scope)
+    if isinstance(doc, dict) and doc.get("data") is not None:
         return _row("project", "uncovered", "project not found or not visible to this token", scope)
     return _row("project", "error", "unparseable GraphQL response", scope)
 
 
 def probe_search(name, argv_tail, cfg, timeout, runner):
-    res = runner(["gh", "search"] + argv_tail + ["--limit", "1", "--json", "number"], timeout)
-    scope = cfg["owner"]
+    kind, rest = argv_tail[0], argv_tail[1:]
+    res = runner(["gh", "search", kind, "--owner", cfg["owner"]] + rest +
+                 ["--limit", "1", "--json", "number"], timeout)
+    scope = f"owner:{cfg['owner']}"
     if res.rc != 0:
         return _fail(name, res, scope)
     if not isinstance(_json(res.stdout), list):
@@ -229,9 +268,9 @@ def probe_native_dependencies(timeout, runner):
 def _repo_slug(path, timeout, runner):
     res = runner(["git", "-C", path, "remote", "get-url", "origin"], timeout)
     if res.rc != 0:
-        return None
+        return None, res
     m = re.search(r"github\.com[:/]+([^/\s]+/[^/\s]+?)(?:\.git)?\s*$", res.stdout.strip())
-    return m.group(1) if m else None
+    return (m.group(1) if m else None), res
 
 
 def probe_branch_protection(project_dir, manifest, timeout, runner):
@@ -243,8 +282,11 @@ def probe_branch_protection(project_dir, manifest, timeout, runner):
             continue
         path = rel if os.path.isabs(rel) else os.path.join(project_dir, rel)
         name = f"branch_protection:{key}"
-        slug = _repo_slug(path, timeout, runner)
+        slug, sres = _repo_slug(path, timeout, runner)
         if not slug:
+            if sres.deadline:
+                rows.append(_fail(name, sres, key))
+                continue
             rows.append(_row(name, "error", "no GitHub origin remote resolved", key))
             continue
         res = _gh_api(f"repos/{slug}", timeout, runner)
@@ -355,6 +397,15 @@ def load_scope(project_dir):
     cfg = manifest.get("github_scope")
     if not isinstance(cfg, dict) or not cfg.get("owner") or not cfg.get("planning_repo"):
         return manifest, None
+    cfg = dict(cfg)
+    n = cfg.get("project_number")
+    if isinstance(n, str) and n.strip().isdigit():
+        n = int(n.strip())
+    if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+        cfg["_project_number_error"] = ("github_scope.project_number is missing or not a positive "
+                                        "integer in .claude/foundry-project.json")
+    else:
+        cfg["project_number"] = n
     return manifest, cfg
 
 
@@ -368,14 +419,40 @@ def summarize(rows):
         p for p in ((f"uncovered: {', '.join(unc)}" if unc else ""),
                     (f"error: {', '.join(err)}" if err else "")) if p)
     ok = all(by.get(n, {}).get("status") == "ok" for n in REQUIRED_SOURCES)
-    return {"coverage": coverage, "required_sources_ok": ok, "summary": line}
+    return {"coverage": coverage, "required_sources_ok": ok, "summary": line,
+            "has_error": bool(err)}
 
 
-def collect(project_dir, runner=default_runner, timeout=DEFAULT_TIMEOUT, now=None):
+class _Bounded:
+    """Wraps the runner with the overall deadline: past it no subprocess is spawned, and each call's
+    timeout is capped to the time that remains."""
+
+    def __init__(self, runner, deadline):
+        self.runner, self.end, self.hit = runner, time.monotonic() + deadline, False
+
+    def __call__(self, argv, timeout):
+        left = self.end - time.monotonic()
+        if left <= 0:
+            self.hit = True
+            return Result(rc=124, deadline=True)
+        return self.runner(argv, min(timeout, left))
+
+
+def collect(project_dir, runner=default_runner, timeout=DEFAULT_TIMEOUT, now=None,
+            deadline=DEFAULT_DEADLINE):
     """Run every probe. Returns None when no github_scope is configured."""
     manifest, cfg = load_scope(project_dir)
     if cfg is None:
         return None
+    runner = _Bounded(runner, deadline)
+    out = _collect(project_dir, manifest, cfg, runner, timeout, now)
+    out["deadline_hit"] = runner.hit
+    if runner.hit:
+        out["summary"] += f" (deadline {deadline:g}s reached; remaining rows are error: deadline)"
+    return out
+
+
+def _collect(project_dir, manifest, cfg, runner, timeout, now):
     me = "@me"
     rows = [
         probe_gh(timeout, runner),
@@ -398,9 +475,10 @@ def collect(project_dir, runner=default_runner, timeout=DEFAULT_TIMEOUT, now=Non
     return out
 
 
-def advisory_line(project_dir, runner=default_runner, timeout=DEFAULT_TIMEOUT):
+def advisory_line(project_dir, runner=default_runner, timeout=DEFAULT_TIMEOUT,
+                  deadline=DEFAULT_DEADLINE):
     """The doctor's one-line value: `full`, `partial — uncovered: ...`, or the n/a text."""
-    res = collect(project_dir, runner, timeout)
+    res = collect(project_dir, runner, timeout, deadline=deadline)
     if res is None:
         return "n/a (no github_scope configured)"
     return res["summary"]
@@ -412,20 +490,24 @@ def main(argv=None):
     ap.add_argument("--project-dir", default=os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
     ap.add_argument("--json", action="store_true", help="emit a single JSON object")
     ap.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help="per-call bound, seconds")
+    ap.add_argument("--deadline", type=float, default=DEFAULT_DEADLINE,
+                    help="bound for the whole probe set, seconds")
     args = ap.parse_args(argv)
-    res = collect(args.project_dir, timeout=args.timeout)
+    res = collect(args.project_dir, timeout=args.timeout, deadline=args.deadline)
     if res is None:
         msg = "n/a (no github_scope configured)"
         print(json.dumps({"coverage": "n/a", "required_sources_ok": False, "sources": [],
                           "summary": msg}) if args.json else msg)
-        return 0
+        return 1
     if args.json:
         print(json.dumps(res, indent=2))
     else:
         for r in res["sources"]:
             print(f"{r['status']:<9} {r['name']:<28} {r['scope']}: {r['detail']}")
         print(f"coverage: {res['summary']}  (required_sources_ok={str(res['required_sources_ok']).lower()})")
-    return 0
+    if res["coverage"] == "full":
+        return 0
+    return 1 if res["has_error"] or res["deadline_hit"] else 2
 
 
 if __name__ == "__main__":
