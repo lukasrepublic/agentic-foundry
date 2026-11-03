@@ -1446,7 +1446,7 @@ COVERED_CLAIMS = [
         "claim_id": "skill-catalog-count",
         "doc": "README.md",
         "mutation_class": "add-unit",
-        "tokens": frozenset({"29"}),  # v2.0.0: 32 skills minus the three core-loop verbs
+        "tokens": frozenset({"30"}),  # v2.0.0 + gn-10 command-deck: 33 skills minus the three core-loop verbs
         "derive": _derive_skill_catalog_count,
         "check": _check_skill_catalog_count,
         "make_mutated": _mutate_skill_catalog_count,
