@@ -1,0 +1,6 @@
+{"agent_id": "agA", "at": "2026-10-20T09:59:00Z", "issue": "A", "operator": "alice", "session_id": "sA1", "worktree": "/w/A"}
+{"agent_id": "agA2", "at": "2026-11-02T09:59:00Z", "issue": "A", "operator": "bob", "session_id": "sA2", "worktree": "/w/A"}
+{"agent_id": "agB", "at": "2026-11-02T10:59:00Z", "issue": "B", "operator": "bob", "session_id": "sB", "worktree": "/w/B"}
+{"agent_id": "agC", "at": "2026-11-01T11:59:00Z", "issue": "C", "operator": "carol", "session_id": "sC", "worktree": "/w/C"}
+{"agent_id": "agL1", "at": "2026-11-02T12:00:00Z", "issue": "B", "operator": "carol", "session_id": "sL", "worktree": "/w/B"}
+{"agent_id": "agL2", "at": "2026-11-02T12:00:00Z", "issue": "C", "operator": "carol", "session_id": "sL", "worktree": "/w/C"}
