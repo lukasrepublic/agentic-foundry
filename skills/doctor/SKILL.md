@@ -87,6 +87,10 @@ lane signal — Tier B advisory) plus `hooks/foundry-git-discipline.sh`'s determ
      (`--apply`, `ask`-tiered), never a doctor-enforced one — see
      `docs/how-to/branching-and-cleanup.md`.
 
+   - **`github-capabilities`** (gn-03) — `full`, `partial — uncovered: <sources>`, or `n/a (no
+     github_scope configured)`: which GitHub request sources your credentials cover (read-only;
+     see `scripts/foundry_github_capabilities.py`). Full check only (skipped under `--session-start`). Never RED.
+
    Each probe is individually crash-proof — an unexpected exception inside one check is reported
    as that check's own RED result (`probe crashed: <type>: <detail>`), never an uncaught
    traceback, so a single broken probe can never mask the others or wedge the advisory

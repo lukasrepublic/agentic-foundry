@@ -1,0 +1,4 @@
+HTTP/2.0 200 OK
+X-Poll-Interval: 60
+
+[{"reason":"review_requested","id":"1"},{"reason":"mention","id":"2"}]
