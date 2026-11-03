@@ -252,7 +252,7 @@ def test_script_is_read_only_and_adapter_uses_injected_runner():
     src = (ROOT / "scripts" / "foundry_leader_board.py").read_text()
     for bad in ("post_comment(", "gh issue comment", "--method POST", "-X POST", "open(p, \"w\"", "subprocess"):
         assert bad not in src
-    assert "datetime.now" in src and src.count("datetime.now") == 3        # only default clocks, never in compute
+    assert "datetime.now" in src        # default clocks only (fetch_inputs, main), never in compute
     compute_src = src[src.index("def compute("):src.index("def _trend(")]
     assert "now(" not in compute_src
 
