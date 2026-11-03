@@ -216,6 +216,10 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_leader_board.py:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_events.py:*)",
             "origin": "settings.json"
           },
@@ -480,6 +484,10 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_leader_board.py:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_events.py:*)",
             "origin": "settings.json"
           },
@@ -693,6 +701,10 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_tier_preflight.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_leader_board.py:*)",
             "origin": "settings.json"
           },
           {
@@ -928,6 +940,10 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_leader_board.py:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_events.py:*)",
             "origin": "settings.json"
           },
@@ -1143,6 +1159,10 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_tier_preflight.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_leader_board.py:*)",
             "origin": "settings.json"
           },
           {
