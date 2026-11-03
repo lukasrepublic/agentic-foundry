@@ -1,0 +1,38 @@
+# Reference OpenTelemetry Collector config for Foundry usage collection (gn-05).
+# version: PINNED IN docs/standing-versions.md (workspace) — research timestamp 2026-11-03
+# Run the collector-contrib distribution (the `file` exporter lives in contrib), by exact pinned version
+# or digest; never `latest`. Pipeline: OTLP/HTTP receiver -> file exporter writing OTLP JSON lines.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 127.0.0.1:4318
+
+exporters:
+  file:
+    # One file per day: the date is part of the file name. The collector's file exporter has no
+    # strftime-style path templating that we have verified; rotate by size/age below and let a daily
+    # scheduler (cron/launchd) restart or rename, OR point `path` at a directory the operator rotates.
+    # UNCERTAIN (verify against the pinned version's file exporter README before relying on it):
+    # the rotation keys `rotation.max_megabytes`, `rotation.max_days`, `rotation.max_backups`,
+    # `rotation.localtime`, and `format: json`. `foundry_usage.py ingest` reads every *.jsonl in the
+    # directory and dedupes by request_id, so any rotation scheme (or none) is safe for correctness.
+    path: ./collector/otlp-logs.jsonl
+    format: json
+    rotation:
+      max_megabytes: 50
+      max_days: 7
+      max_backups: 30
+      localtime: false
+
+processors:
+  batch: {}
+
+service:
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [file]
+    # Metrics are exported by the CLI too but request events (logs) are the source of truth;
+    # counters/session totals are alternative views of the same requests, never additive.
