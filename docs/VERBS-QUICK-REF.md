@@ -30,6 +30,7 @@ three verbs (`init`, `dispatch`, `merge-when-green`); see the `## Start here` ta
 | Verb | What it produces |
 |---|---|
 | `/foundry:dispatch` | Builds a ticket in an isolated worktree, runs the local-green step, and opens one PR |
+| `/foundry:leader-board` | Read-only operator and outcome statistics over GitHub history and native usage: three windows, queue panel, coverage |
 | `/foundry:merge-when-green` | On your explicit instruction, waits for a PR's checks and mergeStateStatus, then merges the instant both are green — the one primitive that replaces a hand-rolled sleep-then-poll loop |
 | `/foundry:verify` | Runs your stack's static validation and tests — the format/lint/typecheck/build and test recipes the active stack profile declares. Skips when no stack profile is locked |
 | `/foundry:research-first` | Runs the research-first discipline at a design fork before anything is built |

@@ -1,0 +1,598 @@
+{
+ "deployments": null,
+ "freshness": {
+  "github": "2026-11-03T11:59:00Z",
+  "usage_latest_record": "2026-10-31T11:00:00Z"
+ },
+ "inaccessible": [],
+ "issues": [
+  {
+   "author": "lead",
+   "comments": [
+    {
+     "author": {
+      "login": "alice"
+     },
+     "body": "<!-- foundry-deck: {\"v\": 1, \"event\": \"handoff\", \"idempotency_key\": \"h1\", \"target\": \"bob\", \"blocking\": null, \"at\": \"2026-10-29T09:05:00Z\", \"by\": \"alice\", \"evidence\": [\"example-org/planning#1\"]} -->\nrecorded",
+     "createdAt": "2026-10-29T09:05:00Z",
+     "id": "1"
+    },
+    {
+     "author": {
+      "login": "bob"
+     },
+     "body": "<!-- foundry-deck: {\"v\": 1, \"event\": \"accepted\", \"idempotency_key\": \"a1\", \"target\": null, \"blocking\": null, \"at\": \"2026-10-31T10:00:00Z\", \"by\": \"bob\", \"evidence\": [\"https://example.com/pr/1\"]} -->\nrecorded",
+     "createdAt": "2026-10-31T10:00:00Z",
+     "id": "2"
+    }
+   ],
+   "created_at": "2026-10-20T08:00:00Z",
+   "labels": [
+    "type:feature"
+   ],
+   "project": "Delivery",
+   "ref": "example-org/planning#1",
+   "timeline": [
+    {
+     "__typename": "ProjectV2ItemStatusChangedEvent",
+     "actor": {
+      "login": "lead"
+     },
+     "createdAt": "2026-10-21T09:00:00Z",
+     "status": "Ready"
+    },
+    {
+     "__typename": "AssignedEvent",
+     "actor": {
+      "login": "lead"
+     },
+     "assignee": {
+      "login": "alice"
+     },
+     "createdAt": "2026-10-21T09:00:00Z"
+    },
+    {
+     "__typename": "ProjectV2ItemStatusChangedEvent",
+     "actor": {
+      "login": "lead"
+     },
+     "createdAt": "2026-10-22T09:00:00Z",
+     "status": "In progress"
+    },
+    {
+     "__typename": "UnassignedEvent",
+     "actor": {
+      "login": "lead"
+     },
+     "assignee": {
+      "login": "alice"
+     },
+     "createdAt": "2026-10-29T09:00:00Z"
+    },
+    {
+     "__typename": "AssignedEvent",
+     "actor": {
+      "login": "lead"
+     },
+     "assignee": {
+      "login": "bob"
+     },
+     "createdAt": "2026-10-29T09:00:00Z"
+    }
+   ],
+   "title": "synthetic 1"
+  },
+  {
+   "author": "lead",
+   "comments": [
+    {
+     "author": {
+      "login": "bob"
+     },
+     "body": "<!-- foundry-deck: {\"v\": 1, \"event\": \"accepted\", \"idempotency_key\": \"a2\", \"target\": null, \"blocking\": null, \"at\": \"2026-11-01T10:00:00Z\", \"by\": \"bob\", \"evidence\": [\"https://example.com/pr/1\"]} -->\nrecorded",
+     "createdAt": "2026-11-01T10:00:00Z",
+     "id": "3"
+    }
+   ],
+   "created_at": "2026-10-24T08:00:00Z",
+   "labels": [
+    "type:feature"
+   ],
+   "project": "Delivery",
+   "ref": "example-org/planning#2",
+   "timeline": [
+    {
+     "__typename": "AssignedEvent",
+     "actor": {
+      "login": "lead"
+     },
+     "assignee": {
+      "login": "bob"
+     },
+     "createdAt": "2026-10-24T09:00:00Z"
+    },
+    {
+     "__typename": "ProjectV2ItemStatusChangedEvent",
+     "actor": {
+      "login": "lead"
+     },
+     "createdAt": "2026-10-25T09:00:00Z",
+     "status": "In progress"
+    }
+   ],
+   "title": "synthetic 2"
+  },
+  {
+   "author": "lead",
+   "comments": [],
+   "created_at": "2026-10-29T08:00:00Z",
+   "labels": [
+    "type:feature"
+   ],
+   "project": "Delivery",
+   "ref": "example-org/planning#3",
+   "timeline": [
+    {
+     "__typename": "ProjectV2ItemStatusChangedEvent",
+     "actor": {
+      "login": "lead"
+     },
+     "createdAt": "2026-10-29T09:00:00Z",
+     "status": "Ready"
+    },
+    {
+     "__typename": "AssignedEvent",
+     "actor": {
+      "login": "lead"
+     },
+     "assignee": {
+      "login": "carol"
+     },
+     "createdAt": "2026-10-30T09:00:00Z"
+    },
+    {
+     "__typename": "ProjectV2ItemStatusChangedEvent",
+     "actor": {
+      "login": "lead"
+     },
+     "createdAt": "2026-10-30T09:00:00Z",
+     "status": "In progress"
+    }
+   ],
+   "title": "synthetic 3"
+  },
+  {
+   "author": "lead",
+   "comments": [
+    {
+     "author": {
+      "login": "alice"
+     },
+     "body": "<!-- foundry-deck: {\"v\": 1, \"event\": \"accepted\", \"idempotency_key\": \"a4a\", \"target\": null, \"blocking\": null, \"at\": \"2026-10-10T10:00:00Z\", \"by\": \"alice\", \"evidence\": [\"https://example.com/pr/1\"]} -->\nrecorded",
+     "createdAt": "2026-10-10T10:00:00Z",
+     "id": "4"
+    },
+    {
+     "author": {
+      "login": "alice"
+     },
+     "body": "<!-- foundry-deck: {\"v\": 1, \"event\": \"accepted\", \"idempotency_key\": \"a4b\", \"target\": null, \"blocking\": null, \"at\": \"2026-11-01T11:00:00Z\", \"by\": \"alice\", \"evidence\": [\"https://example.com/pr/1\", \"https://example.com/pr/2\"]} -->\nrecorded",
+     "createdAt": "2026-11-01T11:00:00Z",
+     "id": "5"
+    }
+   ],
+   "created_at": "2026-10-01T08:00:00Z",
+   "labels": [
+    "type:fix"
+   ],
+   "project": "Delivery",
+   "ref": "example-org/planning#4",
+   "timeline": [
+    {
+     "__typename": "ProjectV2ItemStatusChangedEvent",
+     "actor": {
+      "login": "lead"
+     },
+     "createdAt": "2026-10-02T09:00:00Z",
+     "status": "Ready"
+    },
+    {
+     "__typename": "AssignedEvent",
+     "actor": {
+      "login": "lead"
+     },
+     "assignee": {
+      "login": "alice"
+     },
+     "createdAt": "2026-10-02T09:00:00Z"
+    },
+    {
+     "__typename": "ProjectV2ItemStatusChangedEvent",
+     "actor": {
+      "login": "lead"
+     },
+     "createdAt": "2026-10-03T09:00:00Z",
+     "status": "In progress"
+    },
+    {
+     "__typename": "ReopenedEvent",
+     "actor": {
+      "login": "lead"
+     },
+     "createdAt": "2026-10-30T09:00:00Z"
+    }
+   ],
+   "title": "synthetic 4"
+  },
+  {
+   "author": "alice",
+   "comments": [
+    {
+     "author": {
+      "login": "bob"
+     },
+     "body": "<!-- foundry-deck: {\"v\": 1, \"event\": \"scheduled\", \"idempotency_key\": \"s10\", \"target\": \"example-org/planning#10\", \"blocking\": null, \"at\": \"2026-10-28T08:30:00Z\", \"by\": \"bob\", \"evidence\": [], \"when\": \"2026-10-30\"} -->\nrecorded",
+     "createdAt": "2026-10-28T08:30:00Z",
+     "id": "6"
+    },
+    {
+     "author": {
+      "login": "bob"
+     },
+     "body": "<!-- foundry-deck: {\"v\": 1, \"event\": \"ack\", \"idempotency_key\": \"k10\", \"target\": \"example-org/planning#10\", \"blocking\": null, \"at\": \"2026-10-28T09:00:00Z\", \"by\": \"bob\", \"evidence\": []} -->\nrecorded",
+     "createdAt": "2026-10-28T09:00:00Z",
+     "id": "7"
+    },
+    {
+     "author": {
+      "login": "bob"
+     },
+     "body": "<!-- foundry-deck: {\"v\": 1, \"event\": \"rescheduled\", \"idempotency_key\": \"r10\", \"target\": \"example-org/planning#10\", \"blocking\": null, \"at\": \"2026-10-28T09:30:00Z\", \"by\": \"bob\", \"evidence\": [], \"when\": \"2026-11-05\", \"original_target\": \"2026-10-30\"} -->\nrecorded",
+     "createdAt": "2026-10-28T09:30:00Z",
+     "id": "8"
+    },
+    {
+     "author": {
+      "login": "bob"
+     },
+     "body": "<!-- foundry-deck: {\"v\": 1, \"event\": \"resolved\", \"idempotency_key\": \"z10\", \"target\": \"example-org/planning#10\", \"blocking\": null, \"at\": \"2026-10-29T08:00:00Z\", \"by\": \"bob\", \"evidence\": [\"https://example.com/pr/1\"]} -->\nrecorded",
+     "createdAt": "2026-10-29T08:00:00Z",
+     "id": "9"
+    }
+   ],
+   "created_at": "2026-10-28T08:00:00Z",
+   "labels": [
+    "request",
+    "request:review"
+   ],
+   "project": "Delivery",
+   "ref": "example-org/planning#10",
+   "timeline": [
+    {
+     "__typename": "AssignedEvent",
+     "actor": {
+      "login": "lead"
+     },
+     "assignee": {
+      "login": "bob"
+     },
+     "createdAt": "2026-10-28T08:00:00Z"
+    }
+   ],
+   "title": "synthetic 10"
+  },
+  {
+   "author": "carol",
+   "comments": [
+    {
+     "author": {
+      "login": "alice"
+     },
+     "body": "<!-- foundry-deck: {\"v\": 1, \"event\": \"scheduled\", \"idempotency_key\": \"s11\", \"target\": \"example-org/planning#11\", \"blocking\": null, \"at\": \"2026-10-27T13:30:00Z\", \"by\": \"alice\", \"evidence\": [], \"when\": \"2026-10-29\"} -->\nrecorded",
+     "createdAt": "2026-10-27T13:30:00Z",
+     "id": "10"
+    },
+    {
+     "author": {
+      "login": "alice"
+     },
+     "body": "<!-- foundry-deck: {\"v\": 1, \"event\": \"rescheduled\", \"idempotency_key\": \"r11\", \"target\": \"example-org/planning#11\", \"blocking\": null, \"at\": \"2026-10-28T13:30:00Z\", \"by\": \"alice\", \"evidence\": [], \"when\": \"2026-11-05\", \"original_target\": \"2026-10-29\"} -->\nrecorded",
+     "createdAt": "2026-10-28T13:30:00Z",
+     "id": "11"
+    }
+   ],
+   "created_at": "2026-10-27T13:00:00Z",
+   "labels": [
+    "request",
+    "request:decision"
+   ],
+   "project": "Delivery",
+   "ref": "example-org/planning#11",
+   "timeline": [
+    {
+     "__typename": "AssignedEvent",
+     "actor": {
+      "login": "lead"
+     },
+     "assignee": {
+      "login": "alice"
+     },
+     "createdAt": "2026-10-27T13:00:00Z"
+    }
+   ],
+   "title": "synthetic 11"
+  },
+  {
+   "author": "alice",
+   "comments": [
+    {
+     "author": {
+      "login": "bob"
+     },
+     "body": "<!-- foundry-deck: {\"v\": 1, \"event\": \"ack\", \"idempotency_key\": \"k12\", \"target\": \"example-org/planning#12\", \"blocking\": null, \"at\": \"2026-10-26T09:00:00Z\", \"by\": \"bob\", \"evidence\": []} -->\nrecorded",
+     "createdAt": "2026-10-26T09:00:00Z",
+     "id": "12"
+    },
+    {
+     "author": {
+      "login": "bob"
+     },
+     "body": "<!-- foundry-deck: {\"v\": 1, \"event\": \"blocker_ack\", \"idempotency_key\": \"bk12a\", \"target\": \"example-org/planning#1\", \"blocking\": \"example-org/planning#1\", \"at\": \"2026-10-26T10:00:00Z\", \"by\": \"bob\", \"evidence\": []} -->\nrecorded",
+     "createdAt": "2026-10-26T10:00:00Z",
+     "id": "13"
+    },
+    {
+     "author": {
+      "login": "bob"
+     },
+     "body": "<!-- foundry-deck: {\"v\": 1, \"event\": \"blocker_ack\", \"idempotency_key\": \"bk12b\", \"target\": \"example-org/planning#1\", \"blocking\": \"example-org/planning#1\", \"at\": \"2026-10-28T14:00:00Z\", \"by\": \"bob\", \"evidence\": []} -->\nrecorded",
+     "createdAt": "2026-10-28T14:00:00Z",
+     "id": "14"
+    },
+    {
+     "author": {
+      "login": "bob"
+     },
+     "body": "<!-- foundry-deck: {\"v\": 1, \"event\": \"resolved\", \"idempotency_key\": \"z12\", \"target\": \"example-org/planning#12\", \"blocking\": null, \"at\": \"2026-10-29T10:00:00Z\", \"by\": \"bob\", \"evidence\": [\"https://example.com/pr/1\"]} -->\nrecorded",
+     "createdAt": "2026-10-29T10:00:00Z",
+     "id": "15"
+    }
+   ],
+   "created_at": "2026-10-25T08:00:00Z",
+   "labels": [
+    "request",
+    "request:review"
+   ],
+   "project": "Delivery",
+   "ref": "example-org/planning#12",
+   "timeline": [
+    {
+     "__typename": "AssignedEvent",
+     "actor": {
+      "login": "lead"
+     },
+     "assignee": {
+      "login": "bob"
+     },
+     "createdAt": "2026-10-25T08:00:00Z"
+    },
+    {
+     "__typename": "BlockingAddedEvent",
+     "actor": {
+      "login": "lead"
+     },
+     "blockedIssue": {
+      "number": 1,
+      "repository": {
+       "nameWithOwner": "example-org/planning"
+      }
+     },
+     "createdAt": "2026-10-28T10:00:00Z"
+    }
+   ],
+   "title": "synthetic 12"
+  },
+  {
+   "author": "bob",
+   "comments": [
+    {
+     "author": {
+      "login": "carol"
+     },
+     "body": "<!-- foundry-deck: {\"v\": 1, \"event\": \"scheduled\", \"idempotency_key\": \"s13\", \"target\": \"example-org/planning#13\", \"blocking\": null, \"at\": \"2026-09-02T08:30:00Z\", \"by\": \"carol\", \"evidence\": [], \"when\": \"2026-09-10\"} -->\nrecorded",
+     "createdAt": "2026-09-02T08:30:00Z",
+     "id": "16"
+    }
+   ],
+   "created_at": "2026-09-01T08:00:00Z",
+   "labels": [
+    "request",
+    "request:decision"
+   ],
+   "project": "Delivery",
+   "ref": "example-org/planning#13",
+   "timeline": [
+    {
+     "__typename": "AssignedEvent",
+     "actor": {
+      "login": "lead"
+     },
+     "assignee": {
+      "login": "carol"
+     },
+     "createdAt": "2026-09-01T08:00:00Z"
+    },
+    {
+     "__typename": "BlockingAddedEvent",
+     "actor": {
+      "login": "lead"
+     },
+     "blockedIssue": {
+      "number": 3,
+      "repository": {
+       "nameWithOwner": "example-org/planning"
+      }
+     },
+     "createdAt": "2026-09-02T08:00:00Z"
+    }
+   ],
+   "title": "synthetic 13"
+  }
+ ],
+ "scope": {
+  "default_repo": "example-org/planning",
+  "operators": {
+   "alice": "op-alice",
+   "bob": "op-bob",
+   "carol": "op-carol"
+  },
+  "timezone": "America/Los_Angeles"
+ },
+ "usage": [
+  {
+   "agent_id": null,
+   "at": "2026-10-23T10:00:00Z",
+   "basis": "fixture",
+   "bucket": "outcome",
+   "cost_usd_estimate": null,
+   "issue": "example-org/planning#1",
+   "model": "m1",
+   "operator": "op-alice",
+   "rate_basis": "none",
+   "request_id": "u1",
+   "session_id": "s-op-alice",
+   "tokens": {
+    "cache_creation": 0,
+    "cache_read": 0,
+    "input": 50000,
+    "output": 0
+   }
+  },
+  {
+   "agent_id": null,
+   "at": "2026-10-23T11:00:00Z",
+   "basis": "fixture",
+   "bucket": "outcome",
+   "cost_usd_estimate": null,
+   "issue": "example-org/planning#1",
+   "model": "m1",
+   "operator": "op-alice",
+   "rate_basis": "none",
+   "request_id": "u2",
+   "session_id": "s-op-alice",
+   "tokens": {
+    "cache_creation": 0,
+    "cache_read": 0,
+    "input": 0,
+    "output": 10000
+   }
+  },
+  {
+   "agent_id": null,
+   "at": "2026-10-30T10:00:00Z",
+   "basis": "fixture",
+   "bucket": "outcome",
+   "cost_usd_estimate": null,
+   "issue": "example-org/planning#1",
+   "model": "m1",
+   "operator": "op-bob",
+   "rate_basis": "none",
+   "request_id": "u3",
+   "session_id": "s-op-bob",
+   "tokens": {
+    "cache_creation": 0,
+    "cache_read": 0,
+    "input": 40000,
+    "output": 0
+   }
+  },
+  {
+   "agent_id": null,
+   "at": "2026-10-30T11:00:00Z",
+   "basis": "fixture",
+   "bucket": "outcome",
+   "cost_usd_estimate": null,
+   "issue": "example-org/planning#2",
+   "model": "m1",
+   "operator": "op-bob",
+   "rate_basis": "none",
+   "request_id": "u4",
+   "session_id": "s-op-bob",
+   "tokens": {
+    "cache_creation": 0,
+    "cache_read": 0,
+    "input": 150000,
+    "output": 0
+   }
+  },
+  {
+   "agent_id": null,
+   "at": "2026-10-31T09:00:00Z",
+   "basis": "fixture",
+   "bucket": "outcome",
+   "cost_usd_estimate": null,
+   "issue": "example-org/planning#2",
+   "model": "m1",
+   "operator": "op-bob",
+   "rate_basis": "none",
+   "request_id": "u5",
+   "session_id": "s-op-bob",
+   "tokens": {
+    "cache_creation": 0,
+    "cache_read": 0,
+    "input": 0,
+    "output": 50000
+   }
+  },
+  {
+   "agent_id": null,
+   "at": "2026-10-31T10:00:00Z",
+   "basis": "fixture",
+   "bucket": "outcome",
+   "cost_usd_estimate": null,
+   "issue": "example-org/planning#3",
+   "model": "m1",
+   "operator": "op-carol",
+   "rate_basis": "none",
+   "request_id": "u6",
+   "session_id": "s-op-carol",
+   "tokens": {
+    "cache_creation": 0,
+    "cache_read": 500000,
+    "input": 0,
+    "output": 0
+   }
+  },
+  {
+   "agent_id": null,
+   "at": "2026-10-31T11:00:00Z",
+   "basis": "fixture",
+   "bucket": "lead-overhead",
+   "cost_usd_estimate": null,
+   "issue": null,
+   "model": "m1",
+   "operator": "op-carol",
+   "rate_basis": "none",
+   "request_id": "u7",
+   "session_id": "s-op-carol",
+   "tokens": {
+    "cache_creation": 0,
+    "cache_read": 0,
+    "input": 100000,
+    "output": 0
+   }
+  }
+ ],
+ "usage_coverage": {
+  "attributed_records": 6,
+  "complete": true,
+  "earliest": "2026-10-20T00:00:00Z",
+  "incomplete_reasons": [],
+  "latest": "2026-10-31T11:00:00Z",
+  "operators_without_records": [],
+  "records": 7,
+  "unknown_shape": {
+   "records": 0
+  }
+ }
+}

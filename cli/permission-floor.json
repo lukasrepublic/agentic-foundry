@@ -209,6 +209,11 @@
       "rationale": "read-only discovery-coverage probe: REST GET, search and GraphQL `query` only, every call timeout-bounded; writes nothing to GitHub or the workspace (gn-03 capability check)."
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_leader_board.py:*)",
+      "tier": "allow",
+      "rationale": "read-only leader-board report: gh issue list/view, REST GET and GraphQL `query` only, plus reads of the usage dataset; computes statistics to stdout and writes nothing to GitHub or the workspace (gn-15)."
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py scan:*)",
       "tier": "allow",
       "rationale": "read-only inbox scan: GitHub search, notifications and issue views only; writes nothing to GitHub and only the gitignored runtime inbox.json in the workspace; never posts a comment (gn-09 operator inbox)."
