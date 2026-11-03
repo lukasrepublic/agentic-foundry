@@ -8,8 +8,20 @@ Design decisions (charter gn-04):
   * Event time is GitHub's `createdAt` (timeline node or comment), never the marker's self-declared `at`.
   * Native-only events (ready, blocked, reopened, withdrawn, cancelled, duplicate) cannot be `emit`ted.
   * A `completed` close is a `Closure`, not an acceptance (native close never marks a decision accepted).
-  * A `blocker_ack` is valid only if a `blocked` record for its target exists at or before it; an
-    ordinary `ack` never satisfies a blocker acknowledgement.
+  * A `blocker_ack` is valid per episode: only if a `blocked` record for its target exists at or before
+    it (i.e. it is at/after the MOST RECENT `blocked` as of its own time). A later re-block opens a new
+    episode the earlier ack does not cover: the target is listed in `unacknowledged` again. An ordinary
+    `ack` never satisfies a blocker acknowledgement.
+  * `BlockingAddedEvent` / `BlockingRemovedEvent` arrive on the BLOCKER issue (this issue blocks another).
+    They do not make this issue blocked, so `parse` SKIPS them (no `blocked` event, no `blocking` note:
+    the vocabulary stays the fixed fifteen). They remain listed in MAPPING["blocked"] as recognised
+    native records. Only `BlockedByAddedEvent` / `BlockedByRemovedEvent` open/close a blocked episode.
+  * Default idempotency keys for start/ack/accepted carry an EPOCH (count of prior withdrawn+reopened
+    events on the issue) and for blocker_ack the latest `blocked` time for its (target, blocking) pair, so
+    a restart after withdrawal, a re-ack after re-block, or a re-acceptance after reopen is not swallowed.
+    Epoch 0 / no prior block leaves the key identical to the pre-epoch key.
+  * `parse` dedupes same-key markers (first by time wins); a `>`-quoted marker is not live; `emit` treats
+    a same-key marker that is hand-edited (unparsed) as present and returns it rather than re-posting.
   * Every `gh` call lives in ONE adapter object (`GhAdapter`); tests inject a stub. `parse` is pure.
 
 Marker comment:
@@ -67,9 +79,9 @@ MARKER_FIELDS = ("v", "event", "idempotency_key", "target", "blocking", "at", "b
 
 _MARKER_RE = re.compile(r"<!--\s*foundry-deck:\s*(.*?)\s*-->", re.DOTALL)
 _MARKER_PREFIX = re.compile(r"<!--\s*foundry-deck:")
-_ISSUE_RE = re.compile(r"^([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)#([0-9]+)$")
-_URL_RE = re.compile(r"^https?://[^\s/]+\S*$")
-_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
+_ISSUE_RE = re.compile(r"([A-Za-z0-9_-]+)/((?!\.{1,2}#)[A-Za-z0-9_.-]+)#([0-9]+)")
+_URL_RE = re.compile(r"https?://[^\s/]+\S*")
+_SHA_RE = re.compile(r"(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,64}")
 
 
 @dataclass
@@ -131,11 +143,11 @@ def _iso(d: datetime) -> str:
 # ---- evidence / payload validation -------------------------------------------------------------------
 
 def is_shared_reference(s) -> bool:
-    return isinstance(s, str) and bool(_URL_RE.match(s) or _ISSUE_RE.match(s) or _SHA_RE.match(s))
+    return isinstance(s, str) and bool(_URL_RE.fullmatch(s) or _ISSUE_RE.fullmatch(s) or _SHA_RE.fullmatch(s))
 
 
 def _check_issue(issue: str):
-    if not isinstance(issue, str) or not _ISSUE_RE.match(issue):
+    if not isinstance(issue, str) or not _ISSUE_RE.fullmatch(issue):
         raise ValueError(f"issue must be 'owner/repo#n', got {issue!r}")
 
 
@@ -143,12 +155,14 @@ def _norm(s) -> str:
     return re.sub(r"[\s_-]+", " ", str(s or "")).strip().lower().replace("status: ", "status:")
 
 
-def default_key(issue: str, event: str, payload: dict) -> str:
+def default_key(issue: str, event: str, payload: dict, epoch=None) -> str:
     fields = KEY_FIELDS.get(event, ("target",))
     body = {}
     for f in fields:
         v = payload.get(f)
         body[f] = sorted(v) if f == "evidence" and isinstance(v, list) else v
+    if epoch not in (None, 0):
+        body["epoch"] = epoch
     raw = json.dumps([issue, event, body], sort_keys=True, ensure_ascii=True)
     return hashlib.sha256(raw.encode()).hexdigest()[:24]
 
@@ -161,20 +175,32 @@ def render_marker(event: Event, line: str) -> str:
            "evidence": list(event.evidence)}
     if event.when is not None:
         obj["when"] = event.when
-    # '>' only occurs inside JSON strings; escaping it keeps a payload from closing the comment early.
-    js = json.dumps(obj, ensure_ascii=True, separators=(",", ":")).replace(">", "\\u003e")
+    # '<' and '>' only occur inside JSON strings; escaping them keeps a payload from closing or opening a comment.
+    js = json.dumps(obj, ensure_ascii=True, separators=(",", ":")).replace(">", "\\u003e").replace("<", "\\u003c")
     line = " ".join(str(line).split()).replace("<!--", "").replace("-->", "")
     return f"<!-- foundry-deck: {js} -->\n{line}\n"
 
 
-def _unparsed(c, why):
+_KEY_RE = re.compile(r'"idempotency_key"\s*:\s*"([^"]*)"')
+
+
+def _unparsed(c, why, raw=None):
+    key = None
+    if raw is not None:
+        m = _KEY_RE.search(raw)
+        key = m.group(1) if m else None
     return Event(event="unparsed", at=_iso(_dt(c["createdAt"])), source="marker", comment_id=str(c.get("id")),
-                 author=((c.get("author") or {}).get("login")), detail=why)
+                 author=((c.get("author") or {}).get("login")), detail=why, idempotency_key=key)
+
+
+def _live_body(body) -> str:
+    """The comment body without `>`-quoted lines (a quoted marker is not a live marker)."""
+    return "\n".join(ln for ln in str(body).split("\n") if not ln.lstrip().startswith(">"))
 
 
 def _markers_in(comment) -> list:
     """Every marker in one comment, as Event (parsed) or Event('unparsed')."""
-    body = comment.get("body") or ""
+    body = _live_body(comment.get("body") or "")
     out = []
     n_prefix = len(_MARKER_PREFIX.findall(body))
     found = _MARKER_RE.findall(body)
@@ -182,18 +208,18 @@ def _markers_in(comment) -> list:
         try:
             obj = json.loads(raw)
         except (ValueError, TypeError):
-            out.append(_unparsed(comment, "malformed_json"))
+            out.append(_unparsed(comment, "malformed_json", raw))
             continue
         if not isinstance(obj, dict):
-            out.append(_unparsed(comment, "not_an_object"))
+            out.append(_unparsed(comment, "not_an_object", raw))
         elif type(obj.get("v")) is not int or obj.get("v") != MARKER_VERSION:
-            out.append(_unparsed(comment, "unknown_version"))
+            out.append(_unparsed(comment, "unknown_version", raw))
         elif any(f not in obj for f in MARKER_FIELDS):
-            out.append(_unparsed(comment, "missing_fields"))
+            out.append(_unparsed(comment, "missing_fields", raw))
         elif obj["event"] not in EVENTS or not MAPPING[obj["event"]]["marker"]:
-            out.append(_unparsed(comment, "event_not_markable"))
+            out.append(_unparsed(comment, "event_not_markable", raw))
         elif not isinstance(obj["evidence"], list) or not isinstance(obj["idempotency_key"], str):
-            out.append(_unparsed(comment, "bad_field_type"))
+            out.append(_unparsed(comment, "bad_field_type", raw))
         else:
             out.append(Event(event=obj["event"], at=_iso(_dt(comment["createdAt"])), by=obj["by"],
                              target=obj["target"], blocking=obj["blocking"], evidence=list(obj["evidence"]),
@@ -233,10 +259,15 @@ def parse(timeline, comments, as_of) -> History:
     st = {"ready_open": False, "started": False, "ever_started": False, "ever_ready": False,
           "accepted_seen": False, "dup_open": False}
     blocked_open = {}   # target -> time of latest blocked record
+    seen_keys = set()
 
     for t, _, _, kind, rec in recs:
         if kind == "mk":
             ev = rec
+            if ev.event != "unparsed" and ev.idempotency_key is not None:
+                if ev.idempotency_key in seen_keys:
+                    continue    # same idempotency key: the first marker by time wins
+                seen_keys.add(ev.idempotency_key)
             if ev.event == "start":
                 if st["started"]:
                     continue    # already started; a repeat start marker is not a new start
@@ -258,13 +289,13 @@ def parse(timeline, comments, as_of) -> History:
                                                       _norm((n.get("label") or {}).get("name")).startswith("status:")):
             status = _norm(n.get("status")) if tn != "LabeledEvent" else _norm(n["label"]["name"])[len("status:"):]
             _status(status, mk, events, st)
-        elif tn in ("BlockedByAddedEvent", "BlockingAddedEvent"):
-            target = _ref(n.get("blockingIssue") if tn == "BlockedByAddedEvent" else n.get("blockedIssue"))
+        elif tn == "BlockedByAddedEvent":
+            target = _ref(n.get("blockingIssue"))
             events.append(mk("blocked", target=target, blocking=target))
             blocked_open[target] = t
-        elif tn in ("BlockedByRemovedEvent", "BlockingRemovedEvent"):
-            target = _ref(n.get("blockingIssue") if tn == "BlockedByRemovedEvent" else n.get("blockedIssue"))
-            blocked_open.pop(target, None)
+        elif tn == "BlockedByRemovedEvent":
+            blocked_open.pop(_ref(n.get("blockingIssue")), None)
+        # BlockingAdded/RemovedEvent: this issue is the BLOCKER; it is not itself blocked — skipped.
         elif tn == "ReopenedEvent":
             events.append(mk("reopened"))
             st["started"] = False
@@ -330,7 +361,9 @@ def _status(status, mk, events, st):
 
 
 def _validate_blockers(events, blocked_open):
-    """Flag each blocker_ack that has no blocked record for its target at or before it."""
+    """Flag each blocker_ack with no blocked record for its target at or before it (per-episode: an ack
+    is judged against the most recent blocked as of its own time; the summary in `parse` additionally
+    requires the ack to be at/after the CURRENT episode's blocked time)."""
     seen = {}   # target -> times of blocked records so far (events are time-ordered)
     for e in events:
         if e.event == "blocked":
@@ -354,8 +387,8 @@ __typename
 ... on ReopenedEvent{createdAt actor{login}}
 ... on MarkedAsDuplicateEvent{createdAt actor{login}}
 ... on ProjectV2ItemStatusChangedEvent{createdAt actor{login} status previousStatus}
-... on AssignedEvent{createdAt actor{login} assignee{... on User{login}}}
-... on UnassignedEvent{createdAt actor{login} assignee{... on User{login}}}
+... on AssignedEvent{createdAt actor{login} assignee{... on User{login} ... on Bot{login}}}
+... on UnassignedEvent{createdAt actor{login} assignee{... on User{login} ... on Bot{login}}}
 ... on LabeledEvent{createdAt actor{login} label{name}}
 ... on CrossReferencedEvent{createdAt actor{login}}
 }}}}}
@@ -382,7 +415,7 @@ class GhAdapter:
         self._run(["issue", "comment", num, "-R", owner_repo, "--body-file", "-"], stdin=body)
 
     def timeline(self, issue):
-        m = _ISSUE_RE.match(issue)
+        m = _ISSUE_RE.fullmatch(issue)
         owner, repo, num = m.groups()
         nodes, after = [], None
         while True:
@@ -390,7 +423,14 @@ class GhAdapter:
                     "-f", f"repo={repo}", "-F", f"number={num}"]
             if after:
                 args += ["-f", f"after={after}"]
-            data = json.loads(self._run(args))["data"]["repository"]["issue"]["timelineItems"]
+            resp = json.loads(self._run(args))
+            if not isinstance(resp, dict) or resp.get("errors"):
+                raise RuntimeError(f"graphql error for {issue}: {json.dumps((resp or {}).get('errors'))[:300]}")
+            repo_node = (resp.get("data") or {}).get("repository")
+            issue_node = (repo_node or {}).get("issue")
+            if not issue_node or not issue_node.get("timelineItems"):
+                raise RuntimeError(f"issue not found: {issue}")
+            data = issue_node["timelineItems"]
             nodes += data["nodes"]
             if not data["pageInfo"]["hasNextPage"]:
                 return nodes
@@ -398,6 +438,18 @@ class GhAdapter:
 
 
 # ---- the idempotent writer --------------------------------------------------------------------------
+
+def _epoch(issue, event, target, blocking, adapter, comments, at):
+    """Epoch for the default idempotency key: how many times the work was withdrawn/reopened (start, ack,
+    accepted) or the latest `blocked` time for the (target, blocking) pair (blocker_ack)."""
+    if event not in ("start", "ack", "accepted", "blocker_ack"):
+        return None
+    h = parse(adapter.timeline(issue), comments, at)
+    if event == "blocker_ack":
+        times = [e.at for e in h.events if e.event == "blocked" and e.target == target and e.blocking == blocking]
+        return max(times) if times else None
+    return sum(1 for e in h.events if e.event in ("withdrawn", "reopened"))
+
 
 def emit(issue, event, payload, adapter=None, clock=None) -> Event:
     """Record `event` on `issue` as a marker comment unless a marker with the same idempotency key exists.
@@ -422,15 +474,19 @@ def emit(issue, event, payload, adapter=None, clock=None) -> Event:
     if not isinstance(by, str) or not by:
         raise ValueError("by (the recording actor) is required")
     adapter = adapter or GhAdapter()
-    key = payload.get("key") or default_key(issue, event, payload)
-    for c in adapter.comments(issue):
-        for ex in _markers_in(c):
-            if ex.event != "unparsed" and ex.idempotency_key == key:
-                return ex
     at = payload.get("at") or _iso((clock or (lambda: datetime.now(timezone.utc)))())
     blocking = payload.get("blocking")
     if event == "blocker_ack" and blocking is None:
         blocking = payload.get("target")
+    comments = adapter.comments(issue)
+    key = payload.get("key")
+    if not key:
+        key = default_key(issue, event, payload,
+                          _epoch(issue, event, payload.get("target"), blocking, adapter, comments, at))
+    for c in comments:
+        for ex in _markers_in(c):
+            if ex.idempotency_key == key and ex.event in (event, "unparsed"):
+                return ex   # present (a hand-edited, unparsed marker with the key counts as present)
     ev = Event(event=event, at=_iso(_dt(at)), by=by, target=payload.get("target"), blocking=blocking,
                evidence=list(evidence), source="marker", idempotency_key=key, when=payload.get("when"))
     note = payload.get("note") or f"{event} recorded by {by}" + (f" for {ev.target}" if ev.target else "")

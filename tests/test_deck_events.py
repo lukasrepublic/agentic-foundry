@@ -31,8 +31,9 @@ def seq(h):
 
 
 class Stub:
-    def __init__(self, comments=()):
+    def __init__(self, comments=(), tl=()):
         self.cs = list(comments)
+        self.tl = list(tl)
         self.posted = []
 
     def comments(self, issue):
@@ -44,7 +45,7 @@ class Stub:
                         "author": {"login": "alice"}, "body": body})
 
     def timeline(self, issue):
-        raise AssertionError("not used")
+        return list(self.tl)
 
 
 # ---- vocabulary -------------------------------------------------------------------------------------
@@ -107,7 +108,7 @@ def test_bad_or_empty_evidence_rejected_without_posting(event, ev):
     assert stub.posted == [] and stub.cs == []
 
 
-@pytest.mark.parametrize("ref", ["https://example.org/pr/1", "example-org/example-repo#12", "0123abc", "a" * 40])
+@pytest.mark.parametrize("ref", ["https://example.org/pr/1", "example-org/example-repo#12", "0123abc", "a1" * 20])
 def test_shared_references_accepted(ref):
     assert de.is_shared_reference(ref)
     stub = Stub()
@@ -284,3 +285,161 @@ def test_cli_parse_uses_adapter(monkeypatch, capsys):
     out = json.loads(capsys.readouterr().out)
     assert [e["event"] for e in out["events"]] == ["cancelled"]
     assert de.main(["emit", ISSUE, "ready", "--payload", "{}"]) == 2
+
+
+# ---- review round 1 ---------------------------------------------------------------------------------
+
+def _status(day, status, hour=0):
+    return {"__typename": "ProjectV2ItemStatusChangedEvent", "createdAt": f"2026-10-{day:02d}T{hour:02d}:00:00Z",
+            "actor": {"login": "alice"}, "status": status}
+
+
+def _clock(day):
+    return lambda: de._dt(f"2026-11-{day:02d}T00:00:00Z")
+
+
+def test_restart_after_withdraw_posts_a_second_start_marker():
+    tl = [_status(1, "In progress")]
+    stub = Stub(tl=tl)
+    de.emit(ISSUE, "start", {"by": "bob"}, adapter=stub, clock=_clock(1))
+    de.emit(ISSUE, "start", {"by": "bob"}, adapter=stub, clock=_clock(1))
+    assert len(stub.posted) == 1
+    stub.tl += [_status(2, "Backlog")]
+    de.emit(ISSUE, "start", {"by": "bob"}, adapter=stub, clock=_clock(2))
+    assert len(stub.posted) == 2
+
+
+def test_reaccept_after_reopen_posts():
+    stub = Stub(tl=[])
+    p = {"by": "bob", "target": "x", "evidence": [ISSUE]}
+    de.emit(ISSUE, "accepted", p, adapter=stub, clock=_clock(1))
+    de.emit(ISSUE, "accepted", p, adapter=stub, clock=_clock(1))
+    assert len(stub.posted) == 1
+    stub.tl.append({"__typename": "ReopenedEvent", "createdAt": "2026-10-05T00:00:00Z", "actor": {"login": "a"}})
+    de.emit(ISSUE, "accepted", p, adapter=stub, clock=_clock(2))
+    assert len(stub.posted) == 2
+
+
+OTHER = "example-org/example-repo#7"
+
+
+def _blocked(day, hour=0):
+    return {"__typename": "BlockedByAddedEvent", "createdAt": f"2026-10-{day:02d}T{hour:02d}:00:00Z",
+            "actor": {"login": "bob"}, "blockingIssue": {"number": 7, "repository": {"nameWithOwner": "example-org/example-repo"}}}
+
+
+def test_reblock_then_ack_posts_a_second_blocker_ack():
+    stub = Stub(tl=[_blocked(1)])
+    p = {"by": "alice", "target": OTHER}
+    de.emit(ISSUE, "blocker_ack", p, adapter=stub, clock=_clock(1))
+    de.emit(ISSUE, "blocker_ack", p, adapter=stub, clock=_clock(1))
+    assert len(stub.posted) == 1
+    stub.tl.append(_blocked(3))
+    de.emit(ISSUE, "blocker_ack", p, adapter=stub, clock=_clock(3))
+    assert len(stub.posted) == 2
+
+
+def _ack_marker(i, day, key):
+    obj = {"v": 1, "event": "blocker_ack", "idempotency_key": key, "target": OTHER, "blocking": OTHER,
+           "at": "x", "by": "alice", "evidence": []}
+    return {"id": i, "createdAt": f"2026-10-{day:02d}T12:00:00Z", "author": {"login": "alice"},
+            "body": f"<!-- foundry-deck: {json.dumps(obj)} -->\nack\n"}
+
+
+def test_blocked_ack_reblocked_is_unacknowledged_and_flag_agrees():
+    tl = [_blocked(1), _blocked(3)]
+    h = de.parse(tl, [_ack_marker("c1", 2, "k1")], END)
+    assert [(e.event, e.invalid) for e in h.events] == [("blocked", None), ("blocker_ack", None), ("blocked", None)]
+    assert h.unacknowledged == [OTHER]
+    h2 = de.parse(tl, [_ack_marker("c1", 2, "k1"), _ack_marker("c2", 4, "k2")], END)
+    assert h2.unacknowledged == []
+
+
+def test_blocking_added_event_on_blocker_does_not_block_this_issue():
+    tl = [{"__typename": "BlockingAddedEvent", "createdAt": "2026-10-01T00:00:00Z", "actor": {"login": "a"},
+           "blockedIssue": {"number": 7, "repository": {"nameWithOwner": "example-org/example-repo"}}}]
+    h = de.parse(tl, [], END)
+    assert h.events == [] and h.unacknowledged == []
+
+
+def test_parse_dedupes_same_key_first_by_time_wins():
+    a, b = _ack_marker("c1", 2, "same"), _ack_marker("c2", 3, "same")
+    h = de.parse([_blocked(1)], [b, a], END)
+    assert [e.comment_id for e in h.events if e.event == "blocker_ack"] == ["c1"]
+
+
+def test_quoted_marker_is_not_live():
+    c = _ack_marker("c1", 2, "k")
+    c["body"] = "\n".join("> " + ln for ln in c["body"].split("\n"))
+    assert de.parse([], [c], END).events == []
+    stub = Stub([c])
+    de.emit(ISSUE, "ack", {"by": "alice", "target": "bob", "key": "k"}, adapter=stub)
+    assert len(stub.posted) == 1
+
+
+def test_same_key_different_event_is_not_a_dedupe_hit():
+    stub = Stub([_ack_marker("c1", 2, "k")])
+    de.emit(ISSUE, "ack", {"by": "alice", "target": "bob", "key": "k"}, adapter=stub)
+    assert len(stub.posted) == 1
+
+
+def test_hand_edited_marker_with_same_key_counts_as_present():
+    c = _ack_marker("c1", 2, "k")
+    c["body"] = c["body"].replace('"v": 1', '"v": 9')
+    stub = Stub([c])
+    ex = de.emit(ISSUE, "blocker_ack", {"by": "alice", "target": OTHER, "key": "k"}, adapter=stub)
+    assert stub.posted == [] and ex.event == "unparsed" and ex.idempotency_key == "k"
+    c2 = _ack_marker("c2", 2, "k2")
+    c2["body"] = c2["body"].replace("}", "", 1)   # malformed JSON
+    stub = Stub([c2])
+    de.emit(ISSUE, "blocker_ack", {"by": "alice", "target": OTHER, "key": "k2"}, adapter=stub)
+    assert stub.posted == []
+
+
+def _gql(nodes, nxt=None):
+    return json.dumps({"data": {"repository": {"issue": {"timelineItems": {
+        "pageInfo": {"hasNextPage": nxt is not None, "endCursor": nxt}, "nodes": nodes}}}}})
+
+
+class _R:
+    def __init__(self, out, rc=0):
+        self.stdout, self.stderr, self.returncode = out, "", rc
+
+
+def test_gh_adapter_paginates_and_raises_on_errors_and_null_issue(monkeypatch):
+    import subprocess
+    calls = []
+    pages = [_gql([{"__typename": "ReopenedEvent"}], "CUR1"), _gql([{"__typename": "ClosedEvent"}])]
+
+    def fake(args, **kw):
+        calls.append(args)
+        return _R(pages[len(calls) - 1])
+    monkeypatch.setattr(subprocess, "run", fake)
+    nodes = de.GhAdapter().timeline(ISSUE)
+    assert [n["__typename"] for n in nodes] == ["ReopenedEvent", "ClosedEvent"]
+    assert "after=CUR1" in calls[1] and not any(a.startswith("after=") for a in calls[0])
+    monkeypatch.setattr(subprocess, "run", lambda a, **k: _R(json.dumps({"errors": [{"message": "boom"}]})))
+    with pytest.raises(RuntimeError):
+        de.GhAdapter().timeline(ISSUE)
+    monkeypatch.setattr(subprocess, "run", lambda a, **k: _R(json.dumps({"data": {"repository": {"issue": None}}})))
+    with pytest.raises(RuntimeError):
+        de.GhAdapter().timeline(ISSUE)
+
+
+@pytest.mark.parametrize("bad", ["abcdefabcdef", "1234567", "a1b2c3", "a1" * 33, "0123abc\n"])
+def test_sha_needs_digit_and_letter_and_bounded_length(bad):
+    assert not de.is_shared_reference(bad)
+    assert de.is_shared_reference("a1b2c3d") and de.is_shared_reference("a1" * 32)
+
+
+@pytest.mark.parametrize("bad", ["../x#1", "a/../#1", "a/b/c#1", "a/b#1\n", "./b#1"])
+def test_issue_ref_rejects_path_shaped(bad):
+    assert not de.is_shared_reference(bad)
+    with pytest.raises(ValueError):
+        de.emit(bad, "ack", {"by": "a"}, adapter=Stub())
+
+
+def test_marker_escapes_lt():
+    ev = de.Event(event="ack", at="2026-10-01T00:00:00Z", by="<!--x", idempotency_key="k")
+    body = de.render_marker(ev, "l")
+    assert body.count("<!--") == 1 and "\\u003c" in body

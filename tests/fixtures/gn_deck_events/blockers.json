@@ -1,12 +1,12 @@
 {
  "timeline": [
   {
-   "__typename": "BlockingAddedEvent",
+   "__typename": "BlockedByAddedEvent",
    "createdAt": "2026-10-03T10:00:00Z",
    "actor": {
     "login": "bob"
    },
-   "blockedIssue": {
+   "blockingIssue": {
     "number": 7,
     "repository": {
      "nameWithOwner": "example-org/example-repo"
