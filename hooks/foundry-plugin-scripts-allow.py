@@ -24,6 +24,13 @@ could point the settings write at another tree). "Every foundry script runs sile
 decision) means the plugin's own code, not an arbitrary command routed through it; these keep the
 session's normal permission mode.
 
+ALSO NEVER ALLOWED SILENTLY (security review of #286) — the verbs the permission floor tiers `ask` because
+they write to GitHub or redirect writes: `foundry_migrate.py cutover`, `foundry_deck_events.py emit`,
+`foundry_inbox.py check|ack|schedule|resolve`, `foundry-ticket.py claim`, `foundry_operating_mode.py
+enable-team|disable-team`, `foundry_usage.py bind` and `ingest|attribute` when `--dataset` is named, and any
+abbreviation of `--trust-author`. The hook is the only silent-allow mechanism, so without this the `ask` rows
+would never be enforced.
+
 WHAT IT NEVER DOES — decide anything else. A compound command (`;`, `&&`, `|`), a redirection, a
 subshell or command substitution, any other `$` expansion, a newline, a path outside the plugin
 root, or anything it cannot parse gets NO output: the platform's normal permission mode decides,
@@ -45,6 +52,28 @@ EXECUTES_INPUT = {"foundry-verify.py", "foundry-test.sh"}
 # foundry-ticket.py executes input only for these shapes (v2.0.0; security review of #270, R1):
 # `done` runs the ticket's command; `--trust-author` adopts a command from outside the write team.
 _TICKET_EXECUTING = ("done", "--trust-author")
+# GitHub-WRITING (or otherwise floor-`ask`) verbs: the permission floor tiers them `ask`, but this hook is
+# the only thing that grants a silent allow, so it must not grant one for them (security review of #286).
+# Matched as plain tokens anywhere after the script (a false hit only costs a prompt, never a silent allow).
+# `foundry-ticket.py lead acquire|renew|release` is deliberately NOT here: a local lease file only, floor
+# tier allow, and the 2-minute deck tick calls `lead renew` unattended.
+_ASK_VERBS = {
+    "foundry_migrate.py": {"cutover"},
+    "foundry_deck_events.py": {"emit"},
+    "foundry_inbox.py": {"check", "ack", "schedule", "resolve"},
+    "foundry-ticket.py": {"claim"},
+    "foundry_operating_mode.py": {"enable-team", "disable-team"},
+    "foundry_usage.py": {"bind"},
+}
+_USAGE_DATASET_VERBS = {"ingest", "attribute"}   # ask only when a dataset is NAMED (`--dataset`, any argparse abbreviation)
+
+
+def _names_option(args, full):
+    for a in args:
+        head = a.split("=", 1)[0]
+        if len(head) >= 3 and head.startswith("--") and full.startswith(head):
+            return True
+    return False
 
 
 def _plugin_root():
@@ -81,7 +110,13 @@ def allowed(command, root):
     if not any(_inside(real, os.path.join(root, d)) for d in ("scripts", "hooks")):
         return False
     name = os.path.basename(real)
-    if name == "foundry-ticket.py" and any(a in _TICKET_EXECUTING for a in argv[1:]):
+    if name == "foundry-ticket.py" and (any(a in _TICKET_EXECUTING for a in argv[1:])
+                                         or _names_option(argv[1:], "--trust-author")):
+        return False
+    if any(a in _ASK_VERBS.get(name, ()) for a in argv[1:]):
+        return False
+    if name == "foundry_usage.py" and _names_option(argv[1:], "--dataset") \
+            and any(a in _USAGE_DATASET_VERBS for a in argv[1:]):
         return False
     if name in EXECUTES_INPUT:
         return False

@@ -99,9 +99,34 @@
       "rationale": "advisory context-diet lint over an assembled dispatch prompt; fail-open, flags-only"
     },
     {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py:*)",
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py ingest:*)",
       "tier": "allow",
-      "rationale": "writes only six fixed filenames under the directory named by `--dataset`/`usage.dataset`; reads collector/transcript dirs the operator names; stores numeric fields only"
+      "rationale": "writes only six fixed filenames under the CONFIGURED usage.dataset; reads the collector dir the operator names; numeric fields only (configured `usage.dataset` only: an explicit `--dataset` is the ask row below)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py attribute:*)",
+      "tier": "allow",
+      "rationale": "derives attribution.jsonl under the CONFIGURED usage.dataset from usage + bindings; numeric fields only (configured `usage.dataset` only: an explicit `--dataset` is the ask row below)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py coverage:*)",
+      "tier": "allow",
+      "rationale": "read-only coverage report over the configured dataset"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py fallback-transcripts:*)",
+      "tier": "allow",
+      "rationale": "reads the operator's own transcript directory; writes usage rows under the configured dataset (configured `usage.dataset` only: an explicit `--dataset` is the ask row below)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py bind:*)",
+      "tier": "ask",
+      "rationale": "appends an attribution record (session -> issue/operator) to <dataset>/bindings.jsonl; wrong bindings misattribute cost, so the write is not silent"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py --dataset:*)",
+      "tier": "ask",
+      "rationale": "`--dataset DIR` redirects ingest/bind/attribute writes to a caller-named directory instead of the configured usage.dataset; the explicit form is not silent (the configured-dataset form stays in the allow row)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_env_isolation.py:*)",
@@ -296,17 +321,22 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py next:*)",
       "tier": "allow",
-      "rationale": "read-only: reads the operator's assigned issues from GitHub (gh api graphql/user, queries only) and prints the selection; writes nothing"
+      "rationale": "read-only: reads the operator's assigned issues from GitHub (gh api graphql/user, queries only) and prints the selection; writes nothing; skips (never selects) an issue whose Done-means is not author-trusted"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py read-issue:*)",
+      "tier": "allow",
+      "rationale": "read-only: reads one issue from GitHub (gh api graphql/user and the collaborator-permission probe, queries only) and prints the trust-checked view (done_trusted, done_digest, last_edited_by); executes nothing, writes nothing"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py claim:*)",
       "tier": "ask",
-      "rationale": "POSTs a structured `start` comment on a GitHub issue under the operator's identity (a content-creating write) and writes the git-dir claim record; refuses unassigned / other-owned issues and the WIP limit; never self-assigns (gn-08)"
+      "rationale": "POSTs a structured `start` comment on a GitHub issue under the operator's identity (a content-creating write) and writes the git-dir claim record; refuses unassigned / other-owned issues and the WIP limit; never self-assigns (gn-08); refuses (typed `done-means-untrusted`) an issue whose Done-means command is not author-trusted unless the operator passes --trust-author (never auto-allowed by the plugin-scripts-allow hook)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py reconcile:*)",
       "tier": "allow",
-      "rationale": "read-only: reads current GitHub issue state + timeline and reports stop_dispatch per started issue; writes nothing"
+      "rationale": "reads current GitHub issue state + timeline and reports stop_dispatch per started issue; no GitHub write. Its only local write is pruning claim records for issues GitHub reports closed from the git-dir claims file (a cache, never authority)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py lead:*)",
