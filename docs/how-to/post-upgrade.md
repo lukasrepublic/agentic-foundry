@@ -57,8 +57,8 @@ mid-walk question:
    as the report records it.
 
 It never edits a frozen contract, never deletes a branch the gc did not classify as merged, and never
-writes the agent-teams flag into a settings file. Team mode is a separate, optional step you take after
-the upgrade (`/foundry:team-mode enable`); the upgrade lands every workspace in single-operator mode.
+writes the agent-teams flag into a settings file. The GitHub-backed verbs need a
+`github_scope` in `.claude/foundry-project.json`; run `/foundry:init` to set it (doctor shows a `github-scope` line).
 
 ## Restore before cutover
 

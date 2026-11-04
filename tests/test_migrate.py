@@ -975,13 +975,13 @@ def test_authority_record_only_by_registered_operator(tmp_path, monkeypatch):
     assert rc != 0 and "no-migrated-item-without-acknowledge-empty" in out
     rc, out, err = e.run(*rec, "--acknowledge-empty")
     assert rc == 0, out + err
-    # single-operator workspace: cutover (every form) is a team-mode surface and is refused
+    # no-scope workspace: cutover (every form) needs github_scope and is refused
     files = WS.basic_files()
     del files[".claude/foundry-project.json"]
     s = W(tmp_path / "s", monkeypatch, files=files)
     rc, out, err = s.run(*rec, "--acknowledge-empty")
-    assert rc == 2 and "team-mode verb" in err and s.argvs() == []
-    assert s.run("inventory", "--offline")[0] == 0                       # read-only verbs run in both modes
+    assert rc == 2 and "github-scope-missing" in err and s.argvs() == []
+    assert s.run("inventory", "--offline")[0] == 0                       # read-only verbs need no scope
 
 
 # ==================================================================================== AC-CUT-14

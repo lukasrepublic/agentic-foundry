@@ -40,7 +40,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import foundry_operating_mode as _om  # noqa: E402
 from foundry_tier_preflight import API_VERSION, probe_has_rsc_rule  # noqa: E402
 
 # Claude Code harness floor: the `claude_code: ">=2.1.278"` entry of the workspace
@@ -370,6 +369,23 @@ def load_scope(project_dir):
     return manifest, cfg
 
 
+SCOPE_MISSING = "github-scope-missing"
+
+
+def scope_missing_text(verb):
+    return (f"{SCOPE_MISSING}: {verb} needs a well-formed github_scope (owner, planning_repo) in "
+            ".claude/foundry-project.json; run /foundry:init")
+
+
+def gate(project_dir, verb):
+    """For a GitHub-backed entry point: print the one typed refusal to stderr and return 2 when
+    `github_scope` is absent or malformed (before any network call), else None to proceed."""
+    if load_scope(str(project_dir))[1] is not None:
+        return None
+    print(scope_missing_text(verb), file=sys.stderr)
+    return 2
+
+
 def summarize(rows):
     by = {r["name"]: r for r in rows}
     bad = [n for n in INBOX_ROWS if by.get(n, {}).get("status") != "ok"]
@@ -415,8 +431,6 @@ def collect(project_dir, runner=default_runner, timeout=DEFAULT_TIMEOUT, now=Non
 
 def advisory_line(project_dir, runner=default_runner, timeout=DEFAULT_TIMEOUT):
     """The doctor's one-line value: `full`, `partial — uncovered: ...`, or the n/a text."""
-    if _om.resolve(project_dir).name != _om.TEAM:  # gn-17: no network in single-operator mode
-        return "n/a (single-operator mode)"
     res = collect(project_dir, runner, timeout)
     if res is None:
         return "n/a (no github_scope configured)"
@@ -430,11 +444,6 @@ def main(argv=None):
     ap.add_argument("--json", action="store_true", help="emit a single JSON object")
     ap.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help="per-call bound, seconds")
     args = ap.parse_args(argv)
-    if _om.resolve(args.project_dir).name != _om.TEAM:  # gn-17: n/a, exit 0, no network
-        msg = "n/a (single-operator mode)"
-        print(json.dumps({"coverage": "n/a", "required_sources_ok": False, "sources": [],
-                          "summary": msg}) if args.json else msg)
-        return 0
     res = collect(args.project_dir, timeout=args.timeout)
     if res is None:
         msg = "n/a (no github_scope configured)"

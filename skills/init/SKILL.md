@@ -287,6 +287,15 @@ standalone plugin repo) so the gates are live + fail-closed.
     **Cleanup.** The whole walk lives on a scratch branch — once the operator has seen the loop end
     to end, delete it rather than leaving toy content behind.
 
+## GitHub scope (required)
+
+Init requires `github_scope` in `.claude/foundry-project.json`: `{"owner": "<login or org>", "planning_repo":
+"<repo>"}` (optional `operators`, `project_number`). There is one operating mode and a solo developer is a team
+of one, so everyone sets it the same way. The GitHub-backed verbs (`foundry-ticket.py next|claim|reconcile|lead`,
+the inbox, the leader-board, the deck, usage, `foundry_migrate.py cutover`, the issue-assignment dispatch lane)
+refuse with `github-scope-missing` until it is present; the base ticket loop (`start|allow|done|status|clear`)
+runs without it. Doctor shows `github-scope: missing — run /foundry:init` until it is set and is never RED on it.
+
 ## What init verifies — and what it no longer does
 
 Init is not purely conversational — it still writes three artifacts (the closing line below).

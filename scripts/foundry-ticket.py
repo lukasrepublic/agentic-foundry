@@ -1289,8 +1289,8 @@ def main(argv: list[str], run=None, now: float | None = None) -> int:
              "claim": lambda r: cmd_claim(r, gh, clock),
              "reconcile": lambda r: cmd_reconcile(r, gh, clock), "lead": lambda r: cmd_lead(r, clock)}
     if verb in owned:
-        import foundry_operating_mode as _om  # gn-17: next|claim|reconcile|lead are team-mode verbs
-        refused = _om.gate(project_root(), f"foundry-ticket.py {verb}")
+        import foundry_github_capabilities as _ghc  # next|claim|reconcile|lead need github_scope
+        refused = _ghc.gate(project_root(), f"foundry-ticket.py {verb}")
         if refused is not None:
             return refused
         return owned[verb](rest)

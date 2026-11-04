@@ -360,9 +360,8 @@ PY
 #   4  = AC-WNI-2 staged spec/contract preflight hard-fail (typed diagnostic logged)
 #   5  = manifest names neither a contract_ref nor a COMPLETE issue assignment (gn-11) — fail closed
 #        (a complete assignment with no contract_ref is the issue-bound launch: binding, no staging)
-#        gn-17: the issue-assignment lane is also refused with 5 outside team mode (typed `single-operator-mode`)
-#        The contract lane is unchanged in both modes: a contract_ref manifest that ALSO carries an
-#        assignment still writes the gn-11 binding file in single-operator mode (intended).
+#        The issue-assignment lane is also refused with 5 when `github_scope` is missing (typed
+#        `github-scope-missing`); the contract lane does not need it.
 #   6  = gn-11 binding file could not be written (or a different one already exists)
 # Every code other than 0 and 10 stays fail-closed at the dispatcher (AC-WNP-2 floor): a
 # contended or corrupt PRODUCT manifest is never misread as "empty" and relanded native.
@@ -429,16 +428,14 @@ PY
     _log "$WS" "DROPPED-ASSIGNMENT-INCOMPLETE no-assignment $(basename "$m")"
     rm -f "$m"; _unlock "$LOCK"; return 3
   fi
-  # gn-17: the issue-assignment lane (assignment present, no contract_ref) is a team-mode path. Outside
-  # team mode it fails closed (same exit family as the other gn-11 refusals); the contract lane is the
-  # single-operator path and is untouched. An unresolvable mode counts as not-team (fail closed).
+  # The issue-assignment lane (assignment present, no contract_ref) needs a well-formed github_scope in
+  # .claude/foundry-project.json; without one it fails closed (typed `github-scope-missing`, exit 5)
+  # before anything reaches `foundry-wt claim`. An unresolvable check counts as missing (fail closed).
   if [ "$mstate" = "issue" ]; then
-    local _opmode _oprc=0
-    _opmode="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import foundry_operating_mode as m; print(m.resolve(sys.argv[2]).name)' "$HERE/../scripts" "$WS" 2>&1)" || _oprc=$?
-    if [ "$_opmode" != "team" ]; then
-      local _opwhy="issue-assignment lane is team-mode only"
-      [ "$_oprc" -ne 0 ] && _opwhy="resolver failed rc=$_oprc: $(printf '%s' "$_opmode" | tail -n 1 | cut -c1-120)"
-      _log "$WS" "DROPPED-SINGLE-OPERATOR-MODE single-operator-mode $_opwhy $(basename "$m")"
+    local _gsrc=0
+    python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import foundry_github_capabilities as g; sys.exit(0 if g.load_scope(sys.argv[2])[1] is not None else 1)' "$HERE/../scripts" "$WS" >/dev/null 2>&1 || _gsrc=$?
+    if [ "$_gsrc" -ne 0 ]; then
+      _log "$WS" "DROPPED-GITHUB-SCOPE-MISSING github-scope-missing issue-assignment lane needs github_scope; run /foundry:init $(basename "$m")"
       rm -f "$m"; _unlock "$LOCK"; return 5
     fi
   fi
@@ -705,9 +702,9 @@ PY
   if [ "$r9" -eq 1 ]; then echo "AC-MRDISPATCH-9 e2e-extraction: PASS"; else echo "AC-MRDISPATCH-9 e2e-extraction: FAIL"; ok=0; fi
 
   # ---- security (#286 review): the issue lane trusts neither the self-declared lane nor revision --------
-  # A team-mode workspace; the lead's claim record is the only source of the vetted acceptance baseline.
+  # A workspace with github_scope; the lead's claim record is the only source of the vetted acceptance baseline.
   local rcl=1 cgp; cgp="$(git -C "$ws" rev-parse --git-path foundry-claims.json)"; case "$cgp" in /*) : ;; *) cgp="$ws/$cgp" ;; esac
-  printf '{ "schema_version":1, "operating_mode":"team", "github_scope":{"owner":"o","planning_repo":"p"}, "repos": { "app": { "path": "app", "repo": "o/r" } } }\n' > "$ws/.claude/foundry-project.json"
+  printf '{ "schema_version":1, "github_scope":{"owner":"o","planning_repo":"p"}, "repos": { "app": { "path": "app", "repo": "o/r" } } }\n' > "$ws/.claude/foundry-project.json"
   printf '{ "schema_version":1, "operators": { "op_test": { "name":"T" } } }\n' > "$ws/.claude/foundry-operators.json"
   local sha_a sha_b; sha_a="$(printf 'a%.0s' $(seq 1 64))"; sha_b="$(printf 'b%.0s' $(seq 1 64))"
   _issue_manifest() { local iu="${2:-https://github.com/o/r/issues/7}"; printf '{"target_repo":"app","task":"t-iss","agent":"app-engineer","assignment":{"issue_url":"'"$iu"'","issue_number":7,"repo_key":"app","operator":"op_test","lane":"charter","acceptance_revision":{"body_sha256":"%s","documents":[]}}}\n' "$1" > "$ws/.foundry/dispatch-queue/t-iss.json"; }

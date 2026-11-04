@@ -106,9 +106,9 @@ def test_queue_panel_includes_items_older_than_the_window():
 def test_identical_runs_identical_bytes(tmp_path):
     f = tmp_path / "in.json"
     f.write_text(json.dumps(inputs()))
-    (tmp_path / ".claude").mkdir()   # gn-17: the leader-board is a team-mode verb
+    (tmp_path / ".claude").mkdir()   # the leader-board needs github_scope
     (tmp_path / ".claude" / "foundry-project.json").write_text(json.dumps({
-        "operating_mode": "team", "github_scope": {"owner": "example-org", "planning_repo": "planning"}}))
+        "github_scope": {"owner": "example-org", "planning_repo": "planning"}}))
     pd = str(tmp_path)
     outs = []
     for _ in range(2):

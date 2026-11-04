@@ -33,7 +33,7 @@ def ws(tmp_path):
     _init(str(root))
     _init(str(root / "app"))
     (root / ".claude" / "foundry-project.json").write_text(
-        json.dumps({"schema_version": 1, "operating_mode": "team", "github_scope": {"owner": "example-org", "planning_repo": "planning"}, "repos": {"app": {"path": "app", "repo": "o/r"}}}))
+        json.dumps({"schema_version": 1, "github_scope": {"owner": "example-org", "planning_repo": "planning"}, "repos": {"app": {"path": "app", "repo": "o/r"}}}))
     (root / ".claude" / "foundry-operators.json").write_text(
         json.dumps({"schema_version": 1, "operators": {"op_lukas": {"name": "L"}}}))
     _claim(root, "ab" * 32)
@@ -342,3 +342,14 @@ def test_matching_claim_and_configured_repo_proceed(ws):
     _manifest(ws, assignment=_assignment())
     r = _run(ws)
     assert r.returncode == 0, r.stderr
+
+
+def test_issue_lane_dropped_without_github_scope(ws):
+    """gv-02: the issue-assignment lane needs github_scope; the drop is typed and logged, the manifest consumed."""
+    (ws / ".claude" / "foundry-project.json").write_text(
+        json.dumps({"schema_version": 1, "repos": {"app": {"path": "app", "repo": "o/r"}}}))
+    _manifest(ws, assignment=_assignment())
+    r = _run(ws)
+    assert r.returncode != 0 and r.stdout == ""
+    assert "github-scope-missing" in _log(ws)
+    assert not list((ws / ".foundry" / "dispatch-queue").glob("*.json"))

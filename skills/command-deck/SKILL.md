@@ -5,7 +5,7 @@ description: The operator's lead over their own GitHub queue (/foundry:command-d
 
 # /foundry:command-deck
 
-**Team mode only.** In the default single-operator mode this verb refuses. Enable it with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_operating_mode.py" enable-team` (needs plugin 2.0 or later; see `/foundry:team-mode`).
+Needs a well-formed `github_scope` in `.claude/foundry-project.json` (set by `/foundry:init`); without it this verb refuses with `github-scope-missing`.
 
 The deck is **this session**, woken by a native recurring prompt. It is the operator's lead over their
 GitHub queue: it reads requests and work from GitHub, keeps owned work moving, and escalates what needs
