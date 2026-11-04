@@ -52,11 +52,14 @@ it does invoke `claude` (bounded by a closed allowlist — see its own README).
 - `.foundry/permissions.yaml` is a SEED, not a managed file: written once when absent (an empty,
   commented starter for standing grants — see the plugin's `docs/how-to/standing-grants.md`),
   then operator-owned — reported `[kept]`, never compared, never drifted, never written again.
-- The Amendments backfill: every `specs/**/*.md` (any basename, since v1.17.1) with a normative region and no
-  `## Amendments` section after it gets the empty section `/foundry:amend` requires, reported as
-  one row (`[amendments] backfilled N of M specs (K already present, J skipped: no normative
-  region)`). Outside the hashed region, so no `spec_sha256` moves; already-present, marker-less and
-  symlinked specs are never written; `--dry-run` prints the same row.
+- The Amendments backfill — **off by default since the 2.0 upgrade path** (it edits retained history).
+  With `--legacy-maintenance`, and only while no cutover record exists at
+  `.foundry/migration/authority.yaml`, every `specs/**/*.md` (any basename, since v1.17.1) with a
+  normative region and no `## Amendments` section after it gets the empty section `/foundry:amend`
+  requires, reported as one row (`[amendments] backfilled N of M specs (K already present, J skipped: no
+  normative region)`). Outside the hashed region, so no `spec_sha256` moves; already-present, marker-less
+  and symlinked specs are never written; `--dry-run` prints the same row. Without the flag, or with a
+  recorded or unreadable cutover, the preview names the condition that kept it off.
 
 ## Flags
 

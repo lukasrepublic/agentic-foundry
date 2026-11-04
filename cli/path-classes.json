@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "_comment": "The classification table the updater's preview reads (feat-foundry-adoption-npx-upgrade-2-0, AC-NPX-4/-6): every workspace path a run touches is exactly one of framework-owned, project-customization or retained-history. A path no pattern matches is project-customization. Patterns are workspace-relative; `*` stays inside one path segment, `**` crosses segments. Framework-owned is checked first, so a declared managed path under specs/ (the two README seeds) is framework-owned. Every retired-artifact catalogue entry is ALSO framework-owned; the updater adds those from retired-artifacts.json at run time, so they are not repeated here.",
+  "default_class": "project-customization",
+  "classes": {
+    "framework-owned": [
+      "CLAUDE.md",
+      ".gitignore",
+      ".claude/settings.json",
+      ".claude/foundry-project.json",
+      "specs/features/README.md",
+      "specs/lifecycle/README.md",
+      ".foundry/README.md",
+      ".foundry/permissions.yaml",
+      ".claude/hooks/foundry-statusline.sh",
+      ".claude/hooks/foundry-subagent-statusline.sh",
+      ".foundry/upgrade-report.json",
+      ".foundry/retired/**"
+    ],
+    "retained-history": [
+      "specs/**",
+      ".foundry/releases/**",
+      ".foundry/authorized/**",
+      ".foundry/decisions/**",
+      "**/acceptance-contract.yaml"
+    ]
+  }
+}

@@ -11,8 +11,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { confinedJoin } from './util.mjs';
+import { makeRunId, RUN_ID_RE } from './upgradeCompat.mjs';
 
 export const CATALOGUE_REL = 'retired-artifacts.json';
+export const RETIRED_ROOT_REL = '.foundry/retired';
+
+/** The shipped retired-term list (feat-foundry-adoption-npx-upgrade-2-0, AC-NPX-2): terms naming
+ * machinery earlier releases shipped. A missing or malformed list is empty — never a guess. */
+export function retiredTerms(catalogue) {
+  const t = catalogue && catalogue.retired_terms && catalogue.retired_terms.terms;
+  return Array.isArray(t) ? t.filter((x) => typeof x === 'string' && x.length > 0 && x.length <= 80) : [];
+}
 
 /** Load and validate the catalogue shipped beside `src/` (the package root). Refuses a malformed
  * entry loudly rather than sweeping with a half-read list. */
@@ -71,6 +80,7 @@ const SETTINGS_FILES = ['.claude/settings.json', '.claude/settings.local.json'];
  * exists but does not parse: then nothing under `.claude/hooks/` is planned removable (fail-closed). */
 function hookCommandText(physicalRoot) {
   const parts = [];
+  const perFile = [];
   let unreadable = false;
   for (const rel of SETTINGS_FILES) {
     const abs = confinedJoin(physicalRoot, rel);
@@ -89,16 +99,18 @@ function hookCommandText(physicalRoot) {
       unreadable = true;
       continue;
     }
+    const own = [];
     const walk = (v) => {
       if (Array.isArray(v)) { for (const x of v) walk(x); return; }
       if (v && typeof v === 'object') {
-        if (typeof v.command === 'string') parts.push(v.command);
+        if (typeof v.command === 'string') { parts.push(v.command); own.push(v.command); }
         for (const x of Object.values(v)) walk(x);
       }
     };
     if (obj && typeof obj === 'object' && obj.hooks) walk(obj.hooks);
+    perFile.push([rel, own.join('\n')]);
   }
-  return { text: parts.join('\n'), unreadable };
+  return { text: parts.join('\n'), unreadable, perFile };
 }
 
 // Skipped at ANY depth: version-control internals and installed dependencies only (PR #242 review
@@ -197,12 +209,18 @@ export function planRetiredArtifacts({ physicalRoot, catalogue }) {
         }
       }
       const kindOk = abs && !st.isSymbolicLink() && (entry.kind === 'dir' ? st.isDirectory() : st.isFile());
-      const row = { relPath, kind: entry.kind, retired_in: entry.retired_in, reason: entry.reason, state: kindOk ? 'stale' : 'refused', why: kindOk ? null : 'kind' };
+      const row = { relPath, kind: entry.kind, retired_in: entry.retired_in, reason: entry.reason, state: kindOk ? 'stale' : 'refused', why: kindOk ? null : 'kind', referrers: [] };
       if (row.state === 'stale' && relPath.startsWith(HOOKS_DIR_REL)) {
         if (hooks === null) hooks = hookCommandText(physicalRoot);
         if (hooks.unreadable) { row.state = 'refused'; row.why = 'settings-unreadable'; }
-        else if (hooks.text.includes(path.posix.basename(relPath))) { row.state = 'refused'; row.why = 'referenced'; }
+        else if (hooks.text.includes(path.posix.basename(relPath))) {
+          row.state = 'refused'; row.why = 'referenced';
+          row.referrers = hooks.perFile.filter(([, t]) => t.includes(path.posix.basename(relPath))).map(([rel]) => rel);
+        }
       }
+      // AC-NPX-13: a symbolic link (or non-directory) anywhere above the entry means a move could
+      // cross into another class of path, so the row is refused at plan time too.
+      if (row.state === 'stale' && ancestorProblem(physicalRoot, relPath)) { row.state = 'refused'; row.why = 'link-in-path'; }
       if (row.state === 'stale') {
         // ER #241: an adopter may re-adopt a retired path for their own CI or tooling. A path named
         // (full relative path) by any file the catalogue's reference_scan lists is refused, never
@@ -215,7 +233,7 @@ export function planRetiredArtifacts({ physicalRoot, catalogue }) {
           const base = relPath.startsWith(HOOKS_DIR_REL) ? path.posix.basename(relPath) : null;
           const by = refs.texts.filter(([rel, text]) => rel !== relPath
             && (text.includes(relPath) || (base && rel.startsWith(HOOKS_DIR_REL) && text.includes(base)))).map(([rel]) => rel);
-          if (by.length > 0) { row.state = 'refused'; row.why = 'referenced'; row.refs = by.slice(0, 3); }
+          if (by.length > 0) { row.state = 'refused'; row.why = 'referenced'; row.refs = by.slice(0, 3); row.referrers = by.slice(0, 20); }
         }
       }
       if (row.state === 'stale' && entry.kind === 'dir') {
@@ -231,14 +249,69 @@ export function planRetiredArtifacts({ physicalRoot, catalogue }) {
   };
 }
 
-/** Remove every `stale` row (re-checked with lstat immediately before each removal). Returns the
- * count removed. A row whose state changed between plan and apply is skipped, never forced. */
-export function applyRetiredArtifacts(plan, physicalRoot) {
+/** First non-directory-or-symlink component ABOVE `relPath`'s leaf, or null (AC-NPX-13). `lstat`
+ * from the workspace root down: a component that is missing is not a link (the leaf's own lstat
+ * decides presence); one that is a symbolic link or any non-directory is a problem. */
+function ancestorProblem(physicalRoot, relPath) {
+  const parts = relPath.split('/').filter(Boolean);
+  let cur = physicalRoot;
+  for (let i = 0; i < parts.length - 1; i += 1) {
+    cur = path.join(cur, parts[i]);
+    const st = fs.lstatSync(cur, { throwIfNoEntry: false });
+    if (!st) return null;
+    if (st.isSymbolicLink() || !st.isDirectory()) return parts.slice(0, i + 1).join('/');
+  }
+  return null;
+}
+
+/** Create `.foundry/retired/<runId>/<dirname(rel)>` one component at a time, each `lstat`ed first:
+ * an existing component must be a real directory (a symbolic link or file is a refusal), a missing
+ * one is created with a plain `mkdir` and pushed onto `created`. Returns null, or the refusal reason.
+ * The caller removes `created` again when the rename that follows does not happen. */
+function prepareDestination(physicalRoot, destRel, created) {
+  const parts = destRel.split('/').filter(Boolean);
+  let cur = physicalRoot;
+  for (let i = 0; i < parts.length - 1; i += 1) {
+    cur = path.join(cur, parts[i]);
+    const st = fs.lstatSync(cur, { throwIfNoEntry: false });
+    if (!st) {
+      fs.mkdirSync(cur, { mode: 0o755 });
+      created.push(cur);
+    } else if (st.isSymbolicLink() || !st.isDirectory()) {
+      return 'link-in-path';
+    }
+  }
+  return null;
+}
+
+/** The per-run record of what was moved (AC-NPX-13): `.foundry/retired/<runId>/manifest.json`. */
+function writeQuarantineManifest(physicalRoot, runId, moved) {
+  if (moved.length === 0) return;
+  const abs = path.join(physicalRoot, RETIRED_ROOT_REL, runId, 'manifest.json');
+  const doc = { schema_version: 1, run_id: runId, entries: moved.map((m) => ({ path: m.path, restore_from: m.restore_from })) };
+  fs.writeFileSync(abs, `${JSON.stringify(doc, null, 2)}\n`, { encoding: 'utf-8', flag: 'wx' });
+}
+
+/** Quarantine every `stale` row: ONE `rename` of the entry to `.foundry/retired/<runId>/<rel>`.
+ * Nothing is unlinked, copied or deleted — the bytes stay and a restore is the same move back. Every
+ * component of the source (above the leaf) and of the destination is `lstat`ed from the root down; a
+ * symbolic link or non-directory anywhere, an existing destination, or a failing rename (EXDEV
+ * included — there is no copy fallback) leaves the entry in place and the row `refused` with a
+ * reason. The only recursive removal left in this module takes back the empty directories THIS call
+ * created for a destination whose rename did not happen. Returns the count moved; `runId` is derived
+ * when none is given, so the two-argument form still works. */
+export function applyRetiredArtifacts(plan, physicalRoot, opts) {
+  const runId = (opts && opts.runId) || makeRunId();
+  if (!RUN_ID_RE.test(runId)) throw new Error('applyRetiredArtifacts: runId is not a safe single path segment');
   let removed = 0;
+  const moved = [];
   for (const row of plan.rows) {
     if (row.state !== 'stale') continue;
     const abs = confinedJoin(physicalRoot, row.relPath);
     if (!abs) continue;
+    const destRel = `${RETIRED_ROOT_REL}/${runId}/${row.relPath}`;
+    const absDest = confinedJoin(physicalRoot, destRel);
+    if (!absDest) { row.state = 'refused'; row.why = 'link-in-path'; continue; }
     let st;
     try {
       st = fs.lstatSync(abs);
@@ -247,18 +320,33 @@ export function applyRetiredArtifacts(plan, physicalRoot) {
     }
     if (st.isSymbolicLink()) continue;
     if (row.kind === 'dir' ? !st.isDirectory() : !st.isFile()) continue;
+    if (ancestorProblem(physicalRoot, row.relPath)) { row.state = 'refused'; row.why = 'link-in-path'; continue; }
+    if (fs.lstatSync(absDest, { throwIfNoEntry: false })) { row.state = 'refused'; row.why = 'destination-exists'; continue; }
+    const created = [];
+    let failure = null;
     try {
-      if (row.kind === 'dir') fs.rmSync(abs, { recursive: true, force: false });
-      else fs.unlinkSync(abs);
-      removed += 1;
-      row.state = 'removed';
+      const why = prepareDestination(physicalRoot, destRel, created);
+      if (why) failure = { why };
+      else fs.renameSync(abs, absDest);
     } catch (e) {
-      row.state = 'refused';
-      row.why = 'remove-failed';
-      row.error = e && e.code ? e.code : 'error';
+      failure = { why: 'remove-failed', error: e && e.code ? e.code : 'error' };
     }
+    if (failure) {
+      // nothing moved: take back only the (empty) directories THIS call created for the destination
+      if (created.length > 0) fs.rmSync(created[0], { recursive: true, force: false });
+      row.state = 'refused';
+      row.why = failure.why;
+      if (failure.error) row.error = failure.error;
+      continue;
+    }
+    removed += 1;
+    row.state = 'removed';
+    row.restore_from = destRel;
+    moved.push({ path: row.relPath, restore_from: destRel });
   }
+  writeQuarantineManifest(physicalRoot, runId, moved);
   plan.removed = removed;
+  plan.runId = runId;
   return removed;
 }
 
@@ -269,17 +357,17 @@ export function applyRetiredArtifacts(plan, physicalRoot) {
  * row apply skipped because it changed between plan and apply (hotfix-v1.17.5: the preview used to
  * print that last wording, contradicting the `[removed]` row the same run printed next). Empty when
  * nothing catalogued is present. */
-export function renderRetiredArtifactRows(plan, { cleanup, phase = 'result' }) {
+export function renderRetiredArtifactRows(plan, { cleanup, phase = 'result', runDir = null } = {}) {
   const out = [];
   for (const r of plan.rows) {
     const size = r.kind === 'dir' && typeof r.entries === 'number' ? ` [${r.entries} entr${r.entries === 1 ? 'y' : 'ies'}]` : '';
     if (r.state === 'stale') {
       const tail = !cleanup ? '; remove with --cleanup'
-        : phase === 'preview' ? '; will be removed'
+        : phase === 'preview' ? `; will be removed${runDir ? `; quarantined to ${runDir}` : ''}`
           : ' — NOT removed (changed since the plan)';
       out.push(`  [stale] ${r.relPath}${size} — retired in v${r.retired_in} (${r.reason})${tail}`);
     } else if (r.state === 'removed') {
-      out.push(`  [removed] ${r.relPath}${size} — retired in v${r.retired_in}`);
+      out.push(`  [removed] ${r.relPath}${size} — retired in v${r.retired_in}${r.restore_from ? `; restore from ${r.restore_from}` : ''}`);
     } else if (r.why === 'referenced' && r.refs) {
       out.push(`  [refused] ${r.relPath} — still referenced by ${r.refs.join(', ')} — left alone`);
     } else if (r.why === 'referenced') {
@@ -288,6 +376,10 @@ export function renderRetiredArtifactRows(plan, { cleanup, phase = 'result' }) {
       out.push(`  [refused] ${r.relPath} — the reference scan could not finish (${r.detail}) — left alone`);
     } else if (r.why === 'remove-failed') {
       out.push(`  [refused] ${r.relPath} — removal failed (${r.error}) — left in place`);
+    } else if (r.why === 'link-in-path') {
+      out.push(`  [refused] ${r.relPath} — a component of its path or of its quarantine destination is a symbolic link or not a directory — left in place`);
+    } else if (r.why === 'destination-exists') {
+      out.push(`  [refused] ${r.relPath} — its quarantine destination already exists — left in place`);
     } else if (r.why === 'settings-unreadable') {
       out.push(`  [refused] ${r.relPath} — .claude/settings*.json does not parse, so its hook wiring is unknown — left alone`);
     } else {

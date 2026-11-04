@@ -163,6 +163,57 @@ their process group is killed after every run and on SIGTERM. hooks/ and skills/
 operator-applied `security-reviewed` label applies. No clause of the git-discipline hook admits
 anything it previously refused.
 
+### The npx upgrade path to 2.0: the report says what happened, history is no longer rewritten by default
+
+`npx update-agentic-workspace` is the 2.0 upgrade path (no new installer, ledger or migration platform).
+It reuses the bootstrap and updater packages, the reconcile modules and the `/foundry:post-upgrade`
+hand-off; package versions and `supported_from_min` are set at the cut (the shipped placeholder `0.0.0`
+accepts every installed version until then).
+
+**Changed (updater):**
+- **One outcome per run, three exit codes.** `complete` exits 0, `attention-needed` exits 2, `refused`
+  (stopped, nothing changed) and `partial` (stopped after a change) exit 1. The last line is
+  `outcome: <outcome> · next: <next action> · cutover: <pending|recorded|unknown>`; a zero exit never
+  claims the project moved to 2.0. A refused or partial run still writes the report.
+- **`.foundry/upgrade-report.json` is schema 2** (every v1 field keeps its meaning): `run_id`, `outcome`,
+  `next_action`, `failure`, `previous_partial`, `cleanup[]`, `operator_review[]`, `compatibility`
+  (versions, scopes, registrations, what a new session loads, the diagnoses) and `adoption`
+  (per-phase verdicts, `instructions_pending`, `cutover`). Every value is a version, a shipped constant, a
+  path, a rule string, a URL without userinfo/query/fragment, or a `sha256:` digest; `env` and `hooks`
+  values are never written.
+- **Eleven checks, each with a code and a remedy.** Stops before any change: an unreadable settings file,
+  a marketplace registration that is not ours (the permission floor's wildcarded allow rows are bounded by
+  which repository fills the cache), an installed version below `supported_from_min`, a downgrade; and,
+  after the marketplace refresh and before the plugin update, an unreadable advertised version or a stale
+  npx-cached updater. Continue rows (exit 2): unknown installed version, a skipped input, an unreadable
+  registry, a scope on another version, a missing install directory.
+- **The preview names every effect with its class** (`[invoke|create|reconcile|keep|retire-rows|migrate|
+  review|legacy-backfill|legacy-true-up|quarantine|report] <framework-owned|project-customization|
+  retained-history> <target>`) and lists every settings key it would change with a `widens`/`narrows`
+  impact, in all three settings files. `--dry-run` prints `post-update checks not evaluated` and the
+  cutover state, and exits 1/2/0 by the pre-flight rows.
+- **History is no longer rewritten by default.** The spec Amendments backfill (bootstrap and updater) and
+  the release-manifest true-up (updater) run only under the new `--legacy-maintenance` flag, and only
+  while no cutover record exists at `.foundry/migration/authority.yaml`; a recorded or unreadable record
+  keeps them off. The updater only reads that record.
+- **`--cleanup` moves, it does not delete.** A catalogued retired artifact nothing wires is renamed to
+  `.foundry/retired/<run-id>/<path>` with its `restore_from` recorded in the report and in that run's
+  `manifest.json`; a symlink anywhere in the source or destination path, an existing destination or a
+  failing rename leaves it in place. `.claude/resume` and `.foundry/session-learnings` are moved, never
+  deleted. Nothing prunes the quarantine.
+- A managed path that is present but not a regular file is now reported `drifted` (exit 2) instead of
+  `kept`; a rerun after any stop converges to the uninterrupted result.
+
+**Changed (skill and docs):** `/foundry:post-upgrade` stops on a report that is not schema 2 and on a
+`refused`/`partial` outcome, carries an `attention-needed` report's diagnoses into the PR, takes its truth
+pass from `adoption.instructions_pending`, states `adoption.cutover` verbatim, and loses the
+`requires_capabilities` step; `docs/how-to/post-upgrade.md` gains Restore before cutover, Repair after
+cutover and Rollback limits. Both packages keep their exact-dependency, zero-dependency and
+no-lifecycle-script floor.
+
+**Not decided here (operator):** `supported_from_min` and the shipped `supported_sources`, the legacy-lane
+support window for `--legacy-maintenance`, and the exact package versions at the cut.
+
 ## v1.18.5 — 2026-10-01
 
 ### The status line no longer walks the working tree

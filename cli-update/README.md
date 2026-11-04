@@ -46,9 +46,9 @@ and want it to stay that way, disable it again after the update, or migrate that
    the invoked CLI's own success line.
 3. **Cleanup, opt-in (`--cleanup`)** — remove a stale or duplicate marketplace registration (superseded
    plugin-cache versions are listed, never removed — since v1.18.2, because a running session may still
-   use one). **This is destructive** and off by default: without
+   use one) and quarantine the retired workspace artifacts (moved to `.foundry/retired/<run-id>/`, never deleted). **This changes your setup** and is off by default: without
    `--cleanup`, every candidate path and registration is still previewed, but nothing is removed and
-   no `claude` invocation runs for this phase at all. Pass `--cleanup` to actually delete what was
+   no `claude` invocation runs for this phase at all. Pass `--cleanup` to actually act on what was
    previewed.
 4. **Reinitialization** — the same never-clobber managed-file reconcile and permission-floor
    reconcile `create-agentic-workspace --existing` already implements: an operator-edited file is
@@ -92,23 +92,42 @@ and want it to stay that way, disable it again after the update, or migrate that
    rename-install that keeps the file's mode bits, previewed like every other write, and is
    otherwise untouched.
 5. **The report and the hand-off** — every completed run writes `.foundry/upgrade-report.json`
-   (`schema_version`, `ran_at`, `from_plugin_version` / `to_plugin_version`, the phase verdicts,
-   what the Amendments backfill did, whether the policy file was `created` or `kept`, the drifted
-   paths) and ends with one line: `next: run /foundry:post-upgrade in your next session`. That
-   plugin skill owns the judgement half of an upgrade — standing grants into policy,
-   `requires_capabilities` on unfrozen contracts, a truth pass over your own prose, branch garbage
-   collection — and refuses without this report. `.foundry/` is gitignored; the report stays local.
+   (schema 2: `run_id`, `outcome`, `next_action`, `failure`, the `compatibility` block — versions,
+   scopes, registrations, what a new session loads, the diagnoses — the `adoption` block — per-phase
+   verdicts, `instructions_pending`, the cutover state — `operator_review[]`, `cleanup[]`, plus every v1
+   field) and ends with one line:
+   `outcome: <outcome> · next: <next action> · cutover: <pending|recorded|unknown>`. That plugin skill
+   owns the judgement half of an upgrade — standing grants into policy, a truth pass over your own
+   prose, branch garbage collection — and refuses without this report. `.foundry/` is gitignored; the
+   report stays local.
+6. **Checks, with a code and a remedy each.** Before any change: an unreadable settings file, a
+   marketplace registration that is not this plugin's repository, an installed version below the
+   shipped `supported_from_min`, a downgrade (all stop the run). After the marketplace refresh and
+   before the plugin update: an unreadable advertised version, or an npx-cached updater built for another
+   plugin version (both stop it). Later rows (unknown installed version, a skipped input, an unreadable
+   registry, a scope on another version, a missing install directory) let the run finish and make it
+   `attention-needed`.
 
 Every run previews every `claude` invocation and every path it will touch **before** the first one
 happens, and ends with a per-phase summary (`changed` / `already current` / `skipped: <reason>`).
 
 ## Flags
 
-- `--dry-run` — plan and print everything the run would do, write nothing and run no `claude`
-  command; exits `0`/`2` exactly as the real run would.
-- `--cleanup` — also perform the stale-registration removal and the retired-artifacts removal
-  previewed above. Off by default; a flagless run removes nothing. Plugin-cache versions are never
-  removed (v1.18.2): a running session keeps the version it started with.
+- `--dry-run` — plan and print everything the run would do (each row as `[<effect>] <class> <target>`,
+  then the settings keys it would change under `operator review`), write nothing and run no `claude`
+  command; prints `post-update checks not evaluated` and the cutover state, and exits `1` if a
+  pre-flight stop check fires, `2` if a pre-flight continue check fires or the plan holds a drifted
+  managed file or a refused `.gitignore` block, else `0`.
+- `--cleanup` — also perform the stale-registration removal and **quarantine** the retired artifacts
+  previewed above: each is *moved* (one rename) to `.foundry/retired/<run-id>/<path>` with its
+  `restore_from` in the report and in that directory's `manifest.json`, never deleted, and refused if
+  any path component is a symlink. Off by default; a flagless run moves nothing. Nothing prunes the
+  quarantine. Plugin-cache versions are never removed (v1.18.2): a running session keeps the version it
+  started with.
+- `--legacy-maintenance` — also run the two history writers (the spec `## Amendments` backfill and the
+  release-manifest true-up). Off by default, and only ever while the cutover state is `pending`
+  (no record at `.foundry/migration/authority.yaml`); a recorded or unreadable record keeps them off and
+  the preview names why.
 - `--help` — print usage and exit.
 
 ## Exit codes
@@ -117,10 +136,13 @@ Same convention as the sibling package, and worth reading before you wire this i
 
 | code | meaning |
 |------|---------|
-| `0`  | the run completed |
-| `2`  | the run completed, but `.gitignore`'s managed block could not be reconciled (malformed sentinels — reported, left alone) |
-| `2`  | the run completed, but a Python module the plugin's scripts import is still missing (the `python deps` row names it and why pip could not install it) |
-| `1`  | the run refused, or an invocation failed |
+| `0`  | `complete` — the run reached its end with nothing needing attention |
+| `2`  | `attention-needed` — the run reached its end, but a continue check fired (see `compatibility.diagnoses`), a managed path is present but not a regular file, `.gitignore`'s managed block could not be reconciled (malformed sentinels — reported, left alone), or a Python module the plugin's scripts import is still missing |
+| `1`  | `refused` (stopped before any change) or `partial` (stopped after one) — the last line and the report's `failure` and `next_action` say which and what to do |
+
+The last line is always `outcome: <outcome> · next: <next action> · cutover: <state>`. **A zero exit
+does not mean the project has moved to 2.0**: installation can be complete while adoption of shared work
+is still pending, and `cutover:` says so.
 
 **`2` is a success, not an error.** Since v1.18.0 a file that already exists is never "drifted" on
 the update path: operator-owned files are `[kept]`, and `.claude/settings.json` / `.gitignore` are
