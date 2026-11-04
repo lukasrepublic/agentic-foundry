@@ -4,6 +4,9 @@
 Reads the hook payload (session_id, agent_id, agent_type, cwd), looks for `<git-dir>/foundry-assignment.json`
 in the cwd's worktree ({"operator": ..., "issue": ...}; absence is tolerated and yields a binding with no
 issue), and appends one line to `<usage.dataset>/bindings.jsonl` (`.claude/foundry-project.json`).
+The dataset and the operating mode are resolved from the WORKSPACE (`CLAUDE_PROJECT_DIR`), never from the
+cwd-nearest `foundry-project.json`: when the cwd's own project root is a different tree (a nested or foreign
+checkout carrying its own manifest) the hook writes nothing. `bindings.jsonl` is opened O_NOFOLLOW.
 Fail-open: any problem exits 0 silently; it never blocks a dispatch. Stdlib only, well under a second.
 """
 import json
@@ -44,9 +47,15 @@ def main():
         import foundry_usage as fu
 
         cwd = payload.get("cwd") or os.getcwd()
-        if om.resolve(fu.project_root(cwd)).name != om.TEAM:  # gn-17: no-op outside team mode
+        ws_env = os.environ.get("CLAUDE_PROJECT_DIR")
+        if not ws_env or not os.path.isdir(ws_env):
+            return 0    # no workspace named by the harness: nothing to trust
+        ws = fu.project_root(ws_env)
+        if os.path.realpath(fu.project_root(cwd)) != os.path.realpath(ws):
+            return 0    # the cwd belongs to another project tree: refuse, write nothing
+        if om.resolve(ws).name != om.TEAM:  # gn-17: no-op outside team mode
             return 0
-        ds = fu.dataset_dir(None, start=cwd)
+        ds = fu.dataset_dir(None, start=ws)
         sid = payload.get("session_id")
         if not ds or not isinstance(sid, str) or not sid:
             return 0

@@ -309,6 +309,7 @@ def test_dataset_resolution_from_project_json(tmp_path):
 def _hook(payload, cwd, env_extra=None):
     env = dict(os.environ)
     env.pop("CLAUDE_PROJECT_DIR", None)
+    env.update(env_extra or {})
     t = time.time()
     p = subprocess.run([sys.executable, HOOK], input=payload, capture_output=True, text=True, cwd=cwd, env=env)
     return p, time.time() - t
@@ -326,7 +327,7 @@ def test_subagent_start_hook_writes_one_binding_and_is_fast(tmp_path):
     ds = tmp_path / "ds"
     (root / ".claude" / "foundry-project.json").write_text(json.dumps({"operating_mode": "team", "github_scope": {"owner": "example-org", "planning_repo": "planning"}, "usage": {"dataset": str(ds)}}))
     payload = json.dumps({"session_id": "s1", "agent_id": "a1", "agent_type": "implementer", "cwd": str(wt)})
-    p, dt = _hook(payload, str(wt))
+    p, dt = _hook(payload, str(wt), {"CLAUDE_PROJECT_DIR": str(root)})
     assert p.returncode == 0 and dt < 1.0
     rows = rj(str(ds / "bindings.jsonl"))
     assert len(rows) == 1
@@ -335,7 +336,7 @@ def test_subagent_start_hook_writes_one_binding_and_is_fast(tmp_path):
     assert "at" in rows[0]
     # assignment absent: tolerated, still one line, no issue
     os.remove(gitdir / "foundry-assignment.json")
-    p, _ = _hook(payload, str(wt))
+    p, _ = _hook(payload, str(wt), {"CLAUDE_PROJECT_DIR": str(root)})
     assert p.returncode == 0
     rows = rj(str(ds / "bindings.jsonl"))
     assert len(rows) == 2 and rows[1]["issue"] is None and rows[1]["operator"] is None
@@ -360,14 +361,52 @@ def test_hook_is_fail_open_on_unwritable_dataset_and_corrupt_assignment(tmp_path
     blocker.write_text("x")  # a dataset path under a regular file can never be created
     (root / ".claude" / "foundry-project.json").write_text(json.dumps({"operating_mode": "team", "github_scope": {"owner": "example-org", "planning_repo": "planning"}, "usage": {"dataset": str(blocker / "ds")}}))
     payload = json.dumps({"session_id": "s1", "agent_id": "a1", "cwd": str(wt)})
-    p, _ = _hook(payload, str(wt))
+    p, _ = _hook(payload, str(wt), {"CLAUDE_PROJECT_DIR": str(root)})
     assert p.returncode == 0 and len(p.stderr.strip().splitlines()) <= 1
     # corrupt assignment with a writable dataset: still one binding, no issue
     (root / ".claude" / "foundry-project.json").write_text(json.dumps({"operating_mode": "team", "github_scope": {"owner": "example-org", "planning_repo": "planning"}, "usage": {"dataset": str(tmp_path / "ds")}}))
-    p, _ = _hook(payload, str(wt))
+    p, _ = _hook(payload, str(wt), {"CLAUDE_PROJECT_DIR": str(root)})
     assert p.returncode == 0 and len(p.stderr.strip().splitlines()) <= 1
     rows = rj(str(tmp_path / "ds" / "bindings.jsonl"))
     assert len(rows) == 1 and rows[0]["issue"] is None
+
+
+def test_hook_refuses_when_the_cwd_belongs_to_another_project_tree(tmp_path):
+    root = tmp_path / "proj"
+    (root / ".claude").mkdir(parents=True)
+    ds, evil_ds = tmp_path / "ds", tmp_path / "evil-ds"
+    team = {"operating_mode": "team", "github_scope": {"owner": "example-org", "planning_repo": "planning"}}
+    (root / ".claude" / "foundry-project.json").write_text(json.dumps({**team, "usage": {"dataset": str(ds)}}))
+    foreign = root / "nested"           # a nested checkout with its OWN manifest
+    (foreign / ".claude").mkdir(parents=True)
+    (foreign / ".claude" / "foundry-project.json").write_text(json.dumps({**team, "usage": {"dataset": str(evil_ds)}}))
+    payload = json.dumps({"session_id": "s1", "agent_id": "a1", "cwd": str(foreign)})
+    p, _ = _hook(payload, str(foreign), {"CLAUDE_PROJECT_DIR": str(root)})
+    assert p.returncode == 0 and not (evil_ds / "bindings.jsonl").exists() and not (ds / "bindings.jsonl").exists()
+    # no workspace named at all: nothing is trusted, nothing is written
+    p, _ = _hook(payload, str(foreign))
+    assert p.returncode == 0 and not (evil_ds / "bindings.jsonl").exists()
+
+
+def test_bindings_are_never_appended_through_a_symlink(tmp_path):
+    ds = tmp_path / "ds"
+    ds.mkdir()
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep\n")
+    (ds / "bindings.jsonl").symlink_to(victim)
+    with pytest.raises(OSError):
+        fu.bind(str(ds), "s1", issue=1)
+    assert victim.read_text() == "keep\n"
+
+
+def test_relative_dataset_escaping_the_workspace_by_symlink_is_not_resolved(tmp_path):
+    root = tmp_path / "proj"
+    (root / ".claude").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (root / "data").symlink_to(outside)
+    (root / ".claude" / "foundry-project.json").write_text(json.dumps({"usage": {"dataset": "data/usage"}}))
+    assert fu.dataset_dir(None, start=str(root)) is None
 
 
 def test_hooks_json_wires_subagent_start_to_an_executable_script():

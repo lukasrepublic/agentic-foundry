@@ -105,7 +105,14 @@ def dataset_dir(explicit=None, start=None):
     if not isinstance(ds, str) or not ds:
         return None
     ds = os.path.expanduser(ds)
-    return ds if os.path.isabs(ds) else os.path.join(root, ds)
+    if os.path.isabs(ds):
+        return ds       # operator-named absolute path in their own manifest
+    ds = os.path.join(root, ds)
+    # a RELATIVE dataset must stay inside the workspace after symlinks resolve
+    real_root, real_ds = os.path.realpath(root), os.path.realpath(ds)
+    if real_ds != real_root and not real_ds.startswith(real_root + os.sep):
+        return None
+    return ds
 
 
 def read_jsonl(path):
@@ -138,7 +145,8 @@ def write_jsonl(path, rows):
 
 def append_jsonl(path, row):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o644)   # never through a symlink
+    with os.fdopen(fd, "a", encoding="utf-8") as f:
         f.write(json.dumps(row, sort_keys=True) + "\n")
 
 
