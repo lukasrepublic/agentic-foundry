@@ -1,0 +1,6 @@
+atom: gn-14-cutover-impl
+spec_ref: specs/features/foundry/adoption/artifact-disposition-and-cutover/feat-foundry-adoption-artifact-disposition-and-cutover.md
+workspace_commit: ba69988
+auth_seq: 1
+spec_sha256: 9486699dc45608a8c24a9345dd6a84e4f2da86285d287e6ab56f93edb8b6f0f1
+contract_sha256: 947cb71f134ce0967c959d35a5501539f31b6c6a47ec5a40910c35cd8c62e213

@@ -216,6 +216,10 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_migrate.py:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_operating_mode.py:*)",
             "origin": "settings.json"
           },
@@ -488,6 +492,10 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_migrate.py:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_operating_mode.py:*)",
             "origin": "settings.json"
           },
@@ -709,6 +717,10 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_tier_preflight.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_migrate.py:*)",
             "origin": "settings.json"
           },
           {
@@ -952,6 +964,10 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_migrate.py:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_operating_mode.py:*)",
             "origin": "settings.json"
           },
@@ -1175,6 +1191,10 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_tier_preflight.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_migrate.py:*)",
             "origin": "settings.json"
           },
           {

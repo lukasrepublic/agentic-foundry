@@ -199,6 +199,11 @@
       "rationale": "--apply POSTs repository rulesets with an Administration (write) token; it writes the merge floor itself"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_migrate.py:*)",
+      "tier": "ask",
+      "rationale": "`cutover --apply` creates GitHub issues and writes .foundry/migration/** plus one appended migrated_to key per selected manifest; `cutover record` creates authority.yaml; inventory/preview are read-only. One rule for the script: the write verbs decide the tier (gn-14)."
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_operating_mode.py:*)",
       "tier": "ask",
       "rationale": "enable-team / disable-team rewrite operating_mode in .claude/foundry-project.json (atomic, one key); status is read-only (gn-17)"

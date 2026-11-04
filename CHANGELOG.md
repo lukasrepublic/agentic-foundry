@@ -48,6 +48,16 @@ default path.
   Replaces status reports.
 - `context/operating-model.md` — the whole model on one page; `cli/templates/CLAUDE.md.tmpl`
   and `context/branch-discipline.md` rewritten to it.
+- Unreleased (gn-14): `scripts/foundry_migrate.py inventory|preview|cutover` — artifact disposition and
+  existing-project cutover. `inventory` classifies every spec, contract, manifest, ledger, decision and
+  instruction file (current-knowledge / active-work / retained-history / runtime-residue) and reports
+  recovery state by name; `preview` shows the issue, the sidecar and the instruction sentences that still
+  claim specs or manifests are the planning authority (before/after, never applied); `cutover --apply
+  --select <ids>` creates or adopts one private-repo GitHub issue per selected item (marker lookup over the
+  full paginated listing, idempotent and resumable), appends a single `migrated_to:` key to each selected
+  manifest and writes `.foundry/migration/**`, never committing; `cutover record` writes the operator-only
+  authority record. Retained history keeps its bytes. `cutover` is a team-mode surface. Tiered `ask` in the
+  permission floor.
 
 **Changed:**
 - `/foundry:authorize` is opt-in (`security: true` or an operator-chosen spec lane); the
