@@ -13,7 +13,7 @@
 # validates against schema/stack-profile.schema.json via the shipped loader.
 profile_kind: library
 id: python-uv-lib
-version: 0.1.0
+version: 0.2.0
 requires_core: ">=0.1"
 
 matches:
@@ -22,6 +22,78 @@ matches:
   frameworks: []
   package_managers:
     - uv
+
+# ── gv-08: blueprint-kit extension — governance selection, detection signatures, surfaces ──
+# `matches` above is the DEPRECATED alias of `detect` (still validates); `detect` is evaluated by
+# foundry_blueprint.rank, `governance` is the authority over the prose security_checklist.
+governance:
+  kits:
+    product: {level: 1}
+    architecture: {level: 2}
+    stack: {level: 2}
+    security: {level: 2}
+    contracts: {level: 2}
+    quality: {level: 2}
+    delivery: {level: 2}
+    exceptions: {level: 1}
+    conduct: {level: 1}
+  design_required_paths:
+    - "src/*/__init__.py"
+
+surfaces:
+  - api
+
+detect:
+  confidence_threshold: 0.7
+  signals:
+    - {kind: manifest, pattern: "pyproject.toml", weight: 2}
+    - {kind: lockfile, pattern: "uv.lock", weight: 2}
+    - {kind: path, pattern: "src/*/__init__.py", weight: 1}
+    - {kind: dependency, pattern: "fastapi|starlette|litestar", weight: -4}
+    - {kind: dependency, pattern: "click|typer", weight: -4}
+    - {kind: path, pattern: "**/__main__.py", weight: -3}
+    - {kind: dependency, pattern: "aiokafka|confluent-kafka|faststream|aio-pika|pika|nats-py", weight: -4}
+    - {kind: dependency, pattern: "dagster|prefect|apache-airflow|dbt-core|dlt|luigi|kedro", weight: -4}
+
+readiness_checklist: blueprints/readiness-checklist.md
+test_strategy: blueprints/test-strategy.md
+
+
+# ── gv-08: blueprint-kit extension — governance selection, detection signatures, surfaces ──
+# `matches` above is the DEPRECATED alias of `detect` (still validates); `detect` is evaluated by
+# foundry_blueprint.rank, `governance` is the authority over the prose security_checklist.
+governance:
+  kits:
+    product: {level: 1}
+    architecture: {level: 2}
+    stack: {level: 2}
+    security: {level: 2}
+    contracts: {level: 2}
+    quality: {level: 2}
+    delivery: {level: 2}
+    exceptions: {level: 1}
+    conduct: {level: 1}
+  design_required_paths:
+    - "src/*/__init__.py"
+
+surfaces:
+  - api
+
+detect:
+  confidence_threshold: 0.7
+  signals:
+    - {kind: manifest, pattern: "pyproject.toml", weight: 2}
+    - {kind: lockfile, pattern: "uv.lock", weight: 2}
+    - {kind: path, pattern: "src/*/__init__.py", weight: 1}
+    - {kind: dependency, pattern: "fastapi|starlette|litestar", weight: -4}
+    - {kind: dependency, pattern: "click|typer", weight: -4}
+    - {kind: path, pattern: "**/__main__.py", weight: -3}
+    - {kind: dependency, pattern: "aiokafka|confluent-kafka|faststream|aio-pika|pika|nats-py", weight: -4}
+    - {kind: dependency, pattern: "dagster|prefect|apache-airflow|dbt-core|dlt|luigi|kedro", weight: -4}
+
+readiness_checklist: blueprints/readiness-checklist.md
+test_strategy: blueprints/test-strategy.md
+
 
 architecture:
   layers:

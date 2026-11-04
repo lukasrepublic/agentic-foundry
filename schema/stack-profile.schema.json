@@ -6,10 +6,10 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "id", "version", "requires_core", "matches", "architecture",
+    "id", "version", "requires_core", "architecture",
     "implementation_skills",
-    "security_checklist", "performance_checklist", "observability",
-    "documentation"
+    "performance_checklist", "observability",
+    "documentation", "governance", "surfaces", "detect"
   ],
   "allOf": [
     {
@@ -36,6 +36,9 @@
       }
     }
   ],
+  "definitions": {
+    "kit_selection": {"type": "object", "additionalProperties": false, "required": ["level"], "properties": {"level": {"type": "integer", "enum": [1, 2, 3]}}}
+  },
   "properties": {
     "profile_kind": {
       "type": "string",
@@ -58,6 +61,7 @@
       "description": "Core-compatibility range: lower-bound-only '>=X.Y[.Z]' (non-speculative, admits any core >= lower — preferred) OR two-bound '>=X.Y[.Z],<X.Y[.Z]' (cap ONLY on a demonstrated incompatibility). Byte-equivalent to foundry-stack-profile.py _parse_range. Enforced at load (D4 guardrail 2)."
     },
     "matches": {
+      "description": "DEPRECATED alias (gv-08): superseded by `detect`. Still validates so pre-2.0 profiles load; new profiles carry `detect` and omit it. Optional since gv-08.",
       "type": "object",
       "additionalProperties": false,
       "required": ["languages", "frameworks", "package_managers"],
@@ -113,7 +117,7 @@
         "coverage_gate": {"type": "number", "minimum": 0, "maximum": 100}
       }
     },
-    "security_checklist": {"type": "string", "minLength": 1},
+    "security_checklist": {"type": "string", "minLength": 1, "description": "Prose security notes. Optional since gv-08: the `governance` block's kit selection (security kit + level) is the authority."},
     "performance_checklist": {"type": "string", "minLength": 1},
     "observability": {"type": "string", "minLength": 1},
     "documentation": {"type": "string", "minLength": 1},
@@ -209,6 +213,122 @@
           }
         }
       }
+    },
+    "governance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kits", "design_required_paths"],
+      "description": "gv-08: the governance selection this blueprint makes. `kits` maps a kit id (closed set of 15) to its level 1|2|3; `design_required_paths` are globs whose change requires a design artifact.",
+      "properties": {
+        "kits": {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "properties": {
+            "product": {"$ref": "#/definitions/kit_selection"},
+            "architecture": {"$ref": "#/definitions/kit_selection"},
+            "stack": {"$ref": "#/definitions/kit_selection"},
+            "security": {"$ref": "#/definitions/kit_selection"},
+            "contracts": {"$ref": "#/definitions/kit_selection"},
+            "quality": {"$ref": "#/definitions/kit_selection"},
+            "delivery": {"$ref": "#/definitions/kit_selection"},
+            "operations": {"$ref": "#/definitions/kit_selection"},
+            "cost": {"$ref": "#/definitions/kit_selection"},
+            "observability": {"$ref": "#/definitions/kit_selection"},
+            "data": {"$ref": "#/definitions/kit_selection"},
+            "compliance": {"$ref": "#/definitions/kit_selection"},
+            "ux": {"$ref": "#/definitions/kit_selection"},
+            "exceptions": {"$ref": "#/definitions/kit_selection"},
+            "conduct": {"$ref": "#/definitions/kit_selection"}
+          }
+        },
+        "design_required_paths": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "surfaces": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "cli",
+          "api",
+          "ui",
+          "workflows",
+          "mcp",
+          "goal-agents"
+        ]
+      },
+      "description": "gv-08: the product surfaces this blueprint's stacks expose (governs which surface rules apply)."
+    },
+    "detect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "signals",
+        "confidence_threshold"
+      ],
+      "description": "gv-08: ordered file/dependency signals for stack detection (grown from `matches`). Evaluated by the pure foundry_blueprint.detect_score/rank over facts {paths, dependencies}; no I/O. confidence = max(0, sum of matched weights) / sum of positive weights, in [0,1]; negative weights disambiguate sibling profiles.",
+      "properties": {
+        "signals": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "pattern",
+              "weight"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "manifest",
+                  "lockfile",
+                  "ci",
+                  "iac",
+                  "container",
+                  "dependency",
+                  "path"
+                ]
+              },
+              "pattern": {
+                "type": "string",
+                "minLength": 1
+              },
+              "weight": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "confidence_threshold": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "readiness_checklist": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^blueprints/[A-Za-z0-9_./-]+$",
+      "not": {
+        "pattern": "\\.\\."
+      },
+      "description": "gv-08: pack-relative path (under blueprints/, so blueprints_sha256 covers its bytes) of the production-readiness checklist."
+    },
+    "test_strategy": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^blueprints/[A-Za-z0-9_./-]+$",
+      "not": {
+        "pattern": "\\.\\."
+      },
+      "description": "gv-08: pack-relative path (under blueprints/, digest-covered) of the test-strategy document."
     }
   }
 }

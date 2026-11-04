@@ -413,7 +413,33 @@ def load_profile(id, *, root=None, plugin_root=None):
     validate_profile(doc, plugin_root=plugin_root)
     if doc.get("id") != id:
         raise StackProfileError(f"profile id {doc.get('id')!r} does not match its directory {id!r}")
+    _check_pack_doc_paths(doc, os.path.dirname(path))
     return doc, path, content_sha256(path)
+
+
+def _check_pack_doc_paths(doc, pack_dir):
+    """gv-08: `readiness_checklist` / `test_strategy` must name an existing regular, non-symlink file inside
+    the pack (the schema already pins them under blueprints/, so `blueprints_sha256` covers their bytes)."""
+    for key in ("readiness_checklist", "test_strategy"):
+        rel = doc.get(key)
+        if rel is None:
+            continue
+        p = os.path.join(pack_dir, rel)
+        if os.path.islink(p) or not os.path.isfile(p):
+            raise StackProfileError(f"profile {doc.get('id')!r}: `{key}` {rel!r} is not a regular file in the pack")
+        if os.path.commonpath([os.path.realpath(pack_dir), os.path.realpath(p)]) != os.path.realpath(pack_dir):
+            raise StackProfileError(f"profile {doc.get('id')!r}: `{key}` {rel!r} escapes the pack (containment)")
+
+
+def blueprint_digest(id, *, root=None, plugin_root=None):
+    """The (id, version, sha256) a `.foundry/governance.lock` `blueprint` entry records (gv-15 calls this):
+    sha256 over the profile's three certified digests — content (stack-profile.yaml), blueprints/ subtree
+    (which carries the readiness + test-strategy docs) and standing-versions/ — joined in fixed order.
+    Reproducible; any byte change in any covered file changes it."""
+    doc, path, csha = load_profile(id, root=root, plugin_root=plugin_root)
+    pack = os.path.dirname(path)
+    parts = [csha, _blueprints_sha256_of(pack) or "-", _standing_versions_sha256_of(pack, doc) or "-"]
+    return doc["id"], doc["version"], content_sha256_bytes("\n".join(parts).encode("utf-8"))
 
 
 def bundle_leak(id, *, plugin_root=None):

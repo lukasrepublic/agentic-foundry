@@ -1,0 +1,103 @@
+# data-pipeline — A batch/orchestrated data pipeline (Python via uv; orchestrator + dataframe/SQL engines).
+# Blueprint kit (gv-08): a stack profile extended with `governance` (kit selection),
+# `detect` (weighted signals, evaluated by foundry_blueprint.rank), `surfaces`, a readiness checklist
+# and a test strategy. Pins: standing-versions/ (research timestamp 2026-11-04, vendor sources named there).
+profile_kind: app
+id: data-pipeline
+version: 0.1.0
+requires_core: ">=0.1"
+
+governance:
+  kits:
+    product: {level: 1}
+    architecture: {level: 2}
+    stack: {level: 2}
+    security: {level: 2}
+    contracts: {level: 2}
+    quality: {level: 2}
+    delivery: {level: 2}
+    operations: {level: 2}
+    observability: {level: 2}
+    data: {level: 3}
+    cost: {level: 2}
+    compliance: {level: 2}
+    exceptions: {level: 1}
+    conduct: {level: 1}
+  design_required_paths:
+    - "dags/**"
+    - "pipelines/**"
+    - "models/**"
+    - "schemas/**"
+
+surfaces:
+  - workflows
+
+detect:
+  confidence_threshold: 0.5
+  signals:
+    - {kind: manifest, pattern: "pyproject.toml", weight: 1}
+    - {kind: lockfile, pattern: "uv.lock", weight: 1}
+    - {kind: dependency, pattern: "dagster|prefect|apache-airflow|dbt-core|dlt|luigi|kedro", weight: 4}
+    - {kind: dependency, pattern: "polars|duckdb|pyspark|pandas|pyarrow", weight: 2}
+    - {kind: manifest, pattern: "dbt_project.yml", weight: 3}
+    - {kind: path, pattern: "dags/**|pipelines/**|models/**/*.sql", weight: 2}
+
+readiness_checklist: blueprints/readiness-checklist.md
+test_strategy: blueprints/test-strategy.md
+
+
+architecture:
+  layers:
+    - domain
+    - transform
+    - io
+    - orchestration
+  allowed_dependencies:
+    - from: orchestration
+      to: ["io", "transform", "domain"]
+    - from: io
+      to: ["domain"]
+    - from: transform
+      to: ["domain"]
+    - from: domain
+      to: []
+  conventions_doc: conventions.md
+
+implementation_skills:
+  - skills/implement-data-pipeline.md
+
+static_validation:
+  format: "uv run --locked ruff format --check ."
+  lint: "uv run --locked ruff check ."
+  typecheck: "uv run --locked mypy src"
+  build: "uv build"
+
+test_recipe:
+  unit: "uv run --locked pytest tests/unit --cov=src --cov-report=term-missing --cov-fail-under=80"
+  integration: "uv run --locked pytest tests/integration"
+  e2e: "uv run --locked pytest tests/e2e"
+  coverage_gate: 80
+
+performance_checklist: >-
+  Keep startup and import cost low; avoid accidental quadratic work on the hot path of this stack;
+  measure before optimising and record the budget in the readiness checklist.
+
+observability: >-
+  Structured, leveled logging with correlation ids; metrics for rate, errors and duration of the
+  primary unit of work; a health signal the boot recipe exercises.
+
+documentation: >-
+  README with local setup and the boot command; an ADR for the layering and dependency-direction
+  choices; the readiness checklist and test strategy in blueprints/ kept current.
+
+app_exercise_binding:
+  boot: "uv run --locked python -m pipelines.run --dry-run"
+  surfaces:
+    - kind: pipeline
+      exercise: "uv run --locked python -m pipelines.run --dry-run — a dry-run materialises the pipeline graph without side effects"
+
+standing-versions:
+  manifest:
+    path: standing-versions/manifest.yaml
+  compatibility:
+    path: standing-versions/compatibility.yaml

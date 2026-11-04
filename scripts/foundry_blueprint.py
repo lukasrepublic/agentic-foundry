@@ -295,3 +295,97 @@ def guard_blueprint(body, profile, parametrizes_from, *, deny_extra=None):
                 f"body matches the domain-id deny-list pattern {pat.pattern!r}: {m.group(0)!r} "
                 f"(a product-domain id must not be hardcoded in a generic blueprint)")
     return findings
+
+
+# ── detection (gv-08) — PURE: no I/O, no globbing of the real tree; facts are handed in ──────────────────
+#
+# A blueprint kit's `detect` block is an ordered list of weighted file/dependency signals plus a
+# `confidence_threshold` (grounding: buildpacks' detect groups, Renovate manager file patterns, Nx
+# createNodes). `facts` = {"paths": [repo-relative POSIX paths], "dependencies": [names]}. A signal of kind
+# `dependency` matches a dependency name; every other kind matches a path glob. Glob grammar: a pattern with
+# no `/` matches the BASENAME at any depth; otherwise it matches the whole relative path, `**` spanning any
+# number of directories (also zero) and `*`/`?` never crossing a `/`. A pattern may list ALTERNATIVES
+# separated by `|` (e.g. `package-lock.json|pnpm-lock.yaml`): the signal matches when ANY alternative does,
+# and counts ONCE toward the score (alternatives are one signal, not several).
+
+_GLOB_CACHE = {}
+
+
+def _glob_regex(pattern):
+    rx = _GLOB_CACHE.get(pattern)
+    if rx is None:
+        out, i = [], 0
+        while i < len(pattern):
+            c = pattern[i]
+            if pattern.startswith("**/", i):
+                out.append("(?:.*/)?")
+                i += 3
+                continue
+            if pattern.startswith("**", i):
+                out.append(".*")
+                i += 2
+                continue
+            out.append("[^/]*" if c == "*" else "[^/]" if c == "?" else re.escape(c))
+            i += 1
+        rx = _GLOB_CACHE[pattern] = re.compile("^" + "".join(out) + "$")
+    return rx
+
+
+def glob_match(pattern, path):
+    """True iff `path` (a repo-relative POSIX path) matches `pattern` per the grammar above."""
+    path = path.replace("\\", "/")
+    if path.startswith("./"):
+        path = path[2:]
+    for alt in pattern.split("|"):
+        target = path if "/" in alt else path.rsplit("/", 1)[-1]
+        if _glob_regex(alt).match(target):
+            return True
+    return False
+
+
+def _norm_dep(name):
+    return re.sub(r"[-_.]+", "-", str(name).strip().lower())
+
+
+def detect_score(profile, facts):
+    """Score one profile's `detect` block against `facts`. Returns (score, evidence): score is the
+    confidence in [0, 1] = max(0, sum of matched signal weights) / sum of POSITIVE weights (negative weights
+    are disambiguators against sibling profiles); evidence is a list of {kind, pattern, weight, matched_by}
+    for every matched signal, in declaration order. A profile with no `detect` block (only the deprecated
+    `matches` alias) scores (0.0, [])."""
+    det = (profile or {}).get("detect")
+    if not isinstance(det, dict):
+        return 0.0, []
+    paths = [p for p in (facts or {}).get("paths", [])]
+    deps = {_norm_dep(d) for d in (facts or {}).get("dependencies", [])}
+    total_pos = sum(s["weight"] for s in det.get("signals", []) if s["weight"] > 0)
+    if total_pos <= 0:
+        return 0.0, []
+    got, evidence = 0.0, []
+    for sig in det.get("signals", []):
+        if sig["kind"] == "dependency":
+            alts = [_glob_regex(_norm_dep(a)) for a in sig["pattern"].split("|")]
+            by = next((d for d in sorted(deps) if any(rx.match(d) for rx in alts)), None)
+        else:
+            by = next((p for p in paths if glob_match(sig["pattern"], p)), None)
+        if by is not None:
+            got += sig["weight"]
+            evidence.append({"kind": sig["kind"], "pattern": sig["pattern"],
+                             "weight": sig["weight"], "matched_by": by})
+    return max(0.0, min(1.0, got / total_pos)), evidence
+
+
+def rank(profiles, facts):
+    """Rank profiles (an iterable of parsed profile mappings) over `facts`. Returns a list of
+    {id, version, score, threshold, above_threshold, evidence}, best first (score desc, id asc — total
+    order, deterministic). `above_threshold` is the selection predicate: score >= the profile's own
+    `detect.confidence_threshold`. On an empty tree nothing is above threshold."""
+    rows = []
+    for prof in profiles:
+        score, evidence = detect_score(prof, facts)
+        thr = ((prof.get("detect") or {}).get("confidence_threshold"))
+        rows.append({"id": prof["id"], "version": prof.get("version"), "score": score,
+                     "threshold": thr, "above_threshold": bool(evidence) and thr is not None and score >= thr,
+                     "evidence": evidence})
+    rows.sort(key=lambda r: (-r["score"], r["id"]))
+    return rows
