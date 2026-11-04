@@ -1,0 +1,6 @@
+name: ci
+jobs:
+  call:
+    uses: some-org/some-repo/.github/workflows/build.yml@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+  local:
+    uses: ./.github/workflows/local.yml

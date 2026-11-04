@@ -1,0 +1,13 @@
+{
+  "paths": [
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+    "src/server.ts"
+  ],
+  "dependencies": [
+    "fastify",
+    "vite",
+    "vitest"
+  ]
+}
