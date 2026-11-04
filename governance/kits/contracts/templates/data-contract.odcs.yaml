@@ -1,0 +1,18 @@
+# Open Data Contract Standard skeleton. Researched 2026-11-04. Check the field names against the ODCS
+# schema at the tag you pin; validate with checks/odcs-validate.yml.
+apiVersion: v3.0.2
+kind: DataContract
+id: 00000000-0000-0000-0000-000000000000
+name: orders
+version: 1.0.0
+status: draft
+domain: sales
+description:
+  purpose: Orders placed by customers.
+schema:
+  - name: orders
+    properties:
+      - name: order_id
+        logicalType: string
+        required: true
+        primaryKey: true

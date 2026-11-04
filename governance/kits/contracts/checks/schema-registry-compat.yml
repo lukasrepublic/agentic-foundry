@@ -1,0 +1,22 @@
+# Schema registry compatibility gate. Researched 2026-11-04.
+# REGISTRY_URL is a CI variable. The subject must be registered with BACKWARD or stricter compatibility.
+name: schema-compat
+on: [pull_request]
+permissions:
+  contents: read
+jobs:
+  compat:
+    runs-on: ubuntu-24.04
+    env:
+      SUBJECT: orders-value
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Subject compatibility mode is explicit and strict enough
+        run: |
+          mode=$(curl -fsS "$REGISTRY_URL/config/$SUBJECT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["compatibilityLevel"])')
+          case "$mode" in BACKWARD|BACKWARD_TRANSITIVE|FULL|FULL_TRANSITIVE) ;; *) echo "compatibility $mode is too weak"; exit 1;; esac
+      - name: New schema is compatible
+        run: |
+          curl -fsS -X POST -H 'Content-Type: application/vnd.schemaregistry.v1+json' \
+            --data @schema-request.json "$REGISTRY_URL/compatibility/subjects/$SUBJECT/versions/latest" \
+            | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("is_compatible") else 1)'

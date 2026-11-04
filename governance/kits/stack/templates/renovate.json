@@ -1,0 +1,10 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "_researched": "2026-11-04",
+  "extends": [
+    "github>YOUR-ORG/renovate-presets#1.0.0",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "pinDigests": true,
+  "rangeStrategy": "pin"
+}

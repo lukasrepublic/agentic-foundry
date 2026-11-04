@@ -1,0 +1,200 @@
+kit: architecture
+version: 1.0.0
+rules:
+- id: FG-ARCH-001
+  title: Layers and allowed dependency direction
+  statement: A project MUST declare its layers and the allowed dependency direction between them (the stack profile architecture.allowed_dependencies) and MUST enforce that direction with the ecosystem
+    tool in the bindings table.
+  category: architecture
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: governance/kits/architecture/checks/bindings.yaml#layers
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.2
+  - import-linter layers contract, https://import-linter.readthedocs.io/, accessed 2026-11-04
+  - dependency-cruiser rules, https://github.com/sverweij/dependency-cruiser, accessed 2026-11-04
+  - ArchUnit layered architecture, https://www.archunit.org/, accessed 2026-11-04
+- id: FG-ARCH-002
+  title: No dependency cycles
+  statement: The dependency graph between modules and layers MUST be free of cycles, checked by the tool in the bindings table.
+  category: architecture
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: governance/kits/architecture/checks/bindings.yaml#cycles
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.2
+  - ArchUnit slices, https://www.archunit.org/userguide/html/000_Index.html, accessed 2026-11-04
+- id: FG-ARCH-003
+  title: External dependency allow and deny per layer
+  statement: Each layer MUST list the external packages it may import; an import outside that list MUST fail the architecture check.
+  category: architecture
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: governance/kits/architecture/checks/bindings.yaml#external
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.2
+  - Nx enforce module boundaries, https://nx.dev/features/enforce-module-boundaries, accessed 2026-11-04
+- id: FG-ARCH-004
+  title: Architecture model is code
+  statement: A project SHOULD keep one C4 model as code (Structurizr DSL or equivalent) and SHOULD derive its views from it instead of drawing them by hand.
+  category: architecture
+  level: 2
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: review-lens
+    ref: agents/pr-reviewer.md
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.2
+  - C4 model, https://c4model.com/, accessed 2026-11-04
+  - Structurizr DSL, https://docs.structurizr.com/dsl, accessed 2026-11-04
+- id: FG-ARCH-005
+  title: ADR format and numbering
+  statement: A decision MUST be recorded as a MADR file docs/decisions/NNNN-title.md with a status, a unique number and, for a superseded decision, a resolvable superseded-by link.
+  category: architecture
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: lint
+    ref: governance/kits/architecture/checks/adr_lint.py
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.2
+  - MADR, https://adr.github.io/madr/, accessed 2026-11-04
+- id: FG-ARCH-006
+  title: ADR names the check that confirms it
+  statement: An accepted ADR MUST carry confirmation.check_id naming the rule id or check that enforces it, or the literal value none with a reason in the body.
+  category: architecture
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: lint
+    ref: governance/kits/architecture/checks/adr_lint.py
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.2
+  - MADR confirmation section, https://adr.github.io/madr/, accessed 2026-11-04
+- id: FG-ARCH-007
+  title: ADRs are immutable once accepted
+  statement: An accepted ADR MUST NOT be rewritten. A changed decision MUST be a new ADR that supersedes the old one.
+  category: architecture
+  level: 2
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: review-lens
+    ref: agents/pr-reviewer.md
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.2
+  - Nygard, Documenting Architecture Decisions, https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions, accessed 2026-11-04
+- id: FG-ARCH-008
+  title: Fitness functions run in CI with a committed baseline
+  statement: Every tool-bound architecture rule MUST run in CI as a gate. On a brownfield codebase, known violations MUST be frozen in a committed baseline so that only new violations fail.
+  category: architecture
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: governance/kits/architecture/templates/architecture-fitness.yml
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.2
+  - Building Evolutionary Architectures, fitness functions, https://evolutionaryarchitecture.com/, accessed 2026-11-04
+  - ArchUnit FreezingArchRule, https://www.archunit.org/userguide/html/000_Index.html#_freezing_arch_rules, accessed 2026-11-04

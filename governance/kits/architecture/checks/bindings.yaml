@@ -1,0 +1,39 @@
+# Per-ecosystem binding of the tool-bound architecture rules (layers, cycles, external, baseline).
+# Researched 2026-11-04. Pin each tool to an exact version in the project's version matrix (FG-STK-002).
+version: 1
+researched: 2026-11-04
+# Rules that need an ecosystem tool. For an ecosystem not listed below the state is "no-check:<ecosystem>":
+# a reported gap, never a silent pass.
+tool_bound_rules: [FG-ARCH-001, FG-ARCH-002, FG-ARCH-003, FG-ARCH-008]
+unbound_state: "no-check:<ecosystem>"
+ecosystems:
+  python:
+    tool: import-linter
+    run: lint-imports
+    template: templates/importlinter.ini
+  typescript:
+    tool: dependency-cruiser
+    run: npx depcruise --config .dependency-cruiser.cjs src
+    template: templates/dependency-cruiser.cjs
+  javascript:
+    tool: dependency-cruiser
+    run: npx depcruise --config .dependency-cruiser.cjs src
+    template: templates/dependency-cruiser.cjs
+  java:
+    tool: ArchUnit
+    run: mvn test -Dtest=ArchitectureTest
+    template: templates/ArchitectureTest.java
+  monorepo:
+    tool: nx-boundaries
+    run: npx nx lint
+    template: templates/nx-boundaries.eslintrc.json
+# Sections the rules point at (check.ref ends with #<section>).
+layers: "Every ecosystem tool above encodes the layer list and allowed direction; source of truth is the stack profile architecture.allowed_dependencies."
+cycles: "dependency-cruiser no-circular, import-linter forbidden/layers contracts, ArchUnit slices, Nx no-circular-dependencies."
+external: "Per-layer allowed external packages; any other import fails."
+baseline:
+  file: governance/local/baselines/architecture-deps.json
+  written_by: "foundry_governance.py baseline --check architecture-deps --findings FILE"
+  shape: "{check: architecture-deps, findings: [{rule, from, to}]}"
+  template: templates/architecture-baseline.json
+  semantics: "A violation present in the baseline is tolerated; any other violation fails."

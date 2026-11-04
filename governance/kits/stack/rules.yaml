@@ -1,0 +1,146 @@
+kit: stack
+version: 1.0.0
+rules:
+- id: FG-STK-001
+  title: Use the approved stack
+  statement: A project MUST use the frameworks, libraries and tools approved by its stack profile and conventions.
+  category: stack
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: review-lens
+    ref: agents/pr-reviewer.md
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.3
+- id: FG-STK-002
+  title: Every version is pinned
+  statement: Every dependency, container image, chart and tool version MUST be pinned to an exact version or digest. Floating tags and ranges MUST NOT be used.
+  category: stack
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: governance/kits/stack/checks/pinning.rego
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.3
+  - OpenSSF Scorecard Pinned-Dependencies, https://github.com/ossf/scorecard/blob/main/docs/checks.md#pinned-dependencies, accessed 2026-11-04
+  - GitHub secure use reference, https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions, accessed 2026-11-04
+- id: FG-STK-003
+  title: CI actions are pinned to a commit SHA
+  statement: 'Every external GitHub Actions uses: reference MUST be pinned to a full 40-character commit SHA.'
+  category: stack
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: scorecard
+    ref: Pinned-Dependencies
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.3
+  - OpenSSF Scorecard checks, https://github.com/ossf/scorecard/blob/main/docs/checks.md, accessed 2026-11-04
+- id: FG-STK-004
+  title: Versions are recorded with a research timestamp
+  statement: A project MUST keep one version matrix and a lock of the pinned versions, and every version-bearing template MUST carry the date its versions were researched. A version change MUST be a reviewed
+    edit to both.
+  category: stack
+  level: 2
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: review-lens
+    ref: agents/pr-reviewer.md
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.3
+- id: FG-STK-005
+  title: Dependency updates come from a pinned preset
+  statement: A project MUST configure automated dependency updates by extending a shared preset that is pinned by tag.
+  category: stack
+  level: 2
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: governance/kits/stack/templates/renovate.json
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.3
+  - Renovate shareable config presets, https://docs.renovatebot.com/config-presets/, accessed 2026-11-04
+- id: FG-STK-006
+  title: A new dependency names the rejected alternative
+  statement: A change that adds a dependency MUST state in its design line which alternative was considered and rejected.
+  category: stack
+  level: 2
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: review-lens
+    ref: agents/pr-reviewer.md
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.3

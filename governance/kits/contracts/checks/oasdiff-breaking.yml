@@ -1,0 +1,17 @@
+# Breaking-change gate for OpenAPI against main. Researched 2026-11-04.
+# Install oasdiff at the version pinned in your version matrix.
+name: api-breaking
+on: [pull_request]
+permissions:
+  contents: read
+jobs:
+  oasdiff:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+      - name: Compare against main
+        run: |
+          git show origin/main:openapi.yaml > /tmp/base.yaml
+          oasdiff breaking /tmp/base.yaml openapi.yaml --fail-on ERR
