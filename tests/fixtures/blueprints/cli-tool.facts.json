@@ -1,0 +1,12 @@
+{
+  "paths": [
+    "pyproject.toml",
+    "uv.lock",
+    "src/mytool/__main__.py",
+    "src/mytool/cli.py"
+  ],
+  "dependencies": [
+    "typer",
+    "rich"
+  ]
+}

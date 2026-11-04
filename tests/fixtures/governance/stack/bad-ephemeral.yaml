@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Pod
+metadata: {name: p}
+spec:
+  containers:
+    - {name: a, image: "registry.example/a:1.0.0"}
+  ephemeralContainers:
+    - {name: dbg, image: "registry.example/dbg:latest"}

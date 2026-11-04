@@ -1,0 +1,25 @@
+# data-pipeline — standing-versions platform-anchored compatibility + skew (gv-08).
+# Research timestamp: 2026-11-04; source: each tool's PyPI release metadata (supported-Python
+# classifiers) against the anchored CPython minor. Anchored on the interpreter line, as the sibling
+# python profiles are.
+pins_valid_as_of: "2026-11-04"
+
+python_minor: "3.13"
+
+skew:
+  - component: python_requires
+    anchor: python_minor
+    policy: "python_requires_floor_minor <= python_minor"
+    note: "the pyproject.toml requires-python floor (>=3.11) must not exceed the pinned .python-version line (3.13)"
+  - component: ruff
+    anchor: python_minor
+    policy: "ruff_wheel_supports(python_minor)"
+    note: "the pinned ruff release must publish a wheel for the anchored CPython minor"
+  - component: mypy
+    anchor: python_minor
+    policy: "mypy_supports_python_target(python_minor)"
+    note: "the pinned mypy release must support the anchored minor as runtime and --python-version target"
+  - component: pytest-cov
+    anchor: python_minor
+    policy: "pytest_cov_supports_python(python_minor)"
+    note: "the pinned pytest-cov (and its coverage.py dependency) must support the anchored CPython minor"

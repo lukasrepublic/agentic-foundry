@@ -1,0 +1,17 @@
+kit: architecture
+version: 1.0.0
+category: architecture
+rules: [FG-ARCH-001, FG-ARCH-002, FG-ARCH-003, FG-ARCH-004, FG-ARCH-005, FG-ARCH-006, FG-ARCH-007, FG-ARCH-008]
+checks:
+  - checks/bindings.yaml
+  - checks/bindings.py
+  - checks/adr_lint.py
+templates:
+  - templates/importlinter.ini
+  - templates/dependency-cruiser.cjs
+  - templates/ArchitectureTest.java
+  - templates/nx-boundaries.eslintrc.json
+  - templates/architecture-baseline.json
+  - templates/architecture-fitness.yml
+  - templates/docs/decisions/0000-template.md
+migrations: []

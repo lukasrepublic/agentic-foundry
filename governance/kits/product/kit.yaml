@@ -1,0 +1,11 @@
+kit: product
+version: 1.0.0
+category: product
+rules:
+- FG-PRD-001
+- FG-PRD-002
+- FG-PRD-003
+checks: []
+templates:
+- templates/PRODUCT.md
+migrations: []
