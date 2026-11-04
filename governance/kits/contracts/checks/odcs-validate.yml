@@ -1,0 +1,16 @@
+# Validate data contracts against the ODCS JSON schema. Researched 2026-11-04.
+# Download the schema from the Open Data Contract Standard repository at the tag pinned in your version matrix
+# and commit it as schema/odcs.json. Install check-jsonschema at the pinned version.
+name: data-contracts
+on: [pull_request]
+permissions:
+  contents: read
+jobs:
+  odcs:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Validate every data contract
+        run: check-jsonschema --schemafile schema/odcs.json 'data-contracts/*.yaml'

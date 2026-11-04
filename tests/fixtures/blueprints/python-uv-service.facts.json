@@ -1,0 +1,13 @@
+{
+  "paths": [
+    "pyproject.toml",
+    "uv.lock",
+    "src/app/main.py",
+    "src/app/api/routes.py"
+  ],
+  "dependencies": [
+    "fastapi",
+    "uvicorn",
+    "pydantic"
+  ]
+}

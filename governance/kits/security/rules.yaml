@@ -1,0 +1,648 @@
+kit: security
+version: 1.0.0
+rules:
+- id: FG-SEC-001
+  title: Application security level is declared
+  statement: The workspace MUST declare one application security verification level (1, 2 or 3) in its governance declarations.
+  category: security
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths: &id001
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: declared
+    ref: .foundry/governance.lock
+  exception: &id002
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - OWASP ASVS 5.0 project, https://github.com/OWASP/ASVS/tree/master/5.0/en (retrieved 2026-11-04)
+  - Foundry governance design 2026-11-04, section 2.4
+- id: FG-SEC-002
+  title: Requirements are cited by versioned id
+  statement: A security requirement MUST be cited in the form v5.0.0-chapter.section.requirement, never by number alone, because ids are not stable across ASVS major versions.
+  category: security
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths: *id001
+    blueprints:
+    - '*'
+  check:
+    kind: review-lens
+    ref: agents/security-reviewer.md
+  exception: *id002
+  sources:
+  - OWASP ASVS 5.0 project, https://github.com/OWASP/ASVS/tree/master/5.0/en (retrieved 2026-11-04)
+  - Semgrep rule syntax, https://docs.semgrep.dev/writing-rules/rule-syntax (retrieved 2026-11-04)
+- id: FG-SEC-003
+  title: Level 1 requirement subset is met
+  statement: Code MUST meet the level-1 requirement subset listed in asvs-level-1.yaml.
+  category: security
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths: *id001
+    blueprints:
+    - '*'
+  check:
+    kind: declared
+    ref: governance/kits/security/checks/asvs-level-1.yaml
+  exception: *id002
+  sources:
+  - OWASP ASVS 5.0 project, https://github.com/OWASP/ASVS/tree/master/5.0/en (retrieved 2026-11-04)
+  - Semgrep rule syntax, https://docs.semgrep.dev/writing-rules/rule-syntax (retrieved 2026-11-04)
+- id: FG-SEC-004
+  title: Level 2 requirement subset is met
+  statement: Where level 2 is declared, code MUST meet the requirements in asvs-level-2.yaml in addition to level 1.
+  category: security
+  level: 2
+  floor: false
+  status: active
+  applies_to:
+    paths: *id001
+    blueprints:
+    - '*'
+  check:
+    kind: declared
+    ref: governance/kits/security/checks/asvs-level-2.yaml
+  exception: *id002
+  sources:
+  - OWASP ASVS 5.0 project, https://github.com/OWASP/ASVS/tree/master/5.0/en (retrieved 2026-11-04)
+  - Foundry governance design 2026-11-04, section 2.4
+- id: FG-SEC-005
+  title: Level 3 requirement subset is met
+  statement: Where level 3 is declared, code MUST meet the requirements in asvs-level-3.yaml in addition to levels 1 and 2.
+  category: security
+  level: 3
+  floor: false
+  status: active
+  applies_to:
+    paths: *id001
+    blueprints:
+    - '*'
+  check:
+    kind: declared
+    ref: governance/kits/security/checks/asvs-level-3.yaml
+  exception: *id002
+  sources:
+  - OWASP ASVS 5.0 project, https://github.com/OWASP/ASVS/tree/master/5.0/en (retrieved 2026-11-04)
+  - Foundry governance design 2026-11-04, section 2.4
+- id: FG-SEC-006
+  title: Threat model is declared
+  statement: A threat model naming components, trust boundaries and authentication of each link MUST exist before the first release. It SHOULD be hand-authored from the template.
+  category: security
+  level: 2
+  floor: false
+  status: active
+  applies_to:
+    paths: *id001
+    blueprints:
+    - '*'
+  check:
+    kind: declared
+    ref: governance/kits/security/templates/THREAT-MODEL.md
+  exception: *id002
+  sources:
+  - Threagile model docs, https://raw.githubusercontent.com/Threagile/threagile/master/docs/model.md (retrieved 2026-11-04)
+  - Foundry governance design 2026-11-04, section 2.4
+- id: FG-SEC-007
+  title: Trust boundaries map to paths
+  statement: Each declared trust boundary MUST list the repository paths that implement it, so a change to those paths can be detected.
+  category: security
+  level: 2
+  floor: false
+  status: active
+  applies_to:
+    paths: *id001
+    blueprints:
+    - '*'
+  check:
+    kind: declared
+    ref: .foundry/governance.lock
+  exception: *id002
+  sources:
+  - Threagile model docs, https://raw.githubusercontent.com/Threagile/threagile/master/docs/model.md (retrieved 2026-11-04)
+  - Foundry governance design 2026-11-04, section 2.4
+- id: FG-SEC-008
+  title: Data classification uses the fixed enum
+  statement: Every data asset MUST be classified as exactly one of public, internal, confidential or restricted; no other value is valid.
+  category: security
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths: *id001
+    blueprints:
+    - '*'
+  check:
+    kind: declared
+    ref: governance/kits/security/templates/THREAT-MODEL.md
+  exception: *id002
+  sources:
+  - Threagile model docs, https://raw.githubusercontent.com/Threagile/threagile/master/docs/model.md (retrieved 2026-11-04)
+  - Foundry governance design 2026-11-04, section 2.4
+- id: FG-SEC-009
+  title: Restricted data is not logged or committed
+  statement: Restricted and confidential values MUST NOT appear in logs, fixtures or the repository.
+  category: security
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths: *id001
+    blueprints:
+    - '*'
+  check:
+    kind: review-lens
+    ref: agents/security-reviewer.md
+  exception: *id002
+  sources:
+  - OWASP ASVS 5.0 project, https://github.com/OWASP/ASVS/tree/master/5.0/en (retrieved 2026-11-04)
+  - Foundry governance design 2026-11-04, section 2.4
+- id: FG-SEC-010
+  title: SLSA build level is declared
+  statement: The project MUST declare the SLSA build level it targets for released artifacts.
+  category: security
+  level: 2
+  floor: false
+  status: active
+  applies_to:
+    paths: *id001
+    blueprints:
+    - '*'
+  check:
+    kind: declared
+    ref: .foundry/governance.lock
+  exception: *id002
+  sources:
+  - SLSA v1.0 levels, https://slsa.dev/spec/v1.0/levels (retrieved 2026-11-04)
+  - Foundry governance design 2026-11-04, section 2.4
+- id: FG-SEC-011
+  title: Release provenance is attested and verifiable
+  statement: A released artifact SHOULD carry a signed provenance attestation that a consumer can verify with gh attestation verify.
+  category: security
+  level: 2
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - .github/workflows/**
+    - '**/release/**'
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: governance/kits/security/checks/ci-release-attest.yml.tmpl
+  exception: *id002
+  sources:
+  - SLSA v1.0 levels, https://slsa.dev/spec/v1.0/levels (retrieved 2026-11-04)
+  - Foundry governance design 2026-11-04, section 2.4
+- id: FG-SEC-012
+  title: Build inputs are pinned
+  statement: Dependencies, container bases and CI actions MUST be pinned to an exact version or digest; a CI action MUST be pinned to a 40-character commit SHA.
+  category: security
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths: &id003
+    - '**/package.json'
+    - '**/package-lock.json'
+    - '**/requirements*.txt'
+    - '**/pyproject.toml'
+    - '**/poetry.lock'
+    - '**/go.mod'
+    - '**/go.sum'
+    - '**/Cargo.toml'
+    - '**/Cargo.lock'
+    - '**/Dockerfile*'
+    - .github/workflows/**
+    - '**/.github/dependabot.yml'
+    blueprints:
+    - '*'
+  check:
+    kind: scorecard
+    ref: scorecard:Pinned-Dependencies
+  exception: *id002
+  sources:
+  - OpenSSF Scorecard checks, https://raw.githubusercontent.com/ossf/scorecard/main/docs/checks.md (retrieved 2026-11-04)
+  - NIST SP 800-218 SSDF v1.1, https://csrc.nist.gov/pubs/sp/800/218/final (retrieved 2026-11-04)
+- id: FG-SEC-013
+  title: Releases are signed
+  statement: Release artifacts SHOULD be signed, and signed provenance satisfies this rule.
+  category: security
+  level: 2
+  floor: false
+  status: active
+  applies_to:
+    paths: *id001
+    blueprints:
+    - '*'
+  check:
+    kind: scorecard
+    ref: scorecard:Signed-Releases
+  exception: *id002
+  sources:
+  - OpenSSF Scorecard checks, https://raw.githubusercontent.com/ossf/scorecard/main/docs/checks.md (retrieved 2026-11-04)
+  - SLSA v1.0 levels, https://slsa.dev/spec/v1.0/levels (retrieved 2026-11-04)
+- id: FG-SEC-014
+  title: SBOM is produced on release
+  statement: Each release SHOULD publish a software bill of materials in a standard format.
+  category: security
+  level: 2
+  floor: false
+  status: active
+  applies_to:
+    paths: *id001
+    blueprints:
+    - '*'
+  check:
+    kind: scorecard
+    ref: scorecard:SBOM
+  exception: *id002
+  sources:
+  - OpenSSF Scorecard checks, https://raw.githubusercontent.com/ossf/scorecard/main/docs/checks.md (retrieved 2026-11-04)
+  - NIST SP 800-218 SSDF v1.1, https://csrc.nist.gov/pubs/sp/800/218/final (retrieved 2026-11-04)
+- id: FG-SEC-015
+  title: Known-vulnerable dependencies are gated
+  statement: A dependency with a known vulnerability MUST be fixed or replaced before release.
+  category: security
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths: *id003
+    blueprints:
+    - '*'
+  check:
+    kind: scorecard
+    ref: scorecard:Vulnerabilities
+  exception:
+    allowed: false
+  sources:
+  - OpenSSF Scorecard checks, https://raw.githubusercontent.com/ossf/scorecard/main/docs/checks.md (retrieved 2026-11-04)
+  - NIST SP 800-218 SSDF v1.1, https://csrc.nist.gov/pubs/sp/800/218/final (retrieved 2026-11-04)
+- id: FG-SEC-016
+  title: Dependency updates are automated
+  statement: The repository SHOULD run an automated dependency update tool.
+  category: security
+  level: 2
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**/package.json'
+    - '**/package-lock.json'
+    - '**/requirements*.txt'
+    - '**/pyproject.toml'
+    - '**/poetry.lock'
+    - '**/go.mod'
+    - '**/go.sum'
+    - '**/Cargo.toml'
+    - '**/Cargo.lock'
+    - '**/Dockerfile*'
+    - .github/workflows/**
+    - '**/.github/dependabot.yml'
+    - renovate.json
+    - .github/renovate.json
+    blueprints:
+    - '*'
+  check:
+    kind: scorecard
+    ref: scorecard:Dependency-Update-Tool
+  exception: *id002
+  sources:
+  - OpenSSF Scorecard checks, https://raw.githubusercontent.com/ossf/scorecard/main/docs/checks.md (retrieved 2026-11-04)
+- id: FG-SEC-017
+  title: Protected branches block force-push and need checks
+  statement: A protected branch MUST block force-push and deletion and MUST require status checks before merge.
+  category: security
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths: *id001
+    blueprints:
+    - '*'
+  check:
+    kind: scorecard
+    ref: scorecard:Branch-Protection
+  exception: *id002
+  sources:
+  - OpenSSF Scorecard checks, https://raw.githubusercontent.com/ossf/scorecard/main/docs/checks.md (retrieved 2026-11-04)
+  - NIST SP 800-218 SSDF v1.1, https://csrc.nist.gov/pubs/sp/800/218/final (retrieved 2026-11-04)
+  - Foundry governance design 2026-11-04, section 2.4
+- id: FG-SEC-018
+  title: Merge needs review
+  statement: Where more than one person can merge, a change MUST be reviewed by someone other than its author before it reaches the protected branch.
+  category: security
+  level: 2
+  floor: false
+  status: active
+  applies_to:
+    paths: *id001
+    blueprints:
+    - '*'
+  check:
+    kind: scorecard
+    ref: scorecard:Code-Review
+  exception: *id002
+  sources:
+  - OpenSSF Scorecard checks, https://raw.githubusercontent.com/ossf/scorecard/main/docs/checks.md (retrieved 2026-11-04)
+  - Foundry governance design 2026-11-04, section 2.4
+- id: FG-SEC-019
+  title: CI tokens are least-privilege
+  statement: A workflow MUST declare read-only default token permissions and grant writes per job only.
+  category: security
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths: &id004
+    - .github/workflows/**
+    blueprints:
+    - '*'
+  check:
+    kind: scorecard
+    ref: scorecard:Token-Permissions
+  exception: *id002
+  sources:
+  - OpenSSF Scorecard checks, https://raw.githubusercontent.com/ossf/scorecard/main/docs/checks.md (retrieved 2026-11-04)
+  - Foundry governance design 2026-11-04, section 2.4
+- id: FG-SEC-020
+  title: Dangerous workflow patterns are banned
+  statement: A workflow MUST NOT run untrusted pull-request code with a privileged trigger, nor interpolate untrusted input into a shell step.
+  category: security
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths: *id004
+    blueprints:
+    - '*'
+  check:
+    kind: scorecard
+    ref: scorecard:Dangerous-Workflow
+  exception: *id002
+  sources:
+  - OpenSSF Scorecard checks, https://raw.githubusercontent.com/ossf/scorecard/main/docs/checks.md (retrieved 2026-11-04)
+  - Foundry governance design 2026-11-04, section 2.4
+- id: FG-SEC-021
+  title: A security policy is published
+  statement: The repository MUST publish a security policy that states how to report a vulnerability.
+  category: security
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - SECURITY.md
+    - .github/SECURITY.md
+    blueprints:
+    - '*'
+  check:
+    kind: scorecard
+    ref: scorecard:Security-Policy
+  exception: *id002
+  sources:
+  - OpenSSF Scorecard checks, https://raw.githubusercontent.com/ossf/scorecard/main/docs/checks.md (retrieved 2026-11-04)
+- id: FG-SEC-022
+  title: Static analysis runs in CI
+  statement: Static application security analysis MUST run on every pull request, and its rules SHOULD carry cwe and owasp metadata that maps back to a cited requirement id.
+  category: security
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths: *id001
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: governance/kits/security/checks/ci-semgrep.yml.tmpl
+  exception: *id002
+  sources:
+  - Semgrep rule syntax, https://docs.semgrep.dev/writing-rules/rule-syntax (retrieved 2026-11-04)
+  - OpenSSF Scorecard checks, https://raw.githubusercontent.com/ossf/scorecard/main/docs/checks.md (retrieved 2026-11-04)
+  - Foundry governance design 2026-11-04, section 2.4
+- id: FG-SEC-023
+  title: Merge floor probe stays green
+  statement: The merge-floor doctor probe MUST report green; a red probe blocks release.
+  category: security
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths: *id001
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: scripts/foundry-doctor.py
+  exception: *id002
+  sources:
+  - Foundry governance design 2026-11-04, section 2.4
+- id: FG-SEC-024
+  title: Secret scanner extends the default config
+  statement: The secret scanner MUST run in CI with a configuration that extends the scanner's default rules and only adds to them.
+  category: security
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths: *id001
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: governance/kits/security/checks/gitleaks.toml
+  exception: *id002
+  sources:
+  - gitleaks configuration, https://github.com/gitleaks/gitleaks (retrieved 2026-11-04)
+  - Foundry governance design 2026-11-04, section 2.4
+- id: FG-SEC-025
+  title: Push protection is enabled
+  statement: Platform push protection for secrets SHOULD be enabled on every repository; the kit README describes how.
+  category: security
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths: *id001
+    blueprints:
+    - '*'
+  check:
+    kind: declared
+    ref: governance/kits/security/README.md
+  exception: *id002
+  sources:
+  - Foundry governance design 2026-11-04, section 2.4
+  - GitHub push protection, https://docs.github.com/en/code-security/secret-scanning/introduction/about-push-protection (retrieved 2026-11-04)
+- id: FG-SEC-026
+  title: Agents never read a secret value
+  statement: An agent MUST NOT read, print or transmit a credential value; the secret-read guard hook blocks the attempt.
+  category: security
+  level: 1
+  floor: true
+  status: active
+  applies_to:
+    paths: *id001
+    blueprints:
+    - '*'
+  check:
+    kind: hook
+    ref: hooks/foundry-secret-read-guard.py
+  exception: &id005
+    allowed: false
+  sources:
+  - Foundry governance design 2026-11-04, section 2.4
+  - Claude Code permissions, https://code.claude.com/docs/en/permissions (retrieved 2026-11-04)
+- id: FG-SEC-027
+  title: A leaked secret is rotated, not allowlisted
+  statement: A verified leaked secret MUST be revoked and rotated; allowlisting it MUST NOT be used as the fix.
+  category: security
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths: *id001
+    blueprints:
+    - '*'
+  check:
+    kind: review-lens
+    ref: agents/security-reviewer.md
+  exception: *id002
+  sources:
+  - Foundry governance design 2026-11-04, section 2.4
+  - gitleaks configuration, https://github.com/gitleaks/gitleaks (retrieved 2026-11-04)
+- id: FG-SEC-028
+  title: Agent tool permissions are deny-first
+  statement: An agent's tool permissions MUST evaluate deny before ask before allow, and a lower scope MAY only tighten them.
+  category: security
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths: *id001
+    blueprints:
+    - '*'
+  check:
+    kind: declared
+    ref: docs/permission-floor.json
+  exception: *id002
+  sources:
+  - Foundry governance design 2026-11-04, section 2.4
+  - Claude Code permissions, https://code.claude.com/docs/en/permissions (retrieved 2026-11-04)
+- id: FG-SEC-029
+  title: Agent code runs in an OS sandbox
+  statement: Agent-executed code SHOULD run in an operating-system sandbox with an empty-by-default network allowlist.
+  category: security
+  level: 2
+  floor: false
+  status: active
+  applies_to:
+    paths: *id001
+    blueprints:
+    - '*'
+  check:
+    kind: declared
+    ref: docs/permission-floor.json
+  exception: *id002
+  sources:
+  - Foundry governance design 2026-11-04, section 2.4
+  - Claude Code sandboxing, https://code.claude.com/docs/en/sandboxing (retrieved 2026-11-04)
+- id: FG-SEC-030
+  title: Organization settings precede project settings
+  statement: Organization-managed agent settings MUST take precedence over project settings, and a project MUST NOT loosen them.
+  category: security
+  level: 2
+  floor: false
+  status: active
+  applies_to:
+    paths: *id001
+    blueprints:
+    - '*'
+  check:
+    kind: declared
+    ref: docs/permission-floor.json
+  exception: *id002
+  sources:
+  - Foundry governance design 2026-11-04, section 2.4
+  - Claude Code settings, https://code.claude.com/docs/en/settings (retrieved 2026-11-04)
+- id: FG-SEC-031
+  title: Infrastructure checks use a policy bundle
+  statement: Infrastructure definitions MUST pass the policy-as-code bundle in checks/policy, or an adopter bundle that denies at least the same cases.
+  category: security
+  level: 2
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**/*.tf'
+    - '**/*.tfvars'
+    - '**/k8s/**'
+    - '**/helm/**'
+    - '**/policy/**'
+    - '**/Dockerfile'
+    - infra/**
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: governance/kits/security/checks/policy
+  exception: *id002
+  sources:
+  - Conftest, https://www.conftest.dev/ (retrieved 2026-11-04)
+  - Kyverno PolicyException, https://kyverno.io/docs/exceptions/ (retrieved 2026-11-04)
+  - Foundry governance design 2026-11-04, section 2.4
+- id: FG-SEC-032
+  title: Security review on security-tagged paths
+  statement: A change touching authentication, secrets, payments, external APIs, CI workflows or supply-chain files MUST be reviewed by the security reviewer before merge.
+  category: security
+  level: 1
+  floor: true
+  status: active
+  applies_to:
+    paths:
+    - '**/auth/**'
+    - '**/authn/**'
+    - '**/authz/**'
+    - '**/oauth/**'
+    - '**/secrets/**'
+    - '**/payments/**'
+    - '**/billing/**'
+    - '**/external/**'
+    - '**/integrations/**'
+    - '**/webhooks/**'
+    - .github/workflows/**
+    - .github/actions/**
+    - .github/CODEOWNERS
+    - '**/Dockerfile*'
+    - '**/package.json'
+    - '**/pyproject.toml'
+    - '**/requirements*.txt'
+    - '**/package-lock.json'
+    - '**/poetry.lock'
+    - '**/go.sum'
+    - '**/Cargo.lock'
+    - '**/THREAT-MODEL.md'
+    - '**/SECURITY.md'
+    blueprints:
+    - '*'
+  check:
+    kind: review-lens
+    ref: agents/security-reviewer.md
+  exception: *id005
+  sources:
+  - Foundry governance design 2026-11-04, section 2.4
+  - Threagile model docs, https://raw.githubusercontent.com/Threagile/threagile/master/docs/model.md (retrieved 2026-11-04)

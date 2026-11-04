@@ -1,0 +1,17 @@
+# Spectral ruleset for HTTP APIs. Researched 2026-11-04.
+# Adopt a numbered style guide by reference (Zalando RESTful API Guidelines or Google AIP) and add its
+# rules here. Run: spectral lint openapi.yaml --ruleset .spectral.yaml
+extends: ["spectral:oas"]
+rules:
+  operation-operationId: error
+  operation-description: warn
+  oas3-api-servers: error
+  info-contact: warn
+  path-kebab-case:
+    description: Path segments MUST be kebab-case (Zalando rule 129).
+    severity: error
+    given: "$.paths[*]~"
+    then:
+      function: pattern
+      functionOptions:
+        match: "^(/|(/([a-z0-9-]+|\\{[a-zA-Z0-9_]+\\}))+/?)$"

@@ -1,0 +1,9 @@
+kit: contracts
+version: 1.0.0
+category: contracts
+rules: [FG-API-001, FG-API-002, FG-API-003, FG-EVT-001, FG-EVT-002, FG-DATA-001, FG-CDC-001]
+checks: [checks/spectral-openapi.yaml, checks/spectral-asyncapi.yaml, checks/oasdiff-breaking.yml,
+  checks/buf-breaking.yml, checks/schema-registry-compat.yml, checks/odcs-validate.yml,
+  checks/pact-can-i-deploy.yml]
+templates: [templates/data-contract.odcs.yaml]
+migrations: []

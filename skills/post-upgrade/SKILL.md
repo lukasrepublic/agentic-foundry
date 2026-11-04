@@ -161,6 +161,10 @@ Print both lists, then carry on — they are the inventory the truth pass works 
 8. **Verification.** `/foundry:doctor` → `DOCTOR-GREEN` with no advisory line whose remedy is mechanical
    (statusline, retired artifacts, a lock behind the shipped profile, branches merged-not-deleted):
    each of those has a step above. Compare with the doctor output from the preconditions.
+   Also run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_operating_model.py" validate`: exit 0 is
+   required (a missing `.foundry/operating-model.yaml` is fine - defaults apply). On exit 2, print each
+   named error (`floor-rule-disabled:<key>`, `unknown-key:<key>`) for the operator; never edit the file to
+   a floor value yourself.
 9. **One pull request.** To `main`, carrying the step-1 commit and every later one, whose body is the step →
    before → after → evidence table, then the deletion list, then *For the operator* (anything left
    untouched and why, proposals, operator-owned findings, the `compatibility.diagnoses` from an

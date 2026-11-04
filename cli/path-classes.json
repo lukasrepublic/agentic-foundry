@@ -12,6 +12,7 @@
       "specs/lifecycle/README.md",
       ".foundry/README.md",
       ".foundry/permissions.yaml",
+      ".foundry/operating-model.yaml",
       ".claude/hooks/foundry-statusline.sh",
       ".claude/hooks/foundry-subagent-statusline.sh",
       ".foundry/upgrade-report.json",
