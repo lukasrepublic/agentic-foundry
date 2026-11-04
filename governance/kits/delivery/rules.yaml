@@ -1,0 +1,119 @@
+kit: delivery
+version: 1.0.0
+rules:
+  - id: FG-DLV-001
+    title: Branch discipline
+    statement: Work MUST happen on a branch per ticket and MUST reach a protected branch by pull request. A force-push to a protected branch MUST NOT happen.
+    category: delivery
+    level: 1
+    floor: true
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: hook, ref: hooks/foundry-git-discipline.sh}
+    exception: {allowed: false}
+    sources: ["GitHub docs, about protected branches (2026-11-04)", "Foundry governance design 2026-11-04, section 2.7"]
+  - id: FG-DLV-002
+    title: Conventional commits enforced by commitlint
+    statement: Commit messages MUST follow the Conventional Commits format, and CI MUST check them with commitlint.
+    category: delivery
+    level: 1
+    floor: false
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: lint, ref: governance/kits/delivery/checks/commitlint.config.js}
+    exception: {allowed: true, requires: [reason, owner, expires]}
+    sources: ["Conventional Commits 1.0.0 (2026-11-04)", "commitlint documentation (2026-11-04)"]
+  - id: FG-DLV-003
+    title: The SemVer bump is derived from commits
+    statement: The version bump MUST be derived from the commit types by tooling, and a person MUST NOT hand-pick it. A breaking change MUST be marked in the commit.
+    category: delivery
+    level: 1
+    floor: false
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: ci, ref: governance/kits/delivery/checks/release-please-config.json}
+    exception: {allowed: true, requires: [reason, owner, expires]}
+    sources: ["Semantic Versioning 2.0.0 (2026-11-04)", "release-please documentation (2026-11-04)"]
+  - id: FG-DLV-004
+    title: Merge-queue discipline
+    statement: A PR MUST enter the merge queue only on a green required check at the current head, after the base is merged in. It MUST NOT be merged by admin bypass or auto-merge. A rejected PR MUST be re-queued at most once for a failure outside its diff.
+    category: delivery
+    level: 1
+    floor: true
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: ci, ref: scripts/foundry_queue_land.py}
+    exception: {allowed: false}
+    note: Binds scripts/foundry_queue_land.py (shipped by gv-10). Operating model rule A2.
+    sources: ["GitHub docs, managing a merge queue (2026-11-04)", "Foundry operating model rule A2 (2026-11-04)"]
+  - id: FG-DLV-005
+    title: Coarse PRs and a merge plan
+    statement: Work for one area SHOULD land in one coarse PR, and a merge plan SHOULD order PRs so that a shared catalogue changes once per round.
+    category: delivery
+    level: 2
+    floor: false
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: declared, ref: scripts/foundry_merge_plan.py}
+    exception: {allowed: true, requires: [reason, owner, expires]}
+    note: Binds scripts/foundry_merge_plan.py (shipped by gv-10). Operating model rule A1.
+    sources: ["Foundry operating model rule A1 (2026-11-04)", "Google engineering practices, small CLs (2026-11-04)"]
+  - id: FG-DLV-006
+    title: Full suite only when required
+    statement: A branch MUST run the full test suite only when a shared catalogue changed or the policy key merge.full_suite_on_branch requires it. Otherwise it MUST run the tests the change affects.
+    category: delivery
+    level: 2
+    floor: false
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: declared, ref: scripts/foundry_queue_land.py}
+    exception: {allowed: true, requires: [reason, owner, expires]}
+    note: Policy key merge.full_suite_on_branch. Operating model rule A3.
+    sources: ["Foundry operating model rule A3 (2026-11-04)"]
+  - id: FG-DLV-007
+    title: Release cadence floor and release record
+    statement: A project MUST release at least once per period it declares, and each release MUST leave a release record that names the version, the commit and who built it.
+    category: delivery
+    level: 2
+    floor: false
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: ci, ref: governance/kits/delivery/checks/release-please-config.json}
+    exception: {allowed: true, requires: [reason, owner, expires]}
+    sources: ["Accelerate / DORA delivery metrics (2026-11-04)", "Foundry governance design 2026-11-04, section 2.7"]
+  - id: FG-DLV-008
+    title: Feature flags are cleaned up
+    statement: Each feature flag SHOULD carry an owner and a removal date, and a flag past its removal date SHOULD be removed from the code.
+    category: delivery
+    level: 2
+    floor: false
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: review-lens, ref: agents/pr-reviewer.md}
+    exception: {allowed: true, requires: [reason, owner, expires]}
+    sources: ["Uber Piranha, automated stale feature flag cleanup (2026-11-04)", "Foundry governance design 2026-11-04, section 2.7"]
+  - id: FG-DLV-009
+    title: CODEOWNERS covers governed paths
+    statement: Every governed path MUST have an owner in CODEOWNERS, and the branch protection MUST require owner review for those paths.
+    category: delivery
+    level: 1
+    floor: false
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: ci, ref: governance/kits/delivery/templates/CODEOWNERS.template}
+    exception: {allowed: true, requires: [reason, owner, expires]}
+    sources: ["GitHub docs, about code owners (2026-11-04)", "Foundry governance design 2026-11-04, section 2.7"]
+  - id: FG-DLV-010
+    title: Never edit CI to make a PR pass
+    statement: A PR MUST NOT edit CI workflows, CI scripts, test configs or quarantine lists to make that PR pass. Such an edit is allowed only when the active ticket names the path.
+    category: delivery
+    level: 1
+    floor: true
+    status: active
+    applies_to:
+      paths: [".github/workflows/**", ".github/actions/**", "ci/**", "**/pytest.ini", "**/conftest.py", "**/tox.ini", "**/jest.config.*", "**/quarantine*.yaml", "**/quarantine*.json"]
+      blueprints: ["*"]
+    check: {kind: hook, ref: hooks/foundry-paper-guard.py}
+    exception: {allowed: false}
+    note: Binds the ci class of hooks/foundry-paper-guard.py (shipped by gv-10). Operating model rule A2.
+    sources: ["Foundry operating model rule A2 (2026-11-04)"]

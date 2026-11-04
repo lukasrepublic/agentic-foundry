@@ -1,0 +1,3 @@
+# OpenSLO validate snippet. Copy into the project's CI. SLO files live under slo/.
+- name: Validate OpenSLO definitions
+  run: oslo validate -f slo/

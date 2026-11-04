@@ -1,0 +1,6 @@
+# CODEOWNERS template. Replace the owners. Every governed path needs an owner.
+# The last matching pattern wins.
+*                         @OWNER-TEAM
+/governance/              @GOVERNANCE-OWNERS
+/.github/workflows/       @CI-OWNERS
+/.foundry/                @GOVERNANCE-OWNERS

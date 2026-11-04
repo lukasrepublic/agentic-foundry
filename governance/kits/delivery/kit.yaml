@@ -1,0 +1,7 @@
+kit: delivery
+version: 1.0.0
+category: delivery
+rules: [FG-DLV-001, FG-DLV-002, FG-DLV-003, FG-DLV-004, FG-DLV-005, FG-DLV-006, FG-DLV-007, FG-DLV-008, FG-DLV-009, FG-DLV-010]
+checks: [checks/commitlint.config.js, checks/release-please-config.json]
+templates: [templates/CODEOWNERS.template]
+migrations: []

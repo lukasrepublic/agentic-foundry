@@ -1,0 +1,11 @@
+# Well-Architected pillar checklist ids mapped to repo facts. A scorecard: a report, not a gate.
+# Each entry: the checklist id, the pillar and a repo fact the scorecard reads.
+pillars:
+  - {id: OPS01-BP01, pillar: operational-excellence, fact: "CODEOWNERS file exists", path: CODEOWNERS}
+  - {id: OPS08-BP01, pillar: operational-excellence, fact: "alert rules carry runbook links", path: governance/kits/operations/checks/pint.hcl}
+  - {id: SEC01-BP01, pillar: security, fact: "security review lane configured", path: .github/workflows}
+  - {id: REL01-BP01, pillar: reliability, fact: "SLO files in OpenSLO format", path: slo}
+  - {id: REL13-BP01, pillar: reliability, fact: "error-budget policy document exists", path: docs/error-budget-policy.md}
+  - {id: PERF01-BP01, pillar: performance-efficiency, fact: "performance test or budget in CI", path: .github/workflows}
+  - {id: COST01-BP01, pillar: cost-optimization, fact: "cost allocation tags in IaC", path: infra}
+  - {id: SUS01-BP01, pillar: sustainability, fact: "non-prod scales to zero", path: infra}

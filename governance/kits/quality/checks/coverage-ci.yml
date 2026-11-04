@@ -1,0 +1,4 @@
+# Coverage floor snippet. Copy into the project's CI job. Set the floor per blueprint in the test strategy doc.
+# The floor is a number: change it only by a reviewed edit.
+- name: Tests with coverage floor
+  run: python3 -m pytest --cov --cov-fail-under=80 -q
