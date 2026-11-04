@@ -56,7 +56,7 @@
       "type": "object", "additionalProperties": false,
       "properties": {
         "enabled": {"type": "boolean", "default": true, "description": "B5 tunable."},
-        "expires_after": {"type": "string", "pattern": "^[1-9][0-9]*[mhd]$", "default": "2h", "description": "Lease lifetime without a heartbeat (m, h or d)."}
+        "expires_after": {"type": "string", "maxLength": 8, "pattern": "^[1-9][0-9]*[mhd]$", "default": "2h", "description": "Lease lifetime without a heartbeat (m, h or d)."}
       }
     },
     "cost": {
@@ -74,7 +74,7 @@
         "plain_language": {"type": "boolean", "default": true},
         "max_lines": {"type": "integer", "minimum": 4, "maximum": 200, "default": 8},
         "include_ids": {"type": "boolean", "default": false},
-        "handoff_dir": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f]+$", "default": "~/Documents/<workspace-name>", "description": "E3 tunable; the placeholder is filled by the operator."}
+        "handoff_dir": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u200b-\\u200d\\u2028\\u2029\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$", "default": "~/Documents/<workspace-name>", "description": "E3 tunable; the placeholder is filled by the operator."}
       }
     },
     "communication": {
@@ -109,7 +109,7 @@
     "governance": {
       "type": "object", "additionalProperties": false,
       "properties": {
-        "design_required_paths": {"type": "array", "uniqueItems": true, "maxItems": 64, "items": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f]+$"}, "default": []},
+        "design_required_paths": {"type": "array", "uniqueItems": true, "maxItems": 64, "items": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u200b-\\u200d\\u2028\\u2029\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$"}, "default": []},
         "size_tag_required": {"enum": ["S", "M", "L", "XL"], "default": "L", "description": "A design is required at or above this size tag."}
       }
     }

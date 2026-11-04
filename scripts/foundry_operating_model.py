@@ -156,7 +156,7 @@ def _check_object(node, value, prefix, errors):
     for name, v in value.items():
         key = f"{prefix}{name}"
         if not isinstance(name, str) or name not in props:
-            errors.append(f"unknown-key:{key}")
+            errors.append(f"unknown-key:{key!r}"[:64 + len("unknown-key:")])
             continue
         sub = props[name]
         if _is_leaf(sub):
@@ -241,7 +241,16 @@ def _flat_leaves(data, leaf_keys, prefix=""):
             yield from _flat_leaves(v, leaf_keys, key + ".")
 
 
-def _read_regular(path, cap):
+def _safe_resolve(path, typed):
+    """Path.resolve() raises RuntimeError on a symlink loop (OSError on some other faults): both are
+    the typed refusal `typed`, never a traceback."""
+    try:
+        return Path(path).resolve()
+    except (OSError, RuntimeError):
+        raise PolicyError([typed])
+
+
+def _read_regular(path, cap, refuse_hard_link=False):
     """Read a regular file without following a symlink or blocking on a FIFO. Returns bytes
     (at most cap+1 so the caller can detect an overrun), or None when the file is absent.
     Raises PolicyError('not-regular') for a symlink / FIFO / device / directory."""
@@ -258,8 +267,11 @@ def _read_regular(path, cap):
     except OSError:
         raise PolicyError(["not-regular"])
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        fst = os.fstat(fd)
+        if not stat.S_ISREG(fst.st_mode):
             raise PolicyError(["not-regular"])
+        if refuse_hard_link and fst.st_nlink > 1:
+            raise PolicyError(["hard-link"])
         return os.read(fd, cap + 1)
     finally:
         os.close(fd)
@@ -268,15 +280,12 @@ def _read_regular(path, cap):
 def _read_policy_text(pdir):
     """The policy text, or None when no file. Refuses a symlink/non-regular file, a path that leaves
     the project, and a file over POLICY_MAX_BYTES. The ONE presence test for load AND validate."""
-    root = Path(pdir).resolve()
+    root = _safe_resolve(pdir, "policy-path-unresolvable")
     path = Path(pdir) / POLICY_REL
-    try:
-        parent = path.parent.resolve()
-    except OSError:
-        raise PolicyError(["policy-path-outside-project"])
+    parent = _safe_resolve(path.parent, "policy-path-unresolvable")
     if parent != root and root not in parent.parents:
         raise PolicyError(["policy-path-outside-project"])
-    if parent != (root / ".foundry").resolve():
+    if parent != _safe_resolve(root / ".foundry", "policy-path-unresolvable"):
         raise PolicyError(["policy-path-outside-project"])
     try:
         raw = _read_regular(str(path), POLICY_MAX_BYTES)
@@ -413,7 +422,7 @@ _EXPLAIN = {
         "Operators could not follow dense, ID-heavy status text.",
         "brief preamble, tick template and author personas via `render-tick-section E2`."),
     "communication.operator_style_file": (
-        "E2: the project-relative text file used when style is operator-defined.", "An operator may need a different style.", "`render-tick-section E2`."),
+        "E2: the .foundry/ .md or .txt file used when style is operator-defined.", "An operator may need a different style.", "`render-tick-section E2`."),
     "hygiene.disk_sweep_each_tick": (
         "F2: measure the mount where the work writes, not the default one.", "The wrong disk filled while the default looked fine.", "deck-resources script."),
     "hygiene.teardown_required": (
@@ -527,18 +536,18 @@ def _operator_style_block(rel, project_dir):
         raise PolicyError([f"invalid-value:{key}: required when style is operator-defined"])
     if re.fullmatch(r"\.foundry/([A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(md|txt)", rel) is None:
         raise PolicyError([f"invalid-value:{key}: must be a .md or .txt file under .foundry/"])
-    root = Path(project_dir or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve()
+    root = _safe_resolve(project_dir or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd(), "policy-path-unresolvable")
     target = root / rel
-    try:
-        parent = target.parent.resolve()
-    except OSError:
-        raise PolicyError([f"invalid-value:{key}: path leaves .foundry/"])
-    fdir = (root / ".foundry").resolve()
-    if parent != fdir and fdir not in parent.parents:
+    parent = _safe_resolve(target.parent, "policy-path-unresolvable")
+    fdir = _safe_resolve(root / ".foundry", "policy-path-unresolvable")
+    # the resolved .foundry must itself sit under the resolved root, independently of `load`
+    if root not in fdir.parents or (parent != fdir and fdir not in parent.parents):
         raise PolicyError([f"invalid-value:{key}: path leaves .foundry/"])
     try:
-        raw = _read_regular(str(target), STYLE_MAX_BYTES)
-    except PolicyError:
+        raw = _read_regular(str(target), STYLE_MAX_BYTES, refuse_hard_link=True)
+    except PolicyError as e:
+        if e.errors == ["hard-link"]:
+            raise PolicyError([f"style-file-hard-link:{key}"])
         raw = False
     if raw is False:
         raise PolicyError([f"invalid-value:{key}: not a regular file"])
@@ -554,7 +563,8 @@ def _operator_style_block(rel, project_dir):
     text = text.strip()
     if not text:
         raise PolicyError([f"style-file-empty:{key}"])
-    if "OPERATOR STYLE GUIDANCE" in text:
+    folded = " ".join(unicodedata.normalize("NFKC", text.replace("\u2028", "\n").replace("\u2029", "\n")).casefold().split())
+    if "style guidance" in folded:
         raise PolicyError([f"invalid-value:{key}: contains the block delimiter"])
     return f"{STYLE_BEGIN}\n{text}\n{STYLE_END}"
 
@@ -605,7 +615,7 @@ def main(argv=None):
         if args.cmd == "explain":
             hit = explain(args.key)
             if hit is None:
-                print(f"unknown-key:{args.key}")
+                print(f"unknown-key:{args.key!r:.64}")
                 return 2
             p = load(pdir)
             print(f"key: {args.key}\nkind: {p.kind(args.key) if args.key in p.values else 'meta'}\n"

@@ -31,7 +31,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_operating_model.py:*)",
       "tier": "allow",
-      "rationale": "status|validate|explain|render-tick-section only read .foundry/operating-model.yaml and the shipped schema; the script writes nothing (gv-03)"
+      "rationale": "status|validate|explain|render-tick-section only read .foundry/operating-model.yaml, the shipped schema and the .foundry/ operator style file (a regular .md or .txt file, at most 4 KiB); the script writes nothing (gv-03)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-permissions-compile.py --check:*)",
