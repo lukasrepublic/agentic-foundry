@@ -328,6 +328,7 @@ PY
 #   4  = AC-WNI-2 staged spec/contract preflight hard-fail (typed diagnostic logged)
 #   5  = manifest names neither a contract_ref nor a COMPLETE issue assignment (gn-11) — fail closed
 #        (a complete assignment with no contract_ref is the issue-bound launch: binding, no staging)
+#        gn-17: the issue-assignment lane is also refused with 5 outside team mode (typed `single-operator-mode`)
 #   6  = gn-11 binding file could not be written (or a different one already exists)
 # Every code other than 0 and 10 stays fail-closed at the dispatcher (AC-WNP-2 floor): a
 # contended or corrupt PRODUCT manifest is never misread as "empty" and relanded native.
@@ -393,6 +394,17 @@ PY
   if [ "$mstate" = "none" ]; then
     _log "$WS" "DROPPED-ASSIGNMENT-INCOMPLETE no-assignment $(basename "$m")"
     rm -f "$m"; _unlock "$LOCK"; return 3
+  fi
+  # gn-17: the issue-assignment lane (assignment present, no contract_ref) is a team-mode path. Outside
+  # team mode it fails closed (same exit family as the other gn-11 refusals); the contract lane is the
+  # single-operator path and is untouched. An unresolvable mode counts as not-team (fail closed).
+  if [ "$mstate" = "issue" ]; then
+    local _opmode
+    _opmode="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import foundry_operating_mode as m; print(m.resolve(sys.argv[2]).name)' "$HERE/../scripts" "$WS" 2>/dev/null || true)"
+    if [ "$_opmode" != "team" ]; then
+      _log "$WS" "DROPPED-SINGLE-OPERATOR-MODE single-operator-mode issue-assignment lane is team-mode only $(basename "$m")"
+      rm -f "$m"; _unlock "$LOCK"; return 5
+    fi
   fi
   # B1: both labels are validated on BOTH lanes before anything reaches `foundry-wt claim`.
   if ! _label_ok "$task" || ! _label_ok "$agent"; then

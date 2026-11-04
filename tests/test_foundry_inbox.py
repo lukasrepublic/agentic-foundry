@@ -132,6 +132,10 @@ def req_item(url, n, created="2026-11-01T00:00:00Z"):
 def ws(tmp_path):
     (tmp_path / ".claude").mkdir()
     shutil.copy(FIX / "manifest.json", tmp_path / ".claude" / "foundry-project.json")
+    p = tmp_path / ".claude" / "foundry-project.json"   # gn-17: the inbox is a team-mode surface
+    d = json.loads(p.read_text())
+    d["operating_mode"] = "team"
+    p.write_text(json.dumps(d))
     return tmp_path
 
 

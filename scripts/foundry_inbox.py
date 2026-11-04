@@ -72,6 +72,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import foundry_deck_events as de  # noqa: E402
+import foundry_operating_mode as _om  # noqa: E402
 from foundry_deck_events import GhAdapter, _dt, _iso  # noqa: E402
 from foundry_github_capabilities import (  # noqa: E402
     API_VERSION, DEFAULT_TIMEOUT, _body, _fail, _header, _json, _row, _status_of, default_runner, load_scope,
@@ -685,6 +686,9 @@ def main(argv=None, runner=default_runner, clock=None):
     a = ap.parse_args(argv)
     pd = a.project_dir_sub or a.project_dir
     as_json = a.json or a.json_sub
+    refused = _om.gate(pd, f"foundry_inbox.py {a.cmd}")  # gn-17: team-mode verb; before any gh call/write
+    if refused is not None:
+        return refused
     try:
         if a.cmd in ("scan", "check"):
             res = (scan if a.cmd == "scan" else check)(pd, runner, a.timeout, a.queue_status, clock)

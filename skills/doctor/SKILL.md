@@ -91,6 +91,11 @@ lane signal — Tier B advisory) plus `hooks/foundry-git-discipline.sh`'s determ
      github_scope configured)`: which GitHub request sources your credentials cover (read-only;
      see `scripts/foundry_github_capabilities.py`). Full check only (skipped under `--session-start`). Never RED.
 
+   - **`operating-mode`** (gn-17) — `single-operator (default)`, `single-operator (explicit)`, `team`, or
+     `single-operator (malformed value "<x>")`: the workspace operating mode from `.claude/foundry-project.json`
+     (see `/foundry:team-mode`). Not the session posture (`/foundry:mode`). Offline config read. Never RED.
+     In single-operator mode `github-capabilities` reads `n/a (single-operator mode)`.
+
    Each probe is individually crash-proof — an unexpected exception inside one check is reported
    as that check's own RED result (`probe crashed: <type>: <detail>`), never an uncaught
    traceback, so a single broken probe can never mask the others or wedge the advisory

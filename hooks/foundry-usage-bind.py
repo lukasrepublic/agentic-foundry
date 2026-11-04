@@ -40,9 +40,12 @@ def main():
         if not isinstance(payload, dict):
             return 0
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+        import foundry_operating_mode as om
         import foundry_usage as fu
 
         cwd = payload.get("cwd") or os.getcwd()
+        if om.resolve(fu.project_root(cwd)).name != om.TEAM:  # gn-17: no-op outside team mode
+            return 0
         ds = fu.dataset_dir(None, start=cwd)
         sid = payload.get("session_id")
         if not ds or not isinstance(sid, str) or not sid:

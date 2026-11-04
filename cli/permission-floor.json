@@ -199,6 +199,11 @@
       "rationale": "--apply POSTs repository rulesets with an Administration (write) token; it writes the merge floor itself"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_operating_mode.py:*)",
+      "tier": "ask",
+      "rationale": "enable-team / disable-team rewrite operating_mode in .claude/foundry-project.json (atomic, one key); status is read-only (gn-17)"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_events.py:*)",
       "tier": "ask",
       "rationale": "`emit` posts a structured comment on a GitHub issue under the operator's identity (a content-creating write); `parse` is read-only. One rule for the script: the write verb decides the tier (gn-04 deck events)."

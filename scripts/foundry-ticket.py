@@ -1139,6 +1139,10 @@ def main(argv: list[str], run=None, now: float | None = None) -> int:
     owned = {"next": lambda r: cmd_next(r, gh, clock), "claim": lambda r: cmd_claim(r, gh, clock),
              "reconcile": lambda r: cmd_reconcile(r, gh, clock), "lead": lambda r: cmd_lead(r, clock)}
     if verb in owned:
+        import foundry_operating_mode as _om  # gn-17: next|claim|reconcile|lead are team-mode verbs
+        refused = _om.gate(project_root(), f"foundry-ticket.py {verb}")
+        if refused is not None:
+            return refused
         return owned[verb](rest)
     if verb not in table:
         sys.exit(f"foundry-ticket: unknown verb {verb!r}; one of {', '.join([*table, *owned])}")

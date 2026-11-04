@@ -106,16 +106,20 @@ def test_queue_panel_includes_items_older_than_the_window():
 def test_identical_runs_identical_bytes(tmp_path):
     f = tmp_path / "in.json"
     f.write_text(json.dumps(inputs()))
+    (tmp_path / ".claude").mkdir()   # gn-17: the leader-board is a team-mode verb
+    (tmp_path / ".claude" / "foundry-project.json").write_text(json.dumps({
+        "operating_mode": "team", "github_scope": {"owner": "example-org", "planning_repo": "planning"}}))
+    pd = str(tmp_path)
     outs = []
     for _ in range(2):
         buf = io.StringIO()
-        assert lb.main(["--inputs", str(f), "--as-of", CUT, "--json"], out=buf) == 0
+        assert lb.main(["--inputs", str(f), "--as-of", CUT, "--json", "--project-dir", pd], out=buf) == 0
         outs.append(buf.getvalue())
     assert outs[0] == outs[1]
     texts = []
     for _ in range(2):
         buf = io.StringIO()
-        lb.main(["--inputs", str(f), "--as-of", CUT], out=buf)
+        lb.main(["--inputs", str(f), "--as-of", CUT, "--project-dir", pd], out=buf)
         texts.append(buf.getvalue())
     assert texts[0] == texts[1] and "collection complete: yes" in texts[0]
 

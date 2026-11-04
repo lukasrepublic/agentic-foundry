@@ -784,6 +784,20 @@ def check_github_capabilities(project_dir=None):
     return (True if line == "full" or line.startswith("n/a") else ADVISORY), line
 
 
+def check_operating_mode(project_dir=None):
+    """gn-17: one advisory line -- `single-operator (default)` | `single-operator (explicit)` | `team` |
+    `single-operator (malformed value "<x>")`. NEVER RED; a crash is an ADVISORY line. This is the
+    workspace operating mode, NOT the session posture (`/foundry:mode`)."""
+    pdir = project_dir or _project_dir()
+    try:
+        if HERE not in sys.path:
+            sys.path.insert(0, HERE)
+        import foundry_operating_mode as om
+        return True, om.resolve(pdir).line
+    except Exception as e:  # noqa: BLE001 -- advisory: a crash is a line, not a RED
+        return ADVISORY, _sanitize_detail(f"probe crashed: {type(e).__name__}: {e}")
+
+
 def check_retired_artifacts(plugin_root=None, project_dir=None):
     """hotfix-v1.17.4 (ER #236): `retired-artifacts: none present` or `<n> present — run
     `npx update-agentic-workspace@<pinned> --cleanup`` (the first few paths named). Reads the catalogue the CLI
@@ -953,6 +967,11 @@ def main():
     # never RED — it names what the updater's sweep would remove, from the shipped catalogue.
     ra_ok, ra_detail = check_retired_artifacts(project_dir=project_dir)
     _render_row("retired-artifacts", ra_ok, ra_detail)
+
+    # `operating-mode` (gn-17): advisory, never RED, offline (a config read) so it also shows under
+    # --session-start.
+    om_ok, om_detail = check_operating_mode(project_dir=project_dir)
+    _render_row("operating-mode", om_ok, om_detail)
 
     # `github-capabilities` (gn-03): advisory, never RED, full check only (it makes network
     # calls, so it is skipped under --session-start).

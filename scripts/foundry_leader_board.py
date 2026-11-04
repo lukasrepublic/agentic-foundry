@@ -30,6 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import foundry_deck_events as de  # noqa: E402
+import foundry_operating_mode as _om  # noqa: E402
 import foundry_usage as us  # noqa: E402
 from foundry_github_capabilities import default_runner, load_scope  # noqa: E402
 
@@ -1242,6 +1243,9 @@ def main(argv=None, runner=default_runner, clock=None, out=None):
     ap.add_argument("--project-dir", default=os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
     ap.add_argument("--timeout", type=float, default=30)
     a = ap.parse_args(argv)
+    refused = _om.gate(a.project_dir, "foundry_leader_board.py")  # gn-17: before any gh call/read
+    if refused is not None:
+        return refused
     try:
         as_of = _d(a.as_of) if a.as_of else (clock or (lambda: datetime.now(timezone.utc)))()
         if a.inputs:

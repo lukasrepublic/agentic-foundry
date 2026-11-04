@@ -302,7 +302,7 @@ def test_export_not_arriving_reports_env_keys(ds, tmp_path):
 def test_dataset_resolution_from_project_json(tmp_path):
     root = tmp_path / "proj"
     (root / ".claude").mkdir(parents=True)
-    (root / ".claude" / "foundry-project.json").write_text(json.dumps({"usage": {"dataset": "data/usage"}}))
+    (root / ".claude" / "foundry-project.json").write_text(json.dumps({"operating_mode": "team", "github_scope": {"owner": "example-org"}, "usage": {"dataset": "data/usage"}}))
     assert fu.dataset_dir(None, start=str(root)) == str(root / "data" / "usage")
 
 
@@ -324,7 +324,7 @@ def test_subagent_start_hook_writes_one_binding_and_is_fast(tmp_path):
     (wt / ".git").write_text("gitdir: %s\n" % gitdir)
     (gitdir / "foundry-assignment.json").write_text(json.dumps({"operator": "op_x", "issue": 42}))
     ds = tmp_path / "ds"
-    (root / ".claude" / "foundry-project.json").write_text(json.dumps({"usage": {"dataset": str(ds)}}))
+    (root / ".claude" / "foundry-project.json").write_text(json.dumps({"operating_mode": "team", "github_scope": {"owner": "example-org"}, "usage": {"dataset": str(ds)}}))
     payload = json.dumps({"session_id": "s1", "agent_id": "a1", "agent_type": "implementer", "cwd": str(wt)})
     p, dt = _hook(payload, str(wt))
     assert p.returncode == 0 and dt < 1.0
@@ -358,12 +358,12 @@ def test_hook_is_fail_open_on_unwritable_dataset_and_corrupt_assignment(tmp_path
     (gitdir / "foundry-assignment.json").write_text("{not json")
     blocker = tmp_path / "afile"
     blocker.write_text("x")  # a dataset path under a regular file can never be created
-    (root / ".claude" / "foundry-project.json").write_text(json.dumps({"usage": {"dataset": str(blocker / "ds")}}))
+    (root / ".claude" / "foundry-project.json").write_text(json.dumps({"operating_mode": "team", "github_scope": {"owner": "example-org"}, "usage": {"dataset": str(blocker / "ds")}}))
     payload = json.dumps({"session_id": "s1", "agent_id": "a1", "cwd": str(wt)})
     p, _ = _hook(payload, str(wt))
     assert p.returncode == 0 and len(p.stderr.strip().splitlines()) <= 1
     # corrupt assignment with a writable dataset: still one binding, no issue
-    (root / ".claude" / "foundry-project.json").write_text(json.dumps({"usage": {"dataset": str(tmp_path / "ds")}}))
+    (root / ".claude" / "foundry-project.json").write_text(json.dumps({"operating_mode": "team", "github_scope": {"owner": "example-org"}, "usage": {"dataset": str(tmp_path / "ds")}}))
     p, _ = _hook(payload, str(wt))
     assert p.returncode == 0 and len(p.stderr.strip().splitlines()) <= 1
     rows = rj(str(tmp_path / "ds" / "bindings.jsonl"))
