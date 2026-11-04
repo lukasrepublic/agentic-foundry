@@ -27,7 +27,7 @@ session's normal permission mode.
 ALSO NEVER ALLOWED SILENTLY (security review of #286) — the verbs the permission floor tiers `ask` because
 they write to GitHub or redirect writes: `foundry_migrate.py cutover`, `foundry_deck_events.py emit`,
 `foundry_inbox.py check|ack|schedule|resolve`, `foundry-ticket.py claim`,
-`foundry_governance.py render|baseline`, `foundry_deck_resources.py --reset-oom-baseline|--from-json`, `foundry-env-hygiene.py mark-worktree|reap --label`, `foundry-deck-heavy` (runs a command), `foundry_usage.py bind|fallback-transcripts` and `ingest|attribute` when `--dataset` is named, and any
+`foundry_governance.py render|baseline`, `foundry_deck_resources.py --reset-oom-baseline|--from-json`, `foundry-env-hygiene.py mark-worktree|reap`, `foundry-deck-heavy` (runs a command), `foundry_usage.py bind|fallback-transcripts` and `ingest|attribute` when `--dataset` is named, and any
 abbreviation of `--trust-author`. The hook is the only silent-allow mechanism, so without this the `ask` rows
 would never be enforced.
 
@@ -123,9 +123,8 @@ def allowed(command, root):
     if name == "foundry_deck_resources.py" and (_names_option(argv[1:], "--reset-oom-baseline")
                                                 or _names_option(argv[1:], "--from-json")):
         return False   # the one write this script has, and the fixture-file read (gv-12): both ask
-    if name == "foundry-env-hygiene.py" and ("mark-worktree" in argv[1:]
-                                              or ("reap" in argv[1:] and _names_option(argv[1:], "--label"))):
-        return False   # stamps / removes label-scoped worktrees (gv-12); the SessionEnd path is not PreToolUse
+    if name == "foundry-env-hygiene.py" and ("mark-worktree" in argv[1:] or "reap" in argv[1:]):
+        return False   # stamps / removes worktrees and their files (gv-12): every tool-call reap asks; the SessionEnd hook is not PreToolUse
     if name == "foundry-permissions-compile.py" and any(a == "--root" or a.startswith("--root=") for a in argv[1:]):
         return False
     return True

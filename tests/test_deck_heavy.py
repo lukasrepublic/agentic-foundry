@@ -180,13 +180,37 @@ def test_locked_and_dirty_worktrees_survive(tmp_path):
 
 def test_live_owner_keeps_the_worktree_but_a_recycled_pid_does_not(tmp_path):
     repo = make_repo(tmp_path)
-    alive, _c, start = hy._probe_pid(os.getpid())
-    assert alive
+    state, start = hy.proc_start(os.getpid())
+    assert state == "alive"
     live = add_wt(repo, "live", "proj-a", pid=os.getpid(), start=start)
     recycled = add_wt(repo, "recycled", "proj-a", pid=os.getpid(), start="Thu Jan  1 00:00:00 1970")
     reap = hy.decide_reap(hy.sample_worktrees(str(repo)), "proj-a")
     assert [os.path.basename(c["id"]) for c in reap] == ["recycled"]
     assert live.exists()
+
+
+def test_unreadable_owner_pid_survives_and_gone_pid_is_eligible(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    assert hy.proc_start(dead_pid()) == ("gone", None)
+    assert hy.proc_start(0)[0] == "unknown"
+    add_wt(repo, "w", "proj-a")                       # owner pid is dead (gone)
+    assert len(hy.decide_reap(hy.sample_worktrees(str(repo)), "proj-a")) == 1
+    monkeypatch.setattr(hy, "proc_start", lambda pid: ("unknown", None))   # e.g. EACCES / hidepid
+    assert hy.decide_reap(hy.sample_worktrees(str(repo)), "proj-a") == []
+
+
+def test_mark_worktree_needs_an_explicit_pid(tmp_path):
+    repo = make_repo(tmp_path)
+    wt = repo.parent / "wts" / "m"
+    git("worktree", "add", "-q", "-b", "m", str(wt), "main", cwd=repo)
+    assert hy.mark_worktree(str(wt), "proj-a") is False
+    script = os.path.join(REPO_ROOT, "scripts", "foundry-env-hygiene.py")
+    p = subprocess.run([sys.executable, script, "mark-worktree", "--path", str(wt), "--label", "proj-a"],
+                       capture_output=True, text=True)
+    assert p.returncode == 2
+    p = subprocess.run([sys.executable, script, "mark-worktree", "--path", str(wt), "--label", "proj-a",
+                        "--pid", str(os.getpid())], capture_output=True, text=True)
+    assert p.returncode == 0, p.stdout
 
 
 def test_legacy_marker_without_a_pid_survives(tmp_path):
@@ -322,7 +346,8 @@ def test_floor_tiers_both_scripts_and_mirrors_agree():
 
 
 def test_hygiene_mark_and_labelled_reap_are_never_silent(tmp_path):
-    for args in ("mark-worktree --path /w --label a", "reap --label a", "reap --lab=a"):
+    for args in ("mark-worktree --path /w --label a", "reap --label a", "reap --lab=a", "reap --session x",
+                 "reap --include-ignored", "reap --session proj-a --include-ignored", "reap"):
         assert _allow_decision(tmp_path, "foundry-env-hygiene.py", args) is None
     assert _allow_decision(tmp_path, "foundry-env-hygiene.py", "status") == "allow"
 

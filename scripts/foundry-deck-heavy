@@ -15,6 +15,12 @@ by a live measurement only; the kernel log is never read). Lock files live under
 <git common dir>/foundry-deck-heavy, else $XDG_RUNTIME_DIR/foundry-deck-heavy; with neither, pass
 --lock-dir (there is deliberately no shared /tmp fallback).
 
+Do not wrap a command that backgrounds or daemonises itself: the daemon inherits the lock
+descriptor and keeps the slot after the wrapper returns. To find the holder of a stuck slot run
+`fuser <lock-dir>/slot-N.lock` (or `lsof <lock-dir>/slot-N.lock`) and stop that process.
+Deleting the lock file frees the slot for waiters but breaks mutual exclusion while the old
+holder is still running, so prefer stopping the holder.
+
 Waiting is bounded by --timeout (default 600 s). The wait is reported on stderr as
 `deck-heavy: slot N/M acquired, waited S.SSs`. A timeout reports `timed out` and exits 75
 without running the command. Otherwise the exit status is the wrapped command's (a command
@@ -112,8 +118,10 @@ def main(argv=None):
             if fd is not None:
                 break
             if time.monotonic() - start >= a.timeout:
-                print("deck-heavy: timed out after %.2fs waiting for one of %d slots; command not run"
-                      % (time.monotonic() - start, slots), file=sys.stderr)
+                print("deck-heavy: timed out after %.2fs waiting for one of %d slots; command not run. "
+                      "To find a stuck holder: fuser %s/slot-N.lock (or lsof). Stop that process; "
+                      "deleting the lock file frees the slot but breaks exclusion while the holder runs."
+                      % (time.monotonic() - start, slots, lock_dir), file=sys.stderr)
                 return EX_TEMPFAIL
             time.sleep(POLL_S)
         print("deck-heavy: slot %d/%d acquired, waited %.2fs" % (n, slots, time.monotonic() - start), file=sys.stderr, flush=True)

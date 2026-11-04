@@ -180,3 +180,14 @@ def test_reset_without_uptime_exits_nonzero_with_a_typed_line(tmp_path):
                           "--project-dir", str(tmp_path)], capture_output=True, text=True)
     assert out.returncode == 2
     assert json.loads(out.stdout)["error"] == "oom-baseline-reset-unavailable"
+
+
+def test_symlink_inside_the_fixture_dir_pointing_outside_is_refused(tmp_path, monkeypatch):
+    fixdir = tmp_path / "fix"
+    fixdir.mkdir()
+    secret = tmp_path / "creds.json"
+    secret.write_text(json.dumps({"cpus": 4, "secret": "hunter2"}))
+    os.symlink(secret, fixdir / "innocent.json")
+    monkeypatch.setattr(dr, "FIXTURE_DIR", str(fixdir))
+    with pytest.raises(dr.FixtureRefused):
+        dr.evaluate(from_json=str(fixdir / "innocent.json"), policy=POL)

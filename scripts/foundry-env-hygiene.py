@@ -304,6 +304,30 @@ def _git(args, cwd):
         return 1, ""
 
 
+def proc_start(pid):
+    """(state, start): state is "alive" (start = /proc/<pid>/stat field 22, process start in clock
+    ticks), "gone" (ONLY when the stat file does not exist, ENOENT) or "unknown" (any other
+    error, including a pid <= 0). Reads /proc directly; never `ps`."""
+    try:
+        pid = int(pid)
+    except (ValueError, TypeError):
+        return "unknown", None
+    if pid <= 0:
+        return "unknown", None
+    try:
+        with open("/proc/%d/stat" % pid, "rb") as fh:
+            raw = fh.read().decode("utf-8", "replace")
+    except FileNotFoundError:
+        return "gone", None
+    except OSError:
+        return "unknown", None
+    try:
+        fields = raw[raw.rindex(")") + 2:].split()
+        return "alive", fields[19]       # field 22 overall; fields[0] is field 3
+    except (ValueError, IndexError):
+        return "unknown", None
+
+
 def _read_owner(marker):
     """{"label","pid","start"} from the owner file; a legacy plain-label file has no pid."""
     try:
@@ -336,9 +360,15 @@ def mark_worktree(path, label, pid=None, start=None):
         old = _read_owner(marker) or {}
         if old.get("label") and old.get("label") != label:
             return False
-    pid = os.getppid() if pid is None else int(pid)
+    # The owner pid is explicit: there is no default (a parent shell under a tool call is short-lived).
+    try:
+        pid = int(pid)
+    except (ValueError, TypeError):
+        return False
     if start is None:
-        _alive, _cmd, start = _probe_pid(pid)
+        _state, start = proc_start(pid)
+        if start is None:
+            return False        # cannot record an identity for that pid
     with open(marker, "w", encoding="utf-8") as fh:
         json.dump({"label": label, "pid": pid, "start": start}, fh)
         fh.write("\n")
@@ -379,11 +409,12 @@ def sample_worktrees(project_dir, include_ignored=False):
         # Owner liveness: unknown (no pid recorded) fails closed (None -> survives).
         owner_alive = None
         if owner.get("pid") is not None:
-            try:
-                alive, _c, live_start = _probe_pid(int(owner["pid"]))
-                owner_alive = bool(alive and live_start == owner.get("start"))
-            except (ValueError, TypeError):
-                owner_alive = None
+            state, live_start = proc_start(owner["pid"])
+            if state == "gone":
+                owner_alive = False
+            elif state == "alive" and owner.get("start") is not None:
+                owner_alive = (live_start == str(owner.get("start")))   # a different start = recycled pid
+            # anything else stays None: fail closed, the worktree survives
         cands.append({"kind": "worktree", "id": wt, "repo": project_dir, "label": label,
                       "unpushed": unpushed, "dirty": dirty, "locked": e["locked"],
                       "owner_alive": owner_alive, "protected": protected})
@@ -500,10 +531,10 @@ def main(argv=None):
     project_dir = _resolve_project_dir()
     if cmd == "mark-worktree":
         try:
-            ok = bool(wt_path and explicit_label) and mark_worktree(wt_path, explicit_label, pid=owner_pid)
+            ok = bool(wt_path and explicit_label and owner_pid is not None) and mark_worktree(wt_path, explicit_label, pid=owner_pid)
         except ValueError:
             ok = False
-        print("env-hygiene mark-worktree: %s" % ("marked" if ok else "refused (need --path and a valid --label; a different existing label is never overwritten)"))
+        print("env-hygiene mark-worktree: %s" % ("marked" if ok else "refused (need --path, a valid --label and an explicit --pid; a different existing label is never overwritten)"))
         return 0 if ok else 2
     if cmd == "reap":
         return cmd_reap(session_id, project_dir, include_ignored=include_ignored)
