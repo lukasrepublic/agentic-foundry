@@ -68,7 +68,7 @@ def test_rule_counts_and_id_families():
     assert len(ids["architecture"]) == 8 and all(i.startswith("FG-ARCH-") for i in ids["architecture"])
     assert len(ids["stack"]) == 6 and all(i.startswith("FG-STK-") for i in ids["stack"])
     fams = {i.rsplit("-", 1)[0] for i in ids["contracts"]}
-    assert fams == {"FG-API", "FG-EVT", "FG-DATA", "FG-CDC"}
+    assert fams == {"FG-API", "FG-EVT", "FG-DCON", "FG-CDC"}
 
 
 @pytest.mark.parametrize("kit", MINE)
@@ -302,7 +302,7 @@ def test_applies_to_paths():
     for rid in ("FG-ARCH-005", "FG-ARCH-006", "FG-ARCH-007"):
         assert a[rid] == ["docs/decisions/**"]
     hit = lambda rid, path: any(fg.glob_re(g).fullmatch(path) for g in a[rid])  # noqa: E731
-    assert hit("FG-DATA-001", "data-contracts/orders.odcs.yaml") and hit("FG-DATA-001", "x/orders.odcs.yaml")
+    assert hit("FG-DCON-001", "data-contracts/orders.odcs.yaml") and hit("FG-DCON-001", "x/orders.odcs.yaml")
     for ext in ("yaml", "yml", "json"):
         assert hit("FG-API-001", f"api/openapi.{ext}") and hit("FG-API-002", f"api/openapi.{ext}")
     assert not hit("FG-ARCH-005", "src/a.py")

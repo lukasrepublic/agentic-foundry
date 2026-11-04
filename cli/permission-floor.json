@@ -29,6 +29,11 @@
       "rationale": "status/reap over machine-scoped worker sandbox envs; confined to isolated per-worker state"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_blocker_check.py:*)",
+      "tier": "allow",
+      "rationale": "the blocker lint: reads one candidate-blockers JSON file (or stdin) and prints the blockers / next_tasks partition; writes nothing, no network (gv-14)"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_operating_model.py:*)",
       "tier": "allow",
       "rationale": "status|validate|explain|render-tick-section only read .foundry/operating-model.yaml, the shipped schema and the .foundry/ operator style file (a regular .md or .txt file, at most 4 KiB); the script writes nothing (gv-03)"
@@ -247,6 +252,11 @@
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_governance.py:*)",
       "tier": "ask",
       "rationale": "render writes governance/rendered/ and baseline writes governance/local/baselines/; load, validate, applicable, check and exceptions are read-only and run silently through the plugin-scripts-allow hook; no network"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_research_note.py:*)",
+      "tier": "ask",
+      "rationale": "WRITES .foundry/research/<date>-<slug>.md and, when the sources converge, .foundry/decisions/<date>-<slug>.md inside the project directory; no network, no subprocess (gv-14)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_brief.py:*)",

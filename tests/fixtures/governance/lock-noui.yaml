@@ -1,0 +1,6 @@
+blueprint: {id: web-app, version: 1.0.0, sha256: "0000000000000000000000000000000000000000000000000000000000000000"}
+kits: []
+declarations: {asvs_level: 2, data_classification: [internal], trust_boundaries: [], surfaces: [api]}
+facts_sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+intake_at: "2026-11-04"
+plugin_version: 2.0.0

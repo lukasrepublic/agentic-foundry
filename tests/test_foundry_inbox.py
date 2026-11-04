@@ -573,7 +573,9 @@ def test_escalations_persist_until_resolve_and_pending_shows_them(ws, capsys):
         res = run(ws, gh)
         assert res["events"] == [] and len(res["escalate"]) == 1
     assert inbox.main(["pending", "--json", "--project-dir", str(ws)], runner=gh) == 0
-    assert len(json.loads(capsys.readouterr().out)["escalate"]) == 1
+    # gv-14: `pending` makes no call of its own, so the persisted escalation is a next task there, not an attempt
+    pend = json.loads(capsys.readouterr().out)
+    assert pend["escalate"] == [] and len(pend["next_tasks"]) == 1 and "no attempted" in pend["next_tasks"][0]["reason"]
     inbox.resolve(str(ws), REQ, ["https://github.com/example-org/code/pull/99"], runner=gh, clock=gh.clock)
     assert run(ws, gh)["escalate"] == []
 
@@ -790,3 +792,31 @@ def test_inbox_runtime_state_is_confined_to_the_workspace(tmp_path):
     ok.mkdir()
     inbox.save_state(str(ok), {"pending": {}})
     assert (ok / ".foundry" / "runtime" / ".gitignore").read_text() == "*\n"
+
+
+# ---- gv-14: escalations pass the blocker lint before they surface (stubbed gh, zero real calls) ----
+
+def _blocked_ws(ws):
+    gh = FakeGh()
+    gh.search["assigned"] = [req_item(REQ, 1)]
+    gh.add_blocker("example-org/planning#1", BLOCKED, owner="bob", created="2026-11-03T11:30:00Z")
+    return gh
+
+
+def test_escalations_pass_the_lint_and_next_tasks_is_empty(ws):
+    res = run(ws, _blocked_ws(ws))
+    assert len(res["escalate"]) == 1 and res["next_tasks"] == []
+    cand = inbox._candidate(res["escalate"][0], str(ws))
+    assert inbox._bc.partition([cand])["blockers"] == [cand]
+    assert cand["attempted"] and "0 other pending" in cand["control"]
+    assert inbox._candidate(res["escalate"][0], str(ws), live=False)["attempted"] == []
+
+
+def test_a_demoted_escalation_becomes_a_next_task(ws, monkeypatch):
+    real = inbox._candidate
+    monkeypatch.setattr(inbox, "_candidate",
+                        lambda *a, **k: {kk: v for kk, v in real(*a, **k).items() if kk != "control"})
+    res = run(ws, _blocked_ws(ws))
+    assert res["escalate"] == [] and len(res["next_tasks"]) == 1
+    nt = res["next_tasks"][0]
+    assert nt["type"] == "next_task" and "control" in nt["reason"] and nt["request"] == REQ

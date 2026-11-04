@@ -1,0 +1,86 @@
+# Keep the privileged-job node class for the signer only (FG-COST-004).
+# A taint alone does not restrict access. Targets Kyverno 1.13 or later (per-rule `failureAction`; the spec-level
+# `validationFailureAction` is deprecated). On Kyverno < 1.13 the per-rule failureAction is ignored and the policy
+# fails OPEN (Audit): adopters MUST pin 1.13 or later. Pin Kyverno per the stack kit's version-matrix template
+# (governance/kits/stack/templates/version-matrix.md). Verify with the Kyverno CLI: `kyverno test kyverno-tests/`.
+#
+# Outside the signer namespace, a Pod is denied when it:
+#   - has a toleration that can match dedicated=privileged-job: key dedicated with operator Exists or value
+#     privileged-job, or no key with operator Exists (tolerates everything);
+#   - sets spec.nodeName on CREATE (bypasses the scheduler and ignores NoSchedule; separate rule);
+#   - selects the class with nodeSelector or required node affinity on node-class=privileged-job.
+# Inside the signer namespace, only the signer service account may do the same.
+# Kyverno's default resourceFilters skip kube-system, kube-public and kube-node-lease: this policy does not cover them.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-privileged-job-toleration
+spec:
+  background: false
+  rules:
+    - name: only-in-signer-namespace
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+      exclude:
+        any:
+          - resources:
+              namespaces: ["privileged-jobs"]
+      validate:
+        failureAction: Enforce
+        message: "Only the privileged-jobs namespace may target the privileged-job node class."
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.tolerations || `[]` | [?((key || '')=='dedicated' && (operator=='Exists' || value=='privileged-job')) || (!(key || '') && operator=='Exists')] | length(@) }}"
+                operator: GreaterThan
+                value: 0
+              - key: "{{ request.object.spec.nodeSelector.\"node-class\" || '' }}"
+                operator: Equals
+                value: "privileged-job"
+              - key: "{{ request.object.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms || `[]` | [].matchExpressions[] | [?key=='node-class' && contains(values || `[]`, 'privileged-job')] | length(@) }}"
+                operator: GreaterThan
+                value: 0
+    # nodeName is checked on CREATE only: the scheduler binding sets it later, and an UPDATE of a running pod
+    # (labels, finalizers) must not be denied.
+    - name: no-node-name-outside-signer-namespace
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+              operations: ["CREATE"]
+      exclude:
+        any:
+          - resources:
+              namespaces: ["privileged-jobs"]
+      validate:
+        failureAction: Enforce
+        message: "Pods must not set spec.nodeName: it bypasses the scheduler and ignores taints."
+        deny:
+          conditions:
+            all:
+              - key: "{{ request.operation }}"
+                operator: Equals
+                value: "CREATE"
+              - key: "{{ request.object.spec.nodeName || '' }}"
+                operator: NotEquals
+                value: ""
+    - name: only-the-signer-service-account
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+              namespaces: ["privileged-jobs"]
+      validate:
+        failureAction: Enforce
+        message: "Only the signer service account may target the privileged-job node class."
+        deny:
+          conditions:
+            all:
+              - key: "{{ request.object.spec.tolerations || `[]` | [?((key || '')=='dedicated' && (operator=='Exists' || value=='privileged-job')) || (!(key || '') && operator=='Exists')] | length(@) }}"
+                operator: GreaterThan
+                value: 0
+              - key: "{{ request.object.spec.serviceAccountName || '' }}"
+                operator: NotEquals
+                value: "signer"
