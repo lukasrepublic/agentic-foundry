@@ -251,9 +251,22 @@ def test_semgrep_rules_are_a_valid_config_with_metadata():
         assert r["id"].startswith("fg-sec-")
 
 
-def test_semgrep_control_a_rule_without_metadata_is_detected():
-    bad = {"id": "x", "message": "m", "severity": "ERROR", "languages": ["python"], "pattern": "f()"}
-    assert "metadata" not in bad
+def semgrep_rule_problems(cfg):
+    ids = {r["id"] for r in rules(SEC)}
+    bad = []
+    for r in cfg["rules"]:
+        md = r.get("metadata") or {}
+        if not (md.get("cwe") and md.get("owasp") and md.get("rule") in ids):
+            bad.append(r["id"])
+    return bad
+
+
+def test_semgrep_control_a_mutated_real_rule_fails_the_metadata_check():
+    cfg = yaml.safe_load((SEC / "checks" / "semgrep-rules.yaml").read_text())
+    assert semgrep_rule_problems(cfg) == []
+    mutated = copy.deepcopy(cfg)
+    del mutated["rules"][0]["metadata"]["cwe"]
+    assert semgrep_rule_problems(mutated) == [cfg["rules"][0]["id"]]
 
 
 def test_ci_snippets_are_pinned_and_semgrep_is_installed():
@@ -265,17 +278,69 @@ def test_ci_snippets_are_pinned_and_semgrep_is_installed():
     att = (SEC / "checks" / "ci-release-attest.yml.tmpl").read_text()
     assert "anchore/sbom-action@" in att and "actions/attest-build-provenance@" in att
     assert "GITHUB_TOKEN" in (SEC / "checks" / "ci-gitleaks.yml.tmpl").read_text()
+    assert "actions/setup-python@" in t and t.index("actions/setup-python@") < t.index("pip install")
+    assert "actions/attest-sbom@" in att
 
 
-def test_scorecard_gate_rows_are_must_rules_and_match_the_snippet():
-    m = yaml.safe_load((SEC / "checks" / "scorecard-map.yaml").read_text())["mapping"]
+def run_lines(text):
+    """Every shell line of a workflow snippet: the string values of `run` keys, parsed structurally."""
+    out = []
+    for job in yaml.safe_load(text)["jobs"].values():
+        out += [s["run"] for s in job["steps"] if "run" in s]
+    return out
+
+
+def test_no_expression_reaches_a_shell_in_any_template():
+    for f in (SEC / "checks").glob("ci-*.yml.tmpl"):
+        for line in run_lines(f.read_text()):
+            assert "${{" not in line, (f.name, line)
+
+
+def test_expression_control_the_release_template_uses_env_indirection():
+    t = (SEC / "checks" / "ci-release-attest.yml.tmpl").read_text()
+    step = next(s for j in yaml.safe_load(t)["jobs"].values() for s in j["steps"] if s.get("name") == "upload")
+    assert step["env"]["TAG"] == "${{ github.event.release.tag_name }}" and '"$TAG"' in step["run"]
+    unsafe = t.replace('"$TAG"', '"${{ github.event.release.tag_name }}"')
+    assert any("${{" in line for line in run_lines(unsafe))  # control: the mutated template is caught
+
+
+def scorecard_snippet_facts():
+    s = (SEC / "checks" / "ci-scorecard.yml.tmpl").read_text()
+    run = next(x for j in yaml.safe_load(s)["jobs"].values() for x in j["steps"] if x.get("name") == "gate")["run"]
+    names = json.loads(re.search(r"\[(\"[A-Za-z-]+\"(?:,\"[A-Za-z-]+\")*)\] \| all", run).group(0).rsplit(" | all", 1)[0])
+    return s, run, names, int(re.search(r"--argjson t (\d+)", run).group(1))
+
+
+def test_scorecard_gate_matches_the_map_threshold_names_and_must_rules():
+    doc = yaml.safe_load((SEC / "checks" / "scorecard-map.yaml").read_text())
     by = {r["id"]: r for r in rules(SEC)}
-    snippet = (SEC / "checks" / "ci-scorecard.yml.tmpl").read_text()
-    for e in m:
-        gated = e["gate"]
-        assert (e["check"] in snippet.split("index($n)")[0]) == gated, e["check"]
-        if gated:
+    s, run, names, thr = scorecard_snippet_facts()
+    assert thr == doc["threshold"]
+    assert names == [e["check"] for e in doc["mapping"] if e["gate"]]
+    for e in doc["mapping"]:
+        if e["gate"]:
             assert " MUST " in by[e["rule"]]["statement"], e["rule"]
+    perms = next(iter(yaml.safe_load(s)["jobs"].values()))["permissions"]
+    assert perms == {"contents": "read", "actions": "read"}
+    assert "repo_token" in s and "SCORECARD_TOKEN" in s
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="jq not installed")
+@pytest.mark.parametrize("results,rc", [
+    ("all", 0), ("missing", 1), ("inconclusive", 1), ("low", 1)])
+def test_scorecard_gate_runs_on_synthetic_results(tmp_path, results, rc):
+    _, run, names, thr = scorecard_snippet_facts()
+    checks = [{"name": n, "score": 9} for n in names]
+    if results == "missing":
+        checks = checks[1:]
+    elif results == "inconclusive":
+        checks[0]["score"] = -1
+    elif results == "low":
+        checks[0]["score"] = thr - 1
+    (tmp_path / "results.json").write_text(json.dumps({"checks": checks}))
+    cmd = re.search(r"jq .*results\.json", run).group(0)
+    r = subprocess.run(["bash", "-c", cmd], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == rc, r.stdout + r.stderr
 
 
 def test_asvs_lists_are_ids_only_and_disjoint():
@@ -314,8 +379,13 @@ def test_readme_has_the_planned_placeholder_section():
         assert needle in t, needle
 
 
+REGO_CASES = [("deploy-bad.yaml", 1), ("deploy-good.yaml", 0), ("deploy-empty-sc.yaml", 1), ("deploy-init-bad.yaml", 1),
+              ("replicaset-bad.yaml", 1), ("cronjob-bad.yaml", 1), ("pod-eph-bad.yaml", 1),
+              ("iam-bad.json", 1), ("iam-good.json", 0), ("iam-object-bad.json", 1), ("iam-object-good.json", 0), ("iam-notaction-bad.json", 1)]
+
+
 @pytest.mark.skipif(shutil.which("conftest") is None, reason="conftest not installed")
-@pytest.mark.parametrize("fix,rc", [("deploy-bad.yaml", 1), ("deploy-good.yaml", 0), ("iam-bad.json", 1), ("iam-good.json", 0)])
+@pytest.mark.parametrize("fix,rc", REGO_CASES)
 def test_rego_policy_denies_bad_and_passes_good(fix, rc):
     r = subprocess.run(["conftest", "test", "-p", str(SEC / "checks" / "policy"), str(FIX / fix)], capture_output=True, text=True)
     assert r.returncode == rc, r.stdout + r.stderr
@@ -323,7 +393,12 @@ def test_rego_policy_denies_bad_and_passes_good(fix, rc):
         assert "FG-SEC-031" in r.stdout
 
 
+def test_every_rego_fixture_exists():
+    for fix, _ in REGO_CASES:
+        assert (FIX / fix).is_file(), fix
+
+
 def test_rego_policy_text_denies_the_three_cases():
     t = " ".join(p.read_text() for p in (SEC / "checks" / "policy").glob("*.rego"))
-    for needle in ("@sha256:", "securityContext", 'wildcard(s.Action)'):
+    for needle in ("@sha256:", "runAsNonRoot", "initContainers", "ephemeralContainers", "NotAction", "is_object(input.Statement)", "wildcard(s.Action)"):
         assert needle in t

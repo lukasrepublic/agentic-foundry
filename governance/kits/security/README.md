@@ -19,6 +19,9 @@ Adopters copy this kit's `checks/` directory into their repository as `security-
 - `conftest test -p security-checks/policy <manifests>` (from the plugin: `-p governance/kits/security/checks/policy`)
 - `gh attestation verify <artifact> --repo <owner>/<repo>`
 
+The behavioural policy test (`tests/test_kit_security.py`, rego cases) needs `conftest` on PATH and skips otherwise; CI installs none today,
+so those cases run only on a machine that has it. The scorecard gate test likewise needs `jq`.
+
 ## Enabling push protection (FG-SEC-025)
 
 On GitHub: repository Settings, Code security, Secret protection, enable "Push protection". Organization owners can enable it for all
@@ -39,4 +42,5 @@ consumes them (gv-15); until then FG-SEC-032 triggers on its own globs only.
   `conftest-bundle.yaml` is a PLACEHOLDER.
 - `hooks/foundry-secret-read-guard.py` (FG-SEC-026) is planned under gv-11 and does not exist yet.
 - Level filtering is deferred to the resolver (gv-15): `render` and `applicable` ignore `level` today; every rule carries a valid `level`.
-- Scorecard gating: rows marked `gate: true` fail the snippet below the threshold; other rows are reported only.
+- Scorecard gating: rows marked `gate: true` fail the snippet when absent, inconclusive or below the threshold; other rows are reported only. Branch-Protection needs a `repo_token` secret (`SCORECARD_TOKEN`) with read access to repository settings to score at all.
+- Rego policy: containers must pin images by digest and set `securityContext.runAsNonRoot: true` (container level; init and ephemeral containers included).
