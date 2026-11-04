@@ -18,6 +18,8 @@ END = "2026-12-31T00:00:00Z"
 
 def fx(name):
     d = json.loads((FX / f"{name}.json").read_text())
+    for c in d["comments"]:     # fixtures model repository members unless a case says otherwise
+        c.setdefault("authorAssociation", "MEMBER")
     return d["timeline"], d["comments"]
 
 
@@ -42,7 +44,7 @@ class Stub:
     def post_comment(self, issue, body):
         self.posted.append((issue, body))
         self.cs.append({"id": f"IC_new{len(self.posted)}", "createdAt": "2026-11-01T00:00:00Z",
-                        "author": {"login": "alice"}, "body": body})
+                        "author": {"login": "alice"}, "authorAssociation": "MEMBER", "body": body})
 
     def timeline(self, issue):
         return list(self.tl)
@@ -236,7 +238,7 @@ def test_unknown_version_and_malformed_markers_are_returned_unparsed_with_commen
 
 def test_marker_for_native_only_event_or_missing_field_is_unparsed():
     def c(i, obj):
-        return {"id": i, "createdAt": "2026-10-01T00:00:00Z", "author": {"login": "x"},
+        return {"id": i, "createdAt": "2026-10-01T00:00:00Z", "author": {"login": "x"}, "authorAssociation": "MEMBER",
                 "body": f"<!-- foundry-deck: {json.dumps(obj)} -->\nline\n"}
     base = {"v": 1, "event": "ready", "idempotency_key": "k", "target": None, "blocking": None,
             "at": "x", "by": "x", "evidence": []}
@@ -345,7 +347,7 @@ def test_reblock_then_ack_posts_a_second_blocker_ack():
 def _ack_marker(i, day, key):
     obj = {"v": 1, "event": "blocker_ack", "idempotency_key": key, "target": OTHER, "blocking": OTHER,
            "at": "x", "by": "alice", "evidence": []}
-    return {"id": i, "createdAt": f"2026-10-{day:02d}T12:00:00Z", "author": {"login": "alice"},
+    return {"id": i, "createdAt": f"2026-10-{day:02d}T12:00:00Z", "author": {"login": "alice"}, "authorAssociation": "MEMBER",
             "body": f"<!-- foundry-deck: {json.dumps(obj)} -->\nack\n"}
 
 
@@ -469,3 +471,82 @@ def test_marker_escapes_lt():
     ev = de.Event(event="ack", at="2026-10-01T00:00:00Z", by="<!--x", idempotency_key="k")
     body = de.render_marker(ev, "l")
     assert body.count("<!--") == 1 and "\\u003c" in body
+
+
+# ---- security: marker authority = trusted comment author ---------------------------------------------
+
+REF7 = "owner/repo#7"
+
+
+def _cm(author, obj, at, cid, assoc="NONE"):
+    return {"id": cid, "createdAt": at, "author": {"login": author}, "authorAssociation": assoc,
+            "body": "<!-- foundry-deck: " + json.dumps(obj) + " -->\nline"}
+
+
+def _obj(event, key="k", **kw):
+    return {"v": 1, "event": event, "idempotency_key": key, "target": REF7, "blocking": None,
+            "at": "2026-11-01T00:00:00Z", "by": "operator", "evidence": ["https://github.com/x/y/pull/1"], **kw}
+
+
+def test_foreign_marker_is_unparsed_foreign_author_and_never_authoritative():
+    c = _cm("random-outsider", _obj("accepted"), "2026-11-01T00:00:00Z", "c1")
+    h = de.parse([], [c], "2026-11-05T00:00:00Z")
+    assert [(e.event, e.detail) for e in h.events] == [("unparsed", "foreign_author")]
+    assert not any(e.event == "accepted" for e in h.events)
+
+
+def test_trust_rules_me_operators_and_association_fallback():
+    c = _cm("alice", _obj("ack"), "2026-11-01T00:00:00Z", "c1")
+    assert de.Trust(me="alice")(c) and de.Trust(operators=["ALICE"])(c)
+    assert not de.Trust()(c)                                   # no association, no listing
+    assert de.Trust()(dict(c, authorAssociation="COLLABORATOR"))
+    # with operators configured the association fallback is OFF
+    assert not de.Trust(operators=["bob"])(dict(c, authorAssociation="OWNER"))
+    assert not de.Trust()(dict(c, authorAssociation="CONTRIBUTOR"))
+
+
+def test_trusted_operator_marker_still_works_and_listed_operator_without_association():
+    c = _cm("alice", _obj("accepted"), "2026-11-01T00:00:00Z", "c1")
+    h = de.parse([], [c], "2026-11-05T00:00:00Z", de.Trust(operators=["alice"]))
+    assert [e.event for e in h.events] == ["accepted"]
+
+
+def test_foreign_same_key_malformed_marker_does_not_suppress_emit():
+    key = de.default_key(REF7, "start", {"target": REF7}, 0)
+    squat = {"id": "c3", "createdAt": "2026-11-01T00:00:00Z", "author": {"login": "random-outsider"},
+             "authorAssociation": "NONE", "body": '<!-- foundry-deck: {"idempotency_key":"%s", garbage -->' % key}
+    stub = Stub([squat])
+    ev = de.emit(REF7, "start", {"target": REF7, "by": "operator"}, adapter=stub,
+                 clock=lambda: de._dt("2026-11-03T00:00:00Z"))
+    assert len(stub.posted) == 1 and ev.detail is None and ev.event == "start"
+
+
+def test_foreign_same_key_wellformed_marker_does_not_suppress_emit():
+    key = de.default_key(REF7, "start", {"target": REF7}, 0)
+    stub = Stub([_cm("random-outsider", _obj("start", key), "2026-11-01T00:00:00Z", "c1")])
+    de.emit(REF7, "start", {"target": REF7, "by": "operator"}, adapter=stub)
+    assert len(stub.posted) == 1
+
+
+def test_emit_redacts_note_and_by():
+    stub = Stub()
+    de.emit(REF7, "ack", {"target": REF7, "by": "operator", "note": "token=ghp_" + "a" * 36 + " leaked"}, adapter=stub)
+    assert "ghp_" + "a" * 36 not in stub.posted[0][1]
+
+
+def test_gh_adapter_trust_uses_authenticated_login_and_scope_operators(tmp_path, monkeypatch):
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "foundry-project.json").write_text(
+        json.dumps({"github_scope": {"owner": "o", "planning_repo": "p", "operators": {"carol": "op-c"}}}))
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    ad = de.GhAdapter()
+    calls = []
+
+    def run(args, stdin=None):
+        calls.append(args)
+        return '{"login": "dave"}'
+    ad._run = run
+    t = ad.trust()
+    assert ad.trust() is t and calls == [["api", "user"]]       # cached per adapter
+    c = {"author": {"login": "dave"}}
+    assert t(c) and t({"author": {"login": "carol"}}) and not t({"author": {"login": "eve"}, "authorAssociation": "OWNER"})

@@ -271,9 +271,10 @@ def _me(runner, timeout):
 def _read(adapter, ref):
     """(live parsed markers, raw comments) of one issue."""
     comments = adapter.comments(ref)
+    trust = de.trust_of(adapter)
     out = []
     for c in comments:
-        out += [e for e in de._markers_in(c) if e.event != "unparsed"]
+        out += [e for e in de._markers_in(c, trust) if e.event != "unparsed"]
     return out, comments
 
 
@@ -284,6 +285,12 @@ def _markers(adapter, ref):
 _ACTIVITY_NODES = ("BlockingAddedEvent", "BlockedByAddedEvent", "ReopenedEvent")
 
 
+def _is_marker_comment(c, trust):
+    """A comment that carries only authoritative markers (a FOREIGN marker is just a human comment)."""
+    ms = de._markers_in(c, trust)
+    return bool(ms) and not any(e.detail == "foreign_author" for e in ms)
+
+
 def _resolved_holds(adapter, ref, marks, comments):
     """True iff a `resolved` marker exists AND nothing new happened after the latest one: no later blocked
     episode, no reopen, no human (non-marker) comment. New activity un-suppresses the request."""
@@ -291,8 +298,9 @@ def _resolved_holds(adapter, ref, marks, comments):
     if not stamps:
         return False
     rt = max(stamps)
+    trust = de.trust_of(adapter)
     for c in comments:
-        if isinstance(c, dict) and c.get("createdAt") and _dt(c["createdAt"]) > rt and not de._markers_in(c):
+        if isinstance(c, dict) and c.get("createdAt") and _dt(c["createdAt"]) > rt and not _is_marker_comment(c, trust):
             return False
     for n in adapter.timeline(ref):
         if isinstance(n, dict) and n.get("__typename") in _ACTIVITY_NODES and n.get("createdAt") \

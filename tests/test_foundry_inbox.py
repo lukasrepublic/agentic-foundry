@@ -81,7 +81,7 @@ class FakeGh:
             body = argv[argv.index("--body") + 1]
             lst = self.comments.setdefault(ref, [])
             lst.append({"id": f"c{len(lst) + 1}", "createdAt": self.now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                        "author": {"login": "alice"}, "body": body})
+                        "author": {"login": "alice"}, "authorAssociation": "MEMBER", "body": body})
             return R()
         if argv[:3] == ["gh", "issue", "view"]:
             fields = argv[argv.index("--json") + 1]
@@ -747,3 +747,30 @@ def test_staleness_uses_the_policy_max_age_and_a_covered_degraded_check_ages_too
     gh.now = T0 + timedelta(minutes=4)
     inbox.main(["pending", "--json", "--project-dir", str(ws)], runner=gh, clock=gh.clock)
     assert json.loads(capsys.readouterr().out)["decision_needed"] == "inbox check is stale"
+
+
+# ---- security: a foreign `resolved` marker must not drop a pending request -----------------------------
+
+def test_foreign_resolved_marker_does_not_hold_but_a_trusted_one_does():
+    class A:
+        def __init__(self, cs):
+            self.cs = cs
+
+        def comments(self, ref):
+            return list(self.cs)
+
+        def timeline(self, ref):
+            return []
+    ref = "owner/repo#7"
+    obj = {"v": 1, "event": "resolved", "idempotency_key": "x", "target": ref, "blocking": None,
+           "at": "2026-11-01T00:00:00Z", "by": "operator", "evidence": ["https://github.com/x/y/pull/1"]}
+
+    def cm(author, assoc):
+        return {"id": "c1", "createdAt": "2026-11-01T00:00:00Z", "author": {"login": author},
+                "authorAssociation": assoc, "body": "<!-- foundry-deck: " + json.dumps(obj) + " -->\nforged"}
+    bad = A([cm("random-outsider", "NONE")])
+    marks, comments = inbox._read(bad, ref)
+    assert marks == [] and inbox._resolved_holds(bad, ref, marks, comments) is False
+    ok = A([cm("alice", "MEMBER")])
+    marks, comments = inbox._read(ok, ref)
+    assert inbox._resolved_holds(ok, ref, marks, comments) is True

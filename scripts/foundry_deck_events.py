@@ -26,6 +26,16 @@ Design decisions (charter gn-04):
     Epoch 0 / no prior block leaves the key identical to the pre-epoch key.
   * `parse` dedupes same-key markers (first by time wins); a `>`-quoted marker is not live; `emit` treats
     a same-key marker that is hand-edited (unparsed) as present and returns it rather than re-posting.
+  * AUTHORITY (security): a marker is authoritative only when its COMMENT AUTHOR is trusted (`Trust`):
+    the authenticated login (`gh api user`, cached per adapter), a login listed in
+    `github_scope.operators` (the keys of that object in .claude/foundry-project.json), or, ONLY when
+    the scope lists no operators, an `authorAssociation` of OWNER / MEMBER / COLLABORATOR. A marker
+    from anyone else is returned as `unparsed` with detail `foreign_author` — visible, never
+    authoritative: it cannot resolve/accept/ack anything, cannot start work, and cannot squat an
+    idempotency key (`emit` ignores it in its same-key presence check). `parse`/`_markers_in` take a
+    `trust` predicate (default: association fallback only, i.e. fail-closed); `GhAdapter.trust()`
+    supplies the real one and `emit`/`fetch_history` thread it. `gh issue view --json comments` already
+    carries `author.login` and `authorAssociation`, so no extra query is needed.
   * Every `gh` call lives in ONE adapter object (`GhAdapter`); tests inject a stub. `parse` is pure.
 
 Marker comment:
@@ -45,6 +55,9 @@ import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from foundry_ticket_store import redact as _redact  # noqa: E402
 
 MARKER_VERSION = 1
 
@@ -87,6 +100,44 @@ _MARKER_PREFIX = re.compile(r"<!--\s*foundry-deck:")
 _ISSUE_RE = re.compile(r"([A-Za-z0-9_-]+)/((?!\.{1,2}#)[A-Za-z0-9_.-]+)#([0-9]+)")
 _URL_RE = re.compile(r"https?://[^\s/]+\S*")
 _SHA_RE = re.compile(r"(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,64}")
+
+
+TRUSTED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+
+
+class Trust:
+    """Predicate over one comment: is its author allowed to write authoritative deck markers?"""
+
+    def __init__(self, operators=(), me=None):
+        self.logins = {str(x).lower() for x in (operators or ()) if x}
+        self.me = str(me).lower() if me else None
+
+    def __call__(self, comment) -> bool:
+        login = ((comment.get("author") or {}).get("login") if isinstance(comment, dict) else None)
+        if not isinstance(login, str) or not login:
+            return False
+        low = login.lower()
+        if low == self.me or low in self.logins:
+            return True
+        if not self.logins:     # no configured operators: the repository-role fallback
+            return str(comment.get("authorAssociation") or "").upper() in TRUSTED_ASSOCIATIONS
+        return False
+
+
+def scope_operators(project_dir=None):
+    """The configured `github_scope.operators` logins (empty when absent/unreadable)."""
+    try:
+        with open(os.path.join(project_dir or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd(),
+                               ".claude", "foundry-project.json"), encoding="utf-8") as f:
+            ops = (json.load(f).get("github_scope") or {}).get("operators")
+    except (OSError, ValueError, AttributeError):
+        return []
+    return [k for k in ops if isinstance(k, str)] if isinstance(ops, dict) else []
+
+
+def trust_of(adapter) -> "Trust":
+    fn = getattr(adapter, "trust", None)
+    return fn() if callable(fn) else Trust()
 
 
 @dataclass
@@ -208,12 +259,16 @@ def _live_body(body) -> str:
     return "\n".join(ln for ln in str(body).split("\n") if not ln.lstrip().startswith(">"))
 
 
-def _markers_in(comment) -> list:
-    """Every marker in one comment, as Event (parsed) or Event('unparsed')."""
+def _markers_in(comment, trust=None) -> list:
+    """Every marker in one comment, as Event (parsed) or Event('unparsed'). A comment whose author is
+    not trusted yields only `unparsed` / `foreign_author` entries (never authoritative)."""
     body = _live_body(comment.get("body") or "")
     out = []
     n_prefix = len(_MARKER_PREFIX.findall(body))
     found = _MARKER_RE.findall(body)
+    if n_prefix and not (trust if trust is not None else Trust())(comment):
+        return ([_unparsed(comment, "foreign_author", raw) for raw in found]
+                + [_unparsed(comment, "foreign_author") for _ in range(n_prefix - len(found))])
     for raw in found:
         try:
             obj = json.loads(raw)
@@ -253,7 +308,7 @@ def _ref(node) -> str | None:
     return f"{repo}#{node['number']}" if repo and node.get("number") is not None else None
 
 
-def parse(timeline, comments, as_of) -> History:
+def parse(timeline, comments, as_of, trust=None) -> History:
     """Rebuild history from fetched `timelineItems` nodes + comments, using only records <= as_of. Pure."""
     cutoff = _dt(as_of)
     recs = []   # (time, source_rank, index, kind, payload)
@@ -262,7 +317,7 @@ def parse(timeline, comments, as_of) -> History:
             recs.append((_dt(n["createdAt"]), 0, i, "tl", n))
     for i, c in enumerate(comments or []):
         if isinstance(c, dict) and c.get("createdAt") and _dt(c["createdAt"]) <= cutoff:
-            for j, ev in enumerate(_markers_in(c)):
+            for j, ev in enumerate(_markers_in(c, trust)):
                 recs.append((_dt(c["createdAt"]), 1, i * 1000 + j, "mk", ev))
     recs.sort(key=lambda r: r[:3])
 
@@ -420,7 +475,22 @@ __typename
 
 class GhAdapter:
     """Production adapter: the single object through which `gh` is invoked. Tests substitute a stub with
-    the same three methods: timeline(issue), comments(issue), post_comment(issue, body)."""
+    the same three methods: timeline(issue), comments(issue), post_comment(issue, body) and optionally
+    trust() (default: association fallback only)."""
+
+    _trust = None
+
+    def trust(self) -> "Trust":
+        """The comment-author trust predicate: authenticated login (one `gh api user` per adapter)
+        + `github_scope.operators` + the association fallback (see `Trust`)."""
+        if self._trust is None:
+            me = None
+            try:
+                me = (json.loads(self._run(["api", "user"])) or {}).get("login")
+            except (RuntimeError, ValueError, AttributeError, OSError):
+                me = None
+            self._trust = Trust(scope_operators(), me)
+        return self._trust
 
     def _run(self, args, stdin=None):
         r = subprocess.run(["gh", *args], input=stdin, capture_output=True, text=True, timeout=120)
@@ -462,12 +532,12 @@ class GhAdapter:
 
 # ---- the idempotent writer --------------------------------------------------------------------------
 
-def _epoch(issue, event, target, blocking, adapter, comments, at):
+def _epoch(issue, event, target, blocking, adapter, comments, at, trust=None):
     """Epoch for the default idempotency key: how many times the work was withdrawn/reopened (start, ack,
     accepted) or the latest `blocked` time for the (target, blocking) pair (blocker_ack)."""
     if event not in ("start", "ack", "accepted", "blocker_ack"):
         return None
-    h = parse(adapter.timeline(issue), comments, at)
+    h = parse(adapter.timeline(issue), comments, at, trust)
     if event == "blocker_ack":
         times = [e.at for e in h.events if e.event == "blocked" and e.target == target and e.blocking == blocking]
         return max(times) if times else None
@@ -502,18 +572,23 @@ def emit(issue, event, payload, adapter=None, clock=None) -> Event:
     if event == "blocker_ack" and blocking is None:
         blocking = payload.get("target")
     comments = adapter.comments(issue)
+    trust = trust_of(adapter)
     key = payload.get("key")
     if not key:
         key = default_key(issue, event, payload,
-                          _epoch(issue, event, payload.get("target"), blocking, adapter, comments, at))
+                          _epoch(issue, event, payload.get("target"), blocking, adapter, comments, at, trust))
     for c in comments:
-        for ex in _markers_in(c):
+        for ex in _markers_in(c, trust):
+            if ex.detail == "foreign_author":
+                continue    # a foreign marker never counts as present (no key squatting)
             if ex.idempotency_key == key and ex.event in (event, "unparsed"):
                 return ex   # present (a hand-edited, unparsed marker with the key counts as present)
+    by = _redact(by)
     ev = Event(event=event, at=_iso(_dt(at)), by=by, target=payload.get("target"), blocking=blocking,
                evidence=list(evidence), source="marker", idempotency_key=key, when=payload.get("when"),
                original_target=payload.get("original_target"))
-    note = payload.get("note") or f"{event} recorded by {by}" + (f" for {ev.target}" if ev.target else "")
+    note = _redact(str(payload.get("note") or f"{event} recorded by {by}"
+                       + (f" for {ev.target}" if ev.target else "")))
     adapter.post_comment(issue, render_marker(ev, note))
     return ev
 
@@ -521,7 +596,7 @@ def emit(issue, event, payload, adapter=None, clock=None) -> Event:
 def fetch_history(issue, as_of, adapter=None) -> History:
     _check_issue(issue)
     adapter = adapter or GhAdapter()
-    return parse(adapter.timeline(issue), adapter.comments(issue), as_of)
+    return parse(adapter.timeline(issue), adapter.comments(issue), as_of, trust_of(adapter))
 
 
 def main(argv=None) -> int:

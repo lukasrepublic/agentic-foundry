@@ -171,11 +171,11 @@ class Facts:
     pass
 
 
-def _facts(iss, cutoff):
+def _facts(iss, cutoff, trust=None):
     created = _d(iss["created_at"]) if iss.get("created_at") else None
     if created is not None and created > cutoff:
         return None
-    h = de.parse(iss.get("timeline") or [], iss.get("comments") or [], _s(cutoff))
+    h = de.parse(iss.get("timeline") or [], iss.get("comments") or [], _s(cutoff), trust)
     f = Facts()
     f.ref, f.h, f.iss = iss["ref"], h, iss
     labels = [str(x) for x in iss.get("labels") or []]
@@ -524,7 +524,8 @@ def compute(inputs, as_of, filters=None, sort=None):
     scope = inputs.get("scope") or {}
     mapping = dict(scope.get("operators") or {})
     default_repo = scope.get("default_repo")
-    facts = [f for f in (_facts(i, cutoff) for i in sorted(inputs.get("issues") or [], key=lambda i: i["ref"]))
+    trust = de.Trust(mapping.keys(), scope.get("me"))   # a marker counts only from a trusted comment author
+    facts = [f for f in (_facts(i, cutoff, trust) for i in sorted(inputs.get("issues") or [], key=lambda i: i["ref"]))
              if f is not None]
     obs, wip, queue, notes, unmapped, parents = _observations(facts, cutoff, mapping)
     byref = {f.ref: f for f in facts}
@@ -1219,7 +1220,13 @@ def fetch_inputs(project_dir, as_of, runner=default_runner, timeout=30, dataset=
         except (OSError, ValueError):
             bad.append({"source": "deployments", "detail": f"unreadable {dpath}"})
     now = (clock or (lambda: datetime.now(timezone.utc)))()
-    return {"scope": {"operators": cfg.get("operators") if isinstance(cfg.get("operators"), dict) else {},
+    me = None
+    try:
+        r = runner(["gh", "api", "user"], timeout)
+        me = (json.loads(r.stdout) or {}).get("login") if r.rc == 0 else None
+    except (ValueError, AttributeError, OSError, TypeError):
+        me = None
+    return {"scope": {"me": me, "operators": cfg.get("operators") if isinstance(cfg.get("operators"), dict) else {},
                       "timezone": cfg.get("timezone") or lb.get("timezone"),
                       "default_repo": f"{cfg['owner']}/{cfg['planning_repo']}"},
             "issues": issues, "inaccessible": bad, "usage": rows, "usage_coverage": cov,
