@@ -1,0 +1,44 @@
+# Limit the privileged-job toleration to the signer namespace and service account (FG-COST-004).
+# A taint alone does not restrict access. Pin Kyverno per the stack kit's version-matrix template.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-privileged-job-toleration
+spec:
+  validationFailureAction: Enforce
+  background: false
+  rules:
+    - name: only-in-signer-namespace
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+      exclude:
+        any:
+          - resources:
+              namespaces: ["privileged-jobs"]
+      validate:
+        message: "Only the privileged-jobs namespace may tolerate dedicated=privileged-job."
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.tolerations[?key=='dedicated' && value=='privileged-job'] | length(@) }}"
+                operator: GreaterThan
+                value: 0
+    - name: only-the-signer-service-account
+      match:
+        any:
+          - resources:
+              kinds: ["Pod"]
+              namespaces: ["privileged-jobs"]
+      validate:
+        message: "Only the signer service account may tolerate dedicated=privileged-job."
+        deny:
+          conditions:
+            all:
+              - key: "{{ request.object.spec.tolerations[?key=='dedicated' && value=='privileged-job'] | length(@) }}"
+                operator: GreaterThan
+                value: 0
+              - key: "{{ request.object.spec.serviceAccountName || '' }}"
+                operator: NotEquals
+                value: "signer"

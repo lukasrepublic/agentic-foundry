@@ -8,5 +8,6 @@ rules:
 checks:
 - checks/weaver-registry-check.sh
 - checks/pint-ci.sh
-templates: []
+templates:
+- templates/telemetry-policies/owner-prefix.rego
 migrations: []

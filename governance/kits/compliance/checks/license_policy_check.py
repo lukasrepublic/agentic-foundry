@@ -1,16 +1,25 @@
 #!/usr/bin/env python3
 """FG-LIC-001 check: evaluate a package list against a license policy. Deny unknown.
 
-Usage: license_policy_check.py POLICY.yaml PACKAGES.json [--today YYYY-MM-DD]
-PACKAGES.json: a list of {"name": str, "license": SPDX expression}. Exit 0 pass, 1 violations, 2 bad input.
-An expression with OR passes when any alternative is allowed; AND needs all. Unknown or empty denies.
+Usage: license_policy_check.py POLICY.yaml PACKAGES.json [--today YYYY-MM-DD] [--allow-empty]
+PACKAGES.json: a list of {"name": str, "license": SPDX expression}.
+Exit 0 pass, 1 violations, 2 refused (bad input, unparsed expression, empty package list without --allow-empty).
+
+Expressions: `A OR B` passes when any alternative is allowed; `A AND B` needs all; AND binds tighter than OR.
+`X WITH Y` is one unit and must itself be listed in the policy. Parentheses are refused (`unparsed-expression`),
+never guessed at. Unknown or empty licenses are denied. Needs PyYAML.
 """
+import argparse
 import datetime
 import json
 import re
 import sys
 
 import yaml
+
+
+class Refused(ValueError):
+    pass
 
 
 def _allowed_ids(policy):
@@ -21,28 +30,34 @@ def _allowed_ids(policy):
 
 
 def _ok(expr, allowed, denied):
-    expr = (expr or "").strip()
-    if not expr:
+    if not isinstance(expr, str) or not expr.strip():
         return False
-    ors = [p for p in re.split(r"\s+OR\s+", expr.strip("() ")) if p]
-    for alt in ors:
-        ands = [a.strip("() ") for a in re.split(r"\s+AND\s+", alt)]
-        if all(a in allowed and a not in denied for a in ands):
+    if "(" in expr or ")" in expr:
+        raise Refused(f"unparsed-expression: {expr!r}")
+    for alt in re.split(r"\s+OR\s+", expr.strip()):
+        units = [u.strip() for u in re.split(r"\s+AND\s+", alt)]
+        if all(u and u in allowed and u not in denied for u in units):
             return True
     return False
 
 
 def evaluate(policy, packages, today=None):
+    if not isinstance(policy, dict):
+        raise Refused("policy-not-a-mapping")
+    if not isinstance(packages, list):
+        raise Refused("packages-not-a-list")
     today = today or datetime.date.today()
     allowed, denied = _allowed_ids(policy), set(policy.get("deny") or [])
-    excs = {}
+    excs = set()
     for e in policy.get("exceptions") or []:
         exp = e.get("expires")
         exp = exp if isinstance(exp, datetime.date) else datetime.date.fromisoformat(str(exp))
         if exp >= today and e.get("owner") and e.get("reason"):
-            excs[(e["package"], e["license"])] = True
+            excs.add((e["package"], e["license"]))
     out = []
     for p in packages:
+        if not isinstance(p, dict):
+            raise Refused("package-entry-not-a-mapping")
         lic = p.get("license")
         if (p.get("name"), lic) in excs or _ok(lic, allowed, denied):
             continue
@@ -50,20 +65,32 @@ def evaluate(policy, packages, today=None):
     return out
 
 
-def main(argv):
-    args = [a for a in argv if not a.startswith("--")]
-    today = None
-    if "--today" in argv:
-        today = datetime.date.fromisoformat(argv[argv.index("--today") + 1])
-        args = [a for a in args if a != argv[argv.index("--today") + 1]]
-    if len(args) != 2:
-        print("usage: license_policy_check.py POLICY.yaml PACKAGES.json", file=sys.stderr)
-        return 2
+def _date(s):
     try:
-        policy = yaml.safe_load(open(args[0], encoding="utf-8"))
-        packages = json.load(open(args[1], encoding="utf-8"))
-        bad = evaluate(policy, packages, today)
-    except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as e:
+        return datetime.date.fromisoformat(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a YYYY-MM-DD date: {s!r}")
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(prog="license_policy_check.py")
+    ap.add_argument("policy")
+    ap.add_argument("packages")
+    ap.add_argument("--today", type=_date)
+    ap.add_argument("--allow-empty", action="store_true")
+    try:
+        a = ap.parse_args(argv)
+    except SystemExit as e:
+        return 2 if e.code else 0
+    try:
+        with open(a.policy, encoding="utf-8") as f:
+            policy = yaml.safe_load(f)
+        with open(a.packages, encoding="utf-8") as f:
+            packages = json.load(f)
+        if isinstance(packages, list) and not packages and not a.allow_empty:
+            raise Refused("empty-package-list (use --allow-empty if intended)")
+        bad = evaluate(policy, packages, a.today)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, yaml.YAMLError) as e:
         print(f"refused: {e}", file=sys.stderr)
         return 2
     for line in bad:

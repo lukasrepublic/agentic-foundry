@@ -1,7 +1,11 @@
 # Retention checks (FG-DATA-002)
 
 Declare `retention_days` per store in the classification file and keep it at or below the class maximum.
-Where the platform supports it, verify with checkov. Typical ids (confirm against the pinned checkov index):
+The match between retention and class is declared and reviewed. Platform checks prove only that a retention
+exists; they do not know the class.
+
+Where the platform supports it, checkov covers the existence. Typical ids (verify against the pinned checkov
+index before relying on them):
 
 - `CKV_AWS_66`: CloudWatch log group has a retention period set.
 - `CKV_AWS_338`: CloudWatch log group retention is at least one year (relax per class in a checkov config).

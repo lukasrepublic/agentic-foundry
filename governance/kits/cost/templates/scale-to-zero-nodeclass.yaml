@@ -1,4 +1,19 @@
-# Karpenter NodePool: tainted, scales to zero when empty. Pin the Karpenter version per docs/standing-versions.md.
+# Karpenter NodePools (tainted, empty nodes removed) and their EC2NodeClass.
+# Pin the Karpenter version and the AMI per the stack kit's version-matrix template
+# (governance/kits/stack/templates/version-matrix.md). Replace every <placeholder>.
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: privileged-job
+spec:
+  amiSelectorTerms:
+    - alias: "al2023@<pinned-ami-version>"
+  role: "<node-role-name>"
+  subnetSelectorTerms:
+    - tags: {karpenter.sh/discovery: "<cluster-name>"}
+  securityGroupSelectorTerms:
+    - tags: {karpenter.sh/discovery: "<cluster-name>"}
+---
 apiVersion: karpenter.sh/v1
 kind: NodePool
 metadata:
@@ -27,6 +42,31 @@ spec:
     consolidationPolicy: WhenEmpty
     consolidateAfter: 60s
 ---
-# The job opts in with a selector and a toleration:
-#   nodeSelector: {node-class: privileged-job}
-#   tolerations: [{key: dedicated, operator: Equal, value: privileged-job, effect: NoSchedule}]
+# Non-prod gets its own class (own EC2NodeClass, own taint). Never share the privileged pool with it.
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: non-prod
+spec:
+  template:
+    metadata:
+      labels:
+        node-class: non-prod
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: non-prod   # define by copying the EC2NodeClass above with its own role
+      taints:
+        - key: dedicated
+          value: non-prod
+          effect: NoSchedule
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["spot", "on-demand"]
+  limits:
+    cpu: "32"
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 60s

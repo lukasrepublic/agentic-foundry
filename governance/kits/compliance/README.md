@@ -5,3 +5,4 @@ a license policy (allowlist by category, per-package exceptions, deny unknown) w
 headers where the blueprint requires them, and an SBOM per release.
 
 Check the policy: `python3 checks/license_policy_check.py templates/license-policy.yaml packages.json`.
+The script needs PyYAML (it reads the policy as YAML). Expressions with parentheses are refused (exit 2), not guessed.

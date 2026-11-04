@@ -23,7 +23,6 @@ rules:
     - owner
     - expires
   sources:
-  - Foundry governance design 2026-11-04, section 2.12
   - OSS Review Toolkit (ORT) policy rules and evaluator; SPDX license list, accessed 2026-11-04
 - id: FG-LIC-002
   title: SPDX headers where the blueprint requires
@@ -47,7 +46,6 @@ rules:
     - owner
     - expires
   sources:
-  - Foundry governance design 2026-11-04, section 2.12
   - REUSE specification, reuse.software, accessed 2026-11-04
 - id: FG-LIC-003
   title: SBOM per release
@@ -71,5 +69,4 @@ rules:
     - owner
     - expires
   sources:
-  - Foundry governance design 2026-11-04, section 2.12
   - Anchore Syft and Aqua Trivy SBOM documentation; SPDX and CycloneDX specifications, accessed 2026-11-04

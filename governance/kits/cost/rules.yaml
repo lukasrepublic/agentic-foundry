@@ -19,7 +19,6 @@ rules:
   exception:
     allowed: false
   sources:
-  - Foundry governance design 2026-11-04, section 2.9
   - FinOps Foundation framework, Inform and Optimize phases, finops.org, accessed 2026-11-04
 - id: FG-COST-002
   title: Required cost-allocation tags in IaC plans
@@ -46,7 +45,6 @@ rules:
     - owner
     - expires
   sources:
-  - Foundry governance design 2026-11-04, section 2.9
   - FinOps Foundation, tagging and allocation guidance; Open Policy Agent conftest documentation, accessed 2026-11-04
 - id: FG-COST-003
   title: Cost diff on infra PRs is a comment, not a gate
@@ -73,12 +71,11 @@ rules:
     - owner
     - expires
   sources:
-  - Foundry governance design 2026-11-04, section 2.9
-  - Infracost CI/CD integration documentation (comment mode); operating model rule C2, accessed 2026-11-04
+  - Infracost CI/CD integration documentation (comment mode), accessed 2026-11-04
 - id: FG-COST-004
   title: Scale-to-zero for non-prod and rare privileged jobs
-  statement: Non-production environments and rare privileged jobs (for example a signer) SHOULD run on a dedicated, tainted node class that scales to zero when idle. They MUST NOT share nodes with general
-    build runners.
+  statement: Non-production environments and rare privileged jobs (for example a signer) SHOULD each run on their own dedicated, tainted node class that scales to zero when idle. The two MUST NOT share
+    a node class with each other or with general build runners, and the toleration for a privileged class MUST be limited by an admission policy.
   category: cost
   level: 1
   floor: false
@@ -102,5 +99,4 @@ rules:
     - owner
     - expires
   sources:
-  - Foundry governance design 2026-11-04, section 2.9
-  - Karpenter NodePool and disruption documentation (consolidation, taints); operating model rule C3, accessed 2026-11-04
+  - Karpenter NodePool and disruption documentation (consolidation, taints); Kyverno policy documentation, accessed 2026-11-04

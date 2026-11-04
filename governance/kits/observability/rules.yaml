@@ -24,11 +24,10 @@ rules:
     - owner
     - expires
   sources:
-  - Foundry governance design 2026-11-04, section 2.10
   - OpenTelemetry semantic conventions; OpenTelemetry Weaver registry check documentation, accessed 2026-11-04
 - id: FG-OBS-002
   title: Alert-rule hygiene
-  statement: Prometheus alert and recording rules MUST pass pint lint in CI. Each alert SHOULD carry a severity label and a runbook annotation.
+  statement: Prometheus alert and recording rules MUST pass pint lint in CI. Each alert SHOULD carry a severity label and a runbook annotation (the shipped pint config reports a missing one as a warning).
   category: observability
   level: 1
   floor: false
@@ -51,7 +50,6 @@ rules:
     - owner
     - expires
   sources:
-  - Foundry governance design 2026-11-04, section 2.10
   - Cloudflare pint documentation (rule linting), accessed 2026-11-04
 - id: FG-OBS-003
   title: The factory's own usage collection is declared
@@ -75,5 +73,4 @@ rules:
     - owner
     - expires
   sources:
-  - Foundry governance design 2026-11-04, section 2.10
-  - Foundry governance design 2026-11-04, section 2.10 (gn-05 usage collection), accessed 2026-11-04
+  - OpenTelemetry documentation, telemetry self-observability and usage reporting practice, accessed 2026-11-04

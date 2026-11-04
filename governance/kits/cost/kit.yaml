@@ -12,4 +12,5 @@ checks:
 templates:
 - templates/scale-to-zero-pattern.md
 - templates/scale-to-zero-nodeclass.yaml
+- templates/restrict-privileged-toleration.kyverno.yaml
 migrations: []

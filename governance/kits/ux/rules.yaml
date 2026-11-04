@@ -23,7 +23,6 @@ rules:
     - owner
     - expires
   sources:
-  - Foundry governance design 2026-11-04, section 2.13
   - W3C WCAG 2.2; Deque axe-core documentation (automated coverage is partial), accessed 2026-11-04
 - id: FG-UX-002
   title: Front-end performance budget as a report
@@ -47,8 +46,7 @@ rules:
     - owner
     - expires
   sources:
-  - Foundry governance design 2026-11-04, section 2.13
-  - Lighthouse CI documentation (budgets, assertions); operating model rule C2, accessed 2026-11-04
+  - Lighthouse CI documentation (budgets, assertions), accessed 2026-11-04
 - id: FG-UX-003
   title: No literal strings; locale handling
   statement: User-visible text MUST come from a message catalog, not string literals in components. Dates, numbers and plurals MUST use locale-aware formatting. An i18n lint MUST pass.
@@ -63,7 +61,7 @@ rules:
     - ui
   check:
     kind: lint
-    ref: governance/kits/ux/checks/eslint-i18next.config.js
+    ref: governance/kits/ux/checks/eslint-i18next.config.mjs
   exception:
     allowed: true
     requires:
@@ -71,5 +69,4 @@ rules:
     - owner
     - expires
   sources:
-  - Foundry governance design 2026-11-04, section 2.13
   - eslint-plugin-i18next documentation (no-literal-string); ICU MessageFormat, accessed 2026-11-04
