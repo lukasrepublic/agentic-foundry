@@ -1,8 +1,8 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "_researched": "2026-11-04",
+  "//": "Researched 2026-11-04. Replace <your-org> with your preset repository; the placeholder does not resolve on purpose.",
   "extends": [
-    "github>YOUR-ORG/renovate-presets#1.0.0",
+    "github><your-org>/renovate-presets#1.0.0",
     "helpers:pinGitHubActionDigests"
   ],
   "pinDigests": true,

@@ -11,6 +11,9 @@ import static com.tngtech.archunit.library.freeze.FreezingArchRule.freeze;
 @AnalyzeClasses(packages = "com.example", importOptions = ImportOption.DoNotIncludeTests.class)
 class ArchitectureTest {
     // freeze() stores known violations in a committed store, so only new violations fail.
+    // Point it at the baseline directory in archunit.properties:
+    //   freeze.store.default.path=governance/local/baselines/archunit_store
+    //   freeze.store.default.allowStoreCreation=false
     @ArchTest
     static final ArchRule layers = freeze(layeredArchitecture().consideringAllDependencies()
         .layer("Interface").definedBy("com.example.interfaces..")

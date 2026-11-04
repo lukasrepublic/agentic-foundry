@@ -11,6 +11,7 @@ rules:
   applies_to:
     paths:
     - '**/openapi*.yaml'
+    - '**/openapi*.yml'
     - '**/openapi*.json'
     blueprints:
     - '*'
@@ -38,6 +39,7 @@ rules:
   applies_to:
     paths:
     - '**/openapi*.yaml'
+    - '**/openapi*.yml'
     - '**/openapi*.json'
     blueprints:
     - '*'
@@ -138,6 +140,8 @@ rules:
   applies_to:
     paths:
     - '**/data-contracts/**'
+    - '**/*.odcs.yaml'
+    - '**/*.odcs.yml'
     blueprints:
     - '*'
   check:
@@ -154,7 +158,7 @@ rules:
   - Open Data Contract Standard, https://github.com/bitol-io/open-data-contract-standard, accessed 2026-11-04
 - id: FG-CDC-001
   title: Consumer-driven contracts gate deploys where declared
-  statement: Where a blueprint declares service-to-service calls, each consumer contract MUST be verified and can-i-deploy MUST pass before a deploy.
+  statement: Where a blueprint declares service-to-service calls, the consumer's pacts MUST be published and can-i-deploy MUST pass for the version being deployed before a deploy.
   category: contracts
   level: 2
   floor: false

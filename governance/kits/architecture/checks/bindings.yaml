@@ -10,27 +10,35 @@ ecosystems:
   python:
     tool: import-linter
     run: lint-imports
+    baseline: "ignore_imports in the contract (committed config); no separate file"
     template: templates/importlinter.ini
   typescript:
     tool: dependency-cruiser
-    run: npx depcruise --config .dependency-cruiser.cjs src
+    run: npx depcruise --config .dependency-cruiser.cjs --ignore-known governance/local/baselines/depcruise-known-violations.json src
+    baseline: "native: --ignore-known FILE (write it with --write-known-violations)"
     template: templates/dependency-cruiser.cjs
   javascript:
     tool: dependency-cruiser
-    run: npx depcruise --config .dependency-cruiser.cjs src
+    run: npx depcruise --config .dependency-cruiser.cjs --ignore-known governance/local/baselines/depcruise-known-violations.json src
+    baseline: "native: --ignore-known FILE (write it with --write-known-violations)"
     template: templates/dependency-cruiser.cjs
   java:
     tool: ArchUnit
     run: mvn test -Dtest=ArchitectureTest
+    baseline: "native: freeze() store at freeze.store.default.path=governance/local/baselines/archunit_store (archunit.properties)"
     template: templates/ArchitectureTest.java
   monorepo:
     tool: nx-boundaries
     run: npx nx lint
+    baseline: "none native: Nx boundaries are an ESLint rule; freeze known violations with ESLint bulk suppressions (eslint --suppress-all, ESLint 9.24 or later) or list them in a per-file override"
     template: templates/nx-boundaries.eslintrc.json
 # Sections the rules point at (check.ref ends with #<section>).
 layers: "Every ecosystem tool above encodes the layer list and allowed direction; source of truth is the stack profile architecture.allowed_dependencies."
-cycles: "dependency-cruiser no-circular, import-linter forbidden/layers contracts, ArchUnit slices, Nx no-circular-dependencies."
+cycles: "dependency-cruiser no-circular rule, ArchUnit slices beFreeOfCycles, the Nx boundaries lint (@nx/enforce-module-boundaries reports circular project dependencies). import-linter has no general cycle check: use an independence contract over the modules that must not depend on each other, and a layers contract for direction."
 external: "Per-layer allowed external packages; any other import fails."
+# Baseline. "Only new violations fail" holds for every ecosystem above through its own `baseline` entry. The
+# shared findings file below is the shape the governance baseline verb writes and is what review and the
+# exceptions report read; a tool reads its native file named in its entry.
 baseline:
   file: governance/local/baselines/architecture-deps.json
   written_by: "foundry_governance.py baseline --check architecture-deps --findings FILE"

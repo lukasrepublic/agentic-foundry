@@ -9,6 +9,9 @@ from pathlib import Path
 import pytest
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import foundry_governance as fg  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 KITS = ROOT / "governance" / "kits"
 FIX = ROOT / "tests" / "fixtures" / "governance"
@@ -77,7 +80,7 @@ def test_every_rule_binds_a_real_check_and_has_sources(kit):
         assert r["exception"]["allowed"] is True and r["sources"], r["id"]
         assert any("2026-11-04" in s for s in r["sources"]), r["id"]
         ref = ck.get("ref", "")
-        if ref.startswith(("governance/", "agents/")):
+        if ref.startswith(("governance/", "agents/", "skills/", "hooks/", "scripts/")):
             assert (ROOT / ref.split("#")[0]).is_file(), f"{r['id']}: {ref} does not exist"
 
 
@@ -240,12 +243,13 @@ CONFTEST = shutil.which("conftest")
 
 
 def conftest(fixture):
-    r = run(CONFTEST, "test", "--policy", REGO.parent, "--namespace", "standing.versions", "-o", "json", FIX / "stack" / fixture)
+    r = run(CONFTEST, "test", "--policy", REGO.parent, "--namespace", "governance.pinning", "-o", "json", FIX / "stack" / fixture)
     return r.returncode, json.loads(r.stdout)[0]
 
 
 @pytest.mark.skipif(CONFTEST is None, reason="conftest binary not on PATH; rego evaluation needs it")
-@pytest.mark.parametrize("fixture", ["good-workflow.yaml", "good-deployment.yaml", "good-application.yaml"])
+@pytest.mark.parametrize("fixture", ["good-workflow.yaml", "good-deployment.yaml", "good-application.yaml",
+                                     "good-reusable-workflow.yaml", "good-application-sources.yaml"])
 def test_rego_passes_pinned_fixtures(fixture):
     rc, res = conftest(fixture)
     assert rc == 0 and not res.get("failures")
@@ -254,7 +258,115 @@ def test_rego_passes_pinned_fixtures(fixture):
 @pytest.mark.skipif(CONFTEST is None, reason="conftest binary not on PATH; rego evaluation needs it")
 @pytest.mark.parametrize("fixture,needle", [("bad-workflow.yaml", "not SHA-pinned"),
                                             ("bad-deployment.yaml", "not immutably pinned"),
-                                            ("bad-application.yaml", "not an exact pin")])
+                                            ("bad-application.yaml", "not an exact pin"),
+                                            ("bad-reusable-workflow.yaml", "not SHA-pinned"),
+                                            ("bad-application-missing-revision.yaml", "not an exact pin"),
+                                            ("bad-digest-malformed.yaml", "not immutably pinned"),
+                                            ("bad-ephemeral.yaml", "container dbg")])
 def test_rego_denies_unpinned_fixtures(fixture, needle):
     rc, res = conftest(fixture)
     assert rc == 1 and any(needle in f["msg"] for f in res["failures"])
+
+
+# ---------------------------------------------------------------- fix round 1
+
+def test_rego_package_is_neutral():
+    assert re.search(r"^package governance\.pinning$", REGO.read_text(), re.M)
+    assert "standing" not in REGO.read_text().lower()
+
+
+def test_importlinter_template_includes_external_packages():
+    t = (KITS / "architecture" / "templates" / "importlinter.ini").read_text()
+    assert re.search(r"^include_external_packages = True$", t, re.M)
+
+
+def test_nx_and_renovate_templates_use_comment_conventions_not_unknown_keys():
+    nx = (KITS / "architecture" / "templates" / "nx-boundaries.eslintrc.json").read_text()
+    assert nx.startswith("//") and "_researched" not in nx
+    body = "\n".join(l for l in nx.splitlines() if not l.lstrip().startswith("//"))
+    assert "overrides" in json.loads(body)
+    rn = json.loads((KITS / "stack" / "templates" / "renovate.json").read_text())
+    assert "_researched" not in rn and "researched" in rn["//"].lower()
+    assert any(e.startswith("github><your-org>/") for e in rn["extends"])
+
+
+def test_baseline_binding_is_stated_for_every_ecosystem():
+    t = yaml.safe_load((KITS / "architecture" / "checks" / "bindings.yaml").read_text())["ecosystems"]
+    assert all(e.get("baseline") for e in t.values())
+    assert "--ignore-known" in t["typescript"]["run"]
+
+
+def test_applies_to_paths():
+    a = {r["id"]: r["applies_to"]["paths"] for k in MINE for r in rules_of(k)}
+    for rid in ("FG-ARCH-005", "FG-ARCH-006", "FG-ARCH-007"):
+        assert a[rid] == ["docs/decisions/**"]
+    hit = lambda rid, path: any(fg.glob_re(g).fullmatch(path) for g in a[rid])  # noqa: E731
+    assert hit("FG-DATA-001", "data-contracts/orders.odcs.yaml") and hit("FG-DATA-001", "x/orders.odcs.yaml")
+    for ext in ("yaml", "yml", "json"):
+        assert hit("FG-API-001", f"api/openapi.{ext}") and hit("FG-API-002", f"api/openapi.{ext}")
+    assert not hit("FG-ARCH-005", "src/a.py")
+
+
+def test_stack_rule_scope():
+    by = {r["id"]: r for r in rules_of("stack")}
+    assert by["FG-STK-005"]["check"]["kind"] == "declared" and "SHOULD" in by["FG-STK-005"]["statement"]
+    assert "version matrix" in by["FG-STK-002"]["statement"] and "Helm" in by["FG-STK-002"]["statement"]
+    assert "## Design" in by["FG-STK-006"]["statement"]
+
+
+def test_cycles_text_names_the_import_linter_independence_contract():
+    t = yaml.safe_load((KITS / "architecture" / "checks" / "bindings.yaml").read_text())
+    assert "independence" in t["cycles"]
+
+
+def test_shipped_workflows_persist_no_credentials_and_install_conftest_pinned():
+    for p in workflow_templates():
+        doc = yaml.safe_load(p.read_text())
+        for j in doc["jobs"].values():
+            for st in j.get("steps", []):
+                if st.get("uses", "").startswith("actions/checkout@"):
+                    assert st["with"]["persist-credentials"] is False, p.name
+    for rel in ("architecture/templates/architecture-fitness.yml", "stack/templates/workflow-pinned.yml"):
+        t = (KITS / rel).read_text()
+        assert "conftest/releases/download/v0.68.0/" in t and "sha256sum -c" in t
+
+
+def adr_dir(tmp_path, files):
+    for name, body in files.items():
+        (tmp_path / name).write_bytes(body.encode())
+    return run(sys.executable, ADR_LINT, tmp_path)
+
+
+def test_adr_lint_octal_trap_pair_passes():
+    r = adr("octal-trap")
+    assert r.returncode == 0, r.stdout
+
+
+def test_adr_lint_unknown_status(tmp_path):
+    r = adr_dir(tmp_path, {"0001-x.md": "---\nstatus: wibble\n---\n"})
+    assert r.returncode == 1 and "0001-x.md: unknown status" in r.stdout
+
+
+def test_adr_lint_superseded_without_link(tmp_path):
+    r = adr_dir(tmp_path, {"0001-x.md": "---\nstatus: superseded\n---\n"})
+    assert r.returncode == 1 and "0001-x.md: superseded without superseded-by" in r.stdout
+
+
+def test_adr_lint_missing_front_matter(tmp_path):
+    r = adr_dir(tmp_path, {"0001-x.md": "# no front matter\n"})
+    assert r.returncode == 1 and "0001-x.md: missing front matter" in r.stdout
+
+
+def test_adr_lint_accepts_crlf(tmp_path):
+    body = "---\r\nstatus: accepted\r\nconfirmation:\r\n  check_id: FG-ARCH-001\r\n---\r\n# x\r\n"
+    assert adr_dir(tmp_path, {"0001-x.md": body}).returncode == 0
+
+
+def test_adr_lint_check_id_none_needs_a_reason(tmp_path):
+    r = adr_dir(tmp_path, {"0001-x.md": "---\nstatus: accepted\nconfirmation:\n  check_id: none\n---\n"})
+    assert r.returncode == 1 and "0001-x.md: check_id none without confirmation.reason" in r.stdout
+
+
+def test_bindings_dangling_table_flag_prints_usage():
+    r = run(sys.executable, BINDINGS_PY, "python", "--table")
+    assert r.returncode == 2 and "usage" in r.stderr

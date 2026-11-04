@@ -1,5 +1,8 @@
 # Architecture fitness gate. Replace the run line with the tool from checks/bindings.yaml.
-# Researched 2026-11-04. Keep the checkout pinned to a commit SHA (FG-STK-003).
+# Researched 2026-11-04.
+# Adopters: copy governance/kits/architecture/checks/adr_lint.py from the plugin into the repository
+# (for example to tools/adr_lint.py) and install PyYAML at the version pinned in your version matrix.
+# The lines below use the plugin path only as a placeholder. Keep the checkout pinned to a commit SHA (FG-STK-003).
 name: architecture-fitness
 on: [pull_request]
 permissions:
@@ -9,7 +12,17 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
       - name: Architecture check (new violations fail; baseline tolerated)
         run: lint-imports
+      - name: Install conftest (pinned, checksum-verified)
+        # conftest v0.68.0, release and checksum verified 2026-11-04 against the upstream checksums.txt.
+        run: |
+          curl -fsSL -o conftest.tar.gz https://github.com/open-policy-agent/conftest/releases/download/v0.68.0/conftest_0.68.0_Linux_x86_64.tar.gz
+          echo "6b17eb541b1f9389aa05df651f42ee899609c96802609977a9ef2479e37611b3  conftest.tar.gz" | sha256sum -c -
+          tar -xzf conftest.tar.gz conftest
+      - name: Version pinning policy (copy pinning.rego from the stack kit to policy/)
+        run: ./conftest test --policy policy --namespace governance.pinning .github/workflows/*.yml
       - name: ADR lint
-        run: python3 governance/kits/architecture/checks/adr_lint.py docs/decisions
+        run: python3 tools/adr_lint.py docs/decisions

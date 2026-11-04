@@ -4,11 +4,11 @@
 # Three drift surfaces:
 #   (1) container images in workload manifests: an @sha256 digest or an exact 3-component version tag.
 #   (2) Argo CD Application Helm targetRevision: an exact chart version, never a range, branch or latest.
-#   (3) GitHub Actions `uses:`: a full 40-hex commit SHA, never a floating tag or branch.
+#   (3) GitHub Actions `uses:` (steps and reusable workflows): a full 40-hex commit SHA, never a floating tag or branch.
 #
 # Every rule names a set of compliant subjects and a `deny` per non-compliant subject, so conftest fails
 # on any violator regardless of how many subjects pass. Input: one document or an array of documents.
-package standing.versions
+package governance.pinning
 
 import rego.v1
 
@@ -43,11 +43,11 @@ _docs contains d if {
 	d := item
 }
 
-is_digest_pinned(ref) if contains(ref, "@sha256:")
+is_digest_pinned(ref) if regex.match(`@sha256:[0-9a-f]{64}$`, ref)
 
 # The tag is the segment after the last ":" that follows the last "/" (guards a host:port colon).
 _tag(ref) := tag if {
-	not contains(ref, "@sha256:")
+	not is_digest_pinned(ref)
 	parts := split(ref, "/")
 	last := parts[count(parts) - 1]
 	contains(last, ":")
@@ -56,7 +56,7 @@ _tag(ref) := tag if {
 }
 
 _tag(ref) := "" if {
-	not contains(ref, "@sha256:")
+	not is_digest_pinned(ref)
 	parts := split(ref, "/")
 	last := parts[count(parts) - 1]
 	not contains(last, ":")
@@ -84,21 +84,21 @@ _container_images contains {"workload": name, "container": c.name, "image": c.im
 	c.image
 }
 
-_pod_containers(d) := cs if {
-	d.kind == "Pod"
-	cs := array.concat(object.get(d.spec, "containers", []), object.get(d.spec, "initContainers", []))
-}
+_all_containers(spec) := array.concat(
+	array.concat(object.get(spec, "containers", []), object.get(spec, "initContainers", [])),
+	object.get(spec, "ephemeralContainers", []),
+)
 
-_pod_containers(d) := cs if {
+_pod_containers(d) := _all_containers(d.spec) if d.kind == "Pod"
+
+_pod_containers(d) := _all_containers(tspec) if {
 	d.kind in {"Deployment", "DaemonSet", "StatefulSet", "Job", "ReplicaSet"}
 	tspec := object.get(object.get(d.spec, "template", {}), "spec", {})
-	cs := array.concat(object.get(tspec, "containers", []), object.get(tspec, "initContainers", []))
 }
 
-_pod_containers(d) := cs if {
+_pod_containers(d) := _all_containers(tspec) if {
 	d.kind == "CronJob"
 	tspec := object.get(object.get(object.get(object.get(d.spec, "jobTemplate", {}), "spec", {}), "template", {}), "spec", {})
-	cs := array.concat(object.get(tspec, "containers", []), object.get(tspec, "initContainers", []))
 }
 
 image_pinned contains x if {
@@ -113,13 +113,13 @@ deny contains msg if {
 }
 
 # (2) Helm targetRevision.
-_helm_sources contains {"app": name, "chart": s.chart, "rev": s.targetRevision} if {
+_helm_sources contains {"app": name, "chart": s.chart, "rev": rev} if {
 	some d in _docs
 	d.kind == "Application"
 	name := object.get(object.get(d, "metadata", {}), "name", "<unnamed>")
 	some s in _app_sources(d)
 	object.get(s, "chart", "") != ""
-	object.get(s, "targetRevision", "") != ""
+	rev := object.get(s, "targetRevision", "")
 }
 
 _app_sources(d) := ss if {
@@ -127,8 +127,9 @@ _app_sources(d) := ss if {
 	count(ss) > 0
 }
 
+# An absent or empty `sources` falls back to the single `source`.
 _app_sources(d) := [d.spec.source] if {
-	not object.get(d.spec, "sources", false)
+	count(object.get(d.spec, "sources", [])) == 0
 	object.get(d.spec, "source", false)
 }
 
@@ -140,10 +141,10 @@ helm_rev_pinned contains x if {
 deny contains msg if {
 	some x in _helm_sources
 	not regex.match(_semver_re, x.rev)
-	msg := sprintf("version-pinning: Application %s Helm source (chart %q) targetRevision %q is not an exact pin: use a 3-component chart version (no range, :latest or branch).", [x.app, x.chart, x.rev])
+	msg := sprintf("version-pinning: Application %s Helm source (chart %q) targetRevision %q is not an exact pin: use a 3-component chart version (a missing or empty targetRevision is denied; no range, :latest or branch).", [x.app, x.chart, x.rev])
 }
 
-# (3) GitHub Actions `uses:`. Local actions (`uses: ./...`) have no external ref to pin.
+# (3) GitHub Actions step `uses:` and job-level reusable-workflow `uses:`. Local actions (`uses: ./...`) have no external ref to pin.
 _sha40_re := `@[0-9a-f]{40}$`
 
 _workflow_uses contains {"job": jobname, "uses": step.uses} if {
@@ -153,6 +154,15 @@ _workflow_uses contains {"job": jobname, "uses": step.uses} if {
 	some step in object.get(job, "steps", [])
 	object.get(step, "uses", "") != ""
 	not startswith(step.uses, "./")
+}
+
+# Job-level reusable workflows: jobs.<id>.uses.
+_workflow_uses contains {"job": jobname, "uses": job.uses} if {
+	some d in _docs
+	is_object(object.get(d, "jobs", false))
+	some jobname, job in d.jobs
+	object.get(job, "uses", "") != ""
+	not startswith(job.uses, "./")
 }
 
 action_pinned contains x if {

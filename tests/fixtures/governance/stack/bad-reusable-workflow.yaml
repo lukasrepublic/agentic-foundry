@@ -1,0 +1,4 @@
+name: ci
+jobs:
+  call:
+    uses: some-org/some-repo/.github/workflows/build.yml@main

@@ -7,7 +7,7 @@ Fails (exit 1, one line per finding naming the file) on:
   - a missing or unknown `status` in the front matter
   - a number used by more than one file
   - a `superseded-by` link that does not resolve to another ADR
-  - an accepted ADR without `confirmation.check_id`
+  - an accepted ADR without `confirmation.check_id`, or with `check_id: none` and no `confirmation.reason`
 Exit 2 when DIR is not a directory. 0000-template.md is skipped.
 """
 import re
@@ -49,7 +49,7 @@ def lint(directory):
                 others = ", ".join(q.name for q in ps if q is not p)
                 findings.append(f"{p.name}: number {num} reused (also {others})")
     for p in files:
-        text = p.read_text(encoding="utf-8")
+        text = p.read_text(encoding="utf-8").replace("\r\n", "\n")
         fm = front_matter(text)
         if fm is None:
             findings.append(f"{p.name}: missing front matter")
@@ -71,6 +71,8 @@ def lint(directory):
             conf = fm.get("confirmation")
             if not (isinstance(conf, dict) and conf.get("check_id")):
                 findings.append(f"{p.name}: accepted without confirmation.check_id")
+            elif str(conf["check_id"]).lower() == "none" and not str(conf.get("reason") or "").strip():
+                findings.append(f"{p.name}: check_id none without confirmation.reason")
     return findings
 
 

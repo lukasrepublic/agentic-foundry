@@ -1,5 +1,5 @@
+// Researched 2026-11-04. JSONC: ESLint accepts comments in .eslintrc.json.
 {
-  "_researched": "2026-11-04",
   "overrides": [
     {
       "files": ["*.ts", "*.tsx", "*.js", "*.jsx"],

@@ -110,7 +110,7 @@ rules:
   status: active
   applies_to:
     paths:
-    - '**'
+    - docs/decisions/**
     blueprints:
     - '*'
   check:
@@ -127,14 +127,14 @@ rules:
   - MADR, https://adr.github.io/madr/, accessed 2026-11-04
 - id: FG-ARCH-006
   title: ADR names the check that confirms it
-  statement: An accepted ADR MUST carry confirmation.check_id naming the rule id or check that enforces it, or the literal value none with a reason in the body.
+  statement: An accepted ADR MUST carry confirmation.check_id naming the rule id or check that enforces it, or the literal value none together with confirmation.reason.
   category: architecture
   level: 1
   floor: false
   status: active
   applies_to:
     paths:
-    - '**'
+    - docs/decisions/**
     blueprints:
     - '*'
   check:
@@ -158,7 +158,7 @@ rules:
   status: active
   applies_to:
     paths:
-    - '**'
+    - docs/decisions/**
     blueprints:
     - '*'
   check:

@@ -4,7 +4,8 @@ date: YYYY-MM-DD
 decision-makers: []
 superseded-by: ""           # number of the replacing ADR, e.g. 0007, when status is superseded
 confirmation:
-  check_id: none            # the FG- rule id or CI check that enforces this decision; `none` needs a reason below
+  check_id: none            # the FG- rule id or CI check that enforces this decision
+  reason: ""               # required when check_id is none
 ---
 # 0000: Short title of the decision
 

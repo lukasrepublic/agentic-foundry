@@ -27,6 +27,9 @@ def main(argv):
     table = DEFAULT
     if "--table" in args:
         i = args.index("--table")
+        if i + 1 >= len(args):
+            print("usage: bindings.py ECOSYSTEM [--table PATH]", file=sys.stderr)
+            return 2
         table = args[i + 1]
         del args[i:i + 2]
     if len(args) != 1:
