@@ -108,6 +108,15 @@ _TYPES = {
 }
 
 
+_REMOVAL_KEYS = {"remove", "removed", "delete", "except", "exclude", "unset", "replace", "disable", "disabled"}
+
+
+def _is_removal(item):
+    if isinstance(item, dict):
+        return bool(set(item) & _REMOVAL_KEYS)
+    return isinstance(item, str) and item.lstrip().startswith(("!", "-", "~!", "not "))
+
+
 def _check_leaf(node, value, key):
     """Return a list of named errors for `value` against a leaf schema (empty = valid)."""
     if "anyOf" in node:
@@ -118,6 +127,13 @@ def _check_leaf(node, value, key):
     if "const" in node:
         return [] if _same(value, node["const"]) else [f"floor-rule-disabled:{key}"]
     errs = []
+    if node.get("x-add-only"):
+        # ADD-ONLY list (gv-11): the policy may extend the built-in defaults, never shrink them. Every way a file
+        # could TRY to remove a default is the one named error, so removal is not expressible at all.
+        if isinstance(value, dict) and set(value) & _REMOVAL_KEYS:
+            return [f"floor-rule-disabled:{key}.removal"]
+        if isinstance(value, list) and any(_is_removal(v) for v in value):
+            return [f"floor-rule-disabled:{key}.removal"]
     t = node.get("type")
     if t and not _TYPES[t](value):
         return [f"invalid-value:{key}: expected {t}"]
@@ -441,6 +457,14 @@ _EXPLAIN = {
         "D1 (floor): verify by metadata only; never read or print a secret value.",
         "A command-text hook is not a boundary; only an IAM-level boundary prevents the read.",
         "secret-read hook (configurable verbs and no-print roots) and the docs page."),
+    "secrets.forbidden_verbs": (
+        "D1: extra command phrases the secret-read guard refuses, ADDED to the built-in defaults (a default can never be removed).",
+        "A team's own secret-printing verbs need the same refusal as the defaults.",
+        "the secret-read guard hook and docs/how-to/secrets-never-read.md."),
+    "secrets.no_print_roots": (
+        "D1: extra paths no reader command may be pointed at, ADDED to ~/.ssh, ~/.aws, ~/.config/gcloud, ~/.kube and .env*.",
+        "Private key material never enters an agent's context.",
+        "the secret-read guard hook and docs/how-to/secrets-never-read.md."),
     "messaging.machine_channel": (
         "Cross-session machine messages are an append-only JSONL log on a protected git branch.", "A git log is the established shape for a machine ledger.", "message-log script."),
     "messaging.people_channel": (

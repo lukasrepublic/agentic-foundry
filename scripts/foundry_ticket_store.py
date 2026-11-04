@@ -11,12 +11,14 @@ is not a git repository has no ticket.
 """
 from __future__ import annotations
 
+import calendar
 import hashlib
 import json
 import os
 import re
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 TICKET_BASENAME = "foundry-ticket.json"
@@ -243,3 +245,151 @@ def _git_path(basename: str, root: Path | None = None) -> Path | None:
 
 def command_digest(cmd: str) -> str:
     return hashlib.sha256((cmd or "").encode("utf-8")).hexdigest()
+
+
+# ---- gv-11: claim leases (operating-model rule B5) ---------------------------------------------------------
+# A claim record is a LEASE: `heartbeat_at` is refreshed by `lead renew` and `reconcile`; a lease with no heartbeat
+# for `expires_after` (policy `claims.expires_after`, default 2h) is EXPIRED, and ONLY an expired lease can be taken
+# over by another session (recorded in the new record as `taken_over_from`). A long chunk continues under a SUCCESSOR
+# claim (`claim --successor-of`), which is not a takeover. The store stays a local cache in the git common dir, never
+# authority; it is read fail-CLOSED by the claim-required push clause (hooks/foundry-git-discipline.sh clause (m)).
+DEFAULT_EXPIRES_AFTER = 2 * 3600
+
+
+def iso(t: float) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
+
+
+def epoch(stamp) -> float:
+    """Epoch seconds of a `%Y-%m-%dT%H:%M:%SZ` stamp; 0.0 when absent/malformed (i.e. long expired)."""
+    try:
+        return float(calendar.timegm(time.strptime(str(stamp), "%Y-%m-%dT%H:%M:%SZ")))
+    except (ValueError, OverflowError):
+        return 0.0
+
+
+def parse_expires(text) -> int | None:
+    m = re.fullmatch(r"([1-9][0-9]*)([mhd])", str(text).strip())
+    return int(m.group(1)) * {"m": 60, "h": 3600, "d": 86400}[m.group(2)] if m else None
+
+
+def claims_policy(root: Path | None = None) -> tuple[bool, int]:
+    """(claims.enabled, claims.expires_after in seconds) from the operating-model policy. An absent, unreadable or
+    broken policy yields the defaults (enabled, 2h): a policy problem never turns the lease off."""
+    root = root or project_root()
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_foundry_operating_model_for_claims",
+                                                      Path(__file__).resolve().parent / "foundry_operating_model.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        pol = mod.load(str(root))
+        secs = parse_expires(pol.get("claims.expires_after"))
+        return bool(pol.get("claims.enabled")), secs or DEFAULT_EXPIRES_AFTER
+    except Exception:
+        return True, DEFAULT_EXPIRES_AFTER
+
+
+def lease_state(rec, now: float, default_expires: int = DEFAULT_EXPIRES_AFTER) -> dict:
+    """{"state": live|expired, "age": seconds since the last heartbeat, "expires_after": seconds,
+    "heartbeat_at": stamp}. The heartbeat falls back to `claimed_at` (a pre-lease record); a missing, malformed or
+    FUTURE stamp is expired (a lease that cannot be shown live is not live)."""
+    rec = rec if isinstance(rec, dict) else {}
+    stamp = rec.get("heartbeat_at") or rec.get("claimed_at")
+    exp = rec.get("expires_after_s")
+    exp = exp if isinstance(exp, int) and not isinstance(exp, bool) and exp > 0 else default_expires
+    t = epoch(stamp)
+    age = now - t if t else float("inf")
+    return {"state": "live" if 0 <= age < exp else "expired", "age": age, "expires_after": exp,
+            "heartbeat_at": stamp}
+
+
+def heartbeat_claims(root: Path | None, session_id: str, now: float) -> list[str]:
+    """Refresh `heartbeat_at` on every claim THIS session holds. Never touches another session's claim. Returns
+    the keys touched. Raises ClaimsUnreadable (never overwrites an unreadable file); writes nothing when there is
+    no claims file."""
+    claims, found = read_claims(root)
+    if not found or not session_id:
+        return []
+    touched: list[str] = []
+
+    def fn(cl):
+        for k, rec in cl.items():
+            if isinstance(rec, dict) and rec.get("session_id") == session_id:
+                rec["heartbeat_at"] = iso(now)
+                touched.append(k)
+    update_claims(root, fn)
+    return touched
+
+
+def _gate_root(cwd) -> Path:
+    env = os.environ.get("CLAUDE_PROJECT_DIR")
+    if env and Path(env).is_dir():
+        return Path(env).resolve()
+    if cwd:
+        try:
+            top = subprocess.run(["git", "-C", str(cwd), "rev-parse", "--show-toplevel"], capture_output=True,
+                                 text=True, timeout=10)
+            if top.returncode == 0 and top.stdout.strip():
+                return Path(top.stdout.strip()).resolve()
+        except Exception:
+            pass
+    return project_root()
+
+
+def _team_scope(root: Path) -> bool:
+    try:
+        d = json.loads((root / ".claude" / "foundry-project.json").read_text(encoding="utf-8"))
+        gs = d.get("github_scope") if isinstance(d, dict) else None
+        return isinstance(gs, dict) and bool(gs.get("owner")) and bool(gs.get("planning_repo"))
+    except Exception:
+        return False
+
+
+def claim_gate(cwd=None, now: float | None = None) -> tuple[bool, str]:
+    """Clause (m) of hooks/foundry-git-discipline.sh: may a work-branch push / non-draft `gh pr create` proceed?
+    -> (True, why) to admit, (False, reason) to refuse; a refusal reason always starts `claim-required`.
+
+    APPLICABLE only when ALL hold: `claims.enabled` (policy, default true); the workspace is GitHub-backed
+    (`github_scope` configured, i.e. the owned-queue/claim model is in use - a single-operator workspace has no
+    claims and is never gated); and the active ticket (git dir) is bound to an issue. Then the claims store must
+    hold a LIVE lease for that issue. FAIL CLOSED: an unreadable claims store or ticket record refuses."""
+    now = time.time() if now is None else now
+    root = _gate_root(cwd)
+    enabled, expires = claims_policy(root)
+    if not enabled:
+        return True, "claims disabled by policy"
+    if not _team_scope(root):
+        return True, "no github_scope: claims are not in use"
+    tf = ticket_file(root)
+    if tf is None or not tf.is_file():
+        return True, "no ticket is bound to an issue"
+    try:
+        doc = json.loads(tf.read_text(encoding="utf-8"))
+        if not isinstance(doc, dict):
+            raise ValueError("not an object")
+    except (OSError, ValueError) as e:
+        return False, f"claim-required: the active ticket record is unreadable ({redact(str(e))}); failing closed"
+    number, repo = doc.get("issue"), str(doc.get("repo") or "")
+    if not isinstance(number, int) or isinstance(number, bool):
+        return True, "no ticket is bound to an issue"
+    try:
+        claims, _found = read_claims(root)
+    except ClaimsUnreadable as e:
+        return False, (f"claim-required: the claims store is unreadable ({redact(str(e))}); failing closed. Repair or "
+                       "remove the claims file in the git common dir, then claim the issue again")
+    key = claim_key(repo, number)
+    rec = claims.get(key)
+    if rec is None and not repo:
+        rec = next((r for k, r in claims.items() if k.endswith(f"#{number}")), None)
+    label = key if repo else f"#{number}"
+    if rec is None:
+        return False, (f"claim-required: no claim for {label}. Claim it first: `foundry-ticket.py claim {number}"
+                       f"{' --repo ' + repo if repo else ''}`")
+    st = lease_state(rec, now, expires)
+    if st["state"] != "live":
+        return False, (f"claim-required: the lease on {label} expired (no heartbeat for "
+                       f"{'longer than the record' if st['age'] == float('inf') else str(int(st['age'])) + 's'}; it lasts "
+                       f"{st['expires_after']}s). Renew it: `foundry-ticket.py reconcile` or `foundry-ticket.py lead renew`, "
+                       "or claim again if it was taken over")
+    return True, f"live claim on {label}"

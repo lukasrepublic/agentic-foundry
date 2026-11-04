@@ -88,7 +88,7 @@ _log()    { mkdir -p "$1/.foundry" 2>/dev/null || true; local _m="${2//[^A-Za-z0
 # (gap G7: a jail that hid the spec silently and still reported exit:0).
 _stage_and_preflight() {
   local ws="$1" wt="$2" cref="$3"
-  SCRIPTS_DIR="$HERE/../scripts" python3 - "$ws" "$wt" "$cref" <<'PY'
+  SCRIPTS_DIR="$HERE/../scripts" python3 -I - "$ws" "$wt" "$cref" <<'PY'
 import os, sys, shutil
 
 ws, wt, cref = sys.argv[1:4]
@@ -216,7 +216,7 @@ PY
 # equal the claim's baseline (`assignment-stale`). The hook stays offline: the claim is the lead's own
 # local record of the body it vetted (`foundry-ticket.py claim`).
 _assignment_check() {
-  SCRIPTS_DIR="$HERE/../scripts" python3 - "$1" "$2" "${3:-}" <<'PY' 2>/dev/null || echo "unreadable"
+  SCRIPTS_DIR="$HERE/../scripts" python3 -I - "$1" "$2" "${3:-}" <<'PY' 2>/dev/null || echo "unreadable"
 import json, os, re, sys
 try:
     d = json.load(open(sys.argv[1]))
@@ -294,7 +294,7 @@ PY
 # `.agent` / `.agent/assignment.json`, and a git dir that is not under <product>/.git/worktrees/
 # (or the common dir itself). Prints OK or a typed reason.
 _write_binding() {
-  python3 - "$1" "$2" "$3" "$4" "$5" "$6" "$7" <<'PY' 2>/dev/null || echo "write-error"
+  python3 -I - "$1" "$2" "$3" "$4" "$5" "$6" "$7" <<'PY' 2>/dev/null || echo "write-error"
 import json, os, stat, subprocess, sys
 wt, raw, tr, task, agent, contract, product = sys.argv[1:8]
 try:
@@ -383,7 +383,7 @@ _redirect() {
   # by KEY PRESENCE: contract_ref present+non-empty string -> contract lane; present but empty/non-string
   # -> fail closed; absent + assignment present -> issue lane; neither -> fail closed.
   local -a _f
-  mapfile -d '' -t _f < <(python3 - "$m" <<'PY' 2>/dev/null
+  mapfile -d '' -t _f < <(python3 -I - "$m" <<'PY' 2>/dev/null
 import json,sys
 def out(*v): sys.stdout.write("".join(x + "\0" for x in v))
 try:
@@ -433,7 +433,7 @@ PY
   # before anything reaches `foundry-wt claim`. An unresolvable check counts as missing (fail closed).
   if [ "$mstate" = "issue" ]; then
     local _gsrc=0
-    python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import foundry_github_capabilities as g; sys.exit(0 if g.load_scope(sys.argv[2])[1] is not None else 1)' "$HERE/../scripts" "$WS" >/dev/null 2>&1 || _gsrc=$?
+    python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import foundry_github_capabilities as g; sys.exit(0 if g.load_scope(sys.argv[2])[1] is not None else 1)' "$HERE/../scripts" "$WS" >/dev/null 2>&1 || _gsrc=$?
     if [ "$_gsrc" -ne 0 ]; then
       _log "$WS" "DROPPED-GITHUB-SCOPE-MISSING github-scope-missing issue-assignment lane needs github_scope; run /foundry:init $(basename "$m")"
       rm -f "$m"; _unlock "$LOCK"; return 5
@@ -565,7 +565,7 @@ _native() {
   # supplies the script's OWN source via stdin, so piping the envelope on stdin too would starve
   # `sys.stdin` inside the script (both would race the same fd). argv keeps the manifest-parse and
   # envelope-parse the same "python3 inline" shape while avoiding that stdin collision.
-  read -r name sid < <(python3 - "$envelope" <<'PY' 2>/dev/null
+  read -r name sid < <(python3 -I - "$envelope" <<'PY' 2>/dev/null
 import json,sys
 try: d=json.loads(sys.argv[1])
 except Exception: d={}
@@ -598,7 +598,7 @@ _selftest() {
   # (RISK-3), and the legacy AC-MRDISPATCH-2/-3/-9 redirects below still exercise the
   # real staging + preflight path unchanged in OUTCOME (still PASS), proving AC-WNI-4
   # non-disruption.
-  SCRIPTS_DIR="$HERE/../scripts" python3 - "$ws" <<'PY'
+  SCRIPTS_DIR="$HERE/../scripts" python3 -I - "$ws" <<'PY'
 import os, sys
 ws = sys.argv[1]
 sys.path.insert(0, os.environ["SCRIPTS_DIR"])

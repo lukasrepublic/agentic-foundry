@@ -178,7 +178,15 @@ hook_comment_expectation:
   #      checkout main" && …`, `./x.sh; …`, `make …` and `git stash branch …` keep the push
   #      refused), and a remote configured as a mirror keeps it refused. Strictly narrower than 9.
   #      Corpus: tests/test_hooks_guards.py::test_v118_review_r1_*.
-  executable_content_sha256: 'a425192acca631864aadc4452d5ea6810d60b08e6669b6de633ffee9015c8401'  # v2.0.0 clause (j) local-green (ticket #269)
+  #  11. v2.0.0 clause (j) local-green (ticket #269): every push of commits needs <git-dir>/foundry-local-green
+  #      naming HEAD (written by scripts/foundry-test.sh); a non-draft `gh pr create` likewise. Admission-only,
+  #      after clause (a); opt-out `--local-green=off`. Corpus: tests/test_ticket_first.py.
+  #  12. gv-11 clause (m) claim-required (2026-11-04, security lane): a push of commits / a non-draft `gh pr create`
+  #      needs a LIVE claim for the issue the active ticket is bound to (scripts/foundry_ticket_store.py claim_gate),
+  #      fail-closed on an unreadable claims store; inert where claims are not in use. Every other clause
+  #      byte-identical. Corpus: tests/test_claims_expiry.py. NOTE: gv-10 re-baselines this same digest for its
+  #      clauses (k)/(l); whichever lands second recomputes it over the merged hook.
+  executable_content_sha256: '373e44716895d53cd08e18a524c40062a79d8232faf616d5cdc65f4edfebd0f4'  # re-baselined for entry 12 (gv-11)
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
 operator_registry_shape:

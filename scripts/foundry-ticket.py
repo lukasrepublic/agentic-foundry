@@ -8,8 +8,8 @@
     foundry-ticket.py clear                           forget the active ticket
     foundry-ticket.py next [--json]                   the operator's next item, read from GitHub (gn-08)
     foundry-ticket.py read-issue <issue> [--repo R] [--json]   the trust-checked view of one issue (read-only)
-    foundry-ticket.py claim <issue> [--repo R] [--allow-exception "<reason>"] [--trust-author]   record `start` (never self-assigns)
-    foundry-ticket.py reconcile [<issue>] [--json]    stop_dispatch per started issue, from current GitHub state
+    foundry-ticket.py claim <issue> [--repo R] [--allow-exception "<reason>"] [--trust-author] [--successor-of <id>]   record `start` (never self-assigns)
+    foundry-ticket.py reconcile [<issue>] [--json]    stop_dispatch per started issue, from current GitHub state (also a claim heartbeat)
     foundry-ticket.py lead acquire|renew|release|check [--stale-after 10m]      local duplicate-lead lease
 
 The active ticket lives in the repository's GIT DIR (per worktree; never checked out, never committed).
@@ -912,11 +912,18 @@ def cmd_claim(args: list[str], run, now: float) -> int:
                     help="on a re-claim, adopt the issue's CURRENT body as the acceptance baseline")
     ap.add_argument("--trust-author", action="store_true",
                     help="the OPERATOR has read the issue's Done-means and vouches for it (never auto-run)")
+    ap.add_argument("--successor-of", metavar="ID", default=None,
+                    help="continue a long chunk: this claim succeeds ID (a claim THIS session holds); not a takeover")
+    ap.add_argument("--session-id", default=None, help="the lease owner (default: CLAUDE_CODE_SESSION_ID, else a per-user id)")
     a = ap.parse_args(args)
     root = project_root()
     try:
         cfg = load_config(root)
         repo, number = parse_ref(a.issue, a.repo, cfg["repos"])
+        pred_key = None
+        if a.successor_of:
+            prepo, pnum = parse_ref(a.successor_of, a.repo or repo, cfg["repos"])
+            pred_key = store.claim_key(prepo, pnum)
         login = operator_login(run)
         issues = read_queue(run, cfg)
     except (QueueUnavailable, ValueError) as e:
@@ -952,6 +959,29 @@ def cmd_claim(args: list[str], run, now: float) -> int:
               "remove the claims file in the git common dir (it holds every vetted Done-means digest). Nothing was recorded.",
               file=sys.stderr)
         return 2
+    # B5 lease: a claim another session holds LIVE is not ours to take; only an EXPIRED lease can be taken over.
+    sid = _session_id(root, a.session_id, socket.gethostname())
+    _enabled, expires_s = store.claims_policy(root)
+    prior_lease = claims.get(key) or {}
+    taken_over = None
+    if prior_lease.get("session_id") and prior_lease["session_id"] != sid:
+        st = store.lease_state(prior_lease, now, expires_s)
+        if st["state"] == "live":
+            print(f"claim refused: lease-held: {key} is held by session {prior_lease['session_id']} (operator "
+                  f"{prior_lease.get('operator')}), heartbeat {int(st['age'])}s ago; the lease lasts {st['expires_after']}s and "
+                  "only an expired lease can be taken over", file=sys.stderr)
+            return 2
+        taken_over = {"session_id": prior_lease["session_id"], "operator": prior_lease.get("operator"),
+                      "last_heartbeat_at": st["heartbeat_at"], "at": _iso(now)}
+    if pred_key is not None:
+        pred = claims.get(pred_key)
+        if pred_key == key:
+            print(f"claim refused: successor-refused: {key} cannot succeed itself (a plain `claim` re-claims it)", file=sys.stderr)
+            return 2
+        if not isinstance(pred, dict) or pred.get("session_id") != sid:
+            print(f"claim refused: successor-refused: {pred_key} is not a claim this session holds; a successor continues YOUR "
+                  "claim - to take over another session's, wait for its lease to expire and `claim` it plainly", file=sys.stderr)
+            return 2
     wip = wip_count(issues, login, claims, exclude=key)
     reason = store.redact((a.allow_exception or "").strip()) or None
     exceptions = []
@@ -998,11 +1028,28 @@ def cmd_claim(args: list[str], run, now: float) -> int:
            "done_means": prior.get("done_means", "") if keep_done else vetted["done"],
            "done_trusted_by": "operator-flag" if (a.trust_author and has_done) else ("author" if has_done else None),
            "claimed_at": prior.get("claimed_at") or _iso(now) if keep else _iso(now),
-           "start_idempotency_key": ev.idempotency_key, "exception": exc_text}
+           "start_idempotency_key": ev.idempotency_key, "exception": exc_text,
+           "session_id": sid, "heartbeat_at": _iso(now), "expires_after_s": expires_s}
+    if taken_over:
+        rec["taken_over_from"] = taken_over
+        rec["claimed_at"] = _iso(now)          # a new holder: the lease starts now
+    if pred_key is not None:
+        rec["successor_of"] = pred_key
     path = save_claim(root, key, rec)
+    if pred_key is not None:
+        def _supersede(cl, _p=pred_key, _k=key):
+            if isinstance(cl.get(_p), dict):
+                cl[_p]["superseded_by"] = _k
+                cl[_p]["heartbeat_at"] = _iso(now)
+        try:
+            store.update_claims(root, _supersede)
+        except store.ClaimsUnreadable as e:
+            print(f"claim: warning - could not mark {pred_key} superseded ({store.redact(str(e))})", file=sys.stderr)
     note = " [acceptance baseline kept: pass --rebase-acceptance to adopt the current body]" \
         if keep and prior["body_sha256"] != vetted["body_sha256"] else ""
-    print(f"claimed {key} for {login} (wip {wip + 1}/{a.limit}{', EXCEPTION: ' + exc_text if exc_text else ''}); recorded {path}{note}")
+    lease = (f"; took over from session {taken_over['session_id']} (lease expired)" if taken_over else "") + \
+            (f"; successor of {pred_key}" if pred_key else "")
+    print(f"claimed {key} for {login} (wip {wip + 1}/{a.limit}{', EXCEPTION: ' + exc_text if exc_text else ''}); recorded {path}{note}{lease}")
     return 0
 
 
@@ -1056,9 +1103,15 @@ def cmd_reconcile(args: list[str], run, now: float) -> int:
     ap.add_argument("issue", nargs="?")
     ap.add_argument("--repo")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--session-id", default=None, help="the lease owner whose claims are heartbeated")
     a = ap.parse_args(args)
     root = project_root()
     claims = load_claims(root)
+    beat: list[str] = []
+    try:   # B5: a reconcile is a heartbeat for every claim THIS session holds (never another session's)
+        beat = store.heartbeat_claims(root, _session_id(root, a.session_id, socket.gethostname()), now)
+    except store.ClaimsUnreadable as e:
+        print(f"reconcile: claims-unreadable - not heartbeating ({store.redact(str(e))})", file=sys.stderr)
     results, cause = [], None
     cfg = login = None
     try:
@@ -1102,6 +1155,8 @@ def cmd_reconcile(args: list[str], run, now: float) -> int:
         except store.ClaimsUnreadable as e:
             print(f"reconcile: claims-unreadable — not pruning ({store.redact(str(e))})", file=sys.stderr)
     out = {"results": results, "complete": cause is None, "pruned_claims": sorted(pruned)}
+    if beat:
+        out["heartbeat"] = sorted(beat)
     if cause:
         out["cause"] = store.redact(cause)
     if a.json:
@@ -1268,7 +1323,12 @@ def cmd_lead(args: list[str], now: float) -> int:
     if a.action == "renew":
         cur["heartbeat_at"] = ts
         store.atomic_write_json(path, cur)
-        print("lead lease renewed")
+        beat = []
+        try:   # B5: renewing the lead lease is also the heartbeat of every claim this session holds
+            beat = store.heartbeat_claims(root, sid, now)
+        except store.ClaimsUnreadable as e:
+            print(f"lead renew: claims-unreadable - claims not heartbeated ({store.redact(str(e))})", file=sys.stderr)
+        print("lead lease renewed" + (f"; heartbeat on {len(beat)} claim(s)" if beat else ""))
         return 0
     path.unlink(missing_ok=True)
     print("lead lease released")
