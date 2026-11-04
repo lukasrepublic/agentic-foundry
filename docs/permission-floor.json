@@ -34,6 +34,11 @@
       "rationale": "status|validate|explain|render-tick-section only read .foundry/operating-model.yaml, the shipped schema and the .foundry/ operator style file (a regular .md or .txt file, at most 4 KiB); the script writes nothing (gv-03)"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_merge_plan.py:*)",
+      "tier": "allow",
+      "rationale": "clusters ready items from two JSON arguments and prints a plan; reads no network and writes nothing (gv-10)"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-permissions-compile.py --check:*)",
       "tier": "allow",
       "rationale": "read-only drift check over .foundry/permissions.yaml vs .claude/settings.json; never writes"
@@ -187,6 +192,11 @@
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-merge-when-green.py:*)",
       "tier": "ask",
       "rationale": "issues gh pr merge <pr> --squash once every check is green — a merge is a repo-state mutation, ask like foundry-authorize.py, never a self-grant"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_queue_land.py:*)",
+      "tier": "ask",
+      "rationale": "merges the base into the PR branch, pushes it, posts the record and enqueues the PR -- a repo-state mutation, ask like foundry-merge-when-green.py, never a self-grant (gv-10)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-stack-profile.py --relock:*)",

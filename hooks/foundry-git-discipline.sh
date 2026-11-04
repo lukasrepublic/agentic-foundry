@@ -20,11 +20,15 @@
 #   (i) `gh pr merge` — (floor-#3 review B2) the outcome-level replacement for
 #       the deleted merge-gate PreToolUse hook's block: `--admin` (server-side-check bypass)
 #       anywhere in the argv is refused OUTRIGHT; `gh pr merge --auto` (any merge method) is
-#       admitted WITHOUT a query — it hands the merge to the platform, whose required checks
-#       enforce the wait server-side (AC-V118B-2); any other `gh pr merge` is admitted ONLY when
+#       clause (k) (gv-10, tightening AC-V118B-2): admitted ONLY when a live read of the PR base's
+#       ruleset names >= 1 required status check AND the live `gh pr checks` is green at the head,
+#       fail-closed on every query error; any other `gh pr merge` is admitted ONLY when
 #       a live `gh pr checks` query reports every check passing (non-zero exit, a fail/pending
 #       row, or a query error/timeout all BLOCK, fail-closed). This is the ONE clause in this
 #       hook that executes anything beyond a static token scan — see its own comment below.
+#   (l) (gv-10) `git push` to a branch whose open PR is in the merge queue (`isInMergeQueue` /
+#       `mergeQueueEntry`, read live over GraphQL) — refused, "dequeue first"; fail-closed on a
+#       query error. A local-path remote or a host gh does not know makes no query.
 # The two reflog-recoverable history ops `git reset --hard` and `git rebase -i` are NOT in
 # the default set; they are the `strict_history_ops` OPT-IN widening (--strict-history),
 # which ADDS them to the active set (a widening, never a relaxation).
@@ -572,6 +576,162 @@ for i, t in enumerate(low):
             block("push refused: %s. Command: %s" % (detail, cmd),
                   remediation=_LOCAL_GREEN_REMEDY, retryable=True)
 
+    def _gh_hosts():
+        """Hosts `gh` is configured for: github.com, $GH_HOST, and the top-level keys of gh's hosts.yml."""
+        hosts_ = {"github.com"}
+        if os.environ.get("GH_HOST"):
+            hosts_.add(os.environ["GH_HOST"].lower())
+        cfg_ = os.environ.get("GH_CONFIG_DIR") or os.path.join(
+            os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "gh")
+        try:
+            for ln_ in open(os.path.join(cfg_, "hosts.yml"), encoding="utf-8"):
+                m2_ = re.match(r"^([A-Za-z0-9.-]+):\s*$", ln_)
+                if m2_:
+                    hosts_.add(m2_.group(1).lower())
+        except OSError:
+            pass
+        return hosts_
+
+    # (l) never push to a PR that is in the merge queue (operating-model rule A2). A push moves the
+    # head the queue is testing and silently restarts or invalidates its entry. The branch's open PR
+    # is read LIVE (`gh pr list`, `isInMergeQueue` / `mergeQueueEntry`); every query error, an
+    # unresolvable repository, or an unresolvable destination while ANY open PR is queued, refuses
+    # (fail-closed). A remote that is a local path or `file:` URL has no PR and is admitted without
+    # a query — nothing there can be queued.
+    def _require_not_queued():
+        if "--dry-run" in lrest or "-n" in lrest:
+            return
+        bare_q = [r for r in rest if not r.startswith("-")]
+        refspecs_q = bare_q[1:] if bare_q else []
+        if "--tags" in lrest and not refspecs_q:
+            return
+        # An unresolvable repository (an earlier cd, --git-dir, a non-literal -C) is judged against the
+        # payload cwd as a best guess: if that guess has a GitHub remote the push is refused (fail-closed);
+        # if it has none there is nothing this clause can read, and the push is admitted as before.
+        unresolvable_ = None
+        for k in range(i):
+            if low[k] in ("cd", "pushd", "popd"):
+                unresolvable_ = "an earlier directory change (%s)" % toks[k]
+        repo_q = os.environ.get("PAYLOAD_CWD", "") or os.getcwd()
+        for opt, val in git_globals:
+            if opt.startswith(("--git-dir", "--work-tree")) or (opt == "-C" and (
+                    not val or any(c in val for c in ("$", "`", "*", "?")))):
+                unresolvable_ = "the git global option %s" % opt
+            elif opt == "-C":
+                repo_q = os.path.join(repo_q, os.path.expanduser(val))
+        try:
+            gd_ = subprocess.run(["git", "-C", repo_q, "rev-parse", "--git-dir"], capture_output=True,
+                                 text=True, timeout=10)
+            if gd_.returncode != 0:
+                return                                   # not a repository: nothing to judge
+            remote_q = bare_q[0] if bare_q else "origin"
+            url_ = subprocess.run(["git", "-C", repo_q, "remote", "get-url", remote_q],
+                                  capture_output=True, text=True, timeout=10)
+        except Exception:
+            return
+        target_ = url_.stdout.strip() if url_.returncode == 0 else (
+            remote_q if re.match(r"^(https?|ssh|git)://|^[^/\s]+@[^/\s]+:", remote_q) else "")
+        if not target_ or target_.startswith(("/", ".", "~", "file:")):
+            return                                       # no such remote / local path: no PR exists
+        m_ = re.match(r"^(?:https?|ssh|git)://(?:[^@/]+@)?([^/:]+)(?::\d+)?/(.+?)(?:\.git)?/?$", target_) \
+            or re.match(r"^[^/\s]+@([^:/\s]+):(.+?)(?:\.git)?/?$", target_)
+        if not m_:
+            return                                       # not a URL shape this scan can name
+        host_q = m_.group(1).lower()
+        if host_q not in _gh_hosts():
+            return                                       # not a GitHub host gh knows: no PR to read
+        if unresolvable_:
+            block("push refused: %s makes the repository unresolvable while a GitHub remote is in play, "
+                  "so its merge queue cannot be read. Command: %s" % (unresolvable_, cmd),
+                  remediation="Run the push from the repository cwd or use `git -C <abs-dir> push`.",
+                  retryable=True)
+        sl_ = m_.group(2).split("/")
+        if len(sl_) != 2 or not all(re.match(r"^[A-Za-z0-9._-]+$", x_) for x_ in sl_):
+            block("push refused: the remote %r does not name an owner/repo, so its merge queue cannot "
+                  "be read; fail-closed. Command: %s" % (remote_q, cmd), retryable=True)
+        owner_q, name_q = sl_
+        dsts_, unknown_, current_ = [], False, not refspecs_q
+        for rs_ in refspecs_q:
+            d_ = strip_dst_ref(rs_)
+            if any(c in rs_ for c in ("$", "`", "*", "?")):
+                unknown_ = True                          # a non-literal destination: unknowable
+            elif d_ == "" and ":" not in rs_.lstrip("+"):
+                current_ = True                          # HEAD: the current branch
+            elif d_ == "":
+                unknown_ = True
+            else:
+                dsts_.append(d_)
+        if current_ and not unknown_:
+            cands_, why_ = _resolve_no_refspec_push(i, git_globals, lrest)
+            if why_:
+                unknown_ = True
+            else:
+                dsts_ = sorted(set(dsts_) | set(cands_))
+        env_q = dict(os.environ)
+        for v_ in ("GH_PAGER", "PAGER", "GH_BROWSER", "BROWSER", "GH_EDITOR", "EDITOR",
+                   "GH_FORCE_TTY", "GH_DEBUG"):
+            env_q.pop(v_, None)
+        env_q["GH_PROMPT_DISABLED"] = "1"
+        env_q["GH_NO_UPDATE_NOTIFIER"] = "1"
+        # `isInMergeQueue` / `mergeQueueEntry` exist only in GraphQL: `gh pr list|view --json` has no
+        # such field (gh 2.97.0 rejects it), so the read goes through `gh api graphql`.
+        node_ = "nodes{number headRefName isInMergeQueue mergeQueueEntry{position state}} pageInfo{hasNextPage}"
+        if unknown_:
+            gql_ = "query($o:String!,$r:String!){repository(owner:$o,name:$r){pullRequests(states:OPEN,first:100){" + node_ + "}}}"
+            vars_ = [[]]
+        else:
+            gql_ = "query($o:String!,$r:String!,$h:String!){repository(owner:$o,name:$r){pullRequests(states:OPEN,headRefName:$h,first:20){" + node_ + "}}}"
+            vars_ = [["-f", "h=" + d_] for d_ in dsts_]
+        queued_ = []
+        for extra_ in vars_:
+            q_ = ["gh", "api"] + (["--hostname", host_q] if host_q != "github.com" else []) + \
+                ["graphql", "-f", "query=" + gql_, "-f", "o=" + owner_q, "-f", "r=" + name_q] + extra_
+            try:
+                pq_ = subprocess.run(q_, capture_output=True, text=True, timeout=30, cwd=repo_q, env=env_q)
+            except FileNotFoundError:
+                block("push refused: `gh` is not on this guard's PATH, so the merge queue of the "
+                      "destination branch cannot be read; fail-closed. Command: " + cmd,
+                      remediation="Fix gh's availability on PATH, then retry the push.", retryable=True)
+            except Exception as e_:
+                block("push refused: the merge-queue query failed (%s: %s); fail-closed. Command: %s"
+                      % (type(e_).__name__, e_, cmd), remediation="Retry once the query succeeds.",
+                      retryable=True)
+            if pq_.returncode != 0:
+                block("push refused: the merge-queue query exited %d (%s); fail-closed. Command: %s"
+                      % (pq_.returncode, _redact((pq_.stderr or "").strip()[:300]), cmd),
+                      remediation="Retry once the query succeeds.", retryable=True)
+            try:
+                prs_ = json.loads(pq_.stdout or "")["data"]["repository"]["pullRequests"]
+                rows_ = prs_["nodes"]
+                if not isinstance(rows_, list):
+                    raise ValueError("not a list")
+                more_ = bool(prs_.get("pageInfo", {}).get("hasNextPage"))
+            except (ValueError, KeyError, TypeError, AttributeError):
+                block("push refused: the merge-queue query returned an unreadable answer; fail-closed. "
+                      "Command: " + cmd, retryable=True)
+            queued_ += [r_ for r_ in rows_ if isinstance(r_, dict)
+                        and (r_.get("isInMergeQueue") is True or r_.get("mergeQueueEntry"))]
+            if more_ and unknown_ and not queued_:
+                block("push refused: the destination branch cannot be resolved and the repository has "
+                      "more than 100 open PRs, so 'nothing is queued' cannot be shown. Command: " + cmd,
+                      remediation="Name the destination explicitly (git push <remote> <branch>).",
+                      retryable=True)
+        if queued_:
+            nums_ = ", ".join("#%s (%s)" % (r_.get("number"), r_.get("headRefName")) for r_ in queued_)
+            if unknown_:
+                block("push refused: the destination branch cannot be resolved from this command and "
+                      "open PR(s) %s are in the merge queue. Command: %s" % (nums_, cmd),
+                      remediation="Name the destination explicitly (git push <remote> <branch>); a branch "
+                                  "whose PR is not queued is admitted.", retryable=True)
+            block("git push to a branch whose PR is in the merge queue refused: %s. A push moves the head "
+                  "the queue is testing. Command: %s" % (nums_, cmd),
+                  remediation="Dequeue the PR first (remove it from the merge queue), push, then enqueue "
+                              "again with queue-land.", retryable=False)
+
+    def _admit_push():
+        _require_local_green()                          # clause (j)
+        _require_not_queued()                           # clause (l)
+
     # (a) force-push — refspec-aware.
     if sub == "push":
         force_flag = any(r in ("--force", "-f", "--force-with-lease") or
@@ -584,7 +744,7 @@ for i, t in enumerate(low):
         plus_force = any(rs.startswith("+") for rs in refspecs)
         force_intent = force_flag or plus_force
         if not force_intent:
-            _require_local_green()                      # clause (j)
+            _admit_push()                      # clauses (j) + (l)
             continue                                    # not a force push → not this op
         # Resolve destination(s). No refspec / HEAD / unparseable => current branch =>
         # UNKNOWN => assume protected (BLOCK). Otherwise BLOCK iff any resolved dst is
@@ -610,7 +770,7 @@ for i, t in enumerate(low):
                 if dst in protected:
                     block("force-push with no refspec resolves to PROTECTED branch %r (the "
                           "current branch or its upstream). Command: %s" % (dst, cmd))
-            _require_local_green()                      # clause (j)
+            _admit_push()                      # clauses (j) + (l)
             continue                                    # resolved, every candidate non-protected
         for rs in refspecs:
             dst = strip_dst_ref(rs)
@@ -620,7 +780,7 @@ for i, t in enumerate(low):
             if dst in protected:
                 block("force-push to PROTECTED branch %r. Command: %s" % (dst, cmd))
         # every refspec resolved to a provably-non-protected branch => admit this clause.
-        _require_local_green()                          # clause (j)
+        _admit_push()                          # clauses (j) + (l)
         continue
 
     # (d) branch -D / --delete --force of a protected branch.
@@ -845,15 +1005,12 @@ for i, t in enumerate(low):
                            "without --admin.",
               retryable=False)
 
-    # AC-V118B-2: `gh pr merge --auto` (any merge method) hands the merge to the platform: GitHub
-    # merges only once the branch's required checks pass, so the platform itself enforces the wait
-    # this clause's live query exists to enforce. Querying here refused exactly the command whose
-    # purpose is to wait for pending checks. `--admin` was refused above, so it cannot ride along.
-    # (On a repo with NO required checks the platform merges at once — the floor there is the
-    # repo's own branch protection, per docs/merge-floor.md, not this clause.)
-    if _want_auto:
-        continue
-
+    # AC-V118B-2, TIGHTENED by clause (k) (gv-10, operating-model rule A2): `gh pr merge --auto` hands
+    # the merge to the platform, which waits only for the checks the base branch's ruleset NAMES. On
+    # a base with no required status check it merges at once — a red PR landed that way — so the old
+    # blanket admission is withdrawn. `--auto` is now admitted only when (1) the live ruleset of the
+    # PR's base names at least one required status check AND (2) `gh pr checks` is all green at the
+    # current head (the same live query as a plain merge, run below). `--admin` was refused above.
     # --- CONTEXT BINDING (feat-foundry-merge-verify-context, AC-MVC-1..8) -------------------
     # The verification MUST grade THE PR BEING MERGED. `gh` resolves a PR from ambient state —
     # the cwd's git remote, GH_CONFIG_DIR/GH_HOST/GH_TOKEN, the current branch — so a query
@@ -1010,6 +1167,65 @@ for i, t in enumerate(low):
             block_context(f"The inline assignment {t!r} is not a literal value, so the GitHub "
                       "identity the merge would use cannot be reproduced.")
         run_env[name] = val
+
+    if _want_auto:
+        # (k) part 1: read the LIVE ruleset of the PR's base branch before relying on it. Fail
+        # closed on every query error, unparseable answer, or an empty rule set.
+        def _gh_query(argv_, what):
+            try:
+                pr_ = subprocess.run(argv_, capture_output=True, text=True, timeout=30,
+                                     cwd=run_cwd, env=run_env)
+            except FileNotFoundError:
+                block("gh pr merge --auto refused: `gh` is not on this guard's PATH, so the base "
+                      "branch's required checks cannot be read (%s); fail-closed. Command: %s" % (what, cmd),
+                      remediation="Fix gh's availability on PATH, then retry.", retryable=True)
+            except Exception as e_:
+                block("gh pr merge --auto refused: the %s query failed (%s: %s); fail-closed. "
+                      "Command: %s" % (what, type(e_).__name__, e_, cmd),
+                      remediation="Retry once the query succeeds.", retryable=True)
+            if pr_.returncode != 0:
+                block("gh pr merge --auto refused: the %s query exited %d (%s); fail-closed. "
+                      "Command: %s" % (what, pr_.returncode, _redact((pr_.stderr or "").strip()[:300]), cmd),
+                      remediation="Retry once the query succeeds.", retryable=True)
+            return pr_.stdout or ""
+
+        view_argv = ["gh", "pr", "view", pr_ref, "--json", "baseRefName,url"] + \
+            (["--repo", repo_sel] if repo_sel else [])
+        try:
+            view = json.loads(_gh_query(view_argv, "PR base-branch"))
+            base_ref = view["baseRefName"]
+            m_repo = re.match(r"^https?://([^/]+)/([^/]+)/([^/]+)/pull/\d+", str(view.get("url", "")))
+            if not (isinstance(base_ref, str) and base_ref and m_repo):
+                raise ValueError("no baseRefName/url")
+        except (ValueError, KeyError, TypeError, AttributeError):
+            block("gh pr merge --auto refused: the PR's base branch and repository could not be read, "
+                  "so its ruleset cannot be checked; fail-closed. Command: " + cmd)
+        if not re.match(r"^[A-Za-z0-9._/-]+$", base_ref) or ".." in base_ref:
+            block("gh pr merge --auto refused: the base branch name %r is not a plain ref name. "
+                  "Command: %s" % (base_ref, cmd))
+        api_argv = ["gh", "api", "repos/%s/%s/rules/branches/%s" % (m_repo.group(2), m_repo.group(3), base_ref)]
+        if m_repo.group(1).lower() != "github.com":
+            api_argv[2:2] = ["--hostname", m_repo.group(1)]
+        try:
+            rules = json.loads(_gh_query(api_argv, "base-branch ruleset"))
+            if not isinstance(rules, list):
+                raise ValueError("not a list")
+            required = [r_ for r_ in rules if isinstance(r_, dict)
+                        and r_.get("type") == "required_status_checks"
+                        and isinstance(r_.get("parameters"), dict)
+                        and r_["parameters"].get("required_status_checks")]
+        except (ValueError, TypeError):
+            block("gh pr merge --auto refused: the ruleset of base %r could not be parsed; fail-closed. "
+                  "Command: %s" % (base_ref, cmd))
+        if not required:
+            block("gh pr merge --auto refused: the ruleset of base %r names NO required status check, so "
+                  "the platform would merge without waiting for anything (a red PR has landed that way). "
+                  "Command: %s" % (base_ref, cmd),
+                  remediation="Add a required status check to the base branch's ruleset (an operator "
+                              "step), or merge with `/foundry:merge-when-green %s`, which waits for "
+                              "green checks itself." % pr_ref,
+                  retryable=False)
+        # (k) part 2 falls through to the live `gh pr checks` query below: all green at this head.
 
     check_argv = ["gh", "pr", "checks", pr_ref] + (["--repo", repo_sel] if repo_sel else [])
     try:

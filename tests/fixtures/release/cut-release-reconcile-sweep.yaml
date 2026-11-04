@@ -178,7 +178,7 @@ hook_comment_expectation:
   #      checkout main" && …`, `./x.sh; …`, `make …` and `git stash branch …` keep the push
   #      refused), and a remote configured as a mirror keeps it refused. Strictly narrower than 9.
   #      Corpus: tests/test_hooks_guards.py::test_v118_review_r1_*.
-  executable_content_sha256: 'a425192acca631864aadc4452d5ea6810d60b08e6669b6de633ffee9015c8401'  # v2.0.0 clause (j) local-green (ticket #269)
+  executable_content_sha256: 'ae488de2f0438e898dcb5da8342568377f0346f82df8b756375110ab35e742aa'  # gv-10 clauses (k) --auto needs a required check + green head, (l) no push to a queued PR; was clause (j) local-green (ticket #269)
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
 operator_registry_shape:

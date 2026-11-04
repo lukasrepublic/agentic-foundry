@@ -5,6 +5,32 @@ description: The one primitive that replaces sleep-then-poll around a merge (/fo
 
 # /foundry:merge-when-green
 
+**This skill is the front for landing a PR. Pick the path from the base branch's live ruleset** (gv-10,
+operating-model rule A2). Read it; do not assume it:
+
+```bash
+gh api repos/{owner}/{repo}/rules/branches/{base}
+```
+
+- **The ruleset has a `merge_queue` rule and at least one required status check** — land with the queue. Run it
+  from a checkout of the PR's own branch (`--dry-run` stops after the record):
+  ```bash
+  python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_queue_land.py" <pr>
+  ```
+  It merges the base into the branch (a merge commit, never a rebase or a force), runs the tests that name a
+  changed shared catalogue, posts the one-line record `PR | head | base merged at | catalogue tests | branch full
+  suite | queued`, enqueues with `--auto`, reads the queue entry twice and waits. If a record column cannot be filled
+  honestly it refuses and names the column. A rejection is classified from the failed log: **own files** → fix
+  them; **outside the diff** → evidence posted, re-queue **once**; the **same failure again** → a quarantine
+  request for the test's owner, **never a third roll**. A skipped check is not a pass. It enqueues, so it asks first.
+- **No merge queue** — use the CLI documented below, which waits for green and merges.
+- **Never** `--admin`, a force flag, or a push to a PR that is in the queue (dequeue first). The git-discipline hook
+  refuses all three, and refuses `--auto` unless the base names a required check and the head is green.
+- **Never edit CI to make a PR pass.** Workflows, CI scripts, test configs and quarantine lists are refused by the
+  paper guard unless the ticket names them (`foundry-ticket.py allow --ci <path>`, the operator's call).
+
+The rest of this page documents the no-queue path.
+
 The mechanical half is `scripts/foundry-merge-when-green.py`. It is the primitive a session uses in
 place of guessing a wait interval and re-checking `gh pr checks` by hand - measured at 90
 sleep-blocks and 83 "pending checks" refusals across a single release, plus one permanent deadlock

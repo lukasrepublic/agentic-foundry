@@ -3,6 +3,8 @@
 
     foundry-ticket.py start <issue|url> [--repo OWNER/NAME] [--trust-author]
     foundry-ticket.py allow <path> [<path>...]        permit writing a paper path for this ticket
+    foundry-ticket.py allow --ci <path> [<path>...]   permit editing a CI path (workflows, CI scripts, test configs,
+                                                      quarantine lists) for this ticket; the operator's call (gv-10)
     foundry-ticket.py done                            run the ticket's Done-means command
     foundry-ticket.py status                          print the active ticket
     foundry-ticket.py clear                           forget the active ticket
@@ -269,16 +271,20 @@ def cmd_allow(args: list[str]) -> int:
     doc = load(root)
     if not doc:
         sys.exit("foundry-ticket: no active ticket; run `foundry-ticket.py start <issue>` first")
+    ci = "--ci" in args
+    args = [a for a in args if a != "--ci"]
     if not args:
-        sys.exit("usage: foundry-ticket.py allow <path> [<path>...]")
+        sys.exit("usage: foundry-ticket.py allow [--ci] <path> [<path>...]")
+    key = "ci_allowed" if ci else "paper_allowed"
+    doc.setdefault(key, [])
     for a in args:
         n = norm_path(a, root)
         if not n:
             sys.exit(f"foundry-ticket: {a!r} is not a path under the project root")
-        if n not in doc["paper_allowed"]:
-            doc["paper_allowed"].append(n)
+        if n not in doc[key]:
+            doc[key].append(n)
     save(doc, root)
-    print("paper allowed for #%s: %s" % (doc["issue"], ", ".join(doc["paper_allowed"])))
+    print("%s allowed for #%s: %s" % ("ci" if ci else "paper", doc["issue"], ", ".join(doc[key])))
     return 0
 
 

@@ -14,14 +14,25 @@ Admitted without a ticket (rule-mandated): `.foundry/research/`, `.foundry/decis
 `governance/rendered/` — except a file named acceptance-contract.yaml / release.yaml / state.yaml, which
 still needs a ticket.
 
+A second class, `ci` (gv-10, operating-model rule A2: never edit CI to make a PR pass), is gated the same
+way: `.github/workflows/**`, `.github/actions/**`, other CI-system files (`.gitlab-ci.yml`, `.circleci/**`,
+`Jenkinsfile`, `azure-pipelines.yml`, `scripts/ci/**`, `ci/**`), any script the repo's own workflows invoke
+from `scripts/`/`ci/`/`tools/`, test configs (`pyproject.toml`, `setup.cfg`, `.coveragerc` at the root;
+`pytest.ini`, `tox.ini`, `jest|vitest|playwright|karma.config.*` anywhere), and quarantine lists
+(`quarantine*.json|yaml|yml`). It is refused unless the active ticket names the path (or a parent directory)
+in `paper_allowed` or in `ci_allowed` (`foundry-ticket.py allow --ci <path>`). With no ticket it is refused.
+The point is not that CI never changes: it is that an agent never changes it to turn its own red check green.
+
 Everything else — code, infra, tests, CLAUDE.md, config — is admitted without a ticket. Writes
 outside the project root (e.g. ~/.claude memory) are admitted; so is a symlink that resolves
 outside it. Malformed payloads are admitted (a visibility control, not a security floor). The
 first path component is compared case-insensitively on case-insensitive filesystems (darwin).
 A refusal is exit 2 with the reason on stderr (what the agent sees) and as JSON on stdout.
 """
+import fnmatch
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -33,6 +44,18 @@ PAPER_DIRS = ("specs", "intake", ".foundry", "status-reports", "charters", "docs
 # ticket. Exact directory names, not a free pass: every other path under `.foundry/` stays paper.
 PAPER_ADMITTED = (".foundry/research", ".foundry/decisions", "governance/local", "governance/rendered")
 PAPER_FILES = ("acceptance-contract.yaml", "release.yaml", "state.yaml")
+# The `ci` class (gv-10). Globs are matched against the root-relative POSIX path; `**/x` also matches a
+# root-level `x`. A path under a directory glob (`dir/**`) matches at any depth below it.
+CI_GLOBS = (
+    ".github/workflows/**", ".github/actions/**", ".gitlab-ci.yml", ".circleci/**", "Jenkinsfile",
+    "azure-pipelines.yml", "scripts/ci/**", "ci/**",
+    "pyproject.toml", "setup.cfg", ".coveragerc",
+    "**/pytest.ini", "**/tox.ini", "**/jest.config.*", "**/vitest.config.*", "**/playwright.config.*",
+    "**/karma.conf.*", ".mocharc.*",
+    "**/quarantine*.json", "**/quarantine*.yaml", "**/quarantine*.yml",
+)
+# A script a workflow names: `run: scripts/x.sh`, `python3 ci/check.py`, `bash ./tools/lint.sh`.
+_CI_SCRIPT_RE = re.compile(r"(?<![\w./-])(?:\./)?((?:scripts|ci|tools)/[\w./-]+\.(?:sh|py|js|mjs|cjs|ts|rb|ps1))\b")
 CASEFOLD = sys.platform == "darwin" or os.name == "nt"
 
 
@@ -57,6 +80,36 @@ def _is_paper(rel: Path) -> bool:
     if any(rel_s.startswith(_key(a) + "/") for a in PAPER_ADMITTED):
         return False
     return _key(parts[0]) in {_key(d) for d in PAPER_DIRS}
+
+
+def _glob_match(rel_s: str, pat: str) -> bool:
+    if pat.endswith("/**"):
+        return rel_s.startswith(pat[:-2])
+    if pat.startswith("**/"):
+        parts = rel_s.split("/")
+        return any(fnmatch.fnmatchcase("/".join(parts[k:]), pat[3:]) for k in range(len(parts)))
+    return fnmatch.fnmatchcase(rel_s, pat)
+
+
+def _ci_scripts(root: Path) -> set:
+    """Scripts the repo's own workflows invoke (read live, so a new CI script is covered at once)."""
+    found = set()
+    wf = root / ".github" / "workflows"
+    try:
+        for f in sorted(wf.iterdir()):
+            if f.suffix in (".yml", ".yaml") and f.is_file():
+                for m in _CI_SCRIPT_RE.finditer(f.read_text(encoding="utf-8", errors="replace")):
+                    found.add(_key(m.group(1)))
+    except OSError:
+        pass
+    return found
+
+
+def _is_ci(rel: Path, root: Path) -> bool:
+    rel_s = _key(rel.as_posix())
+    if any(_glob_match(rel_s, _key(g)) for g in CI_GLOBS):
+        return True
+    return rel_s in _ci_scripts(root)
 
 
 def _allowed(rel: Path, allowed: list) -> bool:
@@ -102,7 +155,9 @@ def main() -> int:
         rel = resolved.relative_to(root)
     except Exception:
         return 0  # outside the project → not our business
-    if not _is_paper(rel):
+    is_paper = _is_paper(rel)
+    is_ci = (not is_paper) and _is_ci(rel, root)
+    if not (is_paper or is_ci):
         return 0
 
     ticket_file = store.ticket_file(root)   # git dir only — never the work tree
@@ -112,10 +167,18 @@ def main() -> int:
             doc = json.loads(ticket_file.read_text(encoding="utf-8"))
         except Exception:
             doc = None
-    if doc and _allowed(rel, doc.get("paper_allowed") or []):
+    if doc and _allowed(rel, (doc.get("paper_allowed") or []) + ((doc.get("ci_allowed") or []) if is_ci else [])):
         return 0
 
     p = rel.as_posix()
+    if is_ci:
+        base = ("%s is a CI path (workflows, CI scripts, test configs, quarantine lists). Never edit CI "
+                "to make a PR pass: fix the code or report the failure. " % p)
+        if doc:
+            return _refuse(base + "Ticket #%s does not allow it. If the operator asked for this CI change, run "
+                           "`python3 \"$CLAUDE_PLUGIN_ROOT/scripts/foundry-ticket.py\" allow --ci %s` and retry." % (doc.get("issue"), p))
+        return _refuse(base + "No active ticket; start one (`foundry-ticket.py start <issue>`) and have the "
+                       "operator allow the path with `allow --ci %s`." % p)
     if doc:
         return _refuse("ticket #%s does not allow writing %s. If the operator asked for this document, run "
                        "`python3 \"$CLAUDE_PLUGIN_ROOT/scripts/foundry-ticket.py\" allow %s` and retry. "
