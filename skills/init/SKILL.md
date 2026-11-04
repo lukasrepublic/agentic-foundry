@@ -194,11 +194,29 @@ standalone plugin repo) so the gates are live + fail-closed.
 
    If the operator selects no profile, skip this block entirely and move on — do not run `--lock`
    with an empty/placeholder id.
-10. **Run `/foundry:doctor`** — must be `DOCTOR-GREEN` before the adopter is live. Fail-closed.
+10. **GitHub scope (required).** Write `github_scope` into `.claude/foundry-project.json`:
+   `{"owner": "<login or org>", "planning_repo": "<repo>", "operators": {"<login>": {}}}` (optional
+   `project_number`). There is one operating mode and a solo developer is a team of one, so everyone sets it
+   the same way. The GitHub-backed verbs (`foundry-ticket.py next|claim|reconcile|lead`, the inbox, the
+   leader-board, the deck, usage, `foundry_migrate.py cutover`, the issue-assignment dispatch lane) refuse
+   with `github-scope-missing` until it is present; the base ticket loop (`start|allow|done|status|clear`)
+   runs without it. Doctor shows `github-scope: missing — run /foundry:init` until it is set and is never RED
+   on it.
+
+   **Trust.** List every operator login in `github_scope.operators` (the keys of that object). A
+   `<!-- foundry-deck: ... -->` marker comment (`resolved`, `accepted`, `ack`, `start`, `blocker_ack`, ...) is
+   authoritative only when its author is trusted: the authenticated `gh` login, a listed operator, or, only when
+   no operators are listed, the repository owner or a login with a write/maintain/admin permission lookup. A
+   bare member or read-level collaborator is foreign: its marker is shown as `unparsed` / `foreign_author`,
+   visible but never authoritative. Likewise an issue's `## Done means` command is run by the dispatch path only
+   when its author (and last editor) has write access: `foundry-ticket.py read-issue <issue> --json` reports
+   `done_trusted`, `claim` refuses an untrusted one (`done-means-untrusted`) unless the operator, having read it,
+   passes `--trust-author`, and `next` skips such issues.
+11. **Run `/foundry:doctor`** — must be `DOCTOR-GREEN` before the adopter is live. Fail-closed.
    (Retired: this step used to also pin the gate wiring via `foundry-wiring-hash.py`;
    that script no longer exists in this repo, and the current thin doctor —
    `skills/doctor/SKILL.md` — carries no wiring-hash check, so there is nothing left to pin.)
-11. **Status lines (opt-in, additive — isolation-first) — VERIFY-ONLY.** A wired native
+12. **Status lines (opt-in, additive — isolation-first) — VERIFY-ONLY.** A wired native
    `statusLine` surfaces the highest-value ambient signals every prompt (isolation state,
    current task, context-window headroom) — fail-open, opt-in, and for the ROOT session in a
    visual terminal only (v1.18.2: the `subagentStatusLine` key is retired — it ran once per
@@ -235,7 +253,7 @@ standalone plugin repo) so the gates are live + fail-closed.
    and why the `$CLAUDE_PROJECT_DIR` indirection is required (`${CLAUDE_PLUGIN_ROOT}` does not
    expand inside a `statusLine` command).
    <!-- /foundry:init-verify-only:statusline -->
-12. **Native Bash sandbox (opt-in write-confinement hardening) — VERIFY-ONLY.** Enabling
+13. **Native Bash sandbox (opt-in write-confinement hardening) — VERIFY-ONLY.** Enabling
     Claude Code's native OS-level Bash sandbox kernel-confines a dispatched worker's Bash
     **writes** to its worktree (macOS Seatbelt / Linux+WSL2 bubblewrap; subagent- +
     git-worktree-aware) — opt-in, advisory, and this step's verdict does not affect
@@ -259,7 +277,7 @@ standalone plugin repo) so the gates are live + fail-closed.
     Grounding for the exact key shape: the official Claude Code sandboxing docs
     (`code.claude.com/docs/en/sandboxing`).
     <!-- /foundry:init-verify-only:sandbox -->
-13. **Runtime-partition `.gitignore` (default-deny, leak-prevention).** Run `scripts/foundry-apply-runtime-gitignore.sh <repo-root>`
+14. **Runtime-partition `.gitignore` (default-deny, leak-prevention).** Run `scripts/foundry-apply-runtime-gitignore.sh <repo-root>`
     against the adopter repo. It installs the
     default-deny `.foundry/*` block (re-including only the small designed-tracked set:
     `README.md`, the `/foundry:relock` pin, `stack-profile.lock`) as an idempotent
@@ -273,7 +291,7 @@ standalone plugin repo) so the gates are live + fail-closed.
     (working tree, full history, tracked `.foundry/` state, and a remote direct-SHA probe) to run
     clean; see the script's own `--help` for its remote/known-bad-SHA options.
 
-14. **Guided first ticket (the hello-loop).** Close onboarding by walking the operator through
+15. **Guided first ticket (the hello-loop).** Close onboarding by walking the operator through
     ONE small, throwaway ticket end-to-end, so the first real run of the loop happens before you
     need it for something that matters:
 

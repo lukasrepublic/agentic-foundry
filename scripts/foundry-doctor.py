@@ -784,16 +784,14 @@ def check_github_capabilities(project_dir=None):
     return (True if line == "full" or line.startswith("n/a") else ADVISORY), line
 
 
-def check_operating_mode(project_dir=None):
-    """gn-17: one advisory line -- `single-operator (default)` | `single-operator (explicit)` | `team` |
-    `single-operator (malformed value "<x>")`. NEVER RED; a crash is an ADVISORY line. This is the
-    workspace operating mode, NOT the session posture (`/foundry:mode`)."""
+def check_github_scope(project_dir=None):
+    """One advisory line: `ok` | `missing — run /foundry:init`. NEVER RED; a crash is an ADVISORY line."""
     pdir = project_dir or _project_dir()
     try:
         if HERE not in sys.path:
             sys.path.insert(0, HERE)
-        import foundry_operating_mode as om
-        return True, om.resolve(pdir).line
+        import foundry_github_capabilities as ghc
+        return True, "ok" if ghc.load_scope(pdir)[1] is not None else "missing — run /foundry:init"
     except Exception as e:  # noqa: BLE001 -- advisory: a crash is a line, not a RED
         return ADVISORY, _sanitize_detail(f"probe crashed: {type(e).__name__}: {e}")
 
@@ -986,10 +984,8 @@ def main():
     ra_ok, ra_detail = check_retired_artifacts(project_dir=project_dir)
     _render_row("retired-artifacts", ra_ok, ra_detail)
 
-    # `operating-mode` (gn-17): advisory, never RED, offline (a config read) so it also shows under
-    # --session-start.
-    om_ok, om_detail = check_operating_mode(project_dir=project_dir)
-    _render_row("operating-mode", om_ok, om_detail)
+    gs_ok, gs_detail = check_github_scope(project_dir=project_dir)
+    _render_row("github-scope", gs_ok, gs_detail)
     omp_ok, omp_detail = check_operating_model(project_dir=project_dir)
     _render_row("operating-model", omp_ok, omp_detail)
 

@@ -188,19 +188,19 @@ grouped by stage, is on **[docs/VERBS-QUICK-REF.md](docs/VERBS-QUICK-REF.md)**.
 
 `init → dispatch → merge-when-green`
 
-That's the whole discipline, plus your own CI. The other ~33 skills are an **optional catalog** —
+That's the whole discipline, plus your own CI. The other ~32 skills are an **optional catalog** —
 the opt-in spec lane (`intake`, `authorize`), infra-delivery (`id-*`) craft for OpenTofu/K8s/ArgoCD
 shops, multi-repo (`repos`), release cutting and upgrade tooling. Use three verbs, ignore the rest,
 add lanes when you need them. Want zero ceremony for a small change? Plain Claude Code on a branch
 is the documented escape hatch — `/foundry:mode interactive` says so out loud.
 
-## Operating modes
+## One mode: a team of one
 
-Foundry runs in one of two modes per workspace. **Single-operator mode** is the default and is what you
-get on install or upgrade: the ticket-first loop with no team features and no GitHub team surfaces.
-**Team mode** (opt-in, from 2.0) adds the GitHub-native model: owned queue, operator inbox, issue-bound
-dispatch, usage collection and the leader-board. Check or change it with `/foundry:team-mode`
-(`status`, `enable`, `disable`); it is reversible and is not the session posture (`/foundry:mode`).
+There is one operating mode. A solo developer is a team of one: the ticket-first loop and the GitHub-native
+model (owned queue, operator inbox, issue-bound dispatch, usage collection, the leader-board) are the same
+for everyone. The GitHub-backed verbs need a `github_scope` (`owner`, `planning_repo`) in
+`.claude/foundry-project.json`, which `/foundry:init` sets; without it they refuse with `github-scope-missing`,
+and the base ticket loop keeps working. `/foundry:doctor` shows a `github-scope` line.
 
 ## The merge floor, honestly
 

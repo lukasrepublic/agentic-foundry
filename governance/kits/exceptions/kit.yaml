@@ -1,0 +1,7 @@
+kit: exceptions
+version: 1.0.0
+category: exceptions
+rules: [FG-EXC-001, FG-EXC-002, FG-EXC-003, FG-EXC-004]
+checks: []
+templates: []
+migrations: []

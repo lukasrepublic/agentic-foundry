@@ -607,3 +607,23 @@ def test_no_project_relative_phrasing_remains():
     floor = open(os.path.join(ROOT, "docs", "permission-floor.json")).read()
     assert "operator style file" in floor
     assert open(os.path.join(ROOT, "docs", "permission-floor.json")).read() == open(os.path.join(ROOT, "cli", "permission-floor.json")).read()
+
+
+# ---- the brief renderer (gv-01) picks the policy up by file location ---------------------------
+def test_communication_style_function_values(tmp_path):
+    assert om.communication_style(_ws(tmp_path / "a")) == "simplified-technical-english"
+    assert om.communication_style(_ws(tmp_path / "b", _set("communication.style", "off"))) == "off"
+    assert om.communication_style(_ws(tmp_path / "c", "communication:\n  style: operator-defined\n")) == "operator-defined"
+
+
+def test_brief_renderer_follows_the_policy_file(tmp_path):
+    sys.path.insert(0, os.path.join(ROOT, "tests"))
+    from test_brief_render import render, STYLE_MARK
+    from test_governance_core import make_project
+    proj = make_project(tmp_path / "on")
+    assert STYLE_MARK in render(ROOT, proj, {})[1]  # control: default policy keeps the E2 block
+    proj_off = make_project(tmp_path / "off")
+    os.makedirs(os.path.join(proj_off, ".foundry"), exist_ok=True)
+    open(os.path.join(proj_off, ".foundry", "operating-model.yaml"), "w").write(_set("communication.style", "off"))
+    rc, out, _ = render(ROOT, proj_off, {})
+    assert rc == 0 and STYLE_MARK not in out

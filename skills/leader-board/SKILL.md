@@ -5,7 +5,7 @@ description: Read-only operator and outcome statistics (/foundry:leader-board) o
 
 # /foundry:leader-board
 
-**Team mode only.** In the default single-operator mode this verb refuses. Enable it with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_operating_mode.py" enable-team` (needs plugin 2.0 or later; see `/foundry:team-mode`).
+Needs a well-formed `github_scope` in `.claude/foundry-project.json` (set by `/foundry:init`); without it this verb refuses with `github-scope-missing`.
 
 A read-only report. It writes nothing to GitHub or to the workspace. It combines GitHub work history
 (gn-04 events over issue timelines and comments) with the native usage dataset (gn-05) and the

@@ -26,8 +26,8 @@ session's normal permission mode.
 
 ALSO NEVER ALLOWED SILENTLY (security review of #286) — the verbs the permission floor tiers `ask` because
 they write to GitHub or redirect writes: `foundry_migrate.py cutover`, `foundry_deck_events.py emit`,
-`foundry_inbox.py check|ack|schedule|resolve`, `foundry-ticket.py claim`, `foundry_operating_mode.py
-enable-team|disable-team`, `foundry_usage.py bind|fallback-transcripts` and `ingest|attribute` when `--dataset` is named, and any
+`foundry_inbox.py check|ack|schedule|resolve`, `foundry-ticket.py claim`,
+`foundry_governance.py render|baseline`, `foundry_usage.py bind|fallback-transcripts` and `ingest|attribute` when `--dataset` is named, and any
 abbreviation of `--trust-author`. The hook is the only silent-allow mechanism, so without this the `ask` rows
 would never be enforced.
 
@@ -62,7 +62,7 @@ _ASK_VERBS = {
     "foundry_deck_events.py": {"emit"},
     "foundry_inbox.py": {"check", "ack", "schedule", "resolve"},
     "foundry-ticket.py": {"claim"},
-    "foundry_operating_mode.py": {"enable-team", "disable-team"},
+    "foundry_governance.py": {"render", "baseline"},  # write governance/rendered/ and governance/local/baselines/
     "foundry_usage.py": {"bind", "fallback-transcripts"},  # the floor row is ask with or without --dataset
 }
 _USAGE_DATASET_VERBS = {"ingest", "attribute"}   # ask only when a dataset is NAMED (`--dataset`, any argparse abbreviation)

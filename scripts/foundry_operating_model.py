@@ -31,7 +31,6 @@ import re
 import stat
 import sys
 import unicodedata
-from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -214,13 +213,16 @@ def validate_text(text):
 # ---------------------------------------------------------------------------------------------
 # Policy
 # ---------------------------------------------------------------------------------------------
-@dataclass
 class Policy:
-    values: dict = field(default_factory=dict)    # dotted key -> effective value
-    sources: dict = field(default_factory=dict)   # dotted key -> "default" | "file"
-    floors: frozenset = frozenset()               # dotted keys that are FLOOR
-    path: str = ""                                 # the file path ("" when absent)
-    file_present: bool = False
+    """Effective policy. A plain class (not a dataclass) so the module also loads when another script
+    imports it by file location without registering it in sys.modules."""
+
+    def __init__(self, values=None, sources=None, floors=frozenset(), path="", file_present=False):
+        self.values = values if values is not None else {}    # dotted key -> effective value
+        self.sources = sources if sources is not None else {}  # dotted key -> "default" | "file"
+        self.floors = floors                                   # dotted keys that are FLOOR
+        self.path = path                                       # the file path ("" when absent)
+        self.file_present = file_present
 
     def get(self, key):
         return self.values[key]
@@ -320,6 +322,12 @@ def load(project_dir=None):
         values[key] = v
         sources[key] = "file"
     return Policy(values, sources, floors, str(path), True)
+
+
+def communication_style(project_dir=None):
+    """The effective `communication.style` word: simplified-technical-english | off | operator-defined.
+    The shared brief renderer calls this by file location. A broken policy raises PolicyError."""
+    return load(project_dir).get("communication.style")
 
 
 def resolve_workflow_size(policy, session_size=None, prompt_size=None):

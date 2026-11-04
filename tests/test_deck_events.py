@@ -277,8 +277,8 @@ def test_naive_as_of_rejected():
 
 
 def test_cli_parse_uses_adapter(monkeypatch, capsys, tmp_path):
-    (tmp_path / ".claude").mkdir()   # gn-17: the CLI is a team-mode verb
-    (tmp_path / ".claude" / "foundry-project.json").write_text('{"operating_mode": "team", "github_scope": {"owner": "example-org", "planning_repo": "planning"}}')
+    (tmp_path / ".claude").mkdir()   # the CLI needs github_scope
+    (tmp_path / ".claude" / "foundry-project.json").write_text('{"github_scope": {"owner": "example-org", "planning_repo": "planning"}}')
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
     tl, cm = fx("close_not_planned")
 

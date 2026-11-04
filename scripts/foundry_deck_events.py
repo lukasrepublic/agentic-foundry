@@ -649,8 +649,8 @@ def main(argv=None) -> int:
     e.add_argument("event")
     e.add_argument("--payload", default="{}")
     a = ap.parse_args(argv)
-    import foundry_operating_mode as _om  # gn-17: the CLI is a team-mode verb (module imports stay ungated)
-    refused = _om.gate(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd(), f"foundry_deck_events.py {a.cmd}")
+    import foundry_github_capabilities as _ghc  # the CLI needs github_scope (module imports stay ungated)
+    refused = _ghc.gate(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd(), f"foundry_deck_events.py {a.cmd}")
     if refused is not None:
         return refused
     try:

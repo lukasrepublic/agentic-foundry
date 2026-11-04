@@ -17,8 +17,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 FIX = json.loads((ROOT / "tests" / "fixtures" / "gn_owned_queue" / "queue.json").read_text())
-FIX["config"]["operating_mode"] = "team"
-FIX["config"]["github_scope"].setdefault("planning_repo", "planning")   # gn-17: the owned queue is a team-mode surface
+FIX["config"]["github_scope"].setdefault("planning_repo", "planning")   # the owned queue needs github_scope
 sys.path.insert(0, str(SCRIPTS))
 
 _spec = importlib.util.spec_from_file_location("foundry_ticket_oq", SCRIPTS / "foundry-ticket.py")

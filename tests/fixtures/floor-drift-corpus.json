@@ -240,7 +240,11 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_operating_mode.py:*)",
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_governance.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_brief.py:*)",
             "origin": "settings.json"
           },
           {
@@ -544,7 +548,11 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_operating_mode.py:*)",
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_governance.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_brief.py:*)",
             "origin": "settings.json"
           },
           {
@@ -796,7 +804,11 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_operating_mode.py:*)",
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_governance.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_brief.py:*)",
             "origin": "settings.json"
           },
           {
@@ -1064,7 +1076,11 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_operating_mode.py:*)",
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_governance.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_brief.py:*)",
             "origin": "settings.json"
           },
           {
@@ -1318,7 +1334,11 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_operating_mode.py:*)",
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_governance.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_brief.py:*)",
             "origin": "settings.json"
           },
           {

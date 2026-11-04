@@ -1213,7 +1213,7 @@ def test_claude_md_carries_one_stage_mode_line(tmp_path):
     assert matches == ["scale"]
 
 
-def test_claude_md_carries_the_ticket_first_operating_model(tmp_path):
+def test_claude_md_carries_the_ticket_first_working_model(tmp_path):
     # v2.0.0 (ticket #269): the scaffolded CLAUDE.md points at the one-page operating model and
     # names the ticket as the unit of work; the atomic-spec convention line is gone from the default.
     proc, home, target = _scaffold(tmp_path)

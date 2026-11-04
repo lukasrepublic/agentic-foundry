@@ -43,7 +43,7 @@ def main():
         if not isinstance(payload, dict):
             return 0
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-        import foundry_operating_mode as om
+        import foundry_github_capabilities as ghc
         import foundry_usage as fu
 
         cwd = payload.get("cwd") or os.getcwd()
@@ -53,7 +53,7 @@ def main():
         ws = fu.project_root(ws_env)
         if os.path.realpath(fu.project_root(cwd)) != os.path.realpath(ws):
             return 0    # the cwd belongs to another project tree: refuse, write nothing
-        if om.resolve(ws).name != om.TEAM:  # gn-17: no-op outside team mode
+        if ghc.load_scope(ws)[1] is None:  # no github_scope: no-op (nothing to bind to)
             return 0
         ds = fu.dataset_dir(None, start=ws)
         sid = payload.get("session_id")

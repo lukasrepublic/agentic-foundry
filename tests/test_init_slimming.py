@@ -7,7 +7,7 @@ per-artifact disposition (REFUSE where `[[feat-foundry-bootstrap-cli]]` owns the
 stages in order with the one-keypress explanation and a cleanup instruction while staying inside a
 tight negative scope, that the honest tiering section carries all five rows with real owners, that
 the numbering/inherited-anchor/grep-lock surface survives, that the untouched step slices
-{1,3,5,6,7,8,9,10,13} are byte-identical to the merge-base blob (supplied via `INIT_SLIMMING_BASE`
+{1,3,5,6,7,8,9,11,14} are byte-identical to the merge-base blob (supplied via `INIT_SLIMMING_BASE`
 by the checkpoint locator — this case FAILS, never skips, when that var is unset/unreadable), that
 the six release-atomicity literals are gone at FILE scope, and that all of the above checks are
 non-vacuous (a negative control per lock class, over mutated in-memory copies).
@@ -66,14 +66,14 @@ POINTER_TRIPLE = [
 ]
 
 TIERING_KEYS = ("status lines", "native Bash sandbox", "git identity", "plugin enablement", "permission floor")
-UNTOUCHED_STEPS = (1, 3, 5, 6, 7, 8, 9, 10, 13)
+UNTOUCHED_STEPS = (1, 3, 5, 6, 7, 8, 9, 11, 14)   # gv-02: new step 10 (GitHub scope) shifted doctor to 11, gitignore to 14
 
 # SHA-256 over the nine untouched step slices, each prefixed by `--<n>--`. The POST-LANDING half of
 # AC-INS-5's byte-identity guarantee (see test_untouched_steps_are_byte_identical_to_the_merge_base):
 # once this atom is in the merge base, comparing against that base is comparing text to itself, so
 # the standing anchor becomes this literal. A legitimate edit to any of the nine steps MUST update
 # it in the SAME reviewed diff — the MERGE_BASE_ENTRIES_DIGEST convention, applied here.
-UNTOUCHED_STEPS_DIGEST = "7e1283ddb40fd6fec3362c56fe7e75f1fb0bda8e600a1f8fe3069de28f56679a"
+UNTOUCHED_STEPS_DIGEST = "1c49731c39ceb8001bd17c0ce0c01c350204a8dfdfd311d9d20988046d56612e"
 
 BYPASS_TOKENS = ["--yes", "--dangerously", "bypassPermissions", "acceptEdits", "auto-approve", "allow rule"]
 # v2.0.0 (the delivery rebase): the hello-loop walks a throwaway TICKET, not a spec — the four stages
@@ -335,7 +335,7 @@ def test_fourteen_steps_in_order_with_their_inherited_anchors():
     text = _skill_text()
     proc = _procedure_section(text)
     nums = [int(m.group(1)) for m in STEP_HEADING_RE.finditer(proc)]
-    assert nums == list(range(1, 15)), f"step numbering drifted: {nums}"
+    assert nums == list(range(1, 16)), f"step numbering drifted: {nums}"
 
     slices = _step_slices(text)
     assert "foundry_control_plane.py" in slices[1]
@@ -346,10 +346,13 @@ def test_fourteen_steps_in_order_with_their_inherited_anchors():
     assert "<!-- foundry:stack-profile-lock-create-prescribed" in slices[9]
     assert "--lock <id>" in slices[9]
 
-    assert "/foundry:doctor" in slices[10]
-    assert "DOCTOR-GREEN" in slices[10]
+    # gv-02: step 10 is the required GitHub-scope step and precedes the doctor-GREEN step
+    assert "github_scope" in slices[10] and "github-scope-missing" in slices[10]
+    assert "github_scope.operators" in slices[10] and "foreign_author" in slices[10]
+    assert "/foundry:doctor" in slices[11]
+    assert "DOCTOR-GREEN" in slices[11]
 
-    assert "scripts/foundry-apply-runtime-gitignore.sh <repo-root>" in slices[13]
+    assert "scripts/foundry-apply-runtime-gitignore.sh <repo-root>" in slices[14]
 
 
 def test_inherited_grep_locks_survive_and_the_antipattern_cites_step_nine():
@@ -427,7 +430,7 @@ def test_untouched_steps_are_byte_identical_to_the_merge_base():
             h.update(f"--{n}--".encode())
             h.update(current_slices[n].encode())
         assert h.hexdigest() == UNTOUCHED_STEPS_DIGEST, (
-            "the untouched step slices {1,3,5,6,7,8,9,10,13} changed. If that is a legitimate edit, "
+            "the untouched step slices {1,3,5,6,7,8,9,11,14} changed. If that is a legitimate edit, "
             "update UNTOUCHED_STEPS_DIGEST in the SAME reviewed diff; if it is not, this is the "
             f"regression the check exists for. got={h.hexdigest()}"
         )
