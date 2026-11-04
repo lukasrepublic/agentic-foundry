@@ -183,8 +183,8 @@ def test_discipline_convicts_compound_and_grouped_shapes(cmd, git_repo_on_main):
     'git commit -m "fix(scope): x"',
     'git commit -m "see (git push --force origin main)"',
 ])
-def test_discipline_admits_benign_compound_and_grouped_shapes(cmd):
-    p = _discipline(cmd)
+def test_discipline_admits_benign_compound_and_grouped_shapes(cmd, tmp_path):
+    p = _discipline(cmd, cwd=tmp_path)      # a non-repository cwd: clause (l) has no GitHub remote to read
     assert p.returncode == 0, p.stdout + p.stderr
 
 
@@ -581,7 +581,7 @@ def _make_repo(path, branch="main", upstream_merge=None, config=None):
     _git(path, "branch", "-M", "main")
     if branch != "main":
         _git(path, "checkout", "-q", "-b", branch)
-    _git(path, "remote", "add", "origin", "https://example.invalid/o/r.git")
+    _git(path, "remote", "add", "origin", "file:///nonexistent/o/r.git")
     if upstream_merge:
         _git(path, "config", f"branch.{branch}.remote", "origin")
         _git(path, "config", f"branch.{branch}.merge", f"refs/heads/{upstream_merge}")

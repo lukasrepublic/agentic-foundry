@@ -1,7 +1,7 @@
 """gv-10: the paper guard's `ci` class (operating-model rule A2 — never edit CI to make a PR pass).
 
 A CI path is refused unless the active ticket names it in `paper_allowed` or `ci_allowed`. Code
-elsewhere stays never-gated. `foundry-ticket.py allow --ci` writes `ci_allowed`, and the plugin
+elsewhere stays never-gated. `foundry-ticket.py ci-allow` writes `ci_allowed`, and the plugin
 scripts allow-hook never grants that verb silently.
 """
 import importlib.util
@@ -63,6 +63,7 @@ CI_PATHS = [
     "svc/tox.ini", "web/vitest.config.ts", "web/playwright.config.ts", "jest.config.js",
     "tests/quarantine.json", "ops/quarantine-list.yaml", "ops/quarantine.yml",
     "scripts/gate-check.sh", "tools/lint.py",       # named by the repo's own workflow
+    "Makefile", "noxfile.py", ".pre-commit-config.yaml", "conftest.py", "tests/unit/conftest.py", "web/karma.conf.js",
 ]
 
 
@@ -76,7 +77,7 @@ def test_ci_edit_is_refused_without_a_ticket(repo, rel):
 def test_workflow_edit_without_ci_allowed_is_refused_and_with_it_admitted(repo):
     ticket(repo)
     refused = guard(repo, ".github/workflows/ci.yml")
-    assert refused.returncode == 2 and "allow --ci .github/workflows/ci.yml" in refused.stderr
+    assert refused.returncode == 2 and "ci-allow .github/workflows/ci.yml" in refused.stderr
     ticket(repo, ci_allowed=[".github/workflows/ci.yml"])
     assert guard(repo, ".github/workflows/ci.yml").returncode == 0
 
@@ -89,9 +90,53 @@ def test_ci_allowed_names_only_what_it_names(repo):
     assert guard(repo, ".github/workflows/other.yml").returncode == 0
 
 
-def test_paper_allowed_naming_the_path_also_admits(repo):
-    ticket(repo, paper_allowed=["pyproject.toml"])
+def test_cli_written_paper_allowed_never_lifts_a_ci_path(repo):
+    """The silent lift: `allow <ci-path>` (no --ci) used to write paper_allowed, which the guard honoured."""
+    ticket(repo, paper_allowed=["pyproject.toml", ".github", ".github/workflows/ci.yml"])
+    for rel in ("pyproject.toml", ".github/workflows/ci.yml"):
+        assert guard(repo, rel).returncode == 2, rel
+
+
+def test_the_issue_authors_own_paper_list_may_name_a_ci_path(repo):
+    ticket(repo, issue_paper_allowed=["pyproject.toml"])
     assert guard(repo, "pyproject.toml").returncode == 0
+
+
+@pytest.mark.parametrize("path,probe", [("pyproject.toml", "pyproject.toml"),
+                                        (".github/workflows/ci.yml", ".github/workflows/ci.yml"),
+                                        (".github", ".github/workflows/ci.yml"), ("scripts/ci", "scripts/ci/run.sh"),
+                                        ("Makefile", "Makefile")])
+def test_plain_allow_of_a_ci_path_is_refused_by_the_cli(repo, path, probe):
+    ticket(repo)
+    cli = subprocess.run([sys.executable, str(SCRIPTS / "foundry-ticket.py"), "allow", path],
+                         capture_output=True, text=True, env=_env(repo), cwd=str(repo), timeout=60)
+    assert cli.returncode != 0 and "ci-path-needs-ci-flag" in cli.stderr + cli.stdout
+    doc = json.loads((Path(_git(repo, "rev-parse", "--absolute-git-dir")) / "foundry-ticket.json").read_text())
+    assert doc["paper_allowed"] == [] and not doc.get("ci_allowed")
+    assert guard(repo, probe).returncode == 2
+
+
+def test_allow_dash_dash_ci_is_not_a_verb_and_plain_paper_allow_still_works(repo):
+    ticket(repo)
+    run = lambda *a: subprocess.run([sys.executable, str(SCRIPTS / "foundry-ticket.py"), "allow", *a],
+                                    capture_output=True, text=True, env=_env(repo), cwd=str(repo), timeout=60)
+    assert run("--ci", "setup.cfg").returncode != 0 and run("setup.cfg", "--ci").returncode != 0
+    assert run("docs/how-to/x.md").returncode == 0                       # control: ordinary paper allow
+
+
+def test_package_json_is_ci_only_when_a_test_script_is_touched(repo):
+    def g(ti):
+        payload = {"tool_name": "Edit", "tool_input": dict(ti, file_path=str(repo / "package.json"))}
+        return subprocess.run([str(HOOKS / "foundry-paper-guard.py")], input=json.dumps(payload), capture_output=True,
+                              text=True, env=_env(repo), cwd=str(repo), timeout=60).returncode
+    assert g({"old_string": '"left-pad": "1.0.0"', "new_string": '"left-pad": "1.1.0"'}) == 0
+    assert g({"old_string": '"test": "jest"', "new_string": '"test": "true"'}) == 2
+    assert g({"edits": [{"old_string": "a", "new_string": '"pretest": "x"'}]}) == 2
+
+
+def test_a_quarantine_directory_does_not_make_every_file_under_it_a_quarantine_list(repo):
+    assert guard(repo, "src/quarantine/handler.json").returncode == 0
+    assert guard(repo, "src/quarantine-notes/data.json").returncode == 0
 
 
 def test_ci_allowed_does_not_unlock_paper(repo):
@@ -110,7 +155,7 @@ def test_code_elsewhere_stays_never_gated(repo, rel):
 
 def test_the_ticket_cli_writes_ci_allowed_and_the_guard_honours_it(repo):
     ticket(repo)
-    cli = subprocess.run([sys.executable, str(SCRIPTS / "foundry-ticket.py"), "allow", "--ci", "setup.cfg"],
+    cli = subprocess.run([sys.executable, str(SCRIPTS / "foundry-ticket.py"), "ci-allow", "setup.cfg"],
                          capture_output=True, text=True, env=_env(repo), cwd=str(repo), timeout=60)
     assert cli.returncode == 0, cli.stdout + cli.stderr
     doc = json.loads((Path(_git(repo, "rev-parse", "--absolute-git-dir")) / "foundry-ticket.json").read_text())
@@ -125,5 +170,5 @@ def test_the_allow_hook_never_grants_allow_ci_silently():
     root = str(ROOT)
     ticket_py = str(SCRIPTS / "foundry-ticket.py")
     assert mod.allowed(f"python3 {ticket_py} allow docs/a.md", root) is True       # control: paper allow stays silent
-    assert mod.allowed(f"python3 {ticket_py} allow --ci setup.cfg", root) is False
+    assert mod.allowed(f"python3 {ticket_py} ci-allow setup.cfg", root) is False
     assert mod.allowed(f"python3 {SCRIPTS / 'foundry_queue_land.py'} 12", root) is False

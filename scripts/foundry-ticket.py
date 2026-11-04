@@ -3,7 +3,7 @@
 
     foundry-ticket.py start <issue|url> [--repo OWNER/NAME] [--trust-author]
     foundry-ticket.py allow <path> [<path>...]        permit writing a paper path for this ticket
-    foundry-ticket.py allow --ci <path> [<path>...]   permit editing a CI path (workflows, CI scripts, test configs,
+    foundry-ticket.py ci-allow <path> [<path>...]     permit editing a CI path (workflows, CI scripts, test configs,
                                                       quarantine lists) for this ticket; the operator's call (gv-10)
     foundry-ticket.py done                            run the ticket's Done-means command
     foundry-ticket.py status                          print the active ticket
@@ -254,6 +254,7 @@ def cmd_start(args: list[str]) -> int:
         "done_sha256": store.command_digest(done),
         "trusted_by": trusted_by,
         "paper_allowed": paper,
+        "issue_paper_allowed": list(paper),   # origin: the issue author's list; the CI guard honours this, never CLI-written paper_allowed
         "status": "open",
         "stop_blocks": 0,
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -266,21 +267,40 @@ def cmd_start(args: list[str]) -> int:
     return 0
 
 
-def cmd_allow(args: list[str]) -> int:
+def _paper_guard():
+    """The paper guard module (its CI classifier is the one source of truth for what a CI path is)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "foundry_paper_guard", Path(__file__).resolve().parent.parent / "hooks" / "foundry-paper-guard.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def cmd_ci_allow(args: list[str]) -> int:
+    return cmd_allow(args, ci=True)
+
+
+def cmd_allow(args: list[str], ci: bool = False) -> int:
     root = project_root()
     doc = load(root)
     if not doc:
         sys.exit("foundry-ticket: no active ticket; run `foundry-ticket.py start <issue>` first")
-    ci = "--ci" in args
-    args = [a for a in args if a != "--ci"]
+    if "--ci" in args:
+        sys.exit("foundry-ticket: `allow --ci` is not a verb: the CI-edit lift is `ci-allow <path>` (its own "
+                 "permission-floor row, which asks the operator)")
     if not args:
-        sys.exit("usage: foundry-ticket.py allow [--ci] <path> [<path>...]")
+        sys.exit("usage: foundry-ticket.py %s <path> [<path>...]" % ("ci-allow" if ci else "allow"))
     key = "ci_allowed" if ci else "paper_allowed"
     doc.setdefault(key, [])
+    guard = _paper_guard()
     for a in args:
         n = norm_path(a, root)
         if not n:
             sys.exit(f"foundry-ticket: {a!r} is not a path under the project root")
+        if not ci and guard.ci_overlaps(n, root):
+            sys.exit(f"foundry-ticket: ci-path-needs-ci-flag: {n} is (or contains) a CI path; the CI-edit guard is "
+                     f"lifted only by `ci-allow {n}`, which asks the operator")
         if n not in doc[key]:
             doc[key].append(n)
     save(doc, root)
@@ -1289,7 +1309,7 @@ def main(argv: list[str], run=None, now: float | None = None) -> int:
     verb, rest = argv[0], argv[1:]
     gh = run or default_run
     clock = time.time() if now is None else now
-    table = {"start": cmd_start, "allow": cmd_allow, "done": cmd_done,
+    table = {"start": cmd_start, "allow": cmd_allow, "ci-allow": cmd_ci_allow, "done": cmd_done,
              "status": cmd_status, "clear": cmd_clear}
     owned = {"next": lambda r: cmd_next(r, gh, clock), "read-issue": lambda r: cmd_read_issue(r, gh),
              "claim": lambda r: cmd_claim(r, gh, clock),

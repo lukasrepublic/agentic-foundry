@@ -178,7 +178,17 @@ hook_comment_expectation:
   #      checkout main" && …`, `./x.sh; …`, `make …` and `git stash branch …` keep the push
   #      refused), and a remote configured as a mirror keeps it refused. Strictly narrower than 9.
   #      Corpus: tests/test_hooks_guards.py::test_v118_review_r1_*.
-  executable_content_sha256: 'ae488de2f0438e898dcb5da8342568377f0346f82df8b756375110ab35e742aa'  # gv-10 clauses (k) --auto needs a required check + green head, (l) no push to a queued PR; was clause (j) local-green (ticket #269)
+  #  11. v2.0.0 clause (j) local-green (ticket #269): every push of commits needs <git-dir>/foundry-local-green
+  #      naming HEAD (written by scripts/foundry-test.sh); a non-draft `gh pr create` likewise. Admission-only,
+  #      after clause (a); opt-out `--local-green=off`. Corpus: tests/test_ticket_first.py.
+  #  12. gv-10 merge primitives (2026-11-04, security lane, PR #296, security-reviewed): clause (k) tightens the
+  #      auto-merge admission (AC-V118B-2) to "the base names a required status check, by ruleset or classic branch
+  #      protection, AND the live checks are green at the head", fail-closed; clause (l) refuses a `git push` whose
+  #      destination branch has a PR in the merge queue (GraphQL read), resolving the push remote with
+  #      `get-url --push`, skipping value-taking push flags, and refusing an unresolvable non-local host
+  #      (`remote-host-unresolvable`). Every other clause byte-identical. Corpus:
+  #      tests/test_git_discipline_queue.py, tests/test_hooks_guards.py::test_v118b2_*.
+  executable_content_sha256: 'ce0882e44093870771b3bfed3a8b2a09a9982223eace8cc42c699df560f49f3b'  # re-baselined for entry 12 (gv-10)
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
 operator_registry_shape:

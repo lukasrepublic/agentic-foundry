@@ -77,9 +77,16 @@ def repo(tmp_path):
     return r
 
 
-def _auto_responses(rules, checks=GREEN, checks_rc=0, view=PR_VIEW):
+CLASSIC_NONE = json.dumps({"name": "main", "protected": False})
+CLASSIC_REQUIRED = json.dumps({"name": "main", "protected": True, "protection": {
+    "enabled": True, "required_status_checks": {"enforcement_level": "everyone", "contexts": ["ci"], "checks": []}}})
+
+
+def _auto_responses(rules, checks=GREEN, checks_rc=0, view=PR_VIEW, classic=CLASSIC_NONE, classic_rc=0):
     return [
         {"match": ["pr", "view"], "stdout": view},
+        {"match": ["api", "repos/o/r/branches/main"], "stdout": classic, "rc": classic_rc},
+        {"match": ["api", "--hostname", "ghe.example.com", "repos/o/r/branches/release/2.0.0"], "stdout": classic},
         {"match": ["api"], "stdout": rules},
         {"match": ["pr", "checks"], "stdout": checks, "rc": checks_rc},
     ]
@@ -120,7 +127,7 @@ def test_auto_without_a_required_check_is_refused(stub):
     stub.arm(_auto_responses(RULES_NONE))
     p = run_hook("gh pr merge 42 --auto --squash", stub.env)
     assert p.returncode == 2, p.stdout + p.stderr
-    assert "NO required status check" in p.stdout + p.stderr
+    assert "neither the rulesets" in p.stdout + p.stderr
     assert not any(c[:3] == ["pr", "checks", "42"] for c in stub.calls()), "refused before the checks query"
 
 
@@ -129,6 +136,23 @@ def test_auto_with_an_empty_or_unreadable_ruleset_is_refused(stub, rules):
     stub.arm(_auto_responses(rules))
     p = run_hook("gh pr merge 42 --auto", stub.env)
     assert p.returncode == 2, p.stdout + p.stderr
+
+
+def test_auto_is_admitted_on_classic_branch_protection_with_required_checks(stub):
+    """A repo with no ruleset but classic protection naming a required check is a real gate."""
+    stub.arm(_auto_responses(RULES_NONE, classic=CLASSIC_REQUIRED))
+    p = run_hook("gh pr merge 42 --auto", stub.env)
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert ["api", "repos/o/r/branches/main"] in stub.calls()
+
+
+def test_classic_protection_without_required_checks_or_unreadable_is_still_refused(stub):
+    for classic, rc in ((CLASSIC_NONE, 0), (CLASSIC_REQUIRED, 1), ("not json", 0)):
+        stub.arm(_auto_responses(RULES_NONE, classic=classic, classic_rc=rc))
+        p = run_hook("gh pr merge 42 --auto", stub.env)
+        assert p.returncode == 2, (classic, p.stdout + p.stderr)
+    msg = p.stdout + p.stderr
+    assert "rulesets" in msg and "classic branch protection" in msg and "cannot be used to wait" in msg
 
 
 def test_auto_is_admitted_with_a_required_check_and_green_head(stub):
@@ -256,9 +280,45 @@ def test_unresolvable_destination_is_refused_only_while_something_is_queued(stub
     assert run_hook(cmd, stub.env, cwd=repo).returncode == 2, "more than a page of PRs: nothing-queued is unproven"
 
 
-def test_a_remote_on_a_host_gh_does_not_know_makes_no_query(stub, repo):
-    _git(repo, "remote", "add", "elsewhere", "https://example.invalid/o/r.git")
-    assert run_hook("git push elsewhere feat", stub.env, cwd=repo).returncode == 0
+@pytest.mark.parametrize("url", ["git@mygh-alias:o/r.git", "https://example.invalid/o/r.git", "mygh-alias:o/r.git",
+                                 "ssh://git@mygh-alias/o/r.git"])
+def test_a_remote_on_a_host_gh_does_not_know_is_refused_remote_host_unresolvable(stub, repo, url):
+    """An SSH alias or unknown host is NOT a local path: skipping the query there would let a queued PR be pushed to."""
+    _git(repo, "remote", "add", "elsewhere", url)
+    stub.arm(_list([]))
+    p = run_hook("git push elsewhere feat", stub.env, cwd=repo)
+    assert p.returncode == 2 and "remote-host-unresolvable" in p.stdout, p.stdout + p.stderr
+    assert stub.calls() == []
+
+
+@pytest.mark.parametrize("url", ["github.com:o/r.git", "git@github.com:o/r.git", "ssh://git@github.com/o/r.git",
+                                 "https://github.com/o/r"])
+def test_every_github_url_spelling_reaches_the_queue_query(stub, repo, url):
+    _git(repo, "remote", "set-url", "origin", url)
+    stub.arm(_list([{"number": 7, "headRefName": "feat", "isInMergeQueue": True}]))
+    assert run_hook("git push origin feat", stub.env, cwd=repo).returncode == 2
+    assert "repo=o/r" not in "".join(sum(stub.calls(), [])) and "r=r" in sum(stub.calls(), [])
+
+
+@pytest.mark.parametrize("cmd", [
+    "git push -o ci.skip origin feat", "git push --push-option ci.skip origin feat",
+    "git push --push-option=x origin feat", "git push --receive-pack /bin/true origin feat",
+    "git push --repo=origin feat", "git push --repo origin feat",
+])
+def test_value_taking_push_flags_do_not_hide_the_remote(stub, repo, cmd):
+    stub.arm(_list([{"number": 7, "headRefName": "feat", "isInMergeQueue": True}]))
+    assert run_hook(cmd, stub.env, cwd=repo).returncode == 2, cmd
+
+
+def test_the_push_url_not_the_fetch_url_decides(stub, repo):
+    _git(repo, "remote", "set-url", "--push", "origin", "git@mygh-alias:o/r.git")
+    stub.arm(_list([]))
+    assert run_hook("git push origin feat", stub.env, cwd=repo).returncode == 2
+
+
+def test_a_file_url_remote_makes_no_query(stub, repo):
+    _git(repo, "remote", "add", "fileremote", "file:///nonexistent/o/r.git")
+    assert run_hook("git push fileremote feat", stub.env, cwd=repo).returncode == 0
     assert stub.calls() == []
 
 

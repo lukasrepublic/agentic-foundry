@@ -5,6 +5,7 @@
                           [--catalogue GLOB ...] [--catalogue-test-cmd 'CMD {files}'] [--full-suite-cmd CMD]
                           [--message-log PATH] [--poll-sec N] [--read-gap-sec N] [--timeout-min N]
                           [--checks-timeout-min N] [--quarantine-days N]
+                          [--local-green-cmd CMD]
 
 Run it from a checkout of the PR's own branch (the front for this script is skills/merge-when-green). In order:
 
@@ -32,6 +33,12 @@ Run it from a checkout of the PR's own branch (the front for this script is skil
      is kept in marker comments on the PR, so it survives a new session.
   7. ON MERGE the delivered-by record (PR, merger login, head sha) is posted in the same action (FG-DLV-011).
 
+NOT GUARDED BY THE HOOK. The git and gh calls this script makes are subprocesses; the PreToolUse hook sees only the
+one command that starts the script. So the script re-applies, itself, what the hook would have enforced: it refuses
+before ANY push when the PR is already in the queue (clause (l)), and it runs the repository's local-green runner
+(`foundry-test.sh`) before the base-merge push (clause (j)). It also RUNS THE PR BRANCH'S CODE LOCALLY (the tests
+that name a catalogue, the full suite): use it for the operator's own PRs, never for a fork's.
+
 Every gh call goes through `Adapter.gh`, every git call through `Adapter.git`, so tests inject a stub.
 Output: JSON lines; the last line is the terminal one {"status": ...}. Exit: 0 merged, 2 refused, 3 fix-own-files,
 4 quarantine-requested, 5 requeue-budget-spent, 6 rejection-unclassified, 7 timeout, 8 not-in-queue.
@@ -57,9 +64,10 @@ sys.path.insert(0, str(HERE))
 import foundry_merge_plan as mplan  # noqa: E402  (the catalogue globs are shared with the merge plan)
 
 COLUMNS = ("PR", "head", "base merged at", "catalogue tests", "branch full suite", "queued")
-PR_FIELDS = "number,state,isDraft,headRefName,headRefOid,baseRefName,url,files,reviewDecision"
+PR_FIELDS = "number,state,isDraft,isCrossRepository,headRefName,headRefOid,baseRefName,url,files,reviewDecision"
 POLL_FIELDS = "state,mergedAt,mergedBy,mergeCommit,headRefOid"
 COMMENT_FIELDS = "comments"
+REF_RE = re.compile(r"^[A-Za-z0-9._/-]+$")   # the git-discipline hook's own pattern for a branch name
 CHECK_FIELDS = "name,bucket,workflow,link"
 QUEUE_GQL = ("query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n)"
              "{state merged isInMergeQueue mergeQueueEntry{position state}}}}")
@@ -210,6 +218,12 @@ class Lander:
         m = re.match(r"^https?://[^/]+/([^/]+/[^/]+)/pull/\d+", str(v.get("url", "")))
         if not (self.base and self.head_ref and m):
             raise Refused("the PR's base, head branch and repository could not be read")
+        for what, ref in (("base", self.base), ("head", self.head_ref)):
+            if not REF_RE.match(ref) or ".." in ref or ref.startswith("-"):
+                raise Refused("the PR's %s branch name %r is not a plain ref name" % (what, ref))
+        if v.get("isCrossRepository"):
+            raise Refused("PR #%s comes from a fork: this script runs the branch's code locally and pushes to its "
+                          "branch, so it is for the operator's own PRs only" % self.pr)
         self.slug = self.slug or m.group(1)
         if v.get("state") != "OPEN":
             raise Refused("PR #%s is %s, not OPEN" % (self.pr, v.get("state")))
@@ -228,12 +242,29 @@ class Lander:
         has_queue = any(isinstance(r, dict) and r.get("type") == "merge_queue" for r in rules)
         if not has_queue:
             raise Refused("the ruleset of %s has no merge-queue rule: land this PR with /foundry:merge-when-green" % self.base)
-        if not required:
-            raise Refused("the ruleset of %s names no required status check: a queue waits only for the checks "
-                          "its ruleset names, so this would merge without waiting" % self.base)
+        classic = self.classic_required()
+        if not required and not classic:
+            raise Refused("neither the rulesets nor the classic branch protection of %s name a required status check: "
+                          "a queue waits only for the checks the base names, so this would merge without waiting" % self.base)
+        required = sorted(set(required) | set(classic))
         self.required = required
+        # Clause (l), re-applied here because this script's own git calls are not seen by the hook: a PR that is
+        # ALREADY in the queue (a re-run after a timeout or an abort) must not be pushed to. Refuse before any push.
+        q0 = self.read_queue()
+        if q0.get("isInMergeQueue"):
+            raise Refused("PR #%s is already in the merge queue: dequeue it first (a push would move the head the "
+                          "queue is testing), then run again" % self.pr, reason_code="dequeue-first")
         self.diff_files = [f.get("path") for f in v.get("files") or [] if isinstance(f, dict)]
         return v
+
+    def classic_required(self):
+        """Required check contexts of classic branch protection ([] on any error: none named)."""
+        rc, out, _ = self.ad.gh("api", "repos/%s/branches/%s" % (self.slug, self.base))
+        try:
+            rsc = ((json.loads(out).get("protection") or {}).get("required_status_checks") or {}) if rc == 0 else {}
+            return sorted({c for c in list(rsc.get("contexts") or []) + [x.get("context") for x in rsc.get("checks") or [] if isinstance(x, dict)] if c})
+        except (ValueError, AttributeError, TypeError):
+            return []
 
     # -- 2. base merge + green head
     def merge_base(self):
@@ -244,24 +275,25 @@ class Lander:
         rc, cur, _ = ad.git("rev-parse", "--abbrev-ref", "HEAD")
         if rc != 0 or cur.strip() != self.head_ref:
             raise Refused("this checkout is on %r, not the PR's branch %r" % (cur.strip(), self.head_ref))
-        rc, _, err = ad.git("fetch", "-q", "origin", base)
+        rc, _, err = ad.git("fetch", "-q", "--end-of-options", "origin", base)
         if rc != 0:
             raise Refused("origin/%s cannot be fetched (%s)" % (base, err.strip()[:120]), column="base merged at")
-        rc, base_sha, _ = ad.git("rev-parse", "origin/%s" % base)
+        rc, base_sha, _ = ad.git("rev-parse", "--end-of-options", "origin/%s" % base)
         if rc != 0 or not base_sha.strip():
             raise Refused("origin/%s does not resolve" % base, column="base merged at")
         self.base_sha = base_sha.strip()
-        anc = ad.git("merge-base", "--is-ancestor", self.base_sha, "HEAD")[0] == 0
+        anc = ad.git("merge-base", "--is-ancestor", "--end-of-options", self.base_sha, "HEAD")[0] == 0
         if not anc:
             rc, _, err = ad.git("merge", "--no-ff", "--no-edit", "-m", "Merge %s into %s" % (base, self.head_ref),
-                                "origin/%s" % base)
+                                "--end-of-options", "origin/%s" % base)
             if rc != 0:
                 _, files, _ = ad.git("diff", "--name-only", "--diff-filter=U")
                 ad.git("merge", "--abort")
                 raise Refused("merging origin/%s into %s failed (%s): resolve it by hand, then run again"
                               % (base, self.head_ref, ("conflicts in " + ", ".join(files.split()[:8])) if files.strip()
                                  else err.strip()[:120] or "see git status"), reason_code="merge-conflict")
-            rc, _, err = ad.git("push", "origin", "HEAD:%s" % self.head_ref)
+            self.local_green()
+            rc, _, err = ad.git("push", "--end-of-options", "origin", "HEAD:%s" % self.head_ref)
             if rc != 0:
                 raise Refused("pushing the base merge failed (%s)" % err.strip()[:160])
         rc, head, _ = ad.git("rev-parse", "HEAD")
@@ -270,8 +302,23 @@ class Lander:
             raise Refused("HEAD does not resolve", column="head")
         emit(event="base-merged", base=self.base, base_sha=self.base_sha[:12], merged_now=not anc, head=self.head[:12])
 
+    def local_green(self):
+        """Clause (j) for this script's own push: the repository's local runner must pass on the merge result."""
+        cmd = self.a.local_green_cmd
+        if cmd is None:
+            runner = HERE / "foundry-test.sh"
+            if not runner.is_file():
+                emit(event="local-green", ran=False, why="no foundry-test.sh beside this script")
+                return
+            cmd = "%s --dir %s" % (shlex.quote(str(runner)), shlex.quote(self.a.repo_dir))
+        rc, out, err = self.ad.shell(cmd)
+        emit(event="local-green", ran=True, ok=rc == 0)
+        if rc != 0:
+            raise Refused("local-green failed on the base-merge result, so it was NOT pushed (the merge commit stays "
+                          "local): %s" % (out + err).strip()[-300:], reason_code="local-green-failed")
+
     def changed_files(self):
-        rc, out, _ = self.ad.git("diff", "--name-only", "origin/%s...HEAD" % self.base)
+        rc, out, _ = self.ad.git("diff", "--name-only", "--end-of-options", "origin/%s...HEAD" % self.base)
         if rc != 0:
             raise Refused("the changed files cannot be listed", column="catalogue tests")
         return [x for x in out.splitlines() if x]
@@ -329,6 +376,11 @@ class Lander:
     # -- 3. catalogue + full suite
     def catalogue(self, changed):
         globs = mplan.catalogue_globs(Path(self.a.repo_dir), self.a.catalogue)
+        declared = bool(self.a.catalogue) or (Path(self.a.repo_dir) / mplan.CATALOGUE_FILE).is_file()
+        if not declared:
+            rc, tracked, _ = self.ad.git("ls-files")
+            if not any(mplan._is_catalogue(f, globs) for f in tracked.splitlines()):
+                return [], "n/a: no catalogue declared"
         hit = sorted(f for f in changed if mplan._is_catalogue(f, globs))
         if not hit:
             return [], "n/a: no shared catalogue changed"
@@ -408,6 +460,7 @@ class Lander:
         return pr
 
     def enqueue_and_wait(self):
+        self.enqueued_at = self.ad.now()
         self.gh_ok("pr", "merge", self.pr, "--repo", self.slug, "--auto", "--squash", what="the enqueue")
         first = self.read_queue()
         self.ad.sleep(self.a.read_gap_sec)
@@ -431,16 +484,48 @@ class Lander:
     # -- 6. rejection
     def failed_log(self):
         out = self.gh_ok("run", "list", *self.r(), "--event", "merge_group", "--limit", "30",
-                         "--json", "databaseId,conclusion,headBranch,workflowName", what="the merge-group run list")
+                         "--json", "databaseId,conclusion,headBranch,workflowName,createdAt", what="the merge-group run list")
+        floor = self.enqueued_at - dt.timedelta(seconds=60)           # only runs created after THIS enqueue
         rows = [x for x in _json(out, "the merge-group run list") if isinstance(x, dict)
-                and x.get("conclusion") == "failure" and re.search(r"(^|/)pr-%s-" % re.escape(self.pr), str(x.get("headBranch", "")))]
+                and x.get("conclusion") == "failure" and self.created_after(x.get("createdAt"), floor) and re.search(r"(^|/)pr-%s-" % re.escape(self.pr), str(x.get("headBranch", "")))]
         if not rows:
             return None, None
         run_id = rows[0]["databaseId"]
         return run_id, self.gh_ok("run", "view", str(run_id), *self.r(), "--log-failed", what="the failed log")
 
+    @staticmethod
+    def created_after(stamp, floor):
+        try:
+            return dt.datetime.fromisoformat(str(stamp).replace("Z", "+00:00")) >= floor
+        except ValueError:
+            return False
+
+    def trusted(self):
+        """Logins whose marker comments count: the authenticated login plus github_scope.operators."""
+        if getattr(self, "_trusted", None) is None:
+            logins = set()
+            try:
+                import foundry_deck_events as de
+                logins |= {str(x).lower() for x in de.scope_operators(self.a.repo_dir) or ()}
+            except Exception:
+                pass
+            rc, out, _ = self.ad.gh("api", "user")
+            try:
+                me = json.loads(out).get("login") if rc == 0 else None
+            except (ValueError, AttributeError):
+                me = None
+            if me:
+                logins.add(str(me).lower())
+            if not logins:
+                raise Refused("the authenticated GitHub login cannot be read, so the re-queue count cannot be trusted")
+            self._trusted = logins
+        return self._trusted
+
     def comments(self):
-        return (self.view(COMMENT_FIELDS, "the PR comments").get("comments")) or []
+        """The PR's comments by TRUSTED authors only: anyone can comment a forged marker."""
+        rows = (self.view(COMMENT_FIELDS, "the PR comments").get("comments")) or []
+        ok = self.trusted()
+        return [c for c in rows if isinstance(c, dict) and str((c.get("author") or {}).get("login", "")).lower() in ok]
 
     def handle_rejection(self):
         run_id, log = self.failed_log()                      # the failed log is read FIRST
@@ -480,18 +565,21 @@ class Lander:
 
     def quarantine_request(self, f, run_id):
         today = self.ad.now().date()
-        test = (f["ids"] or f["files"])[0]
-        owner = self.owner_of(f["files"][0] if f["files"] else test)
-        rec = {"quarantine": [{"test": test, "owner": owner, "issue": "https://github.com/%s/pull/%s" % (self.slug, self.pr),
-                               "entry": today.isoformat(), "expiry": (today + dt.timedelta(days=self.a.quarantine_days)).isoformat()}]}
-        d = Path(self.a.repo_dir) / ".foundry" / "quarantine-requests"
+        tests = (f["ids"] or f["files"])[:50]
+        owner = self.owner_of(f["files"][0] if f["files"] else tests[0])
+        issue = "https://github.com/%s/pull/%s" % (self.slug, self.pr)
+        rec = {"quarantine": [{"test": t, "owner": owner, "issue": issue, "entry": today.isoformat(),
+                               "expiry": (today + dt.timedelta(days=self.a.quarantine_days)).isoformat()} for t in tests]}
+        text = json.dumps(rec, indent=2)
+        d = Path(self.a.repo_dir) / ".foundry" / "quarantine-requests"      # gitignored: the tree stays clean
         d.mkdir(parents=True, exist_ok=True)
         path = d / ("pr-%s-%s.json" % (self.pr, f["signature"]))
-        path.write_text(json.dumps(rec, indent=2) + "\n", encoding="utf-8")
-        self.post("queue-land: QUARANTINE REQUEST for %s (owner: %s). It failed the merge queue twice with the same signature on PR #%s "
-                  "(latest run %s), outside the PR's diff. Quarantine is not skip: the test still runs and is reported. "
-                  "Record: %s\n<!-- queue-land:v1 kind=quarantine sig=%s n=1 run=%s -->"
-                  % (test, owner, self.pr, run_id, path.name, f["signature"], run_id), "quarantine request")
+        path.write_text(text + "\n", encoding="utf-8")
+        self.post("queue-land: QUARANTINE REQUEST for %d failing test(s), owner: %s. They failed the merge queue twice with the "
+                  "same signature on PR #%s (latest run %s), outside the PR's diff. Quarantine is not skip: the tests still run "
+                  "and are reported. The full record, in the quality kit's shape:\n```json\n%s\n```\n"
+                  "<!-- queue-land:v1 kind=quarantine sig=%s n=1 run=%s -->"
+                  % (len(tests), owner, self.pr, run_id, text, f["signature"], run_id), "quarantine request")
         return path
 
     def owner_of(self, path):
@@ -512,7 +600,7 @@ class Lander:
     def land(self):
         self.read_ruleset()
         after_rejection = any(m["kind"] == "evidence" for m in markers(self.comments()))
-        for _attempt in range(2):
+        for _attempt in range(1 + int(self.policy.get("merge.requeue_budget_outside_diff"))):
             self.merge_base()
             green = self.wait_green()
             hit, cat_col = self.catalogue(self.changed_files())
@@ -561,6 +649,8 @@ def main(argv=None, adapter=None) -> int:
     ap.add_argument("--timeout-min", type=float, default=90)
     ap.add_argument("--checks-timeout-min", type=float, default=30)
     ap.add_argument("--quarantine-days", type=int, default=14)
+    ap.add_argument("--local-green-cmd", default=None,
+                    help="command that proves local-green before the base-merge push (default: foundry-test.sh)")
     a = ap.parse_args(argv)
     try:
         if not re.fullmatch(r"[1-9][0-9]{0,8}", a.pr):

@@ -601,8 +601,27 @@ for i, t in enumerate(low):
     def _require_not_queued():
         if "--dry-run" in lrest or "-n" in lrest:
             return
-        bare_q = [r for r in rest if not r.startswith("-")]
-        refspecs_q = bare_q[1:] if bare_q else []
+        # Positionals, skipping the VALUE of the value-taking push flags (`-o X`, `--push-option X`,
+        # `--receive-pack X`, `--exec X`, `--repo X`); `--repo=X` names the remote.
+        bare_q, repo_flag_, skip_ = [], None, False
+        for r_ in rest:
+            if skip_:
+                skip_ = False
+                if repo_flag_ == "":
+                    repo_flag_ = r_
+                continue
+            if r_ in ("-o", "--push-option", "--receive-pack", "--exec", "--repo"):
+                skip_ = True
+                if r_ == "--repo":
+                    repo_flag_ = ""
+                continue
+            if r_.startswith("--repo="):
+                repo_flag_ = r_.split("=", 1)[1]
+                continue
+            if r_.startswith("-"):
+                continue
+            bare_q.append(r_)
+        refspecs_q = bare_q if repo_flag_ else (bare_q[1:] if bare_q else [])
         if "--tags" in lrest and not refspecs_q:
             return
         # An unresolvable repository (an earlier cd, --git-dir, a non-literal -C) is judged against the
@@ -624,22 +643,27 @@ for i, t in enumerate(low):
                                  text=True, timeout=10)
             if gd_.returncode != 0:
                 return                                   # not a repository: nothing to judge
-            remote_q = bare_q[0] if bare_q else "origin"
-            url_ = subprocess.run(["git", "-C", repo_q, "remote", "get-url", remote_q],
+            remote_q = repo_flag_ or (bare_q[0] if bare_q else "origin")
+            url_ = subprocess.run(["git", "-C", repo_q, "remote", "get-url", "--push", remote_q],
                                   capture_output=True, text=True, timeout=10)
         except Exception:
             return
         target_ = url_.stdout.strip() if url_.returncode == 0 else (
-            remote_q if re.match(r"^(https?|ssh|git)://|^[^/\s]+@[^/\s]+:", remote_q) else "")
+            remote_q if re.match(r"^(https?|ssh|git|file)://|^([^@/\s]+@)?[^:/\s]+:", remote_q) else "")
         if not target_ or target_.startswith(("/", ".", "~", "file:")):
-            return                                       # no such remote / local path: no PR exists
+            return                                       # no such remote / local path or file://: no PR exists
         m_ = re.match(r"^(?:https?|ssh|git)://(?:[^@/]+@)?([^/:]+)(?::\d+)?/(.+?)(?:\.git)?/?$", target_) \
-            or re.match(r"^[^/\s]+@([^:/\s]+):(.+?)(?:\.git)?/?$", target_)
-        if not m_:
-            return                                       # not a URL shape this scan can name
+            or re.match(r"^(?:[^@/\s]+@)?([^:/\s]+):(?!//)(.+?)(?:\.git)?/?$", target_)
+        if not m_ or m_.group(1).lower() not in _gh_hosts():
+            # remote-host-unresolvable: a host gh is not configured for (an SSH alias, an unknown host) is NOT
+            # a local path. Skipping the query there would let a queued PR be pushed to; fail closed.
+            block("push refused (remote-host-unresolvable): the push remote %r resolves to %r, a host `gh` is "
+                  "not configured for, so the merge queue of the destination cannot be read. Command: %s"
+                  % (remote_q, target_, cmd),
+                  remediation="Push to a remote whose URL names the real GitHub host (git remote set-url "
+                              "--push), or authenticate gh for that host. Only a local path or file:// remote "
+                              "skips the check.", retryable=True)
         host_q = m_.group(1).lower()
-        if host_q not in _gh_hosts():
-            return                                       # not a GitHub host gh knows: no PR to read
         if unresolvable_:
             block("push refused: %s makes the repository unresolvable while a GitHub remote is in play, "
                   "so its merge queue cannot be read. Command: %s" % (unresolvable_, cmd),
@@ -1180,12 +1204,12 @@ for i, t in enumerate(low):
                       "branch's required checks cannot be read (%s); fail-closed. Command: %s" % (what, cmd),
                       remediation="Fix gh's availability on PATH, then retry.", retryable=True)
             except Exception as e_:
-                block("gh pr merge --auto refused: the %s query failed (%s: %s); fail-closed. "
-                      "Command: %s" % (what, type(e_).__name__, e_, cmd),
+                block("gh pr merge --auto refused: the %s could not be read (%s: %s), so the base's required "
+                      "checks are unknown; fail-closed. Command: %s" % (what, type(e_).__name__, e_, cmd),
                       remediation="Retry once the query succeeds.", retryable=True)
             if pr_.returncode != 0:
-                block("gh pr merge --auto refused: the %s query exited %d (%s); fail-closed. "
-                      "Command: %s" % (what, pr_.returncode, _redact((pr_.stderr or "").strip()[:300]), cmd),
+                block("gh pr merge --auto refused: the %s could not be read (gh exited %d: %s), so the base's "
+                      "required checks are unknown; fail-closed. Command: %s" % (what, pr_.returncode, _redact((pr_.stderr or "").strip()[:300]), cmd),
                       remediation="Retry once the query succeeds.", retryable=True)
             return pr_.stdout or ""
 
@@ -1217,13 +1241,27 @@ for i, t in enumerate(low):
         except (ValueError, TypeError):
             block("gh pr merge --auto refused: the ruleset of base %r could not be parsed; fail-closed. "
                   "Command: %s" % (base_ref, cmd))
-        if not required:
-            block("gh pr merge --auto refused: the ruleset of base %r names NO required status check, so "
-                  "the platform would merge without waiting for anything (a red PR has landed that way). "
-                  "Command: %s" % (base_ref, cmd),
-                  remediation="Add a required status check to the base branch's ruleset (an operator "
-                              "step), or merge with `/foundry:merge-when-green %s`, which waits for "
-                              "green checks itself." % pr_ref,
+        # Classic branch protection is the other mechanism that names required checks; read it too
+        # (`.protection.required_status_checks.contexts|checks`). Any error there means "none named".
+        classic = []
+        try:
+            cl_argv = ["gh", "api", "repos/%s/%s/branches/%s" % (m_repo.group(2), m_repo.group(3), base_ref)]
+            if m_repo.group(1).lower() != "github.com":
+                cl_argv[2:2] = ["--hostname", m_repo.group(1)]
+            cl = subprocess.run(cl_argv, capture_output=True, text=True, timeout=30, cwd=run_cwd, env=run_env)
+            if cl.returncode == 0:
+                rsc_ = ((json.loads(cl.stdout).get("protection") or {}).get("required_status_checks") or {})
+                classic = list(rsc_.get("contexts") or []) + list(rsc_.get("checks") or [])
+        except Exception:
+            classic = []
+        if not required and not classic:
+            block("gh pr merge --auto refused: neither the rulesets nor the classic branch protection of base "
+                  "%r name a required status check, so the platform would merge without waiting for anything "
+                  "(a red PR has landed that way). Command: %s" % (base_ref, cmd),
+                  remediation="Add a required status check to the base branch (a ruleset rule or classic "
+                              "branch protection: an operator step), or merge with "
+                              "`/foundry:merge-when-green %s`, which waits for green checks itself. "
+                              "`--auto` cannot be used to wait on pending checks." % pr_ref,
                   retryable=False)
         # (k) part 2 falls through to the live `gh pr checks` query below: all green at this head.
 

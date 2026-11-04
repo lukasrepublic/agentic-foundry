@@ -10,7 +10,8 @@
   --catalogue  a shared-catalogue glob (repeatable). Default: the catalogue list in this file plus one glob
                per line of `.foundry/catalogue-paths` when that file exists.
 
-Each argument is JSON text or the path of a JSON file.
+Each argument is JSON text or the path of a JSON file INSIDE the project root ($CLAUDE_PROJECT_DIR, else the
+cwd); a path outside it is refused. Components are labels the caller supplies; nothing here derives them.
 
 What it does, in order:
   1. Cluster ready items that overlap: they name one file, or one explicit component. A shared catalogue is
@@ -51,8 +52,12 @@ class Refused(Exception):
 def _json_arg(text: str, name: str):
     raw = text.strip()
     if raw[:1] not in ("[", "{"):
+        root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve()
+        target = (root / text).resolve()
+        if target != root and root not in target.parents:
+            raise Refused(f"{name}: {text!r} is outside the project root; pass inline JSON or a file inside it")
         try:
-            raw = Path(text).read_text(encoding="utf-8")
+            raw = target.read_text(encoding="utf-8")
         except OSError as exc:
             raise Refused(f"{name}: not JSON and not a readable file ({exc.strerror})")
     try:

@@ -11,8 +11,10 @@ sys.path.insert(0, str(SCRIPT.parent))
 import foundry_merge_plan as mp  # noqa: E402
 
 
-def cli(*args):
-    return subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True, timeout=60)
+def cli(*args, root=None):
+    env = dict(__import__("os").environ, **({"CLAUDE_PROJECT_DIR": str(root)} if root else {}))
+    return subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True, timeout=60, env=env,
+                          cwd=str(root) if root else None)
 
 
 def test_two_items_sharing_a_catalogue_file_form_one_cluster_stated_in_one_line():
@@ -80,4 +82,13 @@ def test_bad_input_is_refused_on_one_line(args):
 def test_inputs_may_be_files(tmp_path):
     (tmp_path / "r.json").write_text('["a"]')
     (tmp_path / "p.json").write_text('{"a": ["x"]}')
-    assert cli("--ready", str(tmp_path / "r.json"), "--paths", str(tmp_path / "p.json")).returncode == 0
+    assert cli("--ready", "r.json", "--paths", str(tmp_path / "p.json"), root=tmp_path).returncode == 0
+
+
+def test_a_file_outside_the_project_root_is_refused(tmp_path):
+    root = tmp_path / "proj"
+    root.mkdir()
+    (tmp_path / "secret.json").write_text('["a"]')
+    for arg in (str(tmp_path / "secret.json"), "../secret.json"):
+        r = cli("--ready", arg, "--paths", "{}", root=root)
+        assert r.returncode == 2 and "outside the project root" in r.stdout

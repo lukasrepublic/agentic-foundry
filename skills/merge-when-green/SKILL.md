@@ -22,12 +22,12 @@ gh api repos/{owner}/{repo}/rules/branches/{base}
   suite | queued`, enqueues with `--auto`, reads the queue entry twice and waits. If a record column cannot be filled
   honestly it refuses and names the column. A rejection is classified from the failed log: **own files** → fix
   them; **outside the diff** → evidence posted, re-queue **once**; the **same failure again** → a quarantine
-  request for the test's owner, **never a third roll**. A skipped check is not a pass. It enqueues, so it asks first.
+  request for the test's owner, **never a third roll**. A skipped check is not a pass. It enqueues, so it asks first. **It runs the PR branch's code locally** (the catalogue tests, the full suite, the local-green runner), so use it for the operator's own PRs, **never for a fork's**; a PR already in the queue is refused (`dequeue-first`) before any push.
 - **No merge queue** — use the CLI documented below, which waits for green and merges.
 - **Never** `--admin`, a force flag, or a push to a PR that is in the queue (dequeue first). The git-discipline hook
   refuses all three, and refuses `--auto` unless the base names a required check and the head is green.
 - **Never edit CI to make a PR pass.** Workflows, CI scripts, test configs and quarantine lists are refused by the
-  paper guard unless the ticket names them (`foundry-ticket.py allow --ci <path>`, the operator's call).
+  paper guard unless the ticket names them (`foundry-ticket.py ci-allow <path>`, the operator's call).
 
 The rest of this page documents the no-queue path.
 

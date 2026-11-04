@@ -36,7 +36,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_merge_plan.py:*)",
       "tier": "allow",
-      "rationale": "clusters ready items from two JSON arguments and prints a plan; reads no network and writes nothing (gv-10)"
+      "rationale": "clusters ready items from two JSON arguments (inline JSON, or files confined to the project root) and prints a plan; reads the files it is given, writes nothing, no network; components are caller-supplied labels (gv-10)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-permissions-compile.py --check:*)",
@@ -352,6 +352,11 @@
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py claim:*)",
       "tier": "ask",
       "rationale": "POSTs a structured `start` comment on a GitHub issue under the operator's identity (a content-creating write) and writes the git-dir claim record; refuses unassigned / other-owned issues and the WIP limit; never self-assigns (gn-08); refuses (typed `done-means-untrusted`) an issue whose Done-means command is not author-trusted unless the operator passes --trust-author (never auto-allowed by the plugin-scripts-allow hook)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py ci-allow:*)",
+      "tier": "ask",
+      "rationale": "lifts the CI-edit guard for one path on the active ticket (gv-10): the operator's call, so it asks; plain `allow` is refused for CI paths; its own verb so no `allow:*` row subsumes it"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py reconcile:*)",
