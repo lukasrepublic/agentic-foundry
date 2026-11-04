@@ -83,6 +83,11 @@
       },
       "additionalProperties": true
     },
+    "operating_mode": {
+      "type": "string",
+      "enum": ["single-operator", "team"],
+      "description": "Workspace operating mode (gn-17). Absent or any other value resolves to 'single-operator' (the default: no team features, no GitHub team surfaces). 'team' needs a github_scope and a plugin >= 2.0.0; set it with scripts/foundry_operating_mode.py enable-team. Not the session posture (/foundry:mode)."
+    },
     "github_projects": {
       "type": "object",
       "description": "Config-gated, default-OFF project-tracking block.",

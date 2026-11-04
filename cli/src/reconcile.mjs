@@ -5,6 +5,7 @@
 // and NEVER written, on any path, in any mode (never-clobber is unconditional).
 import { ensureDirFor, fileBytesEqual } from './util.mjs';
 import fs from 'node:fs';
+import { assertProtected } from './writeGuard.mjs';
 
 /** Compute the action for each managed file WITHOUT writing anything. */
 export function planManagedFiles(managedFiles) {
@@ -28,6 +29,7 @@ export function planManagedFiles(managedFiles) {
 export function applyPlan(plan) {
   for (const f of plan) {
     if (f.action !== 'create') continue;
+    assertProtected(f.absPath, { creating: true });
     ensureDirFor(f.absPath);
     // O_EXCL ('wx'), not a plain write (PR #61 security review Block 2, defence in depth). The
     // plan already refuses to emit `create` for any path that exists — including a dangling

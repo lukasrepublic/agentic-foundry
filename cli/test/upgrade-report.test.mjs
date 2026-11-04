@@ -59,6 +59,37 @@ test('buildUpgradeReport: every field, from a full run', () => {
     config_dir: '/home/op/.claude',
     hostname: 'box',
     python_deps: null,
+    // v2 (AC-NPX-2): a builder called without a run's v2 inputs leaves every field unreached
+    run_id: null,
+    outcome: null,
+    next_action: null,
+    failure: null,
+    previous_partial: null,
+    cleanup: [],
+    operator_review: [],
+    compatibility: {
+      from_plugin_version: '1.16.1',
+      to_plugin_version: null,
+      updater_version: '0.1.14',
+      core_version: '0.17.2',
+      updater_plugin_version: '1.17.2',
+      advertised_version: null,
+      enabled_scopes: [],
+      sources: [],
+      session_load: [],
+      diagnoses: [],
+    },
+    adoption: {
+      mechanical_steps: [
+        { phase: 'marketplace-refresh', verdict: 'not-run' },
+        { phase: 'plugin-update', verdict: 'not-run' },
+        { phase: 'python-deps', verdict: 'not-run' },
+        { phase: 'cleanup', verdict: 'not-run' },
+        { phase: 'reinitialization', verdict: 'not-run' },
+      ],
+      instructions_pending: [],
+      cutover: null,
+    },
   });
 });
 

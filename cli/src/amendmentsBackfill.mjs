@@ -15,6 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { confinedJoin } from './util.mjs';
+import { assertProtected } from './writeGuard.mjs';
 
 export const NORMATIVE_CLOSE = '<!-- /normative -->';
 export const AMENDMENTS_HEADING = '## Amendments';
@@ -131,6 +132,7 @@ export function applyAmendmentsBackfill(plan) {
   let failed = 0;
   const writtenPaths = [];
   for (const abs of plan.toAppend) {
+    assertProtected(abs);
     let text;
     try {
       text = fs.readFileSync(abs, 'utf-8');

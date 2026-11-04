@@ -99,6 +99,36 @@
       "rationale": "advisory context-diet lint over an assembled dispatch prompt; fail-open, flags-only"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py ingest:*)",
+      "tier": "allow",
+      "rationale": "writes only six fixed filenames under the CONFIGURED usage.dataset; reads the collector dir the operator names; numeric fields only (configured `usage.dataset` only: an explicit `--dataset` is the ask row below)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py attribute:*)",
+      "tier": "allow",
+      "rationale": "derives attribution.jsonl under the CONFIGURED usage.dataset from usage + bindings; numeric fields only (configured `usage.dataset` only: an explicit `--dataset` is the ask row below)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py coverage:*)",
+      "tier": "allow",
+      "rationale": "read-only coverage report over the configured dataset"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py fallback-transcripts:*)",
+      "tier": "allow",
+      "rationale": "reads the operator's own transcript directory; writes usage rows under the configured dataset (configured `usage.dataset` only: an explicit `--dataset` is the ask row below)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py bind:*)",
+      "tier": "ask",
+      "rationale": "appends an attribution record (session -> issue/operator) to <dataset>/bindings.jsonl; wrong bindings misattribute cost, so the write is not silent"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py --dataset:*)",
+      "tier": "ask",
+      "rationale": "`--dataset DIR` redirects ingest/bind/attribute writes to a caller-named directory instead of the configured usage.dataset; the explicit form is not silent (the configured-dataset form stays in the allow row)"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_env_isolation.py:*)",
       "tier": "allow",
       "rationale": "read-only per-worker env-isolation check consumed by the env-reap hook"
@@ -194,6 +224,61 @@
       "rationale": "--apply POSTs repository rulesets with an Administration (write) token; it writes the merge floor itself"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_migrate.py:*)",
+      "tier": "ask",
+      "rationale": "`cutover --apply` creates GitHub issues and writes .foundry/migration/** plus one appended migrated_to key per selected manifest; `cutover record` creates authority.yaml; inventory/preview are read-only. One rule for the script: the write verbs decide the tier (gn-14)."
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_operating_mode.py:*)",
+      "tier": "ask",
+      "rationale": "enable-team / disable-team rewrite operating_mode in .claude/foundry-project.json (atomic, one key); status is read-only (gn-17)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_events.py:*)",
+      "tier": "ask",
+      "rationale": "`emit` posts a structured comment on a GitHub issue under the operator's identity (a content-creating write); `parse` is read-only. One rule for the script: the write verb decides the tier (gn-04 deck events)."
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_github_capabilities.py:*)",
+      "tier": "allow",
+      "rationale": "read-only discovery-coverage probe: REST GET, search and GraphQL `query` only, every call timeout-bounded; writes nothing to GitHub or the workspace (gn-03 capability check)."
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_leader_board.py:*)",
+      "tier": "allow",
+      "rationale": "read-only leader-board report: gh issue list/view, REST GET and GraphQL `query` only, plus reads of the usage dataset; computes statistics to stdout and writes nothing to GitHub or the workspace (gn-15)."
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py scan:*)",
+      "tier": "allow",
+      "rationale": "read-only inbox scan: GitHub search, notifications and issue views only; writes nothing to GitHub and only the gitignored runtime inbox.json in the workspace; never posts a comment (gn-09 operator inbox)."
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py pending:*)",
+      "tier": "allow",
+      "rationale": "reads the persisted runtime inbox.json only; no network, no writes (gn-09)."
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py ack:*)",
+      "tier": "ask",
+      "rationale": "posts an `ack` marker comment on a GitHub issue/PR under the operator's identity (gn-09)."
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py schedule:*)",
+      "tier": "ask",
+      "rationale": "posts a `scheduled`/`rescheduled` marker comment on a GitHub issue under the operator's identity (gn-09)."
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py resolve:*)",
+      "tier": "ask",
+      "rationale": "posts a `resolved` marker comment with evidence on a GitHub issue under the operator's identity (gn-09)."
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py check:*)",
+      "tier": "ask",
+      "rationale": "scan plus WRITES: posts `scheduled`/`blocker_ack` marker comments on GitHub issues under the operator's identity via the gn-04 writer; tiered ask like ack/schedule/resolve because its reach includes GitHub writes, which the read-only `scan` verb does not (gn-09). The `resolve` evidence rule is a practice, not a control."
+    },
+    {
       "rule": "Bash(docker system prune:*)",
       "tier": "deny",
       "rationale": "absolute anti-pattern: unattended bulk local-state destruction"
@@ -216,7 +301,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py start:*)",
       "tier": "allow",
-      "rationale": "adopts a GitHub issue as the active ticket: writes only the git-dir ticket file; refuses a Done-means command from an author without write access on the issue's repo unless --trust-author (which the plugin-scripts-allow hook never auto-allows \u2014 the session's own permission mode decides)"
+      "rationale": "adopts a GitHub issue as the active ticket: writes only the git-dir ticket file; refuses a Done-means command from an author without write access on the issue's repo unless --trust-author (which the plugin-scripts-allow hook never auto-allows — the session's own permission mode decides)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py allow:*)",
@@ -234,6 +319,31 @@
       "rationale": "deletes the git-dir ticket file only"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py next:*)",
+      "tier": "allow",
+      "rationale": "read-only: reads the operator's assigned issues from GitHub (gh api graphql/user, queries only) and prints the selection; writes nothing; skips (never selects) an issue whose Done-means is not author-trusted"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py read-issue:*)",
+      "tier": "allow",
+      "rationale": "read-only: reads one issue from GitHub (gh api graphql/user and the collaborator-permission probe, queries only) and prints the trust-checked view (done_trusted, done_digest, last_edited_by); executes nothing, writes nothing"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py claim:*)",
+      "tier": "ask",
+      "rationale": "POSTs a structured `start` comment on a GitHub issue under the operator's identity (a content-creating write) and writes the git-dir claim record; refuses unassigned / other-owned issues and the WIP limit; never self-assigns (gn-08); refuses (typed `done-means-untrusted`) an issue whose Done-means command is not author-trusted unless the operator passes --trust-author (never auto-allowed by the plugin-scripts-allow hook)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py reconcile:*)",
+      "tier": "allow",
+      "rationale": "reads current GitHub issue state + timeline and reports stop_dispatch per started issue; no GitHub write. Its only local write is pruning claim records for issues GitHub reports closed from the git-dir claims file (a cache, never authority)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py lead:*)",
+      "tier": "allow",
+      "rationale": "local file only: acquire/renew/release/check the lease at <workspace>/.foundry/runtime/lead.json; no network, no GitHub write"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py done:*)",
       "tier": "ask",
       "rationale": "EXECUTES the ticket's Done-means command (input taken from an issue body): the session's permission flow decides, never a silent allow (security review of #270, R1)"
@@ -241,7 +351,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-test.sh:*)",
       "tier": "ask",
-      "rationale": "EXECUTES the repository's own test command (Taskfile/Makefile/npm/pytest \u2014 code the branch defines): the session's permission flow decides; local-green is a delivery convenience, not a reason for a silent allow (security review of #270, R2)"
+      "rationale": "EXECUTES the repository's own test command (Taskfile/Makefile/npm/pytest — code the branch defines): the session's permission flow decides; local-green is a delivery convenience, not a reason for a silent allow (security review of #270, R2)"
     }
   ],
   "not_invoked": [

@@ -138,6 +138,21 @@ export const QUESTION_TABLE = [
     interactive: false,
   },
   {
+    id: 'legacyMaintenance',
+    flag: 'legacy-maintenance',
+    type: 'boolean',
+    prompt: 'Also run the legacy history maintenance (Amendments backfill)',
+    description:
+      'Off by default. Appends the empty "## Amendments" section to every spec\n' +
+      'that predates it. That edits retained history, so it runs only when you\n' +
+      'pass this flag AND no cutover record exists at\n' +
+      '.foundry/migration/authority.yaml; a recorded or unreadable cutover keeps\n' +
+      'it off, and the preview names which condition did.\n' +
+      'Enter alone means no. y, yes, true or 1 mean yes.',
+    default: false,
+    interactive: false,
+  },
+  {
     id: 'help',
     flag: 'help',
     type: 'boolean',

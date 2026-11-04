@@ -25,6 +25,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { confinedJoin } from './util.mjs';
 import { resolveTarget, readTarget, writeTargetAtomically } from './floorReconcile.mjs';
+import { assertProtected } from './writeGuard.mjs';
 
 export const MARKER = 'feat-foundry-init-statusline-wrapper';
 export const WRAPPERS = Object.freeze([
@@ -108,6 +109,7 @@ export function applyStatuslineWiring(plan) {
   if (!plan.settingsPresent) return plan;
   for (const f of plan.files) {
     if (f.action !== 'create' && f.action !== 'converged') continue;
+    assertProtected(f.abs, { creating: f.action === 'create' });
     fs.mkdirSync(path.dirname(f.abs), { recursive: true });
     // Security review (statusline-wiring, Block 1): the temp path is opened with 'wx' — O_EXCL,
     // never following a planted symlink at that name — pid-suffixed against a concurrent run,

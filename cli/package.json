@@ -25,6 +25,7 @@
     "templates",
     "permission-floor.json",
     "retired-artifacts.json",
+    "path-classes.json",
     "python-requirements.json",
     "package.json",
     "README.md"
@@ -37,6 +38,10 @@
     "marketplace_repo": "lukasrepublic/agentic-foundry",
     "plugin_name": "foundry",
     "plugin_version": "1.18.5",
-    "pins_researched": "2026-08-02"
+    "pins_researched": "2026-08-02",
+    "upgrade": {
+      "supported_from_min": "0.0.0",
+      "supported_sources": []
+    }
   }
 }

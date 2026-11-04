@@ -1,0 +1,13 @@
+{
+ "timeline": [
+  {
+   "__typename": "ClosedEvent",
+   "createdAt": "2026-10-02T10:00:00Z",
+   "actor": {
+    "login": "alice"
+   },
+   "stateReason": "NOT_PLANNED"
+  }
+ ],
+ "comments": []
+}

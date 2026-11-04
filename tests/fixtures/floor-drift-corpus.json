@@ -5,7 +5,7 @@
   "cases": [
     {
       "name": "empty-target",
-      "why": "no configuration at all \u2014 every absence class must fire, including the 16 ask entries the vocabulary could not name before AC-FDC-1",
+      "why": "no configuration at all — every absence class must fire, including the 16 ask entries the vocabulary could not name before AC-FDC-1",
       "effective": {
         "allow": [],
         "ask": [],
@@ -14,7 +14,7 @@
     },
     {
       "name": "full-floor-verbatim",
-      "why": "every map rule present in its declared tier, literal text \u2014 no finding of any class",
+      "why": "every map rule present in its declared tier, literal text — no finding of any class",
       "effective": {
         "allow": [
           {
@@ -86,6 +86,22 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py ingest:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py attribute:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py coverage:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py fallback-transcripts:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_env_isolation.py:*)",
             "origin": "settings.json"
           },
@@ -134,7 +150,39 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py next:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py read-issue:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py claim:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py reconcile:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py lead:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py clear:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_github_capabilities.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py scan:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py pending:*)",
             "origin": "settings.json"
           }
         ],
@@ -184,6 +232,30 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_migrate.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_operating_mode.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_leader_board.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_events.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py bind:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py --dataset:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-permissions-compile.py --write:*)",
             "origin": "settings.json"
           },
@@ -201,6 +273,22 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-test.sh:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py ack:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py schedule:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py resolve:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py check:*)",
             "origin": "settings.json"
           }
         ],
@@ -226,7 +314,7 @@
     },
     {
       "name": "full-floor-home-expanded",
-      "why": "THE CANONICALIZATION CASE. Allow rules as absolute, version-resolved paths \u2014 what the harness writes on ask-to-allow persist. Python folded these and Node did not, so the two disagreed on 42 rules; this case is what pins them together",
+      "why": "THE CANONICALIZATION CASE. Allow rules as absolute, version-resolved paths — what the harness writes on ask-to-allow persist. Python folded these and Node did not, so the two disagreed on 42 rules; this case is what pins them together",
       "effective": {
         "allow": [
           {
@@ -298,6 +386,22 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry_usage.py ingest:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry_usage.py attribute:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry_usage.py coverage:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry_usage.py fallback-transcripts:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry_env_isolation.py:*)",
             "origin": "settings.json"
           },
@@ -346,7 +450,39 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-ticket.py next:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-ticket.py read-issue:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-ticket.py claim:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-ticket.py reconcile:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-ticket.py lead:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry-ticket.py clear:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry_github_capabilities.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry_inbox.py scan:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry_inbox.py pending:*)",
             "origin": "settings.json"
           }
         ],
@@ -396,6 +532,30 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_migrate.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_operating_mode.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_leader_board.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_events.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py bind:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py --dataset:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-permissions-compile.py --write:*)",
             "origin": "settings.json"
           },
@@ -413,6 +573,22 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-test.sh:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py ack:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py schedule:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py resolve:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py check:*)",
             "origin": "settings.json"
           }
         ],
@@ -438,7 +614,7 @@
     },
     {
       "name": "cross-tier-placement",
-      "why": "an allow entry the operator deliberately moved into ask \u2014 tier-conflict fires and the false allow-absent is suppressed",
+      "why": "an allow entry the operator deliberately moved into ask — tier-conflict fires and the false allow-absent is suppressed",
       "effective": {
         "allow": [
           {
@@ -502,6 +678,22 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py ingest:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py attribute:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py coverage:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py fallback-transcripts:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_env_isolation.py:*)",
             "origin": "settings.json"
           },
@@ -523,6 +715,18 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_session_mode.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_github_capabilities.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py scan:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py pending:*)",
             "origin": "settings.json"
           }
         ],
@@ -576,11 +780,51 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_migrate.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_operating_mode.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_leader_board.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_events.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py bind:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py --dataset:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py done:*)",
             "origin": "settings.json"
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-test.sh:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py ack:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py schedule:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py resolve:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py check:*)",
             "origin": "settings.json"
           }
         ],
@@ -606,7 +850,7 @@
     },
     {
       "name": "blanket-star",
-      "why": "Bash(*) \u2014 covers() is false for a body not ending ':*', so every entry still classifies absent and every finding must be qualified",
+      "why": "Bash(*) — covers() is false for a body not ending ':*', so every entry still classifies absent and every finding must be qualified",
       "effective": {
         "allow": [
           {
@@ -620,7 +864,7 @@
     },
     {
       "name": "blanket-interpreter-word",
-      "why": "Bash(python3 *) \u2014 blanket via the interpreter-word fold, which the old hardcoded three-spelling set reached only by coincidence",
+      "why": "Bash(python3 *) — blanket via the interpreter-word fold, which the old hardcoded three-spelling set reached only by coincidence",
       "effective": {
         "allow": [
           {
@@ -634,7 +878,7 @@
     },
     {
       "name": "local-only-origin",
-      "why": "a rule carried ONLY in the untracked settings.local.json \u2014 the union sees it covered; AC-FDC-3's origin is what lets a consumer tell the tracked file apart",
+      "why": "a rule carried ONLY in the untracked settings.local.json — the union sees it covered; AC-FDC-3's origin is what lets a consumer tell the tracked file apart",
       "effective": {
         "allow": [
           {
@@ -702,6 +946,22 @@
             "origin": "settings.local.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py ingest:*)",
+            "origin": "settings.local.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py attribute:*)",
+            "origin": "settings.local.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py coverage:*)",
+            "origin": "settings.local.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py fallback-transcripts:*)",
+            "origin": "settings.local.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_env_isolation.py:*)",
             "origin": "settings.local.json"
           },
@@ -723,6 +983,18 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_session_mode.py:*)",
+            "origin": "settings.local.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_github_capabilities.py:*)",
+            "origin": "settings.local.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py scan:*)",
+            "origin": "settings.local.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py pending:*)",
             "origin": "settings.local.json"
           }
         ],
@@ -772,11 +1044,51 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_migrate.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_operating_mode.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_leader_board.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_events.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py bind:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py --dataset:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py done:*)",
             "origin": "settings.json"
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-test.sh:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py ack:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py schedule:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py resolve:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py check:*)",
             "origin": "settings.json"
           }
         ],
@@ -802,7 +1114,7 @@
     },
     {
       "name": "unclassified-shape",
-      "why": "a non-Bash rule \u2014 reported by tool prefix only, never by body",
+      "why": "a non-Bash rule — reported by tool prefix only, never by body",
       "effective": {
         "allow": [
           {
@@ -816,7 +1128,7 @@
     },
     {
       "name": "broader-deny-does-not-cover",
-      "why": "the deny direction refuses the fold and requires EXACT reach equality \u2014 a broader deny must NOT stand in for the map's narrower one",
+      "why": "the deny direction refuses the fold and requires EXACT reach equality — a broader deny must NOT stand in for the map's narrower one",
       "effective": {
         "allow": [
           {
@@ -884,6 +1196,22 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py ingest:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py attribute:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py coverage:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py fallback-transcripts:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_env_isolation.py:*)",
             "origin": "settings.json"
           },
@@ -905,6 +1233,18 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_session_mode.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_github_capabilities.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py scan:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py pending:*)",
             "origin": "settings.json"
           }
         ],
@@ -954,11 +1294,51 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_migrate.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_operating_mode.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_leader_board.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_events.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py bind:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_usage.py --dataset:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py done:*)",
             "origin": "settings.json"
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-test.sh:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py ack:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py schedule:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py resolve:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_inbox.py check:*)",
             "origin": "settings.json"
           }
         ],
@@ -972,7 +1352,7 @@
     },
     {
       "name": "ask-shadowed-by-broad-allow",
-      "why": "a broad but NON-blanket allow shadows the ask tier. Two distinct classes must fire: the 15 ceremony entries (scripts/ basenames) give ask-shadowed-ceremony, and the one non-ceremony entry, Bash(claude plugin tag:*), gives plain ask-shadowed \u2014 reachable only when that entry is ABSENT from the ask tier and covered from allow, which no blanket case can produce",
+      "why": "a broad but NON-blanket allow shadows the ask tier. Two distinct classes must fire: the 15 ceremony entries (scripts/ basenames) give ask-shadowed-ceremony, and the one non-ceremony entry, Bash(claude plugin tag:*), gives plain ask-shadowed — reachable only when that entry is ABSENT from the ask tier and covered from allow, which no blanket case can produce",
       "effective": {
         "allow": [
           {
@@ -1007,7 +1387,7 @@
     },
     {
       "name": "unreadable-and-unclassified",
-      "why": "a non-Bash rule in each tier \u2014 reported by tool prefix only, body never disclosed; these classes name no MAP rule, so the differential compares them as empty on both sides",
+      "why": "a non-Bash rule in each tier — reported by tool prefix only, body never disclosed; these classes name no MAP rule, so the differential compares them as empty on both sides",
       "effective": {
         "allow": [
           {

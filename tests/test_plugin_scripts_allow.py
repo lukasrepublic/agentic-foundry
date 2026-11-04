@@ -146,3 +146,40 @@ def test_the_hook_is_wired_for_bash():
     bash = [g for g in hooks["hooks"]["PreToolUse"] if g.get("matcher") == "Bash"]
     cmds = [h["command"] for g in bash for h in g["hooks"]]
     assert any(c.endswith("/hooks/foundry-plugin-scripts-allow.py") for c in cmds)
+
+
+# ---- security review of #286: the floor's GitHub-writing `ask` verbs are never silently allowed -----------
+
+_WRITERS = [
+    ("foundry_migrate.py", "cutover --apply"), ("foundry_migrate.py", "cutover record"),
+    ("foundry_deck_events.py", "emit o/r#1 ack --payload {}"),
+    ("foundry_inbox.py", "check"), ("foundry_inbox.py", "ack https://github.com/o/r/issues/1"),
+    ("foundry_inbox.py", "schedule u --target t"), ("foundry_inbox.py", "resolve u --evidence e"),
+    ("foundry-ticket.py", "claim 7"), ("foundry-ticket.py", "claim 7 --trust"),
+    ("foundry-ticket.py", "start 7 --trust-author"), ("foundry-ticket.py", "start 7 --trust"),
+    ("foundry_operating_mode.py", "enable-team"), ("foundry_operating_mode.py", "disable-team"),
+    ("foundry_usage.py", "bind --session s --issue i"),
+    ("foundry_usage.py", "--dataset /d ingest /c"), ("foundry_usage.py", "--dat=/d attribute"),
+]
+_READERS = [
+    ("foundry_migrate.py", "inventory"), ("foundry_deck_events.py", "parse o/r#1 --as-of 2026-01-01T00:00:00Z"),
+    ("foundry_inbox.py", "scan"), ("foundry_inbox.py", "pending"),
+    ("foundry-ticket.py", "read-issue 7 --json"), ("foundry-ticket.py", "next --json"),
+    ("foundry-ticket.py", "reconcile"), ("foundry-ticket.py", "lead renew"),
+    ("foundry_operating_mode.py", "status"),
+    ("foundry_usage.py", "ingest /c"), ("foundry_usage.py", "attribute"), ("foundry_usage.py", "coverage"),
+]
+
+
+@pytest.mark.parametrize("script,args", _WRITERS)
+def test_writing_verbs_get_no_silent_allow(env, script, args):
+    with open(os.path.join(env["root"], "scripts", script), "w") as f:
+        f.write("print('x')\n")
+    assert decide(env, f"python3 {env['root']}/scripts/{script} {args}") is None
+
+
+@pytest.mark.parametrize("script,args", _READERS)
+def test_read_only_verbs_stay_silently_allowed(env, script, args):
+    with open(os.path.join(env["root"], "scripts", script), "w") as f:
+        f.write("print('x')\n")
+    assert decide(env, f"python3 {env['root']}/scripts/{script} {args}") == "allow"

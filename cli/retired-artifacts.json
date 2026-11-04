@@ -11,6 +11,16 @@
     "max_bytes": 4194304,
     "max_total_bytes": 67108864
   },
+  "retired_terms": {
+    "_comment": "Terms naming machinery earlier releases shipped and the current one does not. The updater lists each occurrence in CLAUDE.md, AGENTS.md, WORKFLOW.md and .claude/*.md as adoption.instructions_pending (path, line, term); the /foundry:post-upgrade truth pass works from that list. Matching is a case-insensitive substring per line. A term match finds instructions that NAME retired machinery, not ones that describe the old flow in other words, and it never edits anything.",
+    "terms": [
+      "live-seam", "merge gate", "merge-gate", "foundry-merge-gate", "foundry-ci-gate", "wiring-hash",
+      "impl-wizard", "impl-progress", "dispatch-queue",
+      "foundry:release-wave", "foundry:amend", "foundry:spec-review", "foundry:audit", "foundry:command-deck",
+      "foundry:mode-autonomous", "foundry:learn-distill", "foundry:upstream-submit",
+      "plugins/cache/agentic-foundry/foundry/"
+    ]
+  },
   "entries": [
     { "path": ".foundry/wiring-hash.pin", "kind": "file", "retired_in": "0.24.0", "reason": "the wiring-hash auto-heal and its pin were removed with the live-seam merge gate" },
     { "path": ".foundry/active-workflow.json", "kind": "file", "retired_in": "0.5.0", "reason": "the macro-workflow engine's active-workflow pointer; the engine was retired" },

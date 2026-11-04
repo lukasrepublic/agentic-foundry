@@ -1,0 +1,183 @@
+{
+  "paths": [
+    {
+      "path": ".claude/hooks/h.sh",
+      "class": "current-knowledge",
+      "rule": "R-CUR-3"
+    },
+    {
+      "path": ".claude/settings.json",
+      "class": "current-knowledge",
+      "rule": "R-CUR-3"
+    },
+    {
+      "path": ".foundry/admission-ledger.jsonl",
+      "class": "retained-history",
+      "rule": "R-HIS-4"
+    },
+    {
+      "path": ".foundry/decisions/d1.md",
+      "class": "current-knowledge",
+      "rule": "R-CUR-2"
+    },
+    {
+      "path": ".foundry/evidence/e1.txt",
+      "class": "retained-history",
+      "rule": "R-HIS-4"
+    },
+    {
+      "path": ".foundry/releases/prog-closed/AUDIT.md",
+      "class": "retained-history",
+      "rule": "R-HIS-2"
+    },
+    {
+      "path": ".foundry/releases/prog-closed/program.yaml",
+      "class": "retained-history",
+      "rule": "R-HIS-1"
+    },
+    {
+      "path": ".foundry/releases/rel-gone/release.yaml",
+      "class": "retained-history",
+      "rule": "R-HIS-1"
+    },
+    {
+      "path": ".foundry/releases/rel-live/A2-PARKED.md",
+      "class": "current-knowledge",
+      "rule": "R-CUR-4"
+    },
+    {
+      "path": ".foundry/releases/rel-live/HANDOFF.md",
+      "class": "current-knowledge",
+      "rule": "R-CUR-4"
+    },
+    {
+      "path": ".foundry/releases/rel-live/RESUME.md",
+      "class": "current-knowledge",
+      "rule": "R-CUR-4"
+    },
+    {
+      "path": ".foundry/releases/rel-live/release.yaml",
+      "class": "active-work",
+      "rule": "R-ACT-1"
+    },
+    {
+      "path": ".foundry/releases/rel-live/state.yaml",
+      "class": "current-knowledge",
+      "rule": "R-CUR-4"
+    },
+    {
+      "path": ".foundry/releases/rel-orphan/release.yaml",
+      "class": "active-work",
+      "rule": "R-ACT-1"
+    },
+    {
+      "path": ".foundry/releases/rel-planned/release.yaml",
+      "class": "active-work",
+      "rule": "R-ACT-1"
+    },
+    {
+      "path": ".foundry/wiring-hash.pin",
+      "class": "runtime-residue",
+      "rule": "R-RES-1"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "class": "current-knowledge",
+      "rule": "R-CUR-3"
+    },
+    {
+      "path": "CLAUDE.md",
+      "class": "current-knowledge",
+      "rule": "R-CUR-3"
+    },
+    {
+      "path": "docs/note.md",
+      "class": "current-knowledge",
+      "rule": "R-CUR-2"
+    },
+    {
+      "path": "specs/charters/c1.md",
+      "class": "retained-history",
+      "rule": "R-HIS-4"
+    },
+    {
+      "path": "specs/features/foundry/g/one/acceptance-contract.yaml",
+      "class": "retained-history",
+      "rule": "R-HIS-3"
+    },
+    {
+      "path": "specs/features/foundry/g/one/feat-one.md",
+      "class": "retained-history",
+      "rule": "R-HIS-3"
+    },
+    {
+      "path": "specs/features/foundry/g/two/acceptance-contract.yaml",
+      "class": "retained-history",
+      "rule": "R-HIS-3"
+    },
+    {
+      "path": "specs/features/foundry/g/two/feat-two.md",
+      "class": "retained-history",
+      "rule": "R-HIS-3"
+    },
+    {
+      "path": "status-reports/s1.md",
+      "class": "retained-history",
+      "rule": "R-HIS-4"
+    }
+  ],
+  "items": [
+    {
+      "id": "rel-live/reauth-one",
+      "rule": "R-ACT-1",
+      "status": "unmigrated",
+      "flags": [
+        "coupled",
+        "program-closed"
+      ]
+    },
+    {
+      "id": "rel-live/shipped-one",
+      "rule": "R-ACT-1",
+      "status": "unmigrated",
+      "flags": [
+        "likely-shipped",
+        "program-closed"
+      ]
+    },
+    {
+      "id": "rel-live/shipped-two",
+      "rule": "R-ACT-1",
+      "status": "unmigrated",
+      "flags": [
+        "likely-shipped",
+        "program-closed"
+      ]
+    },
+    {
+      "id": "rel-orphan",
+      "rule": "R-ACT-1",
+      "status": "unmigrated",
+      "flags": [
+        "program-unresolved"
+      ]
+    },
+    {
+      "id": "rel-planned/flow-one",
+      "rule": "R-ACT-1",
+      "status": "unmigrated",
+      "flags": [
+        "program-closed"
+      ]
+    },
+    {
+      "id": "rel-planned/flow-two",
+      "rule": "R-ACT-1",
+      "status": "unmigrated",
+      "flags": [
+        "program-closed"
+      ]
+    }
+  ],
+  "unreadable": []
+}

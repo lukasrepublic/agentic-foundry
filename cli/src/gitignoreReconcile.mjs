@@ -27,6 +27,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { confinedJoin, RefusalError } from './util.mjs';
+import { assertProtected } from './writeGuard.mjs';
 
 export const BEGIN_TOKEN = 'FOUNDRY-RUNTIME-GITIGNORE-BEGIN';
 export const END_TOKEN = 'FOUNDRY-RUNTIME-GITIGNORE-END';
@@ -228,6 +229,7 @@ export function reconcileGitignorePlan({ physicalRoot, templatesDir }) {
  * replace atomic (same filesystem) and closes the same interrupted-write / classify-to-write-race
  * loss floorReconcile.mjs's own comment documents, without ever truncating the file in place. */
 export function writeGitignoreAtomically(targetPath, nextLines) {
+  assertProtected(targetPath);
   const dir = path.dirname(targetPath);
   const tmp = path.join(dir, `.gitignore.${process.pid}.tmp`);
   const bytes = Buffer.from(nextLines.map((ln) => `${ln}\n`).join(''), 'utf-8');

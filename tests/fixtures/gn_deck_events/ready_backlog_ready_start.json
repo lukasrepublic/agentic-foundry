@@ -1,0 +1,41 @@
+{
+ "timeline": [
+  {
+   "__typename": "ProjectV2ItemStatusChangedEvent",
+   "createdAt": "2026-10-01T10:00:00Z",
+   "actor": {
+    "login": "alice"
+   },
+   "status": "Ready",
+   "previousStatus": null
+  },
+  {
+   "__typename": "ProjectV2ItemStatusChangedEvent",
+   "createdAt": "2026-10-02T10:00:00Z",
+   "actor": {
+    "login": "alice"
+   },
+   "status": "Backlog",
+   "previousStatus": "Ready"
+  },
+  {
+   "__typename": "ProjectV2ItemStatusChangedEvent",
+   "createdAt": "2026-10-03T10:00:00Z",
+   "actor": {
+    "login": "alice"
+   },
+   "status": "Ready",
+   "previousStatus": "Backlog"
+  },
+  {
+   "__typename": "ProjectV2ItemStatusChangedEvent",
+   "createdAt": "2026-10-04T10:00:00Z",
+   "actor": {
+    "login": "bob"
+   },
+   "status": "In progress",
+   "previousStatus": "Ready"
+  }
+ ],
+ "comments": []
+}

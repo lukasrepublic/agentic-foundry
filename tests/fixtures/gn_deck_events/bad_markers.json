@@ -1,0 +1,29 @@
+{
+ "timeline": [],
+ "comments": [
+  {
+   "id": "IC_1",
+   "createdAt": "2026-10-02T10:00:00Z",
+   "author": {
+    "login": "alice"
+   },
+   "body": "<!-- foundry-deck: {\"v\":2,\"event\":\"handoff\",\"idempotency_key\":\"k-1\",\"target\":null,\"blocking\":null,\"at\":\"2026-10-02T10:00:00Z\",\"by\":\"alice\",\"evidence\":[\"example-org/example-repo#1\"]} -->\nhandoff recorded by alice\n"
+  },
+  {
+   "id": "IC_2",
+   "createdAt": "2026-10-03T10:00:00Z",
+   "author": {
+    "login": "bob"
+   },
+   "body": "<!-- foundry-deck: {not json -->\nhuh\n"
+  },
+  {
+   "id": "IC_3",
+   "createdAt": "2026-10-04T10:00:00Z",
+   "author": {
+    "login": "alice"
+   },
+   "body": "<!-- foundry-deck: {\"v\":1,\"event\":\"ack\",\"idempotency_key\":\"k-3\",\"target\":\"alice\",\"blocking\":null,\"at\":\"2026-10-04T10:00:00Z\",\"by\":\"alice\",\"evidence\":[]} -->\nack recorded by alice\n"
+  }
+ ]
+}

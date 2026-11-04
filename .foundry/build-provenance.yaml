@@ -1,0 +1,6 @@
+atom: gn-13-npx-upgrade-impl
+spec_ref: specs/features/foundry/adoption/npx-upgrade-2-0/feat-foundry-adoption-npx-upgrade-2-0.md
+workspace_commit: f5bed31
+auth_seq: 1
+spec_sha256: 1c0d0f928f04d324e3e8039d0c0a84b1313ec09cbf8601348577a310a4ed8ab9
+contract_sha256: ba408282d3a709f5761f5e6314d4341389d9047bb06226792922f3a972cbd7e9

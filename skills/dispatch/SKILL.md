@@ -66,7 +66,7 @@ The unit of work is a **ticket** (a GitHub issue with a `## Done means` command;
      > merge floor (branch protection / required CI checks, plus
      > `hooks/foundry-git-discipline.sh` within sessions) decides the merge. Return the structured
      > result per the worker return contract below (pointers only).
-3. **Consume the structured return** (native) - `{branch, pr_url, files_touched, seam_verdict, summary}`. No `result.json` polling; the `Agent` tool returns it directly.
+3. **Consume the structured return** (native) - `{branch, pr_url, ci_run_urls, files_touched, seam_verdict, summary, status}`. No `result.json` polling; the `Agent` tool returns it directly.
 4. **Security lane.** Run the `security-reviewer` agent when the ticket is `security: true` or touches auth/secrets/custody paths; the `security-reviewed` label on the PR is the CI-enforced lane (`.github/workflows/btb-gates-base.yml`, `security-path-base`).
 5. **The merge floor.** The PR is admitted by the native merge floor - branch protection / required
    CI checks (`docs/merge-floor.md`), plus `hooks/foundry-git-discipline.sh` for any merge attempted
@@ -74,25 +74,27 @@ The unit of work is a **ticket** (a GitHub issue with a `## Done means` command;
 
 ## Worker return contract (claim-check) — AC-WCD-2
 
-RETURN POINTERS ONLY: a status enum and evidence PATHS — NEVER return a full file body.
+RETURN POINTERS ONLY: a status enum and shared references (PR and CI run URLs) — NEVER return a full file body
+and never a local evidence path (a local path is not accessible to the operator or the deck).
 
 This rule is stated VERBATIM in every dispatch template (this skill's step-2 worker contract
 above) so a compliant worker never
 round-trips an artifact it could reference by path instead: a spec, a contract, a diff, a log — the
-worker Reads it directly in its own context and returns only the PATH to it (plus the structured
+worker Reads it directly in its own context and returns only a URL for it (plus the structured
 fields below), never its body.
 
 ## Result schema (replaces result.json)
 
 ```json
-{"branch": "<str>", "pr_url": "<str|null>", "files_touched": ["<path>"],
- "seam_verdict": "PASS|FAIL|EVIDENCE-MISSING|NOT-APPLICABLE",  # worker-self-reported live-seam result ("walk_verdict" is the legacy name for this field)
- "summary": "<str>", "status": "ready|failed",
- "evidence": ["<path — walk-evidence / test / build artifact, never the artifact's body>"]}
+{"branch": "<str>", "pr_url": "<https url|null>", "ci_run_urls": ["<https url of a CI run>"],
+ "files_touched": ["<path>"],
+ "seam_verdict": "PASS|FAIL|EVIDENCE-MISSING|NOT-APPLICABLE",  # worker-self-reported live-seam result
+ "summary": "<str>", "status": "ready|failed"}
 ```
 
-`status` is a closed enum (`ready|failed`); `evidence` and `files_touched` are PATHS, never inlined
-bodies (the claim-check rule above).
+`status` is a closed enum (`ready|failed`); `pr_url` and `ci_run_urls` are accessible https URLs
+(the evidence `review_ready` cites); `files_touched` is a list of paths, never inlined bodies.
+There is no local `evidence` path field.
 
 ## Multi-ticket fan-out
 
@@ -164,6 +166,63 @@ native `/loop` if recurring):
    can only land against its own repo. The merge floor (`docs/merge-floor.md` — branch protection /
    required CI checks, plus `hooks/foundry-git-discipline.sh` within sessions) then governs admission
    in that repo the same way it does for single-repo dispatch.
+
+## Issue-assignment launch (GitHub-native dispatch)
+
+**Team mode only.** In the default single-operator mode the worktree-create hook refuses an issue-assignment manifest (typed `single-operator-mode` line in `.foundry/dispatch.log`); the contract lane is unchanged in both modes (a contract manifest that also carries an assignment still writes the gn-11 binding in single-operator mode, intended). Enable team mode with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_operating_mode.py" enable-team` (needs plugin 2.0 or later; see `/foundry:team-mode`).
+
+A GitHub-task dispatch is launched against an explicit **assignment**, written into the dispatch
+manifest. The manifest is required for every such dispatch, single-repo included, so the worker's
+binding is always written. The assignment source is the manifest alone - no environment variable and
+no shared "current ticket" file names it. Procedure:
+
+1. **Read and claim.** `python3 scripts/foundry-ticket.py read-issue <issue> --json` is the trust-checked,
+   read-only view (body, linked documents, `done_trusted`, `done_digest`, `last_edited_by`);
+   `python3 scripts/foundry-ticket.py claim <issue>` takes it. `claim` re-reads the issue through the same
+   reader and REFUSES (exit 2, typed line `done-means-untrusted`) when the issue declares a `Done means`
+   whose author (or last editor) is not trusted - never auto-run an untrusted command; only the operator,
+   having read it, re-runs `claim --trust-author`. On success the claim record stores the VETTED
+   `done_digest`, `done_trusted`, the Done-means text and `body_sha256`; `next` never selects an issue it
+   would refuse (`skipped: done-means-untrusted`), and `reconcile` reports `acceptance_changed` when the
+   live Done-means digest differs from the claim's `done_digest`. The lead computes each linked document's
+   `{url, revision}` itself - the hook stays offline.
+2. **Write the manifest** (`acceptance_revision.body_sha256` is copied from the claim record in step 1 - the hook verifies the assignment against `<git-dir>/foundry-claims.json`: no claim record is refused `assignment-no-claim`, a body hash that differs from the claim's baseline `assignment-stale`, and an `issue_url` repo outside the configured `repos` `assignment-repo-unconfigured`; `lane` is only a declaration) to `<workspace>/.foundry/dispatch-queue/<task>.json` (atomic temp+rename):
+   `{target_repo, task, agent, dispatcher_session_id, assignment: {issue_url, issue_number, repo_key,
+   operator, lane: charter|factory, acceptance_revision: {body_sha256, documents: [{url, revision}]}}}`.
+   `contract_ref` is OPTIONAL: name it only for a factory-lane atom (the hook then stages and preflights
+   the spec and contract exactly as in *Multi-repo dispatch*). The lane is chosen by key presence:
+   `contract_ref` a non-empty string selects the contract lane (and the binding is still written when an
+   assignment is also present); `contract_ref` present but empty or non-string is refused; absent with an
+   `assignment` selects the issue lane. A `security: true` / spec-lane issue (`lane: factory`) REQUIRES
+   `contract_ref`; the hook refuses it otherwise - this is the gn-07/gn-16 authority boundary. `task` and
+   `agent` must match `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$` (no `..`); `issue_url` must be
+   `https://<host>/<owner>/<repo>/issues/<issue_number>`; `repo_key` must equal `target_repo`; `operator`
+   must be a key in `.claude/foundry-operators.json`. Without `contract_ref` no staging occurs; repo
+   binding, isolation and the cwd write-jail stay in force. An incomplete or invalid assignment, an unsafe
+   label, or a `target_repo` key that does not resolve, makes the hook exit non-zero with no stdout and a
+   typed `.foundry/dispatch.log` line.
+3. **Record `start`** with accessible https evidence only: the issue, branch and draft-PR URL
+   (`foundry_deck_events.emit`).
+4. **Launch** the native `Agent` (`isolation: "worktree"`). The worker brief carries the VETTED Done-means
+   text and its `done_digest` from the claim record, and tells the worker: before running anything, call
+   `foundry-ticket.py read-issue <issue> --json`; if the live `done_digest` differs from the vetted one (or
+   `done_trusted` is false), REFUSE and report - the worker never executes an unvetted live body. The
+   worker verifies through `foundry-ticket.py start <issue>` then `done` (both trust-check the command),
+   never by copying a command out of the body into a shell. The `WorktreeCreate` hook claims the worktree
+   of `target_repo` (including `workspace`), writes the per-worktree binding
+   `<git-dir>/foundry-assignment.json` once (the assignment fields plus the worktree path; gn-05 reads it
+   for attribution), keeps `.agent/assignment.json` for the write-jail, and emits the path. A pre-existing
+   binding with the same `issue_url` is kept as is (reconcile in step 5 catches a changed acceptance
+   revision); a different one is refused. A symlinked `.agent` or `.agent/assignment.json`, or a git dir
+   outside the product repo's `worktrees/`, is refused (`BINDING-FAILED`).
+5. **Late-result procedure.** When a worker result arrives:
+   1. Run `python3 scripts/foundry-ticket.py reconcile <issue>` FIRST, before integrating anything.
+   2. Proceed only if the issue is still owned by the operator, is not cancelled, duplicate or withdrawn,
+      and its acceptance-context revision equals the assignment's. Otherwise preserve the branch and
+      record no completion.
+   3. Integrate the result.
+   4. Record `review_ready` with the PR URL and the CI run URLs from the result's `pr_url` and
+      `ci_run_urls` (https references only, never local paths).
 
 ## Context economy — AC-WCD-4
 

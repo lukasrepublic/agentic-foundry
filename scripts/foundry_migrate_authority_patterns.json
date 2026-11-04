@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "_comment": "AC-CUT-5: planning-authority phrasings that foundry_migrate.py preview reports in CLAUDE.md / AGENTS.md / WORKFLOW.md / CONSTITUTION.md, each with a proposed replacement sentence. Entries are scoped to PLANNING authority only; the front-authorization floor, the merge floor, security review and sign-off are never targeted (a matched sentence that names one is also dropped by the tool). `match` is a case-insensitive regex tried against one sentence; first matching entry wins. The operator applies any change through a reviewed diff; the tool never writes these files.",
+  "entries": [
+    {
+      "id": "manifest-as-work-context",
+      "match": "\\brelease (manifest|\\.yaml)s?\\b.{0,80}\\b(work context|acceptance record|planning authority|planning record|source of truth)",
+      "after": "For work moved to GitHub, the issue is the work context and the acceptance record; a release manifest is retained history for items that have not been migrated."
+    },
+    {
+      "id": "release-shaping-as-routine-path",
+      "match": "/foundry:release\\b.{0,100}\\b(routine|default|every|always|shap\\w*|plan\\w*)\\b|\\b(shap\\w+|plan\\w*)\\b.{0,100}/foundry:release\\b",
+      "after": "Shape and plan work as a GitHub issue; /foundry:release remains available for the factory lane."
+    },
+    {
+      "id": "spec-first-as-routine-prerequisite",
+      "match": "\\bspec[- ]first\\b|\\b(every|each|any) (change|feature|atom|capability) (starts|begins|needs|requires)\\b.{0,40}\\bspec\\b|\\bno (code|work|implementation) without (a |an )?(spec|specification)\\b",
+      "after": "Routine work starts from a Ready GitHub issue; a written spec is required for the factory lane (for example security-flagged work), not as a routine prerequisite."
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+HTTP/2.0 200 OK
+Last-Modified: Tue, 03 Nov 2026 10:00:00 GMT
+X-Poll-Interval: 60
+
+[{"id":"11","reason":"review_requested","unread":false,"updated_at":"2026-11-03T09:00:00Z","subject":{"title":"Add widget","url":"https://api.github.com/repos/example-org/code/pulls/5","type":"PullRequest"}},{"id":"12","reason":"comment","unread":true,"subject":{"title":"chatter","url":"https://api.github.com/repos/example-org/code/issues/9","type":"Issue"}}]

@@ -1,0 +1,12 @@
+{
+  "github_scope": {
+    "owner": "example-org",
+    "planning_repo": "planning",
+    "project_number": 7,
+    "operators": {"alice": "op_alice"}
+  },
+  "repos": {
+    "code": {"path": "code"}
+  },
+  "usage": {"dataset": "usage.jsonl"}
+}

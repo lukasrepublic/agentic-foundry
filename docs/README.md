@@ -26,6 +26,7 @@ Four kinds of page, four kinds of question. Start where your question lives:
 
 - [Recover from a failed gate](how-to/recover-from-a-failed-gate.md)
 
+- [Collect native usage per operator and outcome](how-to/usage-collection.md) — OTEL export to a collector, dispatch bindings, attribution, and the coverage report
 - [Branching and cleanup](how-to/branching-and-cleanup.md) — tickets into `release/<version>`, one PR to `main`, the worktree/branch gc
 - [Run author/approver separation with CODEOWNERS](how-to/team-review-with-codeowners.md)
 - [Run a multi-repo control plane](how-to/multi-repo-control-plane.md) — **the mode Foundry is built for**: one workspace governing several code repos, and why you run Claude from the control plane rather than inside a repo

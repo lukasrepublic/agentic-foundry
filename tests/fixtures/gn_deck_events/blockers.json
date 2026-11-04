@@ -1,0 +1,43 @@
+{
+ "timeline": [
+  {
+   "__typename": "BlockedByAddedEvent",
+   "createdAt": "2026-10-03T10:00:00Z",
+   "actor": {
+    "login": "bob"
+   },
+   "blockingIssue": {
+    "number": 7,
+    "repository": {
+     "nameWithOwner": "example-org/example-repo"
+    }
+   }
+  }
+ ],
+ "comments": [
+  {
+   "id": "IC_1",
+   "createdAt": "2026-10-01T10:00:00Z",
+   "author": {
+    "login": "alice"
+   },
+   "body": "<!-- foundry-deck: {\"v\":1,\"event\":\"ack\",\"idempotency_key\":\"k-1\",\"target\":\"alice\",\"blocking\":null,\"at\":\"2026-10-01T10:00:00Z\",\"by\":\"alice\",\"evidence\":[]} -->\nack recorded by alice\n"
+  },
+  {
+   "id": "IC_2",
+   "createdAt": "2026-10-02T10:00:00Z",
+   "author": {
+    "login": "alice"
+   },
+   "body": "<!-- foundry-deck: {\"v\":1,\"event\":\"blocker_ack\",\"idempotency_key\":\"k-2\",\"target\":\"example-org/example-repo#7\",\"blocking\":\"example-org/example-repo#7\",\"at\":\"2026-10-02T10:00:00Z\",\"by\":\"alice\",\"evidence\":[]} -->\nblocker_ack recorded by alice\n"
+  },
+  {
+   "id": "IC_3",
+   "createdAt": "2026-10-04T10:00:00Z",
+   "author": {
+    "login": "alice"
+   },
+   "body": "<!-- foundry-deck: {\"v\":1,\"event\":\"blocker_ack\",\"idempotency_key\":\"k-3\",\"target\":\"example-org/example-repo#7\",\"blocking\":\"example-org/example-repo#7\",\"at\":\"2026-10-04T10:00:00Z\",\"by\":\"alice\",\"evidence\":[]} -->\nblocker_ack recorded by alice\n"
+  }
+ ]
+}

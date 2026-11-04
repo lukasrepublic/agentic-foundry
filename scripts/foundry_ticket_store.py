@@ -12,12 +12,15 @@ is not a git repository has no ticket.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import subprocess
 from pathlib import Path
 
 TICKET_BASENAME = "foundry-ticket.json"
+CLAIMS_BASENAME = "foundry-claims.json"   # gn-08: the local execution record of claimed issues (a cache, never authority)
+LEASE_RELPATH = Path(".foundry") / "runtime" / "lead.json"   # gn-08: the local duplicate-lead lease
 
 _SECRET_ASSIGN = re.compile(
     r"(?i)\b([A-Za-z_][A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|APIKEY|API_KEY|_KEY|_PAT))=(\S+)")
@@ -45,9 +48,66 @@ def project_root() -> Path:
 
 def ticket_file(root: Path | None = None) -> Path | None:
     """The git-dir path of the ticket for `root` (None when root is not a git repository)."""
+    return _git_path(TICKET_BASENAME, root)
+
+
+def claims_file(root: Path | None = None) -> Path | None:
+    """The git-dir path of the claim records for `root` (None when root is not a git repository)."""
+    return _git_path(CLAIMS_BASENAME, root)
+
+
+def lease_file(root: Path | None = None) -> Path:
+    return (root or project_root()) / LEASE_RELPATH
+
+
+def _inside(root, path) -> bool:
+    r, p = os.path.realpath(root), os.path.realpath(path)
+    return p == r or p.startswith(r + os.sep)
+
+
+def confined_makedirs(ws, d) -> None:
+    """makedirs whose containment is decided on the nearest EXISTING ancestor BEFORE anything is created, and
+    re-checked after (the same rule as foundry_migrate.ensure_dir, kept stdlib-only here so the always-on
+    runtime writers need no YAML dependency). A symlinked directory that leaves the workspace is a refusal."""
+    cur = str(d)
+    while not os.path.lexists(cur):
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        cur = parent
+    if not os.path.isdir(cur) or not _inside(ws, cur):
+        raise PermissionError(f"refusing to create a directory outside the workspace: {d}")
+    os.makedirs(d, exist_ok=True)
+    if not _inside(ws, d):
+        raise PermissionError(f"refusing to use a directory outside the workspace: {d}")
+
+
+def ensure_runtime_dir(ws) -> Path:
+    """`<ws>/.foundry/runtime`, confined, with a `*` .gitignore so a runtime file is never committed."""
+    d = Path(ws) / ".foundry" / "runtime"
+    confined_makedirs(ws, d)
+    gi = d / ".gitignore"
+    try:
+        fd = os.open(gi, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    except FileExistsError:
+        return d
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("*\n")
+    return d
+
+
+def atomic_write_json(path: Path, doc: dict) -> None:
+    """temp file in the same directory + rename, so a reader never sees a half-written file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _git_path(basename: str, root: Path | None = None) -> Path | None:
     root = root or project_root()
     try:
-        out = subprocess.run(["git", "-C", str(root), "rev-parse", "--git-path", TICKET_BASENAME],
+        out = subprocess.run(["git", "-C", str(root), "rev-parse", "--git-path", basename],
                              capture_output=True, text=True, timeout=10)
     except Exception:
         return None

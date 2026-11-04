@@ -1,5 +1,5 @@
 {
-  "//": "Foundry hook wiring (ticket-first, v2.0.0). Hooks are ADDITIVE with the consuming repo's .claude/hooks (both fire; dedup by command string). All commands resolve sibling scripts via ${CLAUDE_PLUGIN_ROOT} and are direct-invoked (exec-bit + shebang); scripts/foundry-doctor.py's check_hooks resolves a command's SCRIPT as its first whitespace token, so no interpreter prefix is used. The doctor's check_hooks fails when a wired script is missing or not executable. Wired: PreToolUse Bash (git-discipline, plugin-scripts-allow), PreToolUse Edit|Write (cwd-enforce, paper-guard), SessionStart (doctor --heal / --session-start, compact-reinject), Stop (ticket-stop), SessionEnd (env-reap), WorktreeCreate/Remove. There is no merge-gate hook, no learnings capture, and no task/teammate hook.",
+  "//": "Foundry hook wiring (ticket-first, v2.0.0). Hooks are ADDITIVE with the consuming repo's .claude/hooks (both fire; dedup by command string). All commands resolve sibling scripts via ${CLAUDE_PLUGIN_ROOT} and are direct-invoked (exec-bit + shebang); scripts/foundry-doctor.py's check_hooks resolves a command's SCRIPT as its first whitespace token, so no interpreter prefix is used. The doctor's check_hooks fails when a wired script is missing or not executable. Wired: PreToolUse Bash (git-discipline, plugin-scripts-allow), PreToolUse Edit|Write (cwd-enforce, paper-guard), SessionStart (doctor --heal / --session-start, compact-reinject), Stop (ticket-stop), SessionEnd (env-reap), WorktreeCreate/Remove, SubagentStart (usage-bind, fail-open). There is no merge-gate hook, no learnings capture, and no task/teammate hook.",
   "hooks": {
     "PreToolUse": [
       {
@@ -89,6 +89,17 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/foundry-worktree-remove.sh"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/foundry-usage-bind.py",
+            "timeout": 5
           }
         ]
       }
