@@ -1,0 +1,66 @@
+# .foundry/operating-model.yaml -- the operating-model policy for this workspace.
+#
+# Delete any key to get its default. A missing file means every default.
+# FLOOR keys are enforced rules. They can only be `true` (or their one allowed value):
+# any other value fails `/foundry:operating-model validate` with `floor-rule-disabled:<key>`.
+# Check this file with `/foundry:operating-model validate`; explain a key with
+# `/foundry:operating-model explain <key>`.
+schema_version: 1
+
+pr_strategy:
+  granularity: coarse                 # coarse | fine
+  one_pr_per_hot_file_per_round: true
+
+merge:
+  queue: auto                         # auto | merge-queue | none (auto = read the live ruleset)
+  requeue_budget_outside_diff: 1      # FLOOR: exactly 1
+  full_suite_on_branch: [shared-catalogue-change, after-queue-rejection]
+  record_line_before_enqueue: true    # FLOOR
+  human_review_required: false        # agent review is the floor
+
+deck:
+  max_builders: 4
+  heavy_slots: auto                   # auto | a number
+  resource_check: true                # FLOOR
+  workflow_size_source: smallest      # FLOOR: the smaller of session setting and tick prompt wins
+
+decisions:
+  research_first: true                # FLOOR
+  escalation_set: [external-provisioning, credential-step, no-consensus-after-research]
+
+claims:
+  enabled: true
+  expires_after: 2h                   # m | h | d
+
+cost:
+  weigh_in_every_decision: true       # FLOOR
+  priced_ask_for_always_on: true      # FLOOR
+
+report:
+  format: four-block                  # four-block | detailed
+  timezone: auto                      # auto = the operator's local zone
+  plain_language: true
+  max_lines: 8
+  include_ids: false
+  handoff_dir: ~/Documents/<workspace-name>
+
+communication:
+  style: simplified-technical-english # simplified-technical-english | off | operator-defined
+  operator_style_file: ""             # .foundry/ .md or .txt file, used when style is operator-defined
+
+hygiene:
+  disk_sweep_each_tick: true
+  teardown_required: true             # FLOOR
+
+secrets:
+  value_reads_forbidden: true         # FLOOR
+
+messaging:
+  machine_channel: git-log
+  people_channel: issue-per-topic
+  chat_mirror: "off"                  # off | on
+  open_change_minutes: 120
+
+governance:
+  design_required_paths: []
+  size_tag_required: L                # S | M | L | XL
