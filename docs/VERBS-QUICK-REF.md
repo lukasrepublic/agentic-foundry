@@ -19,6 +19,7 @@ three verbs (`init`, `dispatch`, `merge-when-green`); see the `## Start here` ta
 |---|---|
 | `/foundry:init` | Seeds the operator registry and project config for this repo |
 | `/foundry:doctor` | Runs seven structural checks on the wiring — python deps, plugin manifest, hooks, skill frontmatter, stack-profile lock, operator registry, control-plane. Not a merge gate, and green here is not proof the merge floor is sound |
+| `/foundry:operating-model` | Shows, validates or explains the operating-model policy file `.foundry/operating-model.yaml`: tunables you may change and floor rules you cannot turn off. No file means every default |
 | `/foundry:mode` | Shows (or sets) which session posture is active |
 | `/foundry:context` | Snapshots and resumes the arc-state a long session needs to hand to its successor |
 | `/foundry:env-hygiene` | Flags stray environment variables and owned dev/test resources a session should not leave behind |
