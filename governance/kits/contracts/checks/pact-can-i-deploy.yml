@@ -1,0 +1,15 @@
+# Consumer-driven contract gate. Applies only where a blueprint declares service-to-service calls.
+# Researched 2026-11-04. Install the pact CLI at the version pinned in your version matrix.
+name: pact-can-i-deploy
+on: [pull_request]
+permissions:
+  contents: read
+jobs:
+  can-i-deploy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Can I deploy
+        run: pact-broker can-i-deploy --pacticipant "$PACTICIPANT" --version "$GITHUB_SHA" --to-environment production

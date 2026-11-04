@@ -1,0 +1,6 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata: {name: chart}
+spec:
+  sources: []
+  source: {chart: demo, repoURL: "https://charts.example"}

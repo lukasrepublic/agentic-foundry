@@ -1,0 +1,9 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: web}
+spec:
+  template:
+    spec:
+      containers:
+        - {name: web, image: "registry.example/web:1.2.3"}
+        - {name: side, image: "registry.example/side@sha256:0000000000000000000000000000000000000000000000000000000000000000"}
