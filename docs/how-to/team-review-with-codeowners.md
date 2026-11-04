@@ -5,6 +5,9 @@ GitHub already has one, server-enforced and tamper-evident. This guide binds Fou
 front-authorization to it, so "the person who wrote the spec is not the person who approved
 it" becomes a platform guarantee instead of a team norm.
 
+> This applies to the **opt-in spec lane** (`security: true` work, or a spec the operator chose to
+> write). On the default ticket path, CODEOWNERS on the paths a ticket touches does the same job.
+
 ## The idea in one picture
 
 ```

@@ -1,21 +1,18 @@
 """tests/test_contract_authz.py — converted from scripts/foundry_checks/{acceptance-contract-
 intended, allowed-paths-grounding, contract-schema-gate-slots, contract-surface-scope,
 freeze-floor-ac-extraction, system-grounding-floor, intake-schema-grounding,
-grounding-conformance-backfill, system-state-snapshot}.py.
+system-state-snapshot}.py.
 
-Ports the real behavioral assertions those nine drop-in selftests drove against the front-
+Ports the real behavioral assertions those drop-in selftests drove against the front-
 authorization core: `scripts/foundry_contract.py` (the acceptance-contract validator + the
 reality-grounding error functions), `scripts/foundry_authz.py` (`_spec_ac_ids`, the spec-side AC
 extraction the freeze floor bijects against), `scripts/foundry_intake_grounding.py` (the
-authoring-time prevent-aid), `scripts/foundry_grounding_conformance.py` (the corpus backfill
-classifier), and `scripts/foundry_system_snapshot.py` (the reality-grounding foundation
+authoring-time prevent-aid), and `scripts/foundry_system_snapshot.py` (the reality-grounding foundation
 primitive). CLI/doctor scaffolding is dropped; the computed fixtures/assertions are kept.
 """
 from __future__ import annotations
 
 import os
-import subprocess
-import sys
 
 import pytest
 import yaml
@@ -25,7 +22,6 @@ from conftest import REPO_ROOT, load_module
 contract = load_module("scripts/foundry_contract.py", "foundry_contract")
 authz = load_module("scripts/foundry_authz.py", "foundry_authz")
 intake_grounding = load_module("scripts/foundry_intake_grounding.py", "foundry_intake_grounding")
-grounding_conformance = load_module("scripts/foundry_grounding_conformance.py", "foundry_grounding_conformance")
 system_snapshot = load_module("scripts/foundry_system_snapshot.py", "foundry_system_snapshot")
 
 
@@ -306,15 +302,6 @@ class TestSpecAcIds:
         assert authz._spec_ac_ids(str(p)) == []
 
 
-def test_acceptance_contract_validate_selftest_subprocess():
-    """The contract validator is the SOLE remaining front-authorization freeze-floor proof
-    (per CHANGELOG v0.24.0). Exercise its own real --selftest directly rather than
-    reimplementing its internals."""
-    script = os.path.join(REPO_ROOT, "scripts", "foundry-acceptance-contract-validate.py")
-    proc = subprocess.run([sys.executable, script, "--selftest"], capture_output=True, text=True)
-    assert proc.returncode == 0, proc.stdout + proc.stderr
-
-
 # ==================================================== intake-schema-grounding (Atom D) ==== #
 
 class TestIntakeSchemaDefects:
@@ -333,51 +320,6 @@ class TestIntakeSchemaDefects:
 
     def test_empty_declared_artifacts_is_a_clean_noop(self, tmp_path):
         assert intake_grounding.intake_schema_defects([], project_dir=str(tmp_path)) == []
-
-
-# ================================================ grounding-conformance-backfill (Atom G) ==== #
-
-class TestClassifyAtom:
-    def test_unconfigured_is_grounded_unconditionally(self):
-        c, errors = grounding_conformance._classify_atom(
-            {"system_grounding": {"artifacts": [{"kind": "bogus"}]}}, _snapshot(configured=False))
-        assert c == grounding_conformance.GROUNDED and errors == []
-
-    def test_no_block_is_ungrounded(self):
-        c, errors = grounding_conformance._classify_atom({}, _snapshot(configured=True))
-        assert c == grounding_conformance.UNGROUNDED and errors == []
-
-    def test_structurally_malformed_block_is_stale(self):
-        data = {"system_grounding": {"artifacts": [{"kind": "table"}]}}  # missing identifier
-        c, errors = grounding_conformance._classify_atom(data, _snapshot(configured=True))
-        assert c == grounding_conformance.STALE and errors
-
-    def test_wellformed_consistent_block_is_grounded(self):
-        data = {"system_grounding": {"artifacts": [
-            {"kind": "table", "identifier": "users", "classification": "exists"}]}}
-        snap = _snapshot(configured=True, entities={"users": {"columns": ["id"]}})
-        c, errors = grounding_conformance._classify_atom(data, snap)
-        assert c == grounding_conformance.GROUNDED and errors == []
-
-    def test_wellformed_inconsistent_block_is_stale(self):
-        data = {"system_grounding": {"artifacts": [
-            {"kind": "table", "identifier": "ghosts", "classification": "exists"}]}}
-        snap = _snapshot(configured=True, entities={"users": {"columns": ["id"]}})
-        c, errors = grounding_conformance._classify_atom(data, snap)
-        assert c == grounding_conformance.STALE and errors
-
-
-class TestValidateSnapshot:
-    def test_valid_snapshot_ok(self):
-        grounding_conformance._validate_snapshot(_snapshot())  # must not raise.
-
-    def test_missing_key_raises(self):
-        with pytest.raises(grounding_conformance.GroundingConformanceError):
-            grounding_conformance._validate_snapshot({"entities": {}, "modules": []})
-
-    def test_non_dict_raises(self):
-        with pytest.raises(grounding_conformance.GroundingConformanceError):
-            grounding_conformance._validate_snapshot("not-a-dict")
 
 
 # ======================================================= system-state-snapshot (Atom A) ==== #

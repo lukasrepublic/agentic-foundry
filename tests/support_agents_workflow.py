@@ -18,9 +18,7 @@ import re
 
 ROLE_MODEL = {
     "security-reviewer": "opus",
-    "spec-author": "opus",
     "pr-reviewer": "sonnet",
-    "spec-reviewer": "sonnet",
     "app-engineer": "sonnet",
     "framework-engineer": "sonnet",
     "infra-engineer": "sonnet",
@@ -108,67 +106,15 @@ def evaluate_persona_model_selection(root):
 
 # ==================================================== reference-agents ==== #
 
-NEW_AGENTS = {"app-engineer", "infra-engineer", "framework-engineer", "qa-engineer", "spec-author"}
+NEW_AGENTS = {"app-engineer", "infra-engineer", "framework-engineer", "qa-engineer"}
 EXISTING_AGENTS = {"pr-reviewer", "security-reviewer"}
-NEW_REVIEWERS = {"spec-reviewer"}
-CANONICAL_AGENTS = NEW_AGENTS | EXISTING_AGENTS | NEW_REVIEWERS
+CANONICAL_AGENTS = NEW_AGENTS | EXISTING_AGENTS
 
 ROLE_TOOLS = {
     "pr-reviewer": frozenset({"Read", "Grep", "Glob"}),
     "security-reviewer": frozenset({"Read", "Grep", "Glob"}),
-    "spec-reviewer": frozenset({"Read", "Grep", "Glob"}),
-    "spec-author": frozenset({"Read", "Grep", "Glob", "Write", "Edit"}),
     "app-engineer": frozenset({"Read", "Grep", "Glob", "Edit", "Write", "Bash"}),
     "infra-engineer": frozenset({"Read", "Grep", "Glob", "Edit", "Write", "Bash"}),
     "framework-engineer": frozenset({"Read", "Grep", "Glob", "Edit", "Write", "Bash"}),
     "qa-engineer": frozenset({"Read", "Grep", "Glob", "Edit", "Write", "Bash"}),
 }
-
-
-# ==================================================== workflow-agent-model-pins ==== #
-
-ALLOWED_WORKFLOW_ALIASES = frozenset({"opus", "sonnet", "haiku", "fable"})
-KNOWN_FANOUT = ("audit:", "remediate:", "impl:", "verify:")
-
-_LABEL_RE = re.compile(r"\blabel\s*:")
-_MODEL_EXPR_RE = re.compile(r"\bmodel\s*:\s*([^,}\n]+)")
-_QUOTED_RE = re.compile(r"['\"]([^'\"]+)['\"]")
-
-
-def _workflow_files(base):
-    return sorted(glob.glob(os.path.join(base, "workflows", "*.js")))
-
-
-def evaluate_workflow_agent_model_pins(root):
-    res = {"ac1": False, "ac2": False, "detail": ""}
-    files = _workflow_files(root)
-    if not files:
-        res["detail"] = f"no workflows/*.js under {root}"
-        return res
-
-    ac1, ac2 = [], []
-    for path in files:
-        rel = os.path.relpath(path, root)
-        for i, line in enumerate(open(path, encoding="utf-8"), 1):
-            if _LABEL_RE.search(line):
-                m = _MODEL_EXPR_RE.search(line)
-                if not m:
-                    ac1.append(f"{rel}:{i}: agent() opts (label:) has no model: pin")
-                else:
-                    lits = _QUOTED_RE.findall(m.group(1))
-                    if not lits:
-                        ac1.append(f"{rel}:{i}: model: expr has no quoted alias literal ({m.group(1).strip()!r})")
-                    elif any(l not in ALLOWED_WORKFLOW_ALIASES for l in lits):
-                        ac1.append(f"{rel}:{i}: model: expr has a non-alias literal ({lits!r})")
-            for mm in _MODEL_EXPR_RE.finditer(line):
-                for val in _QUOTED_RE.findall(mm.group(1)):
-                    if val in ALLOWED_WORKFLOW_ALIASES:
-                        continue
-                    why = ("dated/full model id" if _DATED_ID_RE.match(val)
-                           else "inherit-all '*'" if val == "*" else "non-alias value")
-                    ac2.append(f"{rel}:{i}: {why}: {val!r}")
-
-    res["ac1"] = not ac1
-    res["ac2"] = not ac2
-    res["detail"] = "; ".join(ac1 + ac2) or "ok"
-    return res

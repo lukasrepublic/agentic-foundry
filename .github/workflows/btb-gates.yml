@@ -6,12 +6,10 @@
 # instruction in the header of the file whose whole point is not to ship false merge-floor claims
 # is the same defect one level up.
 #
-# THREE ALWAYS-REPORTING gate jobs (a required context that never reports blocks a PR forever —
-# each job always concludes, reporting `not applicable` when its condition doesn't bind):
-#   * spec-link          — floor #1 as CI: a factory-lane PR must name its authorizing spec
-#                          (`Spec:` trailer in the PR body); light-lane and docs-only PRs are
-#                          not-applicable. Replaces the provenance-marker chain as the lane signal.
-#   * security-path      — floor #3 routing as CI: a diff touching auth/secrets/supply-chain paths
+# This file holds ONE job, `shell-parse-bash32`; the metadata gate `security-path-base` lives in
+# `btb-gates-base.yml`. A required context that never reports blocks a PR forever, so each gate job
+# always concludes, reporting `not applicable` when its condition doesn't bind:
+#   * security-path-base — (defined in `btb-gates-base.yml`) floor #3 routing as CI: a diff touching auth/secrets/supply-chain paths
 #                          requires a `security-reviewed:<head12>-<base8>` label naming THE HEAD COMMIT
 #                          BEING GATED (posted after a security-reviewer subagent pass); clean
 #                          diffs are not-applicable. The BARE `security-reviewed` label no longer
@@ -25,7 +23,7 @@
 #                          so a file that parses under the runner's modern bash but not under the
 #                          bash 3.2 macOS still ships as `/bin/bash` cannot ship unnoticed. Always
 #                          runs (no `if:`), fails closed on any parse failure. Tier B, advisory,
-#                          same as its two siblings.
+#                          same as `security-path-base`.
 #
 # MERGE-FLOOR TIER: no longer stated here as a literal. Each job DERIVES it from the live branch
 # protection state (see the `tier()` helper). The old hardcoded "TIER B: ADVISORY — private repo,
@@ -36,15 +34,13 @@
 # 2026-08-04. Going public made two of them live fork surface. Three are MET; CODEOWNERS is a
 # prerequisite in place rather than a control in force (see below) — stated that way deliberately,
 # because "ALL MET" is what this header said before review checked it:
-#   * branch protection + required checks — applied at the flip (6 required contexts, enforce_admins,
+#   * branch protection + required checks — applied at the flip (5 required contexts: selftests, secret-scan, release-acceptance, shell-parse-bash32, security-path-base; enforce_admins,
 #     no force-push, no deletion);
 #   * CODEOWNERS on .github/ — the FILE is added, but the precondition is only PARTLY met and
 #     saying otherwise would be the exact overclaim this block was rewritten to remove: GitHub
 #     requires code-owner review only when `require_code_owner_review` is set on the branch rule,
 #     and it is NOT set here (a solo maintainer cannot approve their own PR, so requiring it would
 #     make merges unsatisfiable). The file is a prerequisite in place, not a control in force;
-#   * label-only lane signals — spec-link no longer reads `Lane: light` from the fork-controlled
-#     PR body;
 #   * stale-label TOCTOU — the review label is BOUND TO THE HEAD SHA
 #     (`security-reviewed:<head12>-<base8>`), so a label earned on an earlier commit cannot describe a later
 #     one. `security-label-reset.yml` additionally strips stale labels. The first attempt at this
@@ -58,17 +54,17 @@
 # signals, the head+base-bound review label) closed a fork's control of the PR *body*, and none of
 # it closed a fork's control of the *gate definition*.
 #
-# CLOSED for the two metadata gates. `spec-link` and `security-path` no longer live in this file.
-# They are `spec-link-base` / `security-path-base` in `.github/workflows/btb-gates-base.yml`, on
+# CLOSED for the metadata gate. `security-path` no longer lives in this file.
+# It is `security-path-base` in `.github/workflows/btb-gates-base.yml`, on
 # `pull_request_target`, whose definition GitHub takes from the base repository's DEFAULT BRANCH
-# rather than the merge commit. A fork cannot alter what grades it there. Both were already
+# rather than the merge commit. A fork cannot alter what grades it there. It was already
 # checkout-free and API-metadata-only — the profile that makes that trigger safe.
 #
 # STILL OPEN for `shell-parse-bash32`, and it is NOT going to be closed the same way. This job
 # CHECKS OUT FORK CODE, which is the one thing `pull_request_target` must never do with a
 # privileged token; moving it would trade a gate-definition hole for a code-execution hole, which
 # is strictly worse. So a fork PR CAN still rewrite this job and make it report green under its
-# own name. Saying "the fork surface is closed" because two of three moved would be exactly the
+# own name. Saying "the fork surface is closed" because the metadata gate moved would be exactly the
 # overclaim this header was rewritten to remove — the same class as the hardcoded tier line that
 # was true when written and false the moment the repo went public.
 #
@@ -81,7 +77,7 @@
 # E2E-journeys gate: not present for this repo (no app runtime); the adopter template ships
 # with the Phase-5 certification path.
 #
-# Checkout: `spec-link` and `security-path` remain pure-API (gh) — no repo code is fetched or
+# Checkout: `security-path-base` remains pure-API (gh) — no repo code is fetched or
 # executed there (floor-#3 review finding 6: no token-in-.git/config, no fetch-and-execute).
 # `shell-parse-bash32` DOES check out the repo (feat-foundry-bash32-parse-guard, AC-B32-12) — a
 # parse gate over the repository's own shipped scripts cannot avoid it. The reversal is bounded:
@@ -151,8 +147,8 @@ jobs:
           # An intermediate revision of this atom deleted the line outright, reasoning that a
           # checkout-based parse gate's verdict does not depend on the tier. That overshot:
           # AC-B32-4(c) of feat-foundry-bash32-parse-guard REQUIRES this job to write a
-          # step-summary line stating its enforcement tier "as `spec-link` and `security-path`
-          # already do", and an authorized AC is not something an implementation may quietly drop.
+          # step-summary line stating its enforcement tier "as `security-path-base`
+          # does", and an authorized AC is not something an implementation may quietly drop.
           # Parity with the siblings is what the AC ties itself to, so parity is what it gets —
           # byte-identical wording, derived from the same read-only probe.
           tier() {
@@ -189,11 +185,13 @@ jobs:
           # Per-directory minima guard a collapsed discovery query (an empty/short covered set is
           # itself a failure: a gate that checks nothing must not report green); the ACTUAL
           # covered set driven through `bash -n` below is the full shipped-shell-script set,
-          # a strict superset of the two directories the minima bound.
+          # a strict superset of the two directories the minima bound. (v2.0.0: the hooks minimum
+          # moved 11 -> 7 with the four shell hooks the delivery rebase deleted; it still equals the
+          # shipped count, so a collapsed discovery still fails.)
           hook_count="$(git ls-files hooks | grep -c -e '[.]sh$' || true)"
           script_count="$(git ls-files scripts | grep -c -e '[.]sh$' || true)"
-          if [ "${hook_count:-0}" -lt 11 ]; then
-            summary "shell-parse-bash32: FAIL — discovery found only ${hook_count:-0} hooks/*.sh (minimum 11) — discovery collapsed"
+          if [ "${hook_count:-0}" -lt 7 ]; then
+            summary "shell-parse-bash32: FAIL — discovery found only ${hook_count:-0} hooks/*.sh (minimum 7) — discovery collapsed"
             exit 1
           fi
           if [ "${script_count:-0}" -lt 5 ]; then

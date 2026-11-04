@@ -1,6 +1,6 @@
 ---
 name: id-promote
-description: The infra-delivery cross-env PROMOTION orchestrator (step 16) — "this change passed in env N, carry it to env N+1 (e.g. staging→prod)." ADVISORY orchestration that RE-RUNS the existing per-env change-delivery loop in the TARGET env, adding NO new verdict. For the target env it re-derives the GitOps class via classify_gitops(changed_paths, infra_binding) from the frozen change scope × the target profile's infra_binding.gitops_paths, surfaces the ADVISORY id-impact v1 blast_radius hint (a DISPLAY hint for the operator, NOT a routing input — the dropped match_blast engine is NOT used), then drives id-apply's BUILT decide_apply(changed_paths, infra_binding) with its ACTUAL TWO inputs RE-DERIVED in the target env (changed_paths from the frozen change scope; infra_binding from the target profile — NEVER an env-N value, NEVER the removed blast_tier/high_blast_acked args; an unresolvable input REFUSEs, fail-closed). The EXECUTE branch runs the frozen infra_binding.apply against the AWS context the operator has already configured for the TARGET environment — that environment's IAM restrictions are the control; a GitOps-managed path VERIFY_ONLYs instead, because the ArgoCD controller reconciles it. The HIGH-blast-without-ack expectation is surfaced from the real parse_policy_findings read (policy:high-blast-ack) for the operator/reviewer at the target env's merge floor to weigh — honestly disclosed as no longer machine-enforced, since the bespoke merge-gate verdict machinery that once mechanically enforced this ack was retired, so decide_apply is NOT coupled to it and no live component blocks on it automatically today. Because merge IS deploy and the change is already on main, landing is proven by the POST-DEPLOY REALIZATION frame — emit_realization_evidence(change_scope, candidate_sha, post_apply_plan_results, argocd_status, artifact) + derive_realization_verdict (both real, live functions) — NOT the pre-merge restricted-base attributability. REFLECTS the merge floor + realization verdict + decide_apply's per-env re-derivation; never skips the gate, self-certifies a promotion, or issues a mutating verb outside the EXECUTE branch's frozen infra_binding.apply.
+description: The infra-delivery cross-env PROMOTION orchestrator (step 16) — "this change passed in env N, carry it to env N+1 (e.g. staging→prod)." ADVISORY orchestration that RE-RUNS the existing per-env change-delivery loop in the TARGET env, adding NO new verdict. For the target env it re-derives the GitOps class via classify_gitops(changed_paths, infra_binding) from the frozen change scope × the target profile's infra_binding.gitops_paths, surfaces the policy-risk read (foundry_plan_model.parse_policy_findings — a DISPLAY read for the operator, NOT a routing input), then drives id-apply's BUILT decide_apply(changed_paths, infra_binding) with its ACTUAL TWO inputs RE-DERIVED in the target env (changed_paths from the frozen change scope; infra_binding from the target profile — NEVER an env-N value, NEVER the removed blast_tier/high_blast_acked args; an unresolvable input REFUSEs, fail-closed). The EXECUTE branch runs the frozen infra_binding.apply against the AWS context the operator has already configured for the TARGET environment — that environment's IAM restrictions are the control; a GitOps-managed path VERIFY_ONLYs instead, because the ArgoCD controller reconciles it. The HIGH-blast-without-ack expectation is surfaced from the real parse_policy_findings read (policy:high-blast-ack) for the operator/reviewer at the target env's merge floor to weigh — honestly disclosed as no longer machine-enforced, since the bespoke merge-gate verdict machinery that once mechanically enforced this ack was retired, so decide_apply is NOT coupled to it and no live component blocks on it automatically today. Because merge IS deploy and the change is already on main, landing is proven by the POST-DEPLOY REALIZATION frame — emit_realization_evidence(change_scope, candidate_sha, post_apply_plan_results, argocd_status, artifact) + derive_realization_verdict (both real, live functions) — NOT the pre-merge restricted-base attributability. REFLECTS the merge floor + realization verdict + decide_apply's per-env re-derivation; never skips the gate, self-certifies a promotion, or issues a mutating verb outside the EXECUTE branch's frozen infra_binding.apply.
 ---
 
 # id-promote — the cross-env promotion orchestrator (infra-delivery step 16)
@@ -39,7 +39,7 @@ verdict**. The authorities stay where they are:
   AWS context the operator has configured for that environment.
 
 **Honest disclosure:** earlier design intent had a `policy:high-blast-ack` ack mechanically enforced
-by a bespoke merge-gate verdict at merge time — that verdict machinery was retired and does not exist in `scripts/` today; `id-impact`'s real `parse_policy_findings` read
+by a bespoke merge-gate verdict at merge time — that verdict machinery was retired and does not exist in `scripts/` today; `foundry_plan_model.parse_policy_findings`
 still surfaces the finding, but no live component blocks the merge on it automatically. It is
 surfaced to the operator/reviewer at the merge floor for their own judgment.
 
@@ -63,8 +63,8 @@ operator. In particular:
 
 - The **GitOps class is RE-DERIVED** via `classify_gitops(changed_paths, infra_binding)` over the
   target profile — **never** a self-reported routing flag and **never** an env-N value carried over.
-- The **impact tier is a DISPLAY hint only** — a high `blast_radius` does not route the apply, and a
-  low one does not change the outcome. Never let the advisory tier talk you into (or out of) a branch.
+- The **policy findings are a DISPLAY read only** — a finding does not route the apply, and its
+  absence does not change the outcome. Never let the advisory read talk you into (or out of) a branch.
 - The **AWS context is the one the operator has already configured for the TARGET environment** —
   never a caller assertion that a different environment's context applies, and never a context this
   skill itself acquires: it never runs `aws sso login`, `aws configure`, assume-role, or establishes a
@@ -83,12 +83,11 @@ The source must be a change **verified in env N**; an unverified env-N source **
    bound to the **AWS context the operator has already configured for that environment** — never an
    env-N value, never a context this skill acquires itself.
 
-2. **Surface the ADVISORY `id-impact` `blast_radius` impact hint (display, NOT routing).** Surface
-   `id-impact`'s v1 **`blast_radius`** hint over the **target env's** plan as a **DISPLAY hint for the
-   operator** — *not* a routing input. The dropped `match_blast` / `foundry_plan_model.match_blast`
-   blast engine (deleted v2.6) is **NOT** used; the **enforcing** risk gate is the verdict's
-   policy-findings ack (step 5 below), not this advisory tier. (Explaining *why* `match_blast` is gone
-   here is honest documentation, not its use.)
+2. **Surface the policy-risk read (display, NOT routing).** Run the target profile's
+   `infra_binding.policy` over the **target env's** plan and surface
+   `foundry_plan_model.parse_policy_findings`' output as a **DISPLAY read for the operator** — *not* a
+   routing input. The dropped `match_blast` blast engine (deleted v2.6) is **NOT** used; the
+   **enforcing** risk gate is the policy-findings ack (step 5 below).
 
 3. **Drive id-apply's BUILT `decide_apply` with its ACTUAL TWO inputs, RE-DERIVED in the target env.**
    Drive **`id-apply`'s BUILT `decide_apply(*, changed_paths, infra_binding)`** — its real
@@ -124,8 +123,8 @@ The source must be a change **verified in env N**; an unverified env-N source **
      or run**. Fail-closed — surface the reason; the promotion **HALTS**.
 
 5. **The HIGH-blast ack is surfaced for the merge floor's human review — NOT `decide_apply`.** The
-   **HIGH-blast-without-ack expectation** is surfaced from `id-impact`'s real
-   `parse_policy_findings` read over the rendered manifests, for the operator/reviewer to weigh
+   **HIGH-blast-without-ack expectation** is surfaced from the real
+   `foundry_plan_model.parse_policy_findings` read over the rendered manifests, for the operator/reviewer to weigh
    **when the promotion PR merges at the target env's merge floor**. `id-promote`
    **REFLECTS** that surfaced expectation and does **NOT** re-implement a HIGH→REFUSE coupling inside
    `decide_apply` (it has **no `high_blast_acked` input** to do so). **Honest disclosure:** the
@@ -146,7 +145,7 @@ The source must be a change **verified in env N**; an unverified env-N source **
    `id-rollback`; it **HALTS** the promotion.
 
 7. **Surface the promotion report + the per-env realization-evidence.** Emit the **promotion report**
-   (the target env, the surfaced advisory tier, the `decide_apply` branch + its evidence, the
+   (the target env, the surfaced policy findings, the `decide_apply` branch + its evidence, the
    surfaced ack expectation, the realization verdict) and the **`.foundry/`-partitioned per-env
    realization-evidence** (the `emit_realization_evidence` shape). An unverified env-N source, a
    `decide_apply` REFUSE, an operator/reviewer decision to hold the promotion over an un-acked
@@ -166,11 +165,9 @@ The source must be a change **verified in env N**; an unverified env-N source **
 - **Risk = policy findings; the HIGH-blast ack is surfaced for human judgment, not machine-enforced**
   (`parse_policy_findings` → `policy:high-blast-ack`, surfaced at the target merge floor) — never
   re-implemented in `decide_apply`, and no live component blocks on it automatically (the bespoke
-  verdict machinery that once did was retired). The `id-impact`
-  `blast_radius` tier is an **advisory display hint only**.
-- **The `match_blast` blast engine is NOT used** (dropped v2.6) — the impact tier is the advisory
-  `blast_radius` hint; the real risk signal is `id-impact`'s policy-findings read, surfaced for the
-  operator/reviewer, not machine-enforced.
+  verdict machinery that once did was retired).
+- **The `match_blast` blast engine is NOT used** (dropped v2.6) — the real risk signal is the
+  policy-findings read, surfaced for the operator/reviewer, not machine-enforced.
 - **Landing is proven by the realization frame** (`emit_realization_evidence` →
   `derive_realization_verdict`, both real, live functions), **in place of** any pre-merge restricted-base
   attributability notion (which can't attribute an already-merged change).
@@ -192,7 +189,7 @@ The source must be a change **verified in env N**; an unverified env-N source **
 - **Coupling HIGH→REFUSE inside `decide_apply`** — forbidden. The HIGH-blast ack is surfaced for human
   judgment at the merge floor, not enforced by `decide_apply`, which has no `high_blast_acked` input.
 - **Using `match_blast` / `foundry_plan_model.match_blast` to route the apply** — forbidden (dropped
-  v2.6); the impact tier is an advisory display hint, not a routing input.
+  v2.6); the policy read is a display, not a routing input.
 - **Claiming a live component enforces `policy:high-blast-ack` automatically.** That verdict machinery
   was retired; the finding is surfaced, the operator/reviewer decides.
 - **Recording landing via a pre-merge-shaped attributability notion is forbidden (never use it in place of the realization frame).**
@@ -207,13 +204,12 @@ The source must be a change **verified in env N**; an unverified env-N source **
 
 ## Outputs (the named hand-offs)
 
-- **The promotion report** — the human/`id-review`-readable promotion record: the target env, the
-  surfaced advisory `blast_radius` tier, the `decide_apply` branch + its evidence, the surfaced ack
+- **The promotion report** — the human-readable promotion record: the target env, the
+  surfaced policy findings, the `decide_apply` branch + its evidence, the surfaced ack
   expectation, and the realization verdict (LANDED / NOT-LANDED / HALTED).
 - **The `.foundry/`-partitioned per-env realization-evidence** — the realization shape emitted by
   `emit_realization_evidence` (`{change_scope, candidate_sha, post_apply_plan_results, argocd_status,
-  artifact}`), a sibling of the other `.foundry/` runtime partitions (runtime output, not part of the
-  citation-gate corpus). `derive_realization_verdict` reads it to decide LANDED / NOT-LANDED.
+  artifact}`), a sibling of the other `.foundry/` runtime partitions (runtime output). `derive_realization_verdict` reads it to decide LANDED / NOT-LANDED.
 
 ## Where it lives + dogfood
 
@@ -225,7 +221,6 @@ registration along with the whole drop-in-check registry — `foundry-doctor.py`
 composed primitive is verified: `tests/test_infra_delivery.py::TestIdApplyGate` (`decide_apply` +
 `classify_gitops`) and `tests/test_infra_delivery.py::TestRealizationVerdict`
 (`emit_realization_evidence` / `derive_realization_verdict`) — no real infra/env needed. Depends on
-`id-impact` (the advisory `blast_radius` hint + the real `parse_policy_findings` policy-risk read),
 `id-apply` (the BUILT `decide_apply` + `classify_gitops`, executed against the AWS context the
 operator has configured per environment), and
 `infra-realization-gate` (`emit_realization_evidence` / `derive_realization_verdict`). The

@@ -1,31 +1,27 @@
-# Quickstart — zero to your first governed merge
+# Quickstart — zero to your first merged ticket
 
 Every command below is copy-paste-runnable — kept current by the CI doc-drift suites, so no
 version pin here can go stale. If a command here ever drifts from the shipped CLI, that's a
 bug — file it (a CI doc-drift test locks the pins on our side).
 
+The default path is on one page: **[context/operating-model.md](../context/operating-model.md)**.
 What you'll produce, artifact by artifact:
 
 ```
  you type                      what appears in your repo
  ────────                      ─────────────────────────
- /foundry:init            ──▶  .claude/foundry-operators.json   (who may authorize)
+ /foundry:init            ──▶  .claude/foundry-operators.json   (who may authorize; standing grant)
                                .claude/foundry-project.json     (project config)
 
- /foundry:intake "…"      ──▶  specs/features/<product>/<domain>/<cap>/
-                                 ├─ feat-<cap>.md               (atomic spec, stable AC-IDs)
-                                 └─ acceptance-contract.yaml    (observable checkpoints)
+ gh issue create          ──▶  a ticket: What / Why / Done means (a command) / Paper allowed
 
- /foundry:spec-review     ──▶  review recorded, content-bound to the spec's hash
+ foundry-ticket.py start  ──▶  <git-dir>/foundry-ticket.json   (not in the tree; scopes the paper guard
+                                                                  and the Stop hook)
 
- /foundry:authorize       ──▶  acceptance-contract.yaml gains a frozen, signed
-                                 `authorized:` block             (the point of no drift)
+ /foundry:dispatch        ──▶  an isolated worktree → foundry-test.sh green → one PR →
+                                 YOUR checks decide the merge
 
- /foundry:dispatch        ──▶  an isolated worktree → a PR → YOUR checks decide the merge
-
- /foundry:certify-local   ──▶  per-atom pass/fail against one real running instance
-
- /foundry:release accept  ──▶  your sign-off recorded            (a note, not a gate)
+ /foundry:merge-when-green ─▶  (on your say-so) waits for every check, merges when CLEAN
 ```
 
 ## Prerequisites
@@ -33,7 +29,7 @@ What you'll produce, artifact by artifact:
 - **Claude Code** (CLI or desktop).
 - **python3** with `pyyaml`, `jsonschema` (`pip install -r requirements.txt`, runtime deps) and
   `pytest` (`pip install -r requirements-dev.txt`, dev deps).
-- **node 22+** — for the Workflow templates and Playwright journeys (the graph MCP server is Python).
+- **node 22+** — for the `npx` bootstrap/updater and, if your tickets use them, Playwright tests.
 - A repo you own, on GitHub, with CI you trust (the floor derives from YOUR checks).
 
 ## Before your first session
@@ -84,9 +80,8 @@ reports on each; none of them is written by anything this plugin ships.
 
 ## The minimal path
 
-The six-verb core loop, on one repo, with nothing else read first. The full governance model —
-the hook layer, the merge-floor tiers, certification detail — is covered afterward in
-**the full install**, below.
+The three-verb core loop, on one repo, with nothing else read first. The full governance model —
+the hook layer and the merge-floor tiers — is covered afterward in **the full install**, below.
 
 ## 0. Install
 
@@ -144,99 +139,102 @@ native Bash sandbox enable, and the git-identity jail: a plugin cannot edit its 
 confinement. See **Before your first session**, above, for what owns each of those writes and the
 by-hand remedy where nothing does.
 
-**Existing codebase?** Run `/foundry:extract-spec` first — it surveys the code and promotes a
-chosen capability into a candidate spec, which then rides the exact same loop below.
+**Existing codebase?** Nothing to extract: write the next change as a ticket and the loop below
+applies as-is.
 
-## 2. From fuzzy ask to reviewed spec
+## 2. Write the ticket
 
+A GitHub issue, one screen at most:
+
+````markdown
+## What
+Users can export their data as CSV.
+## Why
+Support is hand-exporting it every week.
+## Done means
 ```
-/foundry:intake "users can export their data as CSV"
+python -m pytest tests/test_export_csv.py -q
+```
+## Paper allowed
+docs/runbooks/export.md
+````
+
+`Done means` is a **command**, not a sentence: it is what the agent runs before it stops, what the
+reviewer runs, and what you run for sign-off. `Paper allowed` lists the only documents the change may
+touch under `specs/`, `docs/`, `.foundry/`, `status-reports/` or `charters/`; code, infra, tests and
+config are never gated. Not sure what the ticket should say? `/foundry:intake` walks you through it.
+
+Then start it in the session:
+
+```bash
+python3 "$CLAUDE_PLUGIN_ROOT/scripts/foundry-ticket.py" start 42
 ```
 
-Interactive discovery → an **atomic spec** (stable AC-IDs, a delimited normative region,
-prior-art grounding) + a sibling **acceptance contract** declaring observable checkpoints.
-Specs are capped — hard — at 14 acceptance criteria / 8,000 words; oversize means decompose,
-there is no override flag.
+## 3. Authorization is the standing grant
 
-```
-/foundry:spec-review specs/features/app/export/csv/feat-export-csv.md
-```
-
-Deterministic pre-lints first (size ceiling, reference closure — zero tokens), then three
-fresh-context reviewer questions (prior-art; steel-man + adversarial; per-AC rubric), one
-remediation round, and the review is recorded content-bound to the spec's hash.
-
-## 3. Authorize (the front gate)
-
-```
-/foundry:authorize specs/features/app/export/csv/feat-export-csv.md
-```
-
-You see every checkpoint; you confirm; the spec + contract hashes are frozen and signed with
-your operator id. **An unauthorized spec cannot reach `main` through the factory — there is
-no skip.** (Authorization is yours; the tool only does the freezing.)
+Assigning the ticket **is** the authorization; your standing grant in
+`.claude/foundry-operators.json` (`standing_authorization: true`) is recorded once. Only
+`security: true` work (auth, secrets, custody, production data) or a design too large for a ticket
+takes the opt-in spec lane: `/foundry:authorize` freezes a spec + contract with your operator id and
+has no skip.
 
 ## 4. Build
 
 ```
-/foundry:dispatch feat-export-csv
+/foundry:dispatch 42
 ```
 
-An implementer persona builds the atom in an **isolated git worktree** against the frozen
-contract and opens a PR. Merges wait on your repo's own checks — details in **the full
-install**, below.
+An implementer persona builds the ticket in an **isolated git worktree**, runs
+`scripts/foundry-test.sh` until your repo's own CI command is green locally, pushes once and opens
+one PR. The git-discipline hook refuses the push and a non-draft PR until local-green is recorded for
+HEAD. While `Done means` fails, the Stop hook keeps the session working. Merges wait on your repo's
+own checks — details in **the full install**, below.
 
-Prefer hands-on? `/foundry:mode-interactive` is the zero-ceremony lane: plain Claude Code,
-you implement and review yourself. Small changes deserve small process.
+Prefer hands-on? Plain Claude Code on a branch is the zero-ceremony lane (`/foundry:mode
+interactive`): you implement and review yourself. Small changes deserve small process.
 
-## 5. Certify against the real thing
+## 5. Merge — on your say-so
 
 ```
-/foundry:certify-local export-v1
+/foundry:merge-when-green 87
 ```
 
-Deploys the release **once** locally (your stack profile's boot recipe), then runs every
-atom's tagged Playwright journeys against that single instance — per-atom pass/fail with the
-runner's own output as the evidence. No journeys or no boot recipe → it **refuses** and names
-what's missing; it never passes vacuously.
+Only on your explicit instruction (or a ticket that says `merge: auto`): waits for every check and
+merges through the one already-permitted squash merge the instant the PR is `CLEAN`.
+Deploy on promote (a tag or a label), not on every merge.
 
 ## 6. Sign off — you, not the machine
 
-```
-/foundry:release accept export-v1 --operator <you> --verdict accepted --note "tested it myself"
-```
-
-This records a practice note in the release manifest. It is deliberately **not** a gate: the
-automation's job ends at making problems visible; the judgment is yours.
+Close the ticket with the `Done means` output; then run the thing yourself. Your own test pass is the
+last step of delivery — a practice, deliberately **not** a machine gate: the automation's job ends at
+making problems visible; the judgment is yours.
 
 ---
 
-**The whole loop:** `intake → spec-review → authorize → dispatch → floor → certify-local →
-accept`. Six verbs plus your own CI. Everything else in the catalog is optional — see
-[docs/VERBS-QUICK-REF.md](VERBS-QUICK-REF.md) for the full list.
+**The whole loop:** `ticket → dispatch → floor → merge`. Three verbs plus your own CI. Everything
+else in the catalog is optional — see [docs/VERBS-QUICK-REF.md](VERBS-QUICK-REF.md) for the full
+list.
 
 ## The full install
 
 The minimal path above is the whole discipline. This section states plainly what enabling the
 plugin does to every session in every repo where it's installed, what the merge floor actually
-enforces, and what certification checks — none of it is new machinery beyond the minimal path;
-it's the same six verbs, explained in full.
+enforces — none of it is new machinery beyond the minimal path;
+it's the same three verbs, explained in full.
 
 ### The hook layer — not optional today
 
 **The hook layer is not optional today.** Installing and enabling the plugin wires its hooks
 into every session in every repo on your machine — there is no supported way to disable it, no
 environment variable, no config flag, and no reduced-ceremony install that turns it off. At
-minimum, three guards are wired:
+minimum, these guards are wired:
 
 - **`hooks/foundry-git-discipline.sh`** — a `PreToolUse` guard on `gh pr merge`: refuses
   `--admin` (a server-side-check bypass) outright, admits `--auto` (the platform's required
   checks enforce the wait), and admits any other merge only after a live `gh pr checks` query
-  returns all-green. Fail-closed on any error, pending row, or unknown state.
-- **`hooks/foundry-cloud-cli-exec-guard.sh`** — blocks a bare invocation of a guarded cloud/IaC
-  CLI (`aws`, `kubectl`, `tofu`, `terraform`, `helm`, `argocd`) at any command position unless
-  it's routed through a configured wrapper; it activates once you set one in
-  `.claude/foundry-project.json` and stays inert (never blocks) until you do.
+  returns all-green. Fail-closed on any error, pending row, or unknown state. It also refuses
+  `git push` and a non-draft PR creation until `scripts/foundry-test.sh` has recorded
+  local-green for HEAD.
 - **`hooks/foundry-cwd-enforce.sh`** — inside a dispatched worktree, canonicalizes every
   write-tool target and hard-stops (fail-closed) any write resolving into the main checkout or
   another worktree of the same repository, closing the gap native worktree isolation leaves
@@ -255,12 +253,6 @@ The PR merges when **your repo's checks** are green, per your tier:
   git-discipline guard above.
 
 Details + exact hook behavior: [merge-floor.md](merge-floor.md).
-
-### Certification, in full
-
-`/foundry:certify-local` deploys once and runs the real journey suite (the Certify step above);
-nothing further to configure for the minimal path. A shared staging deployment is
-`/foundry:certify-staging`, part of the optional catalog.
 
 ## Pick one install path — do not stack
 
@@ -283,7 +275,8 @@ runbook is in **[troubleshooting.md](troubleshooting.md)**, symptom-first.
 
 | Artifact | Path |
 |---|---|
-| Specs + contracts | `specs/features/<product>/<domain>/<capability>/` |
+| Tickets | GitHub issues (the record); the active one in the git dir (`git rev-parse --git-path foundry-ticket.json`), never committed |
+| Opt-in specs + contracts | `specs/features/<product>/<domain>/<capability>/` |
 | Operator registry / project config | `.claude/foundry-operators.json` / `.claude/foundry-project.json` |
-| Review + release records | `.foundry/` (gitignored evidence) + your git history (the ledger) |
+| Decisions + research | `.foundry/decisions/`, `.foundry/research/` + your git history (the ledger) |
 | Stack profiles | `packs/stack-profiles/` (node-web, aws-eks-karpenter, python-uv-lib, python-uv-service) |

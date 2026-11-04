@@ -6,13 +6,11 @@ labels: enhancement-request
 ---
 
 <!--
-  This is the RECEIVING shape for `/foundry:upstream-submit`. Adopters: prefer that verb — it
-  fail-closes against proprietary leakage, stamps provenance + a dedup key, and renders this
-  shape for you. Filing by hand? Keep everything GENERALIZED (the mechanism, not your incident)
+  This is the RECEIVING shape for an adopter's generalized request. Keep everything GENERALIZED (the mechanism, not your incident)
   and carry NO proprietary context (product/customer/internal names, operator ids, memory refs).
 
   An ER is a REQUEST and a new /foundry:intake source — NOT a contribution to `main`. If accepted,
-  the maintainer runs it through intake → audit → authorize → build (front-authorization, no skip).
+  the maintainer turns it into a ticket and builds it through the usual loop.
 -->
 
 ## Generalized problem
@@ -29,7 +27,7 @@ labels: enhancement-request
 <!-- One of: `core-plugin` (a change in agentic-foundry) | `handbook-template` (a workspace-shape convention). -->
 
 ## Provenance (machine)
-<!-- `/foundry:upstream-submit` fills this. Filing by hand, include what you can: -->
+<!-- Include what you can: -->
 - adopter: <label>
 - foundry-version: <version you are on>
-- dedup-key: <ur-… ; the verb computes this over the normalized generalized problem>
+- dedup-key: <optional ur-… key over the normalized generalized problem>

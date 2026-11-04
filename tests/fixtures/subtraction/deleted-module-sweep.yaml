@@ -40,6 +40,55 @@ token_set:
   - 'foundry-merge-gate-status'
   - 'skills/authorize-light'
   - 'skills/emit-provenance'
+  # v2.0.0 PR 2 (the delivery rebase, ticket #269): the spec/contract/manifest/learnings/deck
+  # machinery's modules, hooks and workflows, both spellings.
+  - 'foundry[_-]command[_-]deck'
+  - 'foundry[_-]wave[_-]plan'
+  - 'foundry[_-]routine[_-]wake'
+  - 'foundry[_-]message[_-]kind'
+  - 'foundry[_-]blocker[_-]check'
+  - 'foundry[_-]manifest[_-]to[_-]tasklist'
+  - 'foundry[_-]native[_-]todo'
+  - 'foundry[_-]project[_-]sync'
+  - 'foundry[_-]project[_-]tracking'
+  - 'foundry[_-]project[_-]rtm'
+  - 'foundry[_-]project[_-]config'
+  - 'foundry[_-]floor[_-]hooks'
+  - 'foundry[_-]amend'
+  - 'foundry[_-]audit[_-]ledger'
+  - 'foundry[_-]audit[_-]preconditions'
+  - 'foundry[_-]audit[_-]prepare'
+  - 'foundry[_-]audit[_-]record'
+  - 'foundry[_-]spec[_-]lint'
+  - 'foundry[_-]content[_-]conformance'
+  - 'foundry[_-]acceptance[_-]contract[_-]validate'
+  - 'foundry[_-]done[_-]when[_-]backfill'
+  - 'foundry[_-]grounding[_-]conformance'
+  - 'foundry[_-]reconcile\b'
+  - 'foundry[_-]coherence[_-]check'
+  - 'foundry[_-]graph\b'
+  - 'foundry[_-]build[_-]citation[_-]graph'
+  - 'foundry[_-]graph[_-]mcp'
+  - 'foundry[_-]distill'
+  - 'foundry[_-]upstream[_-]submit'
+  - 'foundry[_-]autonomy[_-]instrument'
+  - 'foundry[_-]governance[_-]budget'
+  - 'foundry[_-]index\b'
+  - 'foundry[_-]decommission'
+  - 'foundry[_-]pr[_-]review'
+  - 'foundry[_-]dashboard[_-]fidelity'
+  - 'foundry[_-]sandbox[_-]signature'
+  - 'foundry_release\b'
+  - 'foundry[_-]harvest[_-]learnings'
+  - 'foundry[_-]session[_-]learnings'
+  - 'foundry[_-]learnings[_-]lib'
+  - 'foundry[_-]task[_-]created'
+  - 'foundry[_-]task[_-]completed'
+  - 'foundry[_-]teammate[_-]idle'
+  - 'foundry[_-]cloud[_-]cli[_-]exec[_-]guard'
+  - 'foundry-learn-capture'
+  - 'workflows/release-wave'
+  - 'workflows/spec-audit'
 
 # surface_set — the whole executable AND prompt-executable surface. The shipped AC-SUB-6
 # locator named only five files; skills/ + agents/ join this round (skill/agent prose is
@@ -55,6 +104,10 @@ surface_set:
   - '.github/workflows/*.yml'
   - 'skills/*/SKILL.md'
   - 'agents/*.md'
+  # v2.0.0 PR 2 review: context/docs/cli prose surfaces (stale citations of deleted modules).
+  - 'context/*.md'
+  - 'docs/**/*.md'
+  - 'cli/src/*.mjs'
 
 # absent_paths — the AC-SUB-1 set (32 paths, unchanged, not renumbered) PLUS
 # scripts/foundry-branch-protection.sh (Block 2, AC-SCW-6), PLUS the four fleet-session scripts +
@@ -99,6 +152,97 @@ absent_paths:
   - skills/authorize-light
   - skills/emit-provenance
   - scripts/foundry-branch-protection.sh
+  # v2.0.0 PR 2: the spec/contract/manifest/learnings/deck machinery.
+  - scripts/foundry_release.py
+  - scripts/foundry-wave-plan.py
+  - scripts/foundry_command_deck.py
+  - scripts/foundry_command_deck_watch.py
+  - scripts/foundry-routine-wake-prompt.py
+  - scripts/foundry_message_kind.py
+  - scripts/foundry_blocker_check.py
+  - scripts/foundry-manifest-to-tasklist.py
+  - scripts/foundry-native-todo-discipline.py
+  - scripts/foundry-project-sync.py
+  - scripts/foundry_project_tracking.py
+  - scripts/foundry-project-rtm.py
+  - scripts/foundry_project_config.py
+  - scripts/foundry_floor_hooks.py
+  - scripts/foundry-amend.py
+  - scripts/foundry_audit_ledger.py
+  - scripts/foundry_audit_preconditions.py
+  - scripts/foundry-audit-prepare.py
+  - scripts/foundry-audit-record.py
+  - scripts/foundry-spec-lint.py
+  - scripts/foundry-content-conformance.py
+  - scripts/foundry-acceptance-contract-validate.py
+  - scripts/foundry-done-when-backfill.py
+  - scripts/foundry_grounding_conformance.py
+  - scripts/foundry_reconcile.py
+  - scripts/foundry-coherence-check.py
+  - scripts/foundry_graph.py
+  - scripts/foundry-build-citation-graph.py
+  - scripts/foundry-graph-mcp.py
+  - scripts/foundry-distill.py
+  - scripts/foundry-upstream-submit.py
+  - scripts/foundry-autonomy-instrument.py
+  - scripts/foundry-governance-budget.py
+  - scripts/foundry-index.py
+  - scripts/foundry-decommission.py
+  - scripts/foundry_pr_review.py
+  - scripts/foundry-dashboard-fidelity.py
+  - scripts/foundry_sandbox_signature.py
+  - hooks/foundry-harvest-learnings.sh
+  - hooks/foundry-session-learnings.sh
+  - hooks/foundry-learnings-lib.sh
+  - hooks/foundry-task-created.py
+  - hooks/foundry-task-completed.py
+  - hooks/foundry-teammate-idle.py
+  - hooks/foundry-cloud-cli-exec-guard.sh
+  - bin/foundry-learn-capture
+  - workflows/release-wave.js
+  - workflows/spec-audit.js
+  - .mcp.json
+  - agents/spec-author.md
+  - agents/spec-reviewer.md
+  - .github/workflows/foundry-project-sync.yml
+  - skills/amend
+  - skills/audit
+  - skills/authorize-release
+  - skills/certify-local
+  - skills/certify-staging
+  - skills/coherence-check
+  - skills/command-deck
+  - skills/dashboards-as-code
+  - skills/data-tier-cutover
+  - skills/decommission-gate
+  - skills/drift-sweep
+  - skills/extract-spec
+  - skills/fleet
+  - skills/grounding-conformance
+  - skills/id-architect
+  - skills/id-document
+  - skills/id-impact
+  - skills/id-review
+  - skills/index
+  - skills/infra-sandboxed-apply
+  - skills/learn-capture
+  - skills/learn-distill
+  - skills/mode-autonomous
+  - skills/mode-interactive
+  - skills/release
+  - skills/report-citation-graph
+  - skills/research-capture
+  - skills/revert
+  - skills/sd-debug
+  - skills/sd-discover
+  - skills/sd-document
+  - skills/sd-plan-tests
+  - skills/sd-review
+  - skills/sd-test
+  - skills/sd-verify
+  - skills/skill-authoring
+  - skills/spec-review
+  - skills/upstream-submit
 
 # allowlist — AC-SCW-9's approved exceptions. Every occurrence the widened sweep would
 # otherwise flag over (surface_set x token_set) is covered by exactly one entry below: `path`
@@ -118,11 +262,6 @@ allowlist:
     reason: >-
       Comparative docstring listing the retired provenance-chain scripts by name; not an import
       or invocation.
-  - path: scripts/foundry_reconcile.py
-    token: 'foundry[_-]merge[_-]gate'
-    reason: >-
-      Docstring explaining the reconcile check never mutates real state, contrasted against the
-      retired merge gate's `evaluate`; not an import or invocation.
   - path: scripts/foundry_realization.py
     token: 'foundry[_-]walk[_-]evidence'
     reason: >-
@@ -133,43 +272,6 @@ allowlist:
     reason: >-
       Comment recording that the dispatch preflight used to compose with the retired spawn-worker
       script; not an import or invocation.
-  - path: scripts/foundry_grounding_conformance.py
-    token: 'foundry[_-]merge[_-]gate'
-    reason: >-
-      Comment stating the retired merge gate never imported/ran this module; not an import or
-      invocation.
-  - path: scripts/foundry_grounding_conformance.py
-    token: 'foundry[_-]drift[_-]sweep'
-    reason: >-
-      Comment noting this module's CLI mirrors the (dormant) drift-sweep module's shape; not an
-      import or invocation.
-  - path: scripts/foundry-coherence-check.py
-    token: 'foundry[_-]merge[_-]gate'
-    reason: >-
-      Comments explaining this module is never imported/run inside the retired merge gate; not an
-      import or invocation.
-  - path: workflows/release-wave.js
-    token: 'foundry-spawn-worker'
-    reason: >-
-      Comment recording that the deprecated spawn-worker/fanout scripts were retired entirely;
-      not an import or invocation (the native Workflow tool has no fs/import()/node: access).
-  - path: workflows/release-wave.js
-    token: 'foundry-fanout'
-    reason: >-
-      Same retirement comment as the foundry-spawn-worker entry above; not an import or
-      invocation.
-  - path: workflows/release-wave.js
-    token: 'foundry[_-]run[_-]ledger'
-    reason: >-
-      `foundry-run-ledger:journal` is a hardcoded console.log narration-line LABEL string this
-      workflow itself emits at runtime — not a reference to, import of, or invocation of the
-      deleted scripts/foundry_run_ledger.py module.
-  - path: skills/coherence-check/SKILL.md
-    token: 'foundry[_-]merge[_-]gate'
-    reason: >-
-      Skill prose recording that the bespoke foundry-merge-gate.py this rule/section originally
-      named was retired in the v0.24.0 subtraction; a retirement note, not an invocation
-      instruction.
   - path: skills/cut-release/SKILL.md
     token: 'foundry[_-]wiring[_-]hash'
     reason: >-
@@ -202,28 +304,6 @@ allowlist:
       Skill prose recording there is no wiring-hash check in the current doctor (foundry-wiring
       -hash.py and foundry-merge-gate.py both retired); a retirement note, not an invocation
       instruction.
-  - path: skills/drift-sweep/SKILL.md
-    token: 'foundry[_-]merge[_-]gate'
-    reason: >-
-      Skill prose recording the bespoke foundry-merge-gate.py this line originally named was
-      retired in the v0.24.0 subtraction; a retirement note, not an invocation instruction.
-  - path: skills/drift-sweep/SKILL.md
-    token: 'foundry[_-]drift[_-]sweep'
-    reason: >-
-      This skill's OWN frontmatter/body honestly names itself CURRENTLY DORMANT because the
-      scripts/foundry_drift_sweep.py engine it drives was retired; a self-documenting dormancy
-      note, not a live invocation (the skill is not wired to run this engine).
-  - path: skills/grounding-conformance/SKILL.md
-    token: 'foundry[_-]merge[_-]gate'
-    reason: >-
-      Skill prose recording the bespoke foundry-merge-gate.py this line originally named was
-      retired in the v0.24.0 subtraction; a retirement note, not an invocation instruction.
-  - path: skills/infra-sandboxed-apply/SKILL.md
-    token: 'foundry[_-]walk[_-]evidence'
-    reason: >-
-      Skill prose recording that the `decide_sandbox_apply` gate named here was retired with
-      scripts/foundry_walk_evidence.py in the v0.24.0 subtraction; a retirement note, not an
-      invocation instruction.
   - path: skills/init/SKILL.md
     token: 'foundry[_-]merge[_-]gate'
     reason: >-
@@ -246,22 +326,6 @@ allowlist:
     reason: >-
       Skill prose recording that the branch-protection.json config the retired applier pinned is
       also deleted; a retirement note, not a live config reference.
-  - path: skills/mode-autonomous/SKILL.md
-    token: 'foundry-spawn-worker'
-    reason: >-
-      Skill prose recording the bespoke process-spawn fallback (foundry-fanout/foundry-spawn
-      -worker) was REMOVED in the v0.24.0 subtraction; a retirement note, not an invocation
-      instruction.
-  - path: skills/mode-autonomous/SKILL.md
-    token: 'foundry-fanout'
-    reason: >-
-      Same retirement note as the foundry-spawn-worker entry above; not an invocation
-      instruction.
-  - path: skills/release/SKILL.md
-    token: 'foundry[_-]wiring[_-]hash'
-    reason: >-
-      Skill prose recording that the wiring-manifest.json, foundry-wiring-hash.py and its drop-in
-      doctor check are historical/retired; a retirement note, not an invocation instruction.
   - path: skills/upgrade/SKILL.md
     token: 'foundry[_-]merge[_-]gate'
     reason: >-
@@ -273,3 +337,9 @@ allowlist:
     reason: >-
       Same self-documenting retirement note as the foundry-merge-gate entry above (both retired
       together); not an invocation instruction.
+  - path: cli/src/amendmentsBackfill.mjs
+    token: 'foundry[_-]amend'
+    reason: >-
+      Comments in the (upgrade-surface-frozen) updater phase that backfills the empty Amendments
+      table cite the deleted foundry-amend.py's row shape; documented follow-up, prose only, not an
+      import or invocation.

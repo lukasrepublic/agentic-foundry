@@ -25,8 +25,6 @@ _cleanup() {  # <repo-key> <branch=<agent>/<task>>
   local agent task
   if [ "${branch%/*}" != "$branch" ]; then agent="${branch%%/*}"; task="${branch#*/}"; else agent=""; task="$branch"; fi
   local wt_path="$ROOT/.worktrees/$repo/$branch"
-  # Harvest the worker's learnings sidecar BEFORE removal (fail-open).
-  [ -d "$wt_path" ] && "$HERE/foundry-harvest-learnings.sh" harvest "$wt_path" 2>/dev/null || true
   # Repo-aware path: delegate to foundry-wt (resolves the product repo, never force).
   if [ -n "$agent" ] && [ -x "$WTBIN" ] && CLAUDE_PROJECT_DIR="$ROOT" "$WTBIN" resolve "$repo" >/dev/null 2>&1; then
     if CLAUDE_PROJECT_DIR="$ROOT" "$WTBIN" rm "$repo" "$task" --as="$agent"; then

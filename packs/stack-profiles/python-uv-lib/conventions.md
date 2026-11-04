@@ -65,12 +65,11 @@ default and never inferred. It asserts that atoms built under this profile have 
 to boot: there is no `app_exercise_binding`, and none is expected.
 
 That has one direct, load-bearing operator-facing consequence: **locking this pack makes
-`/foundry:certify-local` REFUSE by design.** With no boot recipe to resolve, certification
-terminates in its pre-dispatch `REFUSED (nothing dispatched): no boot recipe` class — no process is
-launched, no verdict is emitted. That is the *correct* shape for a genuine library. It is emphatically
+any boot-driven check REFUSE by design.** With no boot recipe to resolve, a run that needs to start
+the app terminates before it dispatches anything — no process is launched, no verdict is emitted. That is the *correct* shape for a genuine library. It is emphatically
 **not** the shape for an atom that has any bootable surface (an HTTP endpoint, a CLI entrypoint, a
 worker process) — such an atom belongs on the `python-uv-service` pack instead, where the boot
-recipe and the `/healthz` live-seam surface make certification a real, dispatched check rather than
+recipe and the `/healthz` live-seam surface make a boot-driven check a real, dispatched run rather than
 a refusal. Locking a runtime-bearing atom to this pack does not fail loudly; it silently trades a
-real certification run for a REFUSE that looks identical to a genuine library's. Choose the pack
+real run for a REFUSE that looks identical to a genuine library's. Choose the pack
 deliberately.

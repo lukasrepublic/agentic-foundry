@@ -24,12 +24,8 @@ exception, either (a) a historical LOC/ratio/audit-convergence figure describing
 deleted system with no independently recorded ground truth in the live tree, or (b) an external
 industry citation — neither is "a claim about the shipped tree" (this atom's own displaced
 condition). Every currently-checkable fact those two files repeat (e.g. the 14-AC/8,000-word
-spec-size ceiling) is independently covered via its sibling occurrence in a non-excluded doc.
-docs/GOVERNANCE-BUDGET.md (subtraction-wave, AC-SUB-4) joins them for the SAME reason: its
-"before" column is a point-in-time figure pinned to a specific past commit, never re-derivable
-from the live tree, and its "after" column is exactly as historical the moment the NEXT atom
-merges — a before/after table is definitionally a record of a past measurement, not a standing
-claim about "the tree as it stands right now."
+spec-size ceiling) is prose-only in the spec template since v2.0.0.
+(docs/GOVERNANCE-BUDGET.md, which joined them for the same reason, was deleted in v2.0.0.)
 """
 from __future__ import annotations
 
@@ -93,7 +89,6 @@ EXCLUDED_DOCS = {
     "docs/archive/**": "archived",
     "docs/DESIGN.md": "historical-record",
     "docs/glossary.md": "historical-record",
-    "docs/GOVERNANCE-BUDGET.md": "historical-record",
 }
 
 # Pinned literal expected copy of EXCLUDED_DOCS, hand-synchronized (not derived from it) — a
@@ -102,11 +97,11 @@ EXPECTED_EXCLUSIONS = {
     "docs/archive/**": "archived",
     "docs/DESIGN.md": "historical-record",
     "docs/glossary.md": "historical-record",
-    "docs/GOVERNANCE-BUDGET.md": "historical-record",
 }
 
+# v2.0.0 (the delivery rebase): the core loop is three verbs, not six.
 CORE_LOOP_VERBS = frozenset(
-    {"intake", "spec-review", "authorize", "dispatch", "certify-local", "release"}
+    {"init", "dispatch", "merge-when-green"}
 )
 
 UNDERSTATEMENT_FLOOR_RATIO = 0.5
@@ -388,7 +383,7 @@ def _check_verb_refs(root: Path, doc: str, claim_id: str) -> None:
 
 def _mutate_verb_refs(tmp_path_arg: Path, doc: str) -> Path:
     dest = _materialize(REPO_ROOT, tmp_path_arg, [doc, "skills"])
-    (dest / "skills" / "release").rename(dest / "skills" / "release-renamed")
+    (dest / "skills" / "dispatch").rename(dest / "skills" / "dispatch-renamed")
     return dest
 
 
@@ -417,8 +412,8 @@ def _emitting_jobs_and_tiers(workflow_text: str) -> dict:
     return emitting
 
 
-# BOTH workflow files, because the gate jobs are split by trigger: the two metadata gates run on
-# `pull_request_target` (definition taken from the base branch, so a fork cannot rewrite them) and
+# BOTH workflow files, because the gate jobs are split by trigger: the metadata gate runs on
+# `pull_request_target` (definition taken from the base branch, so a fork cannot rewrite it) and
 # `shell-parse-bash32` stays on `pull_request` because it checks out fork code. Reading only one
 # file would let the README claim tier labels for jobs that no longer emit them — the exact
 # doc-drift class this claim exists to catch.
@@ -459,11 +454,11 @@ def _mutate_gate_tier(tmp_path_arg: Path) -> Path:
     dest = _materialize(
         REPO_ROOT, tmp_path_arg, ["README.md", *_GATE_WORKFLOWS, "docs/merge-floor.md"]
     )
-    # Mutate in the file that actually DEFINES spec-link now. Renaming in btb-gates.yml would be a
+    # Mutate in the file that actually DEFINES security-path-base now. Renaming in btb-gates.yml would be a
     # no-op mutation, which would make this claim's own mutation guard vacuous — a green that can
     # never go red.
     p = dest / ".github" / "workflows" / "btb-gates-base.yml"
-    p.write_text(p.read_text(encoding="utf-8").replace("  spec-link-base:\n", "  spec-link-renamed:\n"), encoding="utf-8")
+    p.write_text(p.read_text(encoding="utf-8").replace("  security-path-base:\n", "  security-path-renamed:\n"), encoding="utf-8")
     return dest
 
 
@@ -613,44 +608,9 @@ def _mutate_node_version(tmp_path_arg: Path) -> Path:
     return dest
 
 
-# ---- 11. spec-size-ceiling-quickstart (completeness) -----------------------
-
-_HARD_ACS_RE = re.compile(r"HARD_ACS\s*=\s*(\d+)")
-_HARD_WORDS_RE = re.compile(r"HARD_WORDS\s*=\s*(\d+)")
-_QUICKSTART_SIZE_RE = re.compile(r"(\d+) acceptance criteria / ([\d,]+) words")
-
-
-def _derive_spec_size_ceiling(root: Path) -> tuple:
-    text = read_doc_text(root, "scripts/foundry-spec-lint.py")
-    ac_m = _HARD_ACS_RE.search(text)
-    words_m = _HARD_WORDS_RE.search(text)
-    if not ac_m or not words_m:
-        raise MissingSourceError(
-            "scripts/foundry-spec-lint.py yields no parseable HARD_ACS/HARD_WORDS constants"
-        )
-    return int(ac_m.group(1)), int(words_m.group(1))
-
-
-def _check_spec_size_ceiling(root: Path) -> None:
-    text = read_doc_text(root, "docs/QUICKSTART.md")
-    m = _QUICKSTART_SIZE_RE.search(text)
-    if not m:
-        raise MissingSourceError("docs/QUICKSTART.md yields no parseable spec-size-ceiling claim")
-    claimed = (int(m.group(1)), int(m.group(2).replace(",", "")))
-    derived = _derive_spec_size_ceiling(root)
-    if claimed != derived:
-        raise AssertionError(
-            f"[spec-size-ceiling-quickstart] docs/QUICKSTART.md claims {claimed[0]} ACs / "
-            f"{claimed[1]} words, scripts/foundry-spec-lint.py pins {derived[0]}/{derived[1]}"
-        )
-
-
-def _mutate_spec_size_ceiling(tmp_path_arg: Path) -> Path:
-    dest = _materialize(REPO_ROOT, tmp_path_arg, ["docs/QUICKSTART.md", "scripts/foundry-spec-lint.py"])
-    p = dest / "scripts" / "foundry-spec-lint.py"
-    p.write_text(p.read_text(encoding="utf-8").replace("HARD_WORDS = 8000", "HARD_WORDS = 7999"), encoding="utf-8")
-    return dest
-
+# ---- 11. spec-size-ceiling-quickstart — RETIRED in v2.0.0 with `scripts/foundry-spec-lint.py`, the
+# source of the HARD_ACS/HARD_WORDS ground truth it derived (the spec lane's size ceiling is now
+# prose-only, in `context/feat-spec-template.md`). ---------------------------------------------
 
 # ---- 12./13. retired (pre-v1 content pass) ---------------------------------
 # subtraction-check-cli-count and subtraction-doctor-loc derived their ground truth from
@@ -1486,7 +1446,7 @@ COVERED_CLAIMS = [
         "claim_id": "skill-catalog-count",
         "doc": "README.md",
         "mutation_class": "add-unit",
-        "tokens": frozenset({"64"}),  # v1.17.0: + post-upgrade
+        "tokens": frozenset({"29"}),  # v2.0.0: 32 skills minus the three core-loop verbs
         "derive": _derive_skill_catalog_count,
         "check": _check_skill_catalog_count,
         "make_mutated": _mutate_skill_catalog_count,
@@ -1540,11 +1500,10 @@ COVERED_CLAIMS = [
         "claim_id": "test-count-band",
         "doc": "README.md",
         "mutation_class": "remove-unit",
-        # r1-followups charter (AC-RFU-3): the v1.0 "(twice the ... mark of v1.0)" parenthetical
-        # (which carried the "1900"/"1000" tokens) is retired -- the claim is now the single
-        # literal "2000", the largest round number that stays inside the test-count-band's
-        # [half-derived, derived] window (suite ~2024 at authoring time).
-        "tokens": frozenset({"2000"}),
+        # r1-followups charter (AC-RFU-3): the claim is a single round literal, the largest round
+        # number that stays inside the test-count-band's [half-derived, derived] window. v2.0.0
+        # (the delivery rebase) deleted ~30 test modules, so it moved from "2000" to "1500".
+        "tokens": frozenset({"1500"}),
         "derive": _derive_test_count,
         "check": _check_test_count,
         "make_mutated": _mutate_test_count,
@@ -1575,15 +1534,6 @@ COVERED_CLAIMS = [
         "derive": _derive_node_version,
         "check": _check_node_version,
         "make_mutated": _mutate_node_version,
-    },
-    {
-        "claim_id": "spec-size-ceiling-quickstart",
-        "doc": "docs/QUICKSTART.md",
-        "mutation_class": "remove-unit",
-        "tokens": frozenset({"14", "8,000"}),
-        "derive": _derive_spec_size_ceiling,
-        "check": _check_spec_size_ceiling,
-        "make_mutated": _mutate_spec_size_ceiling,
     },
     # Two claims retired in the pre-v1 content pass ("subtraction-check-cli-count",
     # "subtraction-doctor-loc"): both derived their ground truth from `git show v0.23.0:…`,
@@ -1789,7 +1739,6 @@ EXPECTED_CLAIM_IDS = frozenset({
     "documented-paths-stack-profiles",
     "documented-paths-git-discipline-hook",
     "node-version-quickstart",
-    "spec-size-ceiling-quickstart",
     "terminology-section-refs",
     "terminology-illustrative-markers",
     "architecture-illustrative-marker",

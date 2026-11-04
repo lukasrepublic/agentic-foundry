@@ -9,7 +9,7 @@ in-cluster manifests. These are the *genuine* commands and shapes such a stack u
 > **Threat model — TRUSTED OPERATOR.** This profile is operator-curated machinery,
 > authorized at the normal `/foundry:authorize` gate. These conventions are an **advisory
 > mistake-catcher FOR the trusted operator**, not a defense AGAINST them. The `infra_binding`
-> command strings are **data** — they are read by the `id-plan` / `id-impact` / `id-verify` /
+> command strings are **data** — they are read by the `id-plan` / `id-verify` /
 > `id-apply` consumers and executed later against the **AWS context the operator has already
 > configured**, never by this pack.
 
@@ -106,7 +106,7 @@ policy pack).
 ## Karpenter blast-radius tiers (the `infra_binding.blast_radius` rule)
 
 The `blast_radius` set encodes the design §6 Karpenter tiering as **machine-evaluable**
-`{tier, action, resource_type, attr?}` rules. `id-impact` matches a planned action to a tier;
+`{tier, action, resource_type, attr?}` rules. the plan reader matches a planned action to a tier;
 **HIGH** escalates to extra approval + a disruption-budget / canary rollout. The tiers reflect
 **node churn**:
 
@@ -119,7 +119,7 @@ The `blast_radius` set encodes the design §6 Karpenter tiering as **machine-eva
   **replace**, or a **NodePool removal** (which drains + replaces every node it owns).
 
 The profile carries **≥1 HIGH** rule (the loader enforces this — a no-HIGH infra profile is a
-fail-closed authoring error). The tier set is **data here, logic in `id-impact`**: this profile
+fail-closed authoring error). The tier set is **data here, logic in the plan reader**: this profile
 declares the tier→match rules; the consumer reads them to classify a plan.
 
 ## Small-fleet safe defaults (ER #87, grounding corrected ER #187)

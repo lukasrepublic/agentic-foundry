@@ -523,7 +523,6 @@ def test_documented_install_commands_name_the_shipped_pin():
 
     scanned_rels = {rel for rel, _ in instructions}
     for expected_rel in ("README.md", "docs/QUICKSTART.md", "docs/troubleshooting.md",
-                         "docs/how-to/adopt-on-an-existing-codebase.md",
                          "skills/cut-release/SKILL.md"):
         assert expected_rel in scanned_rels, (
             "%s carries no recognized marketplace-add install instruction -- either the doc lost "

@@ -182,3 +182,29 @@ test('reference scan: a directory row named through a child path is kept; the di
   const r2 = planRetiredArtifacts({ physicalRoot: root, catalogue: tight }).rows.find((r) => r.relPath === '.claude/logs');
   assert.equal(r2.why, 'scan-incomplete');
 });
+
+test('every 2.0.0 entry validates, is reported stale as its declared kind, and the history stores are never catalogued', () => {
+  const cat = loadRetiredCatalogue(CLI_DIR);
+  const v2 = cat.entries.filter((e) => e.retired_in === '2.0.0');
+  assert.ok(v2.length >= 11);
+  // `.foundry/audit-ledger.jsonl` and `.foundry/evidence` are gitignored pre-2.0 history (review
+  // verdicts / evidence): `--cleanup` would erase the only copy, so they must never be catalogued.
+  const paths = new Set(cat.entries.map((e) => e.path));
+  assert.ok(!paths.has('.foundry/audit-ledger.jsonl'));
+  assert.ok(!paths.has('.foundry/evidence'));
+  for (const e of v2) {
+    assert.ok(e.path.startsWith('.foundry/'), e.path);
+    assert.ok(typeof e.reason === 'string' && e.reason.length > 0 && !e.reason.includes('\n'), e.path);
+  }
+  const root = scratch();
+  fs.mkdirSync(path.join(root, '.foundry'), { recursive: true });
+  for (const e of v2) {
+    const concrete = e.path.replace('*', 'x'); // one `*` in the last segment: pick a matching name
+    const abs = path.join(root, concrete);
+    if (e.kind === 'dir') fs.mkdirSync(abs, { recursive: true });
+    else fs.writeFileSync(abs, 'x');
+  }
+  const plan = planRetiredArtifacts({ physicalRoot: root, catalogue: cat });
+  const by = Object.fromEntries(plan.rows.map((r) => [r.relPath, r.state]));
+  for (const e of v2) assert.equal(by[e.path.replace('*', 'x')], 'stale', e.path);
+});

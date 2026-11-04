@@ -15,17 +15,14 @@ merged without a design change that justifies it:
    ```bash
    pip install -r requirements-dev.txt
    python3 -m pytest tests/ -q
-   python3 scripts/foundry-acceptance-contract-validate.py --selftest
-   python3 scripts/foundry-build-citation-graph.py --selftest
-   python3 scripts/foundry-graph-mcp.py --selftest
    python3 scripts/foundry-doctor.py            # DOCTOR-GREEN
-   node --check workflows/*.js
+   claude plugin validate .
    ```
    See "Testing" below for where a new behavioral test belongs.
 2. **Fail-closed by default.** Gates block on missing/ambiguous/INDETERMINATE input;
    they never "skip to pass". New checks must default to BLOCK.
-3. **Front-authorization is unconditional** — no skip path in the factory flow. Review
-   skips are operator-only and recorded.
+3. **Front-authorization is unconditional on the spec lane** — no skip path in
+   `/foundry:authorize`. The spec lane itself is opt-in (see `context/operating-model.md`).
 4. **No claim beyond shipped enforcement.** Docs and skill prose never describe a
    guarantee the code doesn't provide; the merge floor's tier labeling
    (docs/merge-floor.md) is honest by construction — keep it that way.
@@ -44,7 +41,7 @@ elsewhere (one hand-rolled test harness per atom, re-discovered by a registry, i
 anti-pattern this rule exists to keep out).
 `scripts/foundry-doctor.py` stays a thin, fixed-checklist probe; it is never the place a new
 behavioral assertion goes. A shipped script that already carries its own hermetic `--selftest`
-(e.g. `foundry-decommission.py`, `foundry-bootstrap.sh`, the `hooks/*.sh` selftests)
+(e.g. `foundry-bootstrap.sh`, the `hooks/*.sh` selftests)
 keeps it — `tests/` may wrap it with a subprocess call rather than re-implementing it.
 
 ## Workflow
@@ -53,11 +50,10 @@ keeps it — `tests/` may wrap it with a subprocess call rather than re-implemen
 - For security-relevant changes (the git-discipline hook, CI gate workflows,
   authorization, provenance), an **independent review** (a fresh reviewer, not the
   author) is expected — self-review has repeatedly missed real bugs here.
-- Open a PR with a clear description + the test output; code-change PRs carry a `Spec:`
-  trailer naming the authorizing spec. CI runs the floor.
-- **Dogfood rule: features to Foundry go through Foundry** — non-trivial changes get a
-  spec + review + authorization through the tool itself. The git history doubling as a
-  worked example is a feature.
+- Open a PR with a clear description + the test output. CI runs the floor.
+- **Dogfood rule: features to Foundry go through Foundry** — a change starts as a ticket with
+  a runnable `Done means`, is built on a branch, and lands through `scripts/foundry-test.sh`
+  and the merge floor. The git history doubling as a worked example is a feature.
 - **AI-generated code is welcome** when it arrives tested, reviewed by you, and with the
   model credited in the PR description — the same bar as any other code, stated openly.
 

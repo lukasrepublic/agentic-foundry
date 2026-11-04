@@ -65,8 +65,6 @@ CLAUSE_LABELS = (
 WRITE_PATHS_MAP = {
     "pr-reviewer": frozenset({"none"}),
     "security-reviewer": frozenset({"none"}),
-    "spec-reviewer": frozenset({"none"}),
-    "spec-author": frozenset({"specs/**"}),
     "app-engineer": frozenset({"contract:allowed_paths"}),
     "infra-engineer": frozenset({"contract:allowed_paths"}),
     "framework-engineer": frozenset({"contract:allowed_paths", "tests/**"}),

@@ -56,8 +56,7 @@ this phase. `deep-research` is a **native harness skill — NOT vendored or pinn
 **unavailable** in a given environment.
 
 - **When `deep-research` is UNAVAILABLE**, you have exactly two honest moves:
-  - **escalate** to the operator that live research is unavailable for this fork, per the shared
-    blocker schema (`schema/blocker.schema.json`, feat-foundry-blocker-requires-evidence); **or**
+  - **escalate** to the operator that live research is unavailable for this fork, with the evidence; **or**
   - fall back to **EXPLICITLY-DISCLOSED parametric** answering, labeled verbatim
     **"no live research available — parametric, lower confidence"**, carrying that disclosure through to the
     distilled recommendation and the decision record.
@@ -80,25 +79,20 @@ always-escalate security exceptions and the category-error override.
 
 **Record the decision (ADR-style).** Write an ADR-style **decision record** to the **configured
 governance-record decisions location** — `governance.decisions_path` in `.claude/foundry-project.json`
-(defaults to **`.foundry/decisions/`**, mirroring `sd-discover`'s `.foundry/discovery/`) — carrying the
+(defaults to **`.foundry/decisions/`**) — carrying the
 fields **`{framed-decision, sources, chosen-approach, grounding}`** — the framed fork (phase 1), the
 corroborating sources (phase 2, including any *"no live research available — parametric, lower confidence"*
 disclosure), the chosen approach (phase 4), and the grounding (phase 3). **OR** declare this record shape
 in the procedure and **explicitly defer** durable emission to the `CONTEXT.md` / ADR atom — a
 declared-and-deferred record is in-model; a *silently-skipped* record is not.
 
-**Capture the full evidence trail + retain disconfirming evidence (the research-capture discipline).** When
-the phase-2 research was a **`deep-research`-bearing** run (multi-source, claim-level), ALSO persist the
-**full claim-level trail** to the **configured governance-record research location** —
-`governance.research_path` in `.claude/foundry-project.json` (defaults to **`.foundry/research/`**) — as
-**`<run-id>-<slug>.md`** (path-safe filename) from the research-capture template
-(`skills/research-capture/research-artifact-template.md`), carrying the **verified ∧ refuted** claims, and
-author the ADR (at the configured `governance.decisions_path`, defaults to **`.foundry/decisions/`**)
-**with a `## Refuted / disconfirming evidence` section** (Nygard *Consequences*-style) so the
-killed/disconfirming claims are retained in the decision record itself as well as in the linked artifact.
-**Link the ADR and the artifact both ways.** The disconfirming evidence is **NEVER dropped** — that is what
-lets a later auditor re-judge whether the claimed consensus actually held. Full discipline:
-**`skills/research-capture/SKILL.md`**.
+**Keep the disconfirming evidence.** When the phase-2 research was a **`deep-research`-bearing** run
+(multi-source, claim-level), put the claim-level trail (the **verified and refuted** claims) in a
+comment on the ticket, and author the ADR (at the configured `governance.decisions_path`, defaults to
+**`.foundry/decisions/`**) **with a `## Refuted / disconfirming evidence` section** (Nygard
+*Consequences*-style) so the killed claims are retained in the decision record itself. The
+disconfirming evidence is **NEVER dropped** — that is what lets a later reader re-judge whether the
+claimed consensus actually held.
 
 ## The decision rule — consensus → ADOPT; no-consensus → escalate
 

@@ -6,52 +6,53 @@ each refusal to its recovery, in the order you'll meet them in the loop.
 ```
  where it failed          what refused              your move
  ──────────────           ────────────              ─────────
- spec-review     ──▶      Phase-0 pre-lint          fix the named defect, re-run (free)
- authorize       ──▶      a freeze floor            re-specify the contract, never relax the gate
- dispatch/PR     ──▶      spec-link CI job          add `Spec: <path>` to the PR body
+ edit a doc      ──▶      paper guard               add the path to the ticket's `Paper allowed`
+ stop            ──▶      Stop hook                 `Done means` failed: fix the work (3 refusals max)
+ push / PR       ──▶      git-discipline clause (j) run scripts/foundry-test.sh until green
+ PR checks       ──▶      security-path-base        run the security reviewer, apply the label
  merge           ──▶      git-discipline hook       fix the red check; no bypass exists
- certify-local   ──▶      missing journeys/boot     write the journey / add the boot recipe
+ authorize       ──▶      a freeze floor            (opt-in spec lane) re-specify the contract
 ```
 
-## 1. `spec-review` refused at the pre-lint phase
+## 1. The paper guard refused a write
 
-Deterministic pre-lints (size ceiling, reference closure) run before any LLM work and cost
-nothing to re-run. `OVERSIZE:` means decompose: the spec size ceiling (fourteen criteria / eight
-thousand words) has no override flag, deliberately. `DANGLING-REFERENCE:` names the citation that doesn't resolve;
-fix the reference or remove the claim.
+A write under `specs/`, `intake/`, `.foundry/`, `docs/`, `status-reports/` or `charters/` (or to a
+contract / manifest file) needs the active ticket to allow it. Either the path belongs in the
+ticket's `## Paper allowed` list (`scripts/foundry-ticket.py allow <path>`), or — usually — the
+document should not be written at all. Code, infra, tests and config are never gated.
 
-## 2. `authorize` refused to freeze
+## 2. The Stop hook would not let the session end
 
-- **No review evidence** → run `/foundry:spec-review` first; its recorded row is the
-  precondition and there is no routine skip.
-- **A freeze floor failed** → the output names it (empty `allowed_paths`, a checkpoint whose
-  locator can't bind, a bijection break between AC-IDs and checkpoints). The contract is
-  under-specified: re-author it. **The gate is never the thing to relax.**
+The ticket's `Done means` command is failing. Read its output and fix the work. After three
+refusals per ticket the session may end with the failure named, so a wrong `Done means` cannot
+trap you; correct the ticket instead.
 
-## 3. The `spec-link` CI job failed on your PR
+## 3. The push or the PR was refused
 
-A code diff reached CI with no lane signal. Add one line to the PR body:
+The git-discipline hook (clause (j)) refuses `git push` and a non-draft PR until
+`scripts/foundry-test.sh` has recorded local-green for HEAD. Run it and fix what it reports; commit
+again and the record is for the new HEAD. CI confirms; it does not discover.
 
-```
-Spec: specs/features/<product>/<domain>/<capability>/feat-<capability>.md
-```
+## 4. The `security-path-base` check failed
 
-Docs-only diffs pass automatically as not-applicable.
+The diff touches an auth / secrets / supply-chain path and carries no review label for this head.
+Run the `security-reviewer` agent against the current diff, then apply the
+`security-reviewed:<head12>-<base8>` label the check prints. Pushing a new commit invalidates the
+old label by design.
 
-## 4. The merge was refused
+## 5. The merge was refused
 
 See the same section in [troubleshooting.md](../troubleshooting.md#the-merge-was-refused) —
 short version: fix the red check; `--admin` has no supported path; a pending check means
 wait.
 
-## 5. `certify-local` refused
+## 6. `authorize` refused to freeze (opt-in spec lane)
 
-The refusal names the atom and what it lacks (journeys or a boot recipe). Write the missing
-journey tagged with the atom's AC-IDs, or add the boot recipe to your stack profile. If the
-atom genuinely has no runtime surface, it shouldn't be in the release manifest's certify
-set — remove it there, visibly, rather than teaching the gate to pass silence.
+A freeze floor failed → the output names it (empty `allowed_paths`, a checkpoint whose
+locator can't bind, a bijection break between AC-IDs and checkpoints). The contract is
+under-specified: re-author it. **The gate is never the thing to relax.**
 
-## The one rule across all five
+## The one rule across all of them
 
 **Fix the thing the gate named; never the gate.** Every refusal above is the tool doing its
 job. If you believe a refusal is a false positive, that's a bug worth filing — with the

@@ -1,13 +1,13 @@
 {
   "name": "agentic-foundry",
-  "description": "Governed, spec-driven delivery for agent-built software: operator-authorized acceptance contracts, an honestly-tiered merge floor on your own branch protection + CI, deploy-once certification, and a citation-graph MCP.",
+  "description": "Ticket-first delivery for agent-built software: one GitHub issue with a runnable \"Done means\" is the unit of work; branch protection and CI are the merge floor; a security lane covers auth, secrets and custody changes.",
   "owner": {
     "name": "lukasrepublic"
   },
   "plugins": [
     {
       "name": "foundry",
-      "description": "Governed, spec-driven delivery for agent-built software (skills, acceptance contracts, honest merge-floor discipline, citation-graph MCP).",
+      "description": "Ticket-first delivery for agent-built software (skills, agents, hooks; the platform is the merge floor, with an opt-in spec lane for security work).",
       "source": {
         "source": "github",
         "repo": "lukasrepublic/agentic-foundry",

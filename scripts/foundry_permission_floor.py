@@ -16,7 +16,7 @@ used, is deleted here. What remains, and who reuses it:
     `foundry-permissions-compile.py` both reuse it (AC-SGP-2), never re-implementing their own
     stat/size-cap/JSON-parse read.
   * `load_settings_env` (the sibling `env`-block read, AC-RES-3) — the doctor's `agent-teams`
-    probe and `foundry_command_deck_watch`'s advisory-header gate both reuse it.
+    probe reuses it.
   * `sanitize` — `foundry-capability-preflight.py` reuses it as its own render floor.
   * `covers` / `canonicalize` / `canonicalize_identity` / `deny_covers` / `is_blanket_rule` / the
     `_classify` engine and its `RANK` vocabulary — the shared subsumption logic
@@ -174,8 +174,8 @@ def load_settings_env(paths):
     reported) -- this is a settings CONVENIENCE read for an advisory flag (AC-RES-3), not the
     audited `permissions` read above.
 
-    AC-RES-3: the doctor's `agent-teams` probe and `foundry_command_deck_watch`'s advisory-header
-    gate both call this instead of maintaining their own local copy of the same bounded read."""
+    AC-RES-3: the doctor's `agent-teams` probe calls this
+    instead of maintaining its own local copy of the same bounded read."""
     merged: dict = {}
     for path in paths:
         try:

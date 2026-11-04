@@ -56,7 +56,7 @@ computes a `plan ≡ intended` verdict today — see the honest disclosure above
 
 Because this step **runs no plan and produces no `plan_results`**, it records its authoring
 observation as a **`.foundry/`-partitioned authoring STEP-REPORT NOTE** — the advisory
-**`.foundry/id-implement-report`** record the downstream `id-plan`/`id-impact` read. **Honest
+**`.foundry/id-implement-report`** record the downstream `id-plan` reads. **Honest
 disclosure:** the bespoke pre-merge **plan recorder** `emit_infra_walk_evidence` this note used to be
 contrasted against does **not exist** in `scripts/` — retired. The note is
 **NOT walk-evidence and NOT a verdict input** regardless — this authoring step never ran a plan and
@@ -107,12 +107,10 @@ no plan and issues no mutating verb.
   frozen `intended` set, on a **branch** (never `main`), never applied (no live mutation here).
 - **The `.foundry/id-implement-report` authoring STEP-REPORT NOTE.** A plain advisory
   `.foundry/`-partitioned record (the `.foundry/id-implement-report`) the downstream
-  `id-plan`/`id-impact` read — **NOT** walk-evidence and **NOT** a verdict input (this step runs no
+  `id-plan` reads — **NOT** walk-evidence and **NOT** a verdict input (this step runs no
   plan and has no `plan_results`; the `emit_infra_walk_evidence` recorder it is sometimes contrasted
   against no longer exists in `scripts/` — retired). It is a `.foundry/`
-  runtime partition — a sibling of the other `.foundry/` runtime partitions (e.g.
-  `.foundry/session-learnings/`, `.foundry/build-provenance.yaml`), **outside** the citation gate's
-  CANONICAL_SCOPE by construction.
+  runtime partition (advisory per-run runtime output).
 
 ## Anti-patterns
 

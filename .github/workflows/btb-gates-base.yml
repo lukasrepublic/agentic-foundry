@@ -1,4 +1,4 @@
-# .github/workflows/btb-gates-base.yml — the two METADATA gates, evaluated from the BASE definition.
+# .github/workflows/btb-gates-base.yml — the METADATA gate (`security-path-base`), evaluated from the BASE definition.
 #
 # WHY THIS FILE EXISTS. `btb-gates.yml` runs on `pull_request`, and GitHub runs that workflow FROM
 # THE PR'S MERGE REF — so a fork author's edits to the gate file take effect in the run that grades
@@ -13,11 +13,10 @@
 #
 # THE SAFETY PROFILE IS THE WHOLE ARGUMENT. `pull_request_target` is dangerous ONLY because it pairs
 # a privileged token with the temptation to check out untrusted code — GitHub's own guidance is
-# "Avoid using this event if you need to build or run code from the pull request." These two jobs
-# never check out anything. They consume ONLY API metadata (the changed-file list, the label set,
+# "Avoid using this event if you need to build or run code from the pull request." This job
+# never checks out anything. They consume ONLY API metadata (the changed-file list, the label set,
 # the base ref) through `gh`. No `actions/checkout`, no fetch, no execution of repository content —
-# which is exactly the profile `security-label-reset.yml` already runs under, and exactly why the
-# recorded follow-up named these two jobs and no others.
+# which is exactly the profile `security-label-reset.yml` already runs under.
 #
 # `shell-parse-bash32` DELIBERATELY STAYS on `pull_request` in `btb-gates.yml`. It checks out fork
 # code, which is the one thing this trigger must never do with a privileged token. Moving it here
@@ -32,21 +31,15 @@
 # (GitHub Actions security hardening; the widely-cited "keep untrusted content and privileged
 # execution in separate workflows" pattern).
 #
-# WHY THE JOB NAMES CARRY A `-base` SUFFIX. Required status checks match by CONTEXT NAME. If these
-# jobs kept the names `spec-link` / `security-path` while `btb-gates.yml` still defines them, every
+# WHY THE JOB NAME CARRIES A `-base` SUFFIX. Required status checks match by CONTEXT NAME. If this
+# job kept the name `security-path` while `btb-gates.yml` still defined it, every
 # PR would produce TWO check runs per name and the required check would be ambiguous. The suffix
 # also states the security property at the place an operator reads it: this verdict came from the
 # base definition. The migration is deliberately two steps — see MIGRATION below.
 #
-# MIGRATION (the reason this file adds and removes nothing):
-#   1. THIS PR — add these jobs. Nothing currently required changes; `btb-gates.yml` is untouched,
-#      so no PR can be blocked by landing it. Once on `main` the jobs begin reporting on every PR.
-#   2. OPERATOR — swap the required contexts on `main`: add `spec-link-base` + `security-path-base`,
-#      remove `spec-link` + `security-path`. There is no unprotected window: both pairs run.
-#   3. FOLLOW-UP PR — delete `spec-link` / `security-path` from `btb-gates.yml`.
-# Step 2 cannot be folded into step 1: a `pull_request_target` definition is invisible until it is
-# on the default branch, so a PR that both adds this file and deletes the old jobs would report
-# NEITHER pair and could never satisfy its own required checks.
+# v2.0.0: the `spec-link-base` job (a factory-lane PR must carry a `Spec:` trailer) is DELETED with
+# the spec-first default path; its required-check status was removed from branch protection first.
+# `security-path-base` is the one gate in this file and stays required.
 name: btb-gates-base
 
 on:
@@ -63,64 +56,6 @@ permissions:
   pull-requests: read
 
 jobs:
-  spec-link-base:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: spec-link gate (always reports)
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-          BASE: ${{ github.event.pull_request.base.ref }}
-        run: |
-          set -euo pipefail
-          body="$(gh pr view "$PR" --repo "$REPO" --json body -q .body)"
-          labels="$(gh pr view "$PR" --repo "$REPO" --json labels -q '.labels[].name')"
-          files="$(gh api --paginate "repos/${REPO}/pulls/${PR}/files" -q '.[].filename')"
-          summary() { printf '%s\n' "$1" >> "$GITHUB_STEP_SUMMARY"; printf '%s\n' "$1"; }
-          # DERIVED, never hardcoded. This line was a literal "tier: B (advisory) — private repo,
-          # Free plan" for as long as that happened to be true; it silently became false the moment
-          # the repo went public with branch protection, and it is a PUBLIC claim about our own
-          # merge floor. Reading it from the API costs one call and removes the drift class.
-          # Duplicated verbatim in security-path rather than factored into a script because these
-          # two jobs are deliberately CHECKOUT-FREE (floor-#3 review finding 6: no repo code is
-          # fetched or executed here) — a shared script would mean checking out to run it.
-          tier() {
-            local p; p="$(gh api "repos/${REPO}/branches/${BASE}" -q .protected 2>/dev/null || echo unknown)"
-            # `.protected` is a COARSE boolean — it is true for a branch protected only by
-            # "restrict deletions". It proves SOMETHING guards the branch, never that THESE contexts
-            # are required, and a read-only token cannot enumerate that (the /protection endpoint is
-            # admin-only). So this reports what it can actually substantiate and no more (security
-            # review Block 3, 2026-08-04) — the same discipline foundry_tier_preflight.py applies
-            # when it refuses to call classic protection Tier A.
-            case "$p" in
-              true)  printf '**merge floor: `%s` IS server-protected** — some protection is active; this job cannot enumerate WHICH contexts are required with a read-only token' "$BASE" ;;
-              false) printf '**merge floor tier: B (advisory)** — `%s` is NOT server-protected; these checks report, the server does not enforce' "$BASE" ;;
-              *)     printf '**merge floor: UNKNOWN** — could not read protection state for `%s`; treat as advisory' "$BASE" ;;
-            esac
-          }
-          summary "$(tier)"
-          if printf '%s\n' "$body" | grep -qE '^Spec: .+'; then
-            spec_ref="$(printf '%s\n' "$body" | grep -E '^Spec: ' | sed -n '1p' | tr -cd '[:alnum:]/._ :-' | cut -c1-200)"
-            summary "spec-link: PASS — factory lane, ${spec_ref}"
-          elif printf '%s\n' "$labels" | grep -qxF 'lane:light'; then
-            # LABEL-ONLY, deliberately. This used to also accept `Lane: light` from the PR BODY,
-            # which a fork author writes — so a fork PR could self-declare the light lane and skip
-            # the spec-link requirement entirely. A label can only be applied by someone with write
-            # access. Recorded as a Tier-A precondition at the 2026-07-27 floor-#3 review
-            # ("prefer label-only lane signals"), and live surface since the repo went public.
-            # RESIDUAL, stated rather than hidden: the `Spec:` trailer above is still read from the
-            # body, because a label cannot carry a spec path. A fork can therefore assert any path.
-            # That is bounded — the trailer identifies which spec to check, and the operator's
-            # review is what checks it — whereas `Lane: light` bypassed the check altogether.
-            summary "spec-link: PASS (not applicable) — light lane (charter-authorized, label-gated)"
-          elif ! printf '%s\n' "$files" | grep -qvE '\.(md|txt|png|svg|pdf)$'; then
-            summary "spec-link: PASS (not applicable) — docs-only diff"
-          else
-            summary "spec-link: FAIL — code diff with no lane signal. Add a 'Spec: <workspace spec path>' trailer to the PR body (factory lane), or apply the 'lane:light' LABEL plus a charter (light lane). 'Lane: light' in the body is no longer accepted — a fork author controls the body, so the lane signal is label-gated."
-            exit 1
-          fi
-
   security-path-base:
     runs-on: ubuntu-24.04
     steps:
@@ -140,7 +75,7 @@ jobs:
           files="$(gh api --paginate "repos/${REPO}/pulls/${PR}/files" -q '.[].filename')"
           labels="$(gh pr view "$PR" --repo "$REPO" --json labels -q '.labels[].name')"
           summary() { printf '%s\n' "$1" >> "$GITHUB_STEP_SUMMARY"; printf '%s\n' "$1"; }
-          # DERIVED — see the identical helper in spec-link for why this is not a literal and why
+          # DERIVED — see the identical helper in btb-gates.yml for why this is not a literal and why
           # it is duplicated rather than shared (both jobs are deliberately checkout-free).
           tier() {
             local p; p="$(gh api "repos/${REPO}/branches/${BASE}" -q .protected 2>/dev/null || echo unknown)"

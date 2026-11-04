@@ -2,23 +2,25 @@
 
 The vocabulary, in one place. Terms link to the doc that owns them.
 
-- **Atom / atomic spec** — the unit of work: one capability, one spec file with stable
-  AC-IDs, small enough to review honestly. Hard ceiling: 14 acceptance criteria / 8,000
+- **Ticket** — the default unit of work: a GitHub issue with a runnable `## Done means`
+  command and a `## Paper allowed` list. Assignment is the authorization. See
+  [context/operating-model.md](../context/operating-model.md).
+- **Atom / atomic spec** — the unit of work on the opt-in spec lane: one capability, one spec file
+  with stable AC-IDs, small enough to review honestly. Hard ceiling: 14 acceptance criteria / 8,000
   words (no override — oversize means decompose).
 - **AC-ID** — a stable identifier for one acceptance criterion (`AC-EXPORT-3`). Checkpoints,
-  reviews, tests, and journeys key to it; it never renumbers.
+  reviews and tests key to it; it never renumbers.
 - **Acceptance contract** — the YAML sibling of a spec: scope (`allowed_paths`) +
   observable checkpoints per AC-ID. Frozen (hashed + operator-signed) at authorization —
-  the binding definition of done. See [QUICKSTART](QUICKSTART.md).
-- **Authorization / front-authorization** — the operator's explicit approval of a spec +
-  contract *before* implementation; in the factory flow an unauthorized spec cannot reach
-  `main`. "Approval is the spec merged to the workspace main; git history is the ledger."
-- **Operator** — the human who authorizes, accepts, and signs off. Registered in
+  the binding definition of done on the spec lane. See [QUICKSTART](QUICKSTART.md).
+- **Authorization / front-authorization** — on the opt-in spec lane, the operator's explicit approval
+  of a spec + contract *before* implementation; an unauthorized spec cannot reach
+  `main` through the factory. On the default path the standing grant in
+  `.claude/foundry-operators.json` is the authorization. "Approval is the spec merged to the workspace main; git history is the ledger."
+- **Operator** — the human who authorizes (the standing grant, or a spec), merges, and signs off. Registered in
   `.claude/foundry-operators.json`. The tool's terminal authority, by design.
-- **Workspace vs factory** — the workspace repo holds the WHAT (specs, governance, corpus);
+- **Workspace vs factory** — the workspace repo holds the WHAT (tickets, runbooks, governance);
   the plugin is the HOW (verbs, process). See [architecture.md](architecture.md).
-- **Wave / wave plan** — the parallel build schedule for a release: atoms grouped so no
-  atom runs before its dependencies or beside a sibling touching overlapping paths.
 - **Traceability ids (`feat-<slug>`, `AC-XXX-n`, gap ids)** — parenthetical anchors like
   `(feat-foundry-dispatch-on-native-workflow, AC-DNW-1..4)` cite the spec atoms and acceptance
   criteria that authorized a behavior. For plugin-internal behaviors those specs live in the
@@ -34,65 +36,28 @@ The vocabulary, in one place. Terms link to the doc that owns them.
   [merge-floor.md](merge-floor.md).
 - **Tier A / Tier B** — server-enforced required checks vs always-reporting advisory
   checks (labeled as such), per your platform plan. See [merge-floor.md](merge-floor.md).
-- **Journey** — a tagged end-to-end Playwright test exercising an atom's ACs against the
-  real running app (`@AC-EXPORT-3`). Ordinary Playwright specs, no custom format.
-- **Certification (certify-local)** — deploying a release once locally and running every
-  atom's journeys against that single instance; refuses (never passes vacuously) when
-  journeys or a boot recipe are missing.
-- **Acceptance (release accept)** — the operator's recorded verdict on a release. A
-  practice note, deliberately never a machine gate.
+- **Paper guard** — the PreToolUse hook that refuses a write under `specs/`, `intake/`, `.foundry/`,
+  `docs/`, `status-reports/`, `charters/`, or to a contract / manifest file unless the active
+  ticket's `Paper allowed` list names the path. Code, infra, tests and config are never gated.
+- **Local-green** — `scripts/foundry-test.sh` ran the repository's own CI command and recorded
+  success for HEAD; the git-discipline hook refuses a push and a non-draft PR until it exists.
+- **Sign-off** — the operator's own test pass, the last step of delivery. A practice, deliberately
+  never a machine gate.
 - **Stack profile** — a versioned pack describing how a stack boots, tests, and verifies
-  (`packs/stack-profiles/`). The certify/verify verbs read it.
+  (`packs/stack-profiles/`). `/foundry:verify` reads it.
 - **Stage mode (`lean` / `scale`)** — how much ceremony the workspace runs with; lean is
   the solo default, scale enforces the full gates.
 - **Doctor** — the seven-probe health check (`/foundry:doctor`); `DOCTOR-GREEN` or a named
   failure, in under a second. See [QUICKSTART](QUICKSTART.md).
-- **Intake** — the front door: fuzzy ask → interactive discovery → atomic spec + contract.
-- **Spec-review** — the single-pass default review: deterministic pre-lints, three
-  fresh-context reviewer questions, one remediation round, recorded content-bound.
-- **Deep spec audit** — the multi-pass adversarial engine (`/foundry:audit`). Dormant,
-  opt-in only — measured, multi-pass review does not out-find single-pass, so single-pass
-  is the default.
-- **Provenance (build-provenance)** — the record pinning a built atom to the exact
-  workspace commit it was authorized against (multi-repo adopters).
-- **"§8" / `btb-gates`** — internal code names that survive in shipped strings ("§8" in the
-  deep-audit binder's output; `btb-gates.yml` as a workflow filename). Treat both as proper
-  nouns — they carry no meaning beyond naming the thing that prints them.
-- **Guarded-exec wrapper / `cloud_cli_exec_guard`** — an **adopter-supplied** wrapper convention
-  the `hooks/foundry-cloud-cli-exec-guard.sh` hook matches bare `aws`/`kubectl`/`tofu` invocations
-  against. The hook is **config-gated and fail-INERT**: with no wrapper declared, it blocks nothing.
-  It is **defense-in-depth against the framework's own mistakes**, not a security boundary — the
-  operator's **IAM restrictions on the AWS context they supply** are the control the framework
-  actually relies on.
-- **`software-delivery` / `infra-delivery` (sd-* / id-*)** — two documented step SEQUENCES:
-  procedure families the sd-*/id-* skills form, walked by the operator/agent in order.
-  "Step N" labels a skill's position in the sequence — there is no shipped workflow engine
-  or state-machine file behind them.
-- **Charter** — the one-page unit of work of the charter lane (the default lane): a Goal,
-  acceptance criteria, `Done when`, `Escalate when`, the write scope, verification, the merge
-  rule and an `## Amendments` table — committed to the workspace, no separate spec/contract pair
-  to freeze. See [context/charter-template.md](../context/charter-template.md).
-- **Amendment** — a re-freeze of an already-authorized spec/contract or charter: hashes
-  recomputed, `auth_seq` bumped, recorded without a new operator step unless the change widens
-  scope or touches a security-reviewed boundary. See
-  [skills/amend/SKILL.md](../skills/amend/SKILL.md).
-- **Blocker** — a candidate escalation with a required shape (a claim, its evidence, what was
-  attempted, and a `why_operator` drawn from the closed `escalate_when` set) — one without
-  evidence is a Next Task, not a blocker. See
-  [schema/blocker.schema.json](../schema/blocker.schema.json).
-- **Handoff** — the DATA form of "the operator must run this themselves": a working directory,
-  one bare non-chaining command, why, and what success looks like — never prose the operator has
-  to parse. See [schema/blocker.schema.json](../schema/blocker.schema.json).
-- **Message kind** — the closed vocabulary (`FINDING` / `NEEDS-INTERFACE` / `CHALLENGE` /
-  `HANDOFF`) cross-session messages carry. See
-  [deck-and-containers.md](how-to/deck-and-containers.md).
+- **Intake** — the front door: fuzzy ask → interactive discovery → a ticket (or, on the opt-in spec
+  lane, an atomic spec + contract).
+- **"§8" / `btb-gates`** — internal code names that survive in shipped strings (`btb-gates.yml` as a
+  workflow filename). Treat both as proper nouns — they carry no meaning beyond naming the thing
+  that prints them.
+- **`infra-delivery` (id-*)** — a documented step SEQUENCE: the procedure family the id-* skills
+  form, walked by the operator/agent in order. "Step N" labels a skill's position in the sequence —
+  there is no shipped workflow engine or state-machine file behind it.
 - **Integration branch** — the release's own branch (`release/<version>`, cut from `main` at
-  intake) that every atom's PR targets instead of `main`, so a per-merge deploy trigger fires
+  intake) that every ticket PR targets instead of `main`, so a per-merge deploy trigger fires
   once per release rather than once per atom. See
   [branching-and-cleanup.md](how-to/branching-and-cleanup.md).
-- **Evidence record** — the `done_when` evidence a builder writes to
-  `.foundry/evidence/<atom-id>.json`; the `TaskCompleted` hook's gate reads it before letting a
-  build report done. See `hooks/foundry-task-completed.py`.
-- **`next_action`** — the optional single next thing to do, written to a wave's `state.yaml` so
-  the next tick prompt or fresh session opens with it instead of re-deriving it; a write replaces
-  it rather than accumulating. See [schema/wave-state.schema.json](../schema/wave-state.schema.json).

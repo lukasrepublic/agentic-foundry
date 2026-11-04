@@ -1,5 +1,5 @@
 """tests/test_authorize_no_audit_precondition.py — feat-foundry-authorization-authorize-drops-
-audit-precondition (AC-ADAP-1..4, AC-ADAP-6).
+audit-precondition (AC-ADAP-1, -2, -4, -6; AC-ADAP-3, the informational ledger line, went with the ledger in v2.0.0).
 
 Drives `scripts/foundry-authorize.py` end-to-end (subprocess, hermetic fixture — same pattern
 as `test_doc_claims.py`'s `_run_authorize_degrade_fixture`) to prove the §8 audit-ledger row is
@@ -106,29 +106,6 @@ def test_dry_run_prints_no_enforcement_warning():
         assert "/foundry:audit" not in out, out
 
 
-def test_nonpass_audit_row_is_informational():
-    """AC-ADAP-3: an audit-ledger row exists for this spec's content hash with a verdict outside
-    the passing set (verdict=killed) — `--yes` still proceeds to the freeze and prints the
-    informational line naming that verdict."""
-    with tempfile.TemporaryDirectory(prefix="adap-") as td:
-        fixture = Path(td)
-        spec_path, contract_path = _write_fixture(fixture)
-        spec_hash = fc.spec_sha256(str(spec_path))
-        ledger_path = fixture / ".foundry" / "audit-ledger.jsonl"
-        ledger_path.parent.mkdir(parents=True, exist_ok=True)
-        ledger_path.write_text(json.dumps({
-            "spec_ref": "specs/adap-probe.md",
-            "spec_sha256": spec_hash,
-            "rounds": 1,
-            "operator": "op_adap",
-            "verdict": "killed",
-        }) + "\n", encoding="utf-8")
-        proc = _run(fixture, spec_path, contract_path, [], yes=True)
-        out = proc.stdout + proc.stderr
-        assert proc.returncode == 0, out
-        assert "§8 audit: recorded (verdict=killed) — informational" in out, out
-
-
 def test_skip_audit_reason_is_deprecated_noop():
     """AC-ADAP-4: `--skip-audit-reason` is accepted; stdout carries the 'SKIPPED' token + 'no
     effect'; security-audit.jsonl gains exactly one `authorize-audit-flag-deprecated` record with
@@ -153,15 +130,13 @@ def test_skip_audit_reason_is_deprecated_noop():
 
 
 def test_skill_doc_has_no_precondition_language():
-    """AC-ADAP-6: skills/authorize/SKILL.md contains no statement that an audit-ledger row is a
-    precondition of authorization, and states that /foundry:audit is operator-invoked only and
-    the ledger is informational."""
+    """AC-ADAP-6: skills/authorize/SKILL.md contains no statement that a review record or an audit
+    row is a precondition of authorization (the ledger itself is gone in v2.0.0), and says so."""
     text = (Path(REPO_ROOT) / "skills" / "authorize" / "SKILL.md").read_text(encoding="utf-8")
     lowered = text.lower()
-    # No sentence claiming find_audit / the ledger row is a precondition of authorization.
-    assert "find_audit" in lowered
     for bad in ("find_audit) is\n   unchanged and is the **normal path**",
-                "fail-closes on a spec with no matching"):
+                "fail-closes on a spec with no matching",
+                "audit-ledger row is required",
+                "/foundry:audit"):
         assert bad not in lowered, f"stale precondition language survived: {bad!r}"
-    assert "informational" in lowered
-    assert "operator-invoked only" in lowered
+    assert "not a precondition" in lowered

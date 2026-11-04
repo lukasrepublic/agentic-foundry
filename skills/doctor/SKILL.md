@@ -59,14 +59,9 @@ lane signal — Tier B advisory) plus `hooks/foundry-git-discipline.sh`'s determ
 
    Plus advisory-only lines, rendered the same way but never counted toward `DOCTOR-RED`:
    - **`permissions-policy`** (feat-foundry-authorization-capability-preflight-at-dispatch,
-     AC-CPD-4 — replaces the R1 drift-only advisory, feat-foundry-authorization-standing-grants-
-     as-policy AC-SGP-6) — runs `scripts/foundry-capability-preflight.py` over every atom of every
-     ACTIVE release under `.foundry/releases/*/release.yaml`, printing `preflight over <n> active
-     atom(s): <d> denied[, <c> not pre-granted]` — only a capability a DENY rule would refuse is a
-     blocker; not pre-granted means the session's permission mode decides at run time — followed by
-     `; policy absent|in-sync|drift (<k>) (.foundry/permissions.yaml vs .claude/settings.json)`, the
-     same derivation `foundry-permissions-compile.py --check` runs, naming the two files compared.
-     ADVISORY only on a denial or drift. Never RED.
+     AC-SGP-6) — `policy absent|in-sync|drift (<k>) (.foundry/permissions.yaml vs
+     .claude/settings.json)`, the same derivation `foundry-permissions-compile.py --check` runs,
+     naming the two files compared. ADVISORY only on drift. Never RED.
    - **`agent-teams`** (feat-agent-teams-enablement, AC-ATE-4) — `agent-teams: on (settings env)`
      or `agent-teams: off`, derived from whether the effective settings files' `env` block sets
      `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` to `"1"` (`~/.claude/settings.json`, then the

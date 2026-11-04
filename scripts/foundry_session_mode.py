@@ -29,11 +29,11 @@ module).
 
 Extended (feat-foundry-autonomous-fork-policy, AC-AFP-1/-4/-6) with a second, orthogonal closed-set
 field on the SAME session-keyed store record: `fork_policy` ∈ {`park`, `two-way-auto`}, default
-`park`. Governs whether the autonomous driver charter (`skills/mode-autonomous/SKILL.md`)
+`park`. Governs whether the session
 auto-answers a reversible ("two-way-door") question fork instead of stopping the loop; a
 security-flagged, authorization-adjacent, or irreversible fork always parks regardless of this
 value (AC-AFP-3 — instruction-level defense-in-depth; the actual invariant is the operator
-ceremony + the UL-0007 classifier, both untouched here). Every auto-answer a driver makes under
+ceremony + the UL-0007 classifier, both untouched here). Every auto-answer a session makes under
 `two-way-auto` is appended to a separate append-only log (`record_auto_answer` / `.foundry/
 auto-answers.jsonl`) — AC-AFP-4.
 

@@ -82,13 +82,13 @@ function that derives the class itself) — this procedure drives the I/O around
      a `changed_paths` whose **form** is not a list/tuple/set of well-formed relative POSIX paths:
      **nothing is emitted or run**. Fail-closed — surface the reason to the operator.
 4. **Log the rendered form, never the executed one.** When the decision is displayed, logged, or
-   carried into audit-ledger evidence, log `foundry_id_apply.render_decision(decision)`'s
+   carried into evidence, log `foundry_id_apply.render_decision(decision)`'s
    secret-scrubbed `command` / `verify` / `reason` — never `decision.runbook.command` directly, which
    may carry an inline `VAR=secret` assignment from the profile's `apply` slot. The command actually
    **run** stays the frozen, unscrubbed `decision.runbook.command` bytes — a redacted command is not a
    runnable one.
 5. **Record evidence.** The branch + its evidence (the runbook, the empty-diff/verify proof) is
-   recorded for the existing audit-ledger / build-provenance floor — no new machinery.
+   recorded in the PR description — no new machinery.
 
 ## Invariants (machine-proofed in tests/test_infra_delivery.py)
 

@@ -19,17 +19,10 @@ What this probe checks, every run, cheaply:
      hosted repo. A MISTAKE-CATCHER for the operator, not a floor — see
      `scripts/foundry_control_plane.py`'s module docstring. `--session-start` still fails open
      (AC-CPP-7); the operator-invoked exit code is this check's only enforcement.
-  7. `permissions-policy` (feat-foundry-authorization-capability-preflight-at-dispatch, AC-CPD-4;
-     replaces the R1 `permissions-policy` drift-only advisory, feat-foundry-authorization-standing-
-     grants-as-policy AC-SGP-6, but KEEPS the R1 drift state on the same line rather than dropping
-     it): one ADVISORY line -- runs `scripts/foundry-capability-preflight.py` over every atom
-     (contract_ref or charter_ref) of every ACTIVE release under `.foundry/releases/*/release.yaml`,
-     printing `preflight ok (<n> atoms)` or `preflight: <n> missing rule(s)`, followed by
-     `; policy absent|in-sync|drift (<k>)` -- the SAME derivation `scripts/foundry-permissions-
-     compile.py --check` runs. NEVER RED, by design (AC-CPD-4, unchanged from AC-SGP-6): a stale-
-     permission workspace must never wedge a session; `/foundry:mode-autonomous`'s own preflight-
-     before-dispatch (AC-CPD-3) and the operator's own settings review are the real enforcement
-     surface.
+  7. `permissions-policy` (AC-SGP-6): one ADVISORY line, `policy absent|in-sync|drift (<k>)` -- the
+     SAME derivation `scripts/foundry-permissions-compile.py --check` runs. NEVER RED, by design: a
+     stale-permission workspace must never wedge a session; the operator's own settings review is
+     the real enforcement surface.
   8. `agent-teams` (feat-agent-teams-enablement, AC-ATE-4): one advisory line, `agent-teams: on
      (settings env) | off`, derived from whether the EFFECTIVE settings files' top-level `env`
      block sets `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` to `"1"` — `~/.claude/settings.json`, then
@@ -176,10 +169,14 @@ def check_hooks(plugin_root=None):
             data = json.load(f)
     except Exception as e:
         return False, f"hooks.json invalid JSON: {e}"
-    missing = [s for s in _hook_command_scripts(data, root) if not os.path.isfile(s)]
+    scripts = _hook_command_scripts(data, root)
+    missing = [s for s in scripts if not os.path.isfile(s)]
     if missing:
         return False, f"hooks.json references missing script(s): {missing}"
-    return True, "hooks.json parses; every referenced hook command script exists"
+    not_exec = [s for s in scripts if not os.access(s, os.X_OK)]
+    if not_exec:
+        return False, f"hooks.json references non-executable script(s) (lost exec bit): {not_exec}"
+    return True, "hooks.json parses; every referenced hook command script exists and is executable"
 
 
 # --------------------------------------------------------------------------------------- #
@@ -424,44 +421,6 @@ def _load_permissions_compile_module(plugin_root):
     return mod
 
 
-_UNLOADABLE_RELEASES = []
-
-
-def _active_release_atoms(project_dir):
-    """Every (release_id, atom) pair from every release under `.foundry/releases/*/release.yaml`
-    whose `state` is `active`, for atoms carrying a `contract_ref` or `charter_ref` (AC-CPD-4). A
-    release that fails to load (malformed manifest, unknown id, etc.) is SKIPPED, not raised --
-    this probe stays advisory even when an unrelated release.yaml elsewhere is broken."""
-    releases_dir = os.path.join(project_dir, ".foundry", "releases")
-    if not os.path.isdir(releases_dir):
-        return []
-    scripts_dir = os.path.join(PLUGIN_ROOT, "scripts")
-    if scripts_dir not in sys.path:
-        sys.path.insert(0, scripts_dir)
-    import foundry_release as _fr  # lazy import, mirrors check_operator_registry above
-
-    out = []
-    try:
-        names = sorted(os.listdir(releases_dir))
-    except OSError:
-        return []
-    for name in names:
-        if not os.path.isfile(os.path.join(releases_dir, name, "release.yaml")):
-            continue
-        try:
-            release = _fr.load_release(name, project_dir=project_dir)
-        except _fr.ReleaseError as e:
-            # audit D14: never silent — the permissions-policy line names how many were skipped
-            _UNLOADABLE_RELEASES.append(f"{name}: {e}")
-            continue
-        if release.state != "active":
-            continue
-        for atom in release.atoms:
-            if atom.contract_ref or atom.charter_ref:
-                out.append((release.id, atom))
-    return out
-
-
 def _policy_drift_state(pc, pdir):
     """AC-CPD-4: the R1 drift state -- `absent` | `in-sync` | `drift (<k>)` -- kept on the SAME
     doctor line the preflight status rides, not dropped. Unchanged derivation from
@@ -494,53 +453,15 @@ def check_permissions_policy(plugin_root=None, project_dir=None):
         if cpf is None or pc is None:
             return None, "capability-preflight/compiler module absent (not applicable)"
 
-        del _UNLOADABLE_RELEASES[:]
-        atoms = _active_release_atoms(pdir)
-        missing_total = 0
-        classifier_total = 0
-        skipped_atoms = 0
-        for _release_id, atom in atoms:
-            try:
-                # AC-CPD-1 (auth_seq 2): the same path-confinement floor the CLI's own --contract/
-                # --charter enforces applies here too — a `..`-escaping or oversized atom ref is
-                # refused by the loader itself, never joined/opened directly by this probe.
-                if atom.contract_ref:
-                    capabilities = cpf.load_contract_capabilities(atom.contract_ref, pdir)
-                else:
-                    capabilities = cpf.load_charter_capabilities(atom.charter_ref, pdir)
-                verdict = cpf.preflight(capabilities, pdir)
-            except cpf.PreflightInputError:
-                # an unreadable/out-of-bounds atom-level source is itself advisory here (AC-CPD-4
-                # "never RED") -- the preflight's own --contract/--charter run is the fail-closed
-                # surface for that. Counted, never silent (audit D5/D14).
-                skipped_atoms += 1
-                continue
-            missing_total += len(verdict.get("missing", []))
-            classifier_total += len(verdict.get("classifier", []))
-
-        # v1.18.0 (AC-V118A-7): say exactly what was compared. `denied` = a declared capability a
-        # deny rule would refuse (the only blocker); `not pre-granted` = the session's permission
-        # mode decides at run time (advisory, never a blocker).
-        preflight_part = (
-            f"preflight over {len(atoms)} active atom(s): {missing_total} denied"
-            + (f", {classifier_total} not pre-granted" if classifier_total else "")
-        )
         drift_state, drift_ok = _policy_drift_state(pc, pdir)
-        detail = f"{preflight_part}; policy {drift_state} (.foundry/permissions.yaml vs .claude/settings.json)"
+        detail = f"policy {drift_state} (.foundry/permissions.yaml vs .claude/settings.json)"
         # permissions-scaffold (ER #215, AC-PSC-4): an absent policy names its remedy in one clause.
         if str(drift_state).startswith("absent"):
             # v1.18.3: name the pinned command — the test of this remedy had been passing only because
             # the statusline line, absent its key, happened to name the updater on the same screen
             detail += (f" — seed it: `{_updater_cmd()}` writes a starter .foundry/permissions.yaml, "
                        "or copy context/permissions-template.yaml")
-        if skipped_atoms:
-            detail += f"; {skipped_atoms} atom(s) not checked (unreadable contract/charter)"
-        if _UNLOADABLE_RELEASES:
-            detail += (f"; {len(_UNLOADABLE_RELEASES)} release manifest(s) unloadable "
-                       f"(first: {_sanitize_detail(_UNLOADABLE_RELEASES[0])[:160]})")
-        if missing_total == 0 and drift_ok and not skipped_atoms and not _UNLOADABLE_RELEASES:
-            return True, detail
-        return ADVISORY, detail
+        return (True, detail) if drift_ok else (ADVISORY, detail)
     except Exception as e:  # noqa: BLE001 — deliberate: AC-CPD-4 must never redden the run
         return ADVISORY, _sanitize_detail(f"probe error ({type(e).__name__}: {e})")
 
@@ -643,8 +564,7 @@ def check_agent_teams_flag(plugin_root=None, project_dir=None):
     BEFORE the `--session-start` fail-open branch even runs, wedging every session start.
 
     AC-RES-3: the bounded `env`-block read across the candidate settings files is now
-    `foundry_permission_floor.load_settings_env` (shared with `foundry_command_deck_watch`'s
-    advisory-header gate) rather than a local copy -- when that module is unavailable,
+    `foundry_permission_floor.load_settings_env`  rather than a local copy -- when that module is unavailable,
     `_settings_candidate_paths` already falls back to the two literal project-scoped paths, and
     an absent `pf` module here simply means the shared reader is never reached; `on` stays `False`
     (the safe default), matching this function's own NEVER-RED contract."""

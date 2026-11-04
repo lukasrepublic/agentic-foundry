@@ -13,7 +13,7 @@ Infrastructure has no app to boot, so the app live-seam (boot → exercise a sur
 new 5xx) has no analog here. `id-plan` is the disciplined procedure the generic agent runs
 instead: it resolves the active profile, drives the profile's **`infra_binding.plan`** command
 strings **read-only** against the real environment, collects the structured plan/diff, and turns it into
-**the review artifact** (the hand-off the human / `id-review` / the merge floor reads) plus a
+**the review artifact** (the hand-off the human / the merge floor reads) plus a
 `.foundry/`-partitioned **plan STEP-REPORT NOTE**. The infra live-seam's dedicated walk-evidence
 recorder + verdict machinery this skill used to compose with was retired
 (see `docs/DESIGN.md`) — there is no live consumer that adjudicates this note into a
@@ -96,7 +96,7 @@ Run these steps **in order**. Each is a step, not reference prose.
    `apply`/mutating `kubectl`, never adjudicates). A **clean candidate plan** — no unexpected
    `add`/`change`/`destroy`/`replace`, policy pass, refreshed — reads clean; the **merge-base plan**
    reads as the pre-change baseline, for the operator/reviewer to compare against. Then emit **the
-   review artifact** — the named hand-off the human / `id-review` / the merge floor reads.
+   review artifact** — the named hand-off the human / the merge floor reads.
    **Do NOT self-certify a PASS**: the FROZEN acceptance-contract's `derive_walk_verdict` machinery
    that would have adjudicated this was retired (honest disclosure above)
    — state in the artifact that no automated verdict is computed from it today; the merge floor's
@@ -118,13 +118,10 @@ Run these steps **in order**. Each is a step, not reference prose.
   `scripts/` — retired. Nothing machine-adjudicates this note today; it
   feeds the operator/reviewer at the merge floor.
 
-- **Output: the review artifact.** The named, human-/`id-review`-/merge-floor-readable summary of
+- **Output: the review artifact.** The named, human-/merge-floor-readable summary of
   the plan/diff (the candidate vs. base observations, the action counts, the policy
   result), written as **advisory per-run runtime output** in the `.foundry/` runtime partition of
-  the *code* repo — a sibling of the other `.foundry/` runtime partitions (e.g.
-  `.foundry/session-learnings/`, `.foundry/build-provenance.yaml`), **outside** the citation
-  gate's the citation-scope roots (`docs/`, `foundry/`, `specs/`) CANONICAL_SCOPE (so it is citation-exempt by construction; it is
-  per-run runtime output, NOT part of the corpus). The artifact **states that no automated PASS
+  the *code* repo. The artifact **states that no automated PASS
   verdict is computed from it** — the merge floor's human review is the authority.
 
 ## Anti-patterns

@@ -95,7 +95,7 @@ def _mutate_baseline_altered(tmp_path, registered):
 
 
 def _mutate_write_paths_removed(tmp_path, registered):
-    name = "spec-author"
+    name = "qa-engineer"
     path = tmp_path / "agents" / f"{name}.md"
     text = path.read_text(encoding="utf-8")
     lines = [ln for ln in text.split("\n") if not ln.startswith("write-paths: ")]
@@ -104,19 +104,19 @@ def _mutate_write_paths_removed(tmp_path, registered):
 
 
 def _mutate_grammar_broken(tmp_path, registered):
-    name = "spec-author"
+    name = "pr-reviewer"
     path = tmp_path / "agents" / f"{name}.md"
     text = path.read_text(encoding="utf-8")
-    text = text.replace("write-paths: specs/**", "write-paths: **")
+    text = text.replace("write-paths: none", "write-paths: **")
     path.write_text(text, encoding="utf-8")
     return name
 
 
 def _mutate_map_divergent(tmp_path, registered):
-    name = "spec-author"
+    name = "app-engineer"
     path = tmp_path / "agents" / f"{name}.md"
     text = path.read_text(encoding="utf-8")
-    text = text.replace("write-paths: specs/**", "write-paths: docs/**")
+    text = text.replace("write-paths: contract:allowed_paths", "write-paths: docs/**")
     path.write_text(text, encoding="utf-8")
     return name
 

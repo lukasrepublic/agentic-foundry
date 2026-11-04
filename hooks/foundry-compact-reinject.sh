@@ -1,36 +1,16 @@
 #!/usr/bin/env bash
 # foundry-compact-reinject — the SessionStart pinned-context re-injection hook
-# (feat-foundry-compact-reinjection, AC-CRI-1..6; programme-state summary section added by
-# feat programme-state-minimal, AC-PSM-3).
+# (feat-foundry-compact-reinjection, AC-CRI-1..6).
 #
-# The (a)/(b)/(c) pinned-context section below fires ONLY on a SessionStart event whose `source`
-# is `compact` (checked inline, defense-in-depth against the `hooks.json` matcher which now also
-# admits the other three SessionStart sources for the section below). Emits a <=2048-UTF-8-byte
-# pinned-context manifest to stdout — the active release id + its run-state `--summary` digest,
-# the session posture (`foundry_session_mode.resolve`), and the active atom's contract path (from
-# the `.agent/assignment.json` dispatch/work marker) — every field re-derived at FIRE TIME (no
-# cache, no prior-emission read). Advisory + fail-open: a broken/absent resolver never blocks or
-# delays a session; this hook ALWAYS exits 0, and prints NOTHING unless a component genuinely
-# resolves (posture-resolution failure or ANY unhandled error => print nothing).
+# Fires ONLY on a SessionStart event whose `source` is `compact` or `fork` (checked inline, defense-in-depth
+# against the `hooks.json` matcher, which admits the other sources too). Emits a <=2048-UTF-8-byte
+# pinned-context manifest to stdout — the session posture (`foundry_session_mode.resolve`) and the
+# active atom's contract path (from the `.agent/assignment.json` dispatch/work marker) — every field
+# re-derived at FIRE TIME (no cache, no prior-emission read). Advisory + fail-open: a broken/absent
+# resolver never blocks or delays a session; this hook ALWAYS exits 0, and prints NOTHING unless a
+# component genuinely resolves (posture-resolution failure or ANY unhandled error => print nothing).
 #
-# Sibling shape to hooks/foundry-session-learnings.sh: a thin bash dispatcher around an inline
-# python body (portable; no new plugin-shipped python module — the logic lives HERE, in the one
-# allowed_paths file).
-#
-# feat programme-state-minimal (AC-PSM-3) ADDS a second, independent section: on ANY of the four
-# standard SessionStart sources (startup/resume/clear/compact — not only `compact`), a <=12-
-# PHYSICAL-line summary of every ACTIVE-or-PLANNED release's `.foundry/releases/<id>/state.yaml`,
-# next_action first, so a fresh session opens with it too. This second section never touches the
-# (a)/(b)/(c) pinned-context re-injection above: it is computed independently, is itself absent
-# -> nothing (no state.yaml on any active/planned release, or the releases dir is missing/
-# unreadable), and the whole hook remains exit-0/fail-open no matter which section runs. The
-# `hooks.json` `SessionStart` matcher for THIS script was widened from `compact` to
-# `startup|resume|clear|compact` (PR #184 review round 1, finding 3; charter amendment moved
-# hooks/hooks.json from denied to allowed) so this second section actually fires on a fresh
-# session, not only post-compaction — the (a)/(b)/(c) section stays gated to `compact` by the
-# inline `source` check below regardless of the wider matcher. Every free-text value this second
-# section renders is routed through `foundry_command_deck.as_data()` (PR #184 review round 1,
-# finding 1) — see `_programme_state_summary`'s own docstring.
+# A thin bash dispatcher around an inline python body (portable; no plugin-shipped python module).
 set -uo pipefail   # fail-open: never abort/wedge the session
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo .)"
@@ -65,158 +45,38 @@ def _fits(t):
     return len(t.encode("utf-8")) <= CEILING
 
 
-def _render(release_line, digest_text, posture_line, contract_line):
-    lines = [HEADER]
-    if release_line:
-        lines.append(release_line)
-    if digest_text is not None:
-        lines.append("run-state:")
-        for l in digest_text.split("\n"):
-            lines.append("  " + l)
-    lines.append(posture_line)
+def _render(posture_line, contract_line):
+    lines = [HEADER, posture_line]
     if contract_line:
         lines.append("active-atom-contract: " + contract_line)
     return "\n".join(lines) + "\n"
 
 
-def _assemble(release_line, digest_text, posture_line, contract_line):
-    """AC-CRI-2 deterministic priority truncation (lowest-value shed first), re-checked after
-    EVERY shedding step so the smallest amount of content is ever dropped: (1) the run-state
-    digest body is truncated on a whole-character boundary, trailing MARK appended, kept as long
-    as possible; (2) once the digest is fully exhausted (or never existed) and it STILL doesn't
-    fit, the active-atom contract path (c) is dropped entirely; (3) if it STILL doesn't fit, the
-    run-state section is dropped ENTIRELY (not just truncated). The posture line and the release
-    id(s) are NEVER dropped at any step."""
-    text = _render(release_line, digest_text, posture_line, contract_line)
+def _assemble(posture_line, contract_line):
+    """AC-CRI-2 deterministic truncation: when the manifest exceeds the ceiling the contract path
+    is dropped first; the posture line is NEVER dropped."""
+    text = _render(posture_line, contract_line)
     if _fits(text):
         return text
-
-    # Step 1: shrink the digest body on a whole-character boundary (prefix kept, tail dropped —
-    # mirrors the front-loaded truncation of render_summary itself), contract (c) still kept.
-    if digest_text:
-        n = len(digest_text)
-        for k in range(n - 1, -1, -1):
-            cand = (digest_text[:k] + MARK) if k > 0 else MARK
-            t = _render(release_line, cand, posture_line, contract_line)
-            if _fits(t):
-                return t
-
-    # Step 2: (c) dropped. The digest stays at its most-truncated form (a bare MARK) if one
-    # existed at all; nothing left to shrink further short of removing it outright (step 3).
-    minimal_digest = MARK if digest_text else None
-    t = _render(release_line, minimal_digest, posture_line, None)
-    if _fits(t):
-        return t
-
-    # Step 3: the run-state section is dropped ENTIRELY (not just truncated). (c) already gone.
-    # Best-effort floor: the posture line + release id(s) are never dropped by this function.
-    return _render(release_line, None, posture_line, None)
-
-
-SESSION_START_SOURCES = ("startup", "resume", "clear", "compact")
-
-# AC-PSM-3: <=12 lines TOTAL, header included.
-PROGRAMME_STATE_LINE_CEILING = 12
-
-
-def _programme_state_summary(project_dir, scripts_dir):
-    """A <=12-PHYSICAL-line summary of every ACTIVE-or-PLANNED release's `state.yaml`,
-    next_action first per release (feat programme-state-minimal, AC-PSM-3). Returns None when
-    there is nothing to say — no active/planned release, none of them carries a `state.yaml`, the
-    releases dir is missing/unreadable, or a release manifest is malformed — so the caller can
-    tell "absent" from "empty string" and print nothing rather than a bare header. Never raises:
-    every filesystem/YAML/import step below is inside this function's own try/except, so one
-    broken release (or the whole `.foundry/releases` dir being unreadable) degrades to "nothing
-    from this summary", never a crash and never a non-zero exit (PR #184 review round 1,
-    finding 2).
-
-    `next_action` is routed through `cd.as_data()` -- the SAME manifest-free-text sanitizer
-    `scripts/foundry_command_deck.py` already uses for dispatch prompts, imported here rather
-    than re-implemented, so its exact behaviour (control-char/ANSI-escape stripping, zero-width
-    and bidi-override removal, a length cap) holds for this render path too (PR #184 review
-    round 1, finding 1). A value that could otherwise widen this block by a physical line (an
-    embedded newline) is neutralized before it is ever joined into `lines`."""
-    try:
-        if scripts_dir not in sys.path:
-            sys.path.insert(0, scripts_dir)
-        import foundry_command_deck as cd
-
-        base = os.path.join(project_dir, ".foundry", "releases")
-        if not os.path.isdir(base):
-            return None
-        import yaml
-        candidate_ids = []
-        for name in sorted(os.listdir(base)):
-            p = os.path.join(base, name, "release.yaml")
-            if not os.path.isfile(p):
-                continue
-            try:
-                with open(p, encoding="utf-8") as fh:
-                    doc = yaml.safe_load(fh)
-            except Exception:
-                continue   # one malformed manifest never sinks the scan
-            if isinstance(doc, dict) and doc.get("id") == name and doc.get("state") in ("active", "planned"):
-                candidate_ids.append(name)
-        if not candidate_ids:
-            return None
-
-        lines = ["programme state (state.yaml, next_action first):"]
-        shown = 0
-        for rid in candidate_ids:
-            if len(lines) >= PROGRAMME_STATE_LINE_CEILING:
-                break
-            try:
-                state = cd.load_wave_state(rid, project_dir=project_dir)
-            except Exception:
-                continue   # one unreadable/malformed state.yaml never sinks the whole summary
-            if not state:
-                continue
-            next_action = state.get("next_action")
-            na_text = (
-                cd.as_data(next_action)
-                if isinstance(next_action, str) and next_action.strip()
-                else "(none recorded)"
-            )
-            lines.append(f"  {cd.as_data(rid)}: next_action: {na_text}")
-            shown += 1
-        if shown == 0:
-            return None
-        # Defense in depth, re-derived from the ASSEMBLED text: split on the physical newline and
-        # cap it, so a value this loop forgot to sanitize still cannot widen the block.
-        text = "\n".join(lines)
-        physical = text.split("\n")
-        if len(physical) > PROGRAMME_STATE_LINE_CEILING:
-            text = "\n".join(physical[:PROGRAMME_STATE_LINE_CEILING])
-        return text
-    except Exception:
-        return None
+    return _render(posture_line, None)
 
 
 def main():
     payload = _payload()
-    source = payload.get("source")
+    # `fork` (a forked background session) receives the same re-inject as `compact`: it starts from a
+    # copy of the parent's context and must be told the state it inherits.
+    if payload.get("source") not in ("compact", "fork"):
+        return   # startup/resume/clear: nothing to re-inject; the matcher is wider than this scope
     project_dir = os.environ.get("_CRI_PROJECT_DIR") or os.getcwd()
     plugin_root = os.environ.get("_CRI_PLUGIN_ROOT") or project_dir
     scripts_dir = os.path.join(plugin_root, "scripts")
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
 
-    # AC-PSM-3: independent of the (a)/(b)/(c) compact-only re-injection below, ANY standard
-    # SessionStart source gets this short programme-state summary — absent -> nothing, never RED,
-    # never blocks (this whole function is wrapped by the outer try/except).
-    programme_summary = None
-    if source in SESSION_START_SOURCES:
-        programme_summary = _programme_state_summary(project_dir, scripts_dir)
-
-    if source != "compact":
-        if programme_summary:
-            sys.stdout.write(programme_summary + "\n")
-        return   # defense-in-depth; the hooks.json matcher already scopes (a)/(b)/(c) to `compact`
-
     session_id = payload.get("session_id") or None
 
-    # ── (b) posture — resolved FIRST, at fire time. AC-CRI-4: a posture-resolution failure
-    # suppresses the ENTIRE manifest (its own dedicated clause, stronger than per-component omit).
+    # ── posture — resolved at fire time. AC-CRI-4: a posture-resolution failure suppresses the
+    # ENTIRE manifest.
     try:
         import foundry_session_mode as fsm
         posture = fsm.resolve(project_dir, session_id=session_id)
@@ -225,45 +85,7 @@ def main():
     except Exception:
         return
 
-    # ── (a) active release id + its run-state --summary digest — independent + non-fatal: any
-    # failure here OMITS (a) only, never suppresses (b)/(c) (AC-CRI-4 per-component degradation).
-    # Every field is re-derived HERE, at fire time — never a cached/prior emission (AC-CRI-3).
-    release_line = None
-    digest_text = None
-    try:
-        base = os.path.join(project_dir, ".foundry", "releases")
-        active_ids = []
-        if os.path.isdir(base):
-            import yaml
-            for name in sorted(os.listdir(base)):
-                p = os.path.join(base, name, "release.yaml")
-                if not os.path.isfile(p):
-                    continue
-                try:
-                    with open(p, encoding="utf-8") as fh:
-                        doc = yaml.safe_load(fh)
-                except Exception:
-                    continue   # one malformed manifest never sinks the whole scan
-                if isinstance(doc, dict) and doc.get("state") == "active" and doc.get("id") == name:
-                    active_ids.append(name)
-        if len(active_ids) == 1:
-            release_line = "release: " + active_ids[0]
-            try:
-                import foundry_release as fr
-                rel = fr.load_release(active_ids[0], project_dir=project_dir)
-                rows = fr.derive_run_state(rel, project_dir=project_dir)
-                digest_text = fr.render_summary(rel, rows).rstrip("\n")
-            except Exception:
-                digest_text = None   # release id still shown; only the digest is lost
-        elif len(active_ids) > 1:
-            # AC-CRI-2: ambiguity is surfaced (every active id named), never guessed — no digest.
-            release_line = "releases (ambiguous, active): " + ", ".join(active_ids)
-            digest_text = None
-    except Exception:
-        release_line = None
-        digest_text = None
-
-    # ── (c) the active atom's contract path, from the dispatch/work marker the WorktreeCreate
+    # ── the active atom's contract path, from the dispatch/work marker the WorktreeCreate
     # redirect leaves at `<worktree>/.agent/assignment.json` — independent + non-fatal.
     contract_line = None
     try:
@@ -277,17 +99,11 @@ def main():
     except Exception:
         contract_line = None
 
-    # ── AC-CRI-5: no active release AND default posture (`factory`) AND no active atom
-    # resolvable AND no programme-state summary -> emit NOTHING (overrides (b)'s otherwise-
-    # unconditional inclusion; no noise on an unrelated session).
-    if release_line is None and posture == "factory" and contract_line is None and not programme_summary:
+    # ── AC-CRI-5: default posture (`factory`) and no active atom -> emit NOTHING.
+    if posture == "factory" and contract_line is None:
         return
 
-    manifest_text = _assemble(release_line, digest_text, "posture: " + posture, contract_line)
-    if programme_summary:
-        manifest_text = programme_summary + "\n\n" + manifest_text
-
-    sys.stdout.write(manifest_text)
+    sys.stdout.write(_assemble("posture: " + posture, contract_line))
 
 
 try:

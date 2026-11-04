@@ -1,7 +1,7 @@
 """tests/test_gate_denial_fallback.py — feat-foundry-gate-denial-fallback.
 
 Asserts AC-GDF-1..3 over the REAL repository tree (`docs/harness-denial-fallback.md` plus the
-seven ceremony-instructing `skills/*/SKILL.md` files), plus a parametrized negative control
+three ceremony-instructing `skills/*/SKILL.md` files), plus a parametrized negative control
 (AC-GDF-4) over a throwaway fixture built from the real, already-compliant clause + skills and
 mutated in exactly one of five ways.
 
@@ -41,7 +41,7 @@ class TestGateDenialFallbackLiveTree:
 # ============================================================ AC-GDF-4 negative control ==== #
 
 def _build_valid_fixture(tmp_path):
-    """Copy the REAL clause file + the REAL seven ceremony skills into a throwaway tree, so
+    """Copy the REAL clause file + the REAL three ceremony skills into a throwaway tree, so
     every mutation test starts from a tree that is known-GREEN except for its one deliberate
     change."""
     docs_dst = tmp_path / "docs"
@@ -53,7 +53,7 @@ def _build_valid_fixture(tmp_path):
 
     skills_dst = tmp_path / "skills"
     skills_dst.mkdir()
-    for relpath in support.SEVEN_CEREMONY_SKILLS:
+    for relpath in support.CEREMONY_SKILLS:
         name = relpath.split("/")[1]
         dst_dir = skills_dst / name
         dst_dir.mkdir()

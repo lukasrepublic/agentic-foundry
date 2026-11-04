@@ -9,8 +9,8 @@
 unfamiliar domain). A mechanical/standard atom MAY replace this section with a single line:
 "Standard pattern; no research needed." -->
 How the best shops solve this — the industry pattern + trade-offs + grounding, per the research-first
-discipline. Cite sources with the citation grammar (`context/citation-grammar.md`), e.g.
-`[Doc: docs/research/<x>.md]`. This is the proactive complement to the deep spec audit's prior-art lens: it
+discipline. Cite sources by path, e.g.
+`[Doc: docs/research/<x>.md]`. This is the proactive complement to the PR review's prior-art question: it
 prevents building what the industry doesn't build.
 
 <!-- normative -->
@@ -74,8 +74,8 @@ Skip this whole section for a non-UI atom. -->
 
 For an atom with a user-facing surface, keep a **`design/` sibling directory** next to this spec
 (`specs/features/<product>/<domain>/<capability>/design/`) holding the structured design export,
-annotated mockup(s), and target screenshot(s) this atom builds toward. Cite each with the citation
-grammar (`context/citation-grammar.md`), e.g. `[Design-asset: design/checkout-flow.fig.json]`,
+annotated mockup(s), and target screenshot(s) this atom builds toward. Cite each by path,
+e.g. `[Design-asset: design/checkout-flow.fig.json]`,
 `[Design-asset: design/annotated-empty-state.png]`.
 
 - `design/<export>.*` — the structured design export (e.g. a Figma/Claude-Design export) this
@@ -88,8 +88,7 @@ grammar (`context/citation-grammar.md`), e.g. `[Design-asset: design/checkout-fl
 ## Journeys (AC-tagged — becomes the E2E suite verbatim)
 
 <!-- CONSTITUTION §16: a journey is a concrete, ordered user path through the
-UI-bearing surface, TAGGED to the AC-IDs it exercises. Journeys are what `release-wave`'s wave
-plan surfaces as `journeys: [...]` metadata and what a faithful implementer turns into the E2E
+UI-bearing surface, TAGGED to the AC-IDs it exercises. Journeys are what a faithful implementer turns into the E2E
 test suite — verbatim, not reinterpreted. Skip for a non-UI / pure-backend atom. -->
 
 - **Journey: `<journey-tag>`** — <name the concrete path, e.g. "guest checkout, no saved card">,
@@ -97,7 +96,7 @@ test suite — verbatim, not reinterpreted. Skip for a non-UI / pure-backend ato
 
 ## Design / notes
 
-- Cite design assets + related docs with the citation grammar (`context/citation-grammar.md`),
+- Cite design assets + related docs by path,
   e.g. `[Design-asset: docs/design/<screen>.html]`, `[Doc: docs/architecture/<x>.md]` — for
   anything that does not fit the structured `design/` sibling-dir slots above (a related
   architecture doc, a non-UI supporting reference).

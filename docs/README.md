@@ -16,7 +16,8 @@ Four kinds of page, four kinds of question. Start where your question lives:
 
 ## Tutorials — learning, step by step
 
-- **[Quickstart](QUICKSTART.md)** — zero to your first governed merge, six verbs, about ten minutes.
+- **[Quickstart](QUICKSTART.md)** — zero to your first merged ticket, three verbs, about ten minutes.
+- **[The operating model](../context/operating-model.md)** — the whole default path on one page.
 - **[The Acme Links tutorial](https://github.com/lukasrepublic/agentic-handbook/blob/main/docs/example-acme-links/README.md)**
   — the full guided build: an empty repo to a governed, live-proven merge in seven
   checkpointed steps, including watching the floor block a deliberately broken seam.
@@ -25,28 +26,24 @@ Four kinds of page, four kinds of question. Start where your question lives:
 
 - [Recover from a failed gate](how-to/recover-from-a-failed-gate.md)
 
-- [Branching and cleanup](how-to/branching-and-cleanup.md) — atoms into `release/<version>`, one PR to `main`, the worktree/branch gc
-- [Adopt Foundry on an existing codebase](how-to/adopt-on-an-existing-codebase.md) (brownfield)
+- [Branching and cleanup](how-to/branching-and-cleanup.md) — tickets into `release/<version>`, one PR to `main`, the worktree/branch gc
 - [Run author/approver separation with CODEOWNERS](how-to/team-review-with-codeowners.md)
 - [Run a multi-repo control plane](how-to/multi-repo-control-plane.md) — **the mode Foundry is built for**: one workspace governing several code repos, and why you run Claude from the control plane rather than inside a repo
 - [Cut a release](how-to/cut-a-release.md)
-- [Migrate from Spec Kit](how-to/migrate-from-spec-kit.md) · [Migrate from OpenSpec](how-to/migrate-from-openspec.md)
 - [Finish a plugin upgrade](how-to/post-upgrade.md) — `npx update-agentic-workspace@latest` (the script half), then `/foundry:post-upgrade` (the judgement half)
 - [Turn a standing grant into policy](how-to/standing-grants.md) — `.foundry/permissions.yaml` (seeded by the updater), compile, the capability preflight
 - [Enable agent teams](how-to/agent-teams.md)
-- [Wake the command deck with a Routine](how-to/routine-wake.md)
 - [Run the plugin's native evals](how-to/plugin-evals.md)
-- [Message across the command deck and containers](how-to/deck-and-containers.md)
 
 ## Reference — look it up
 
 - **[Verb quick reference](VERBS-QUICK-REF.md)** — every `/foundry:*` verb, one line each,
-  grouped by loop stage.
-- **[Glossary](glossary.md)** — the vocabulary: atom, contract, floor, journey…
+  grouped by stage.
+- **[Glossary](glossary.md)** — the vocabulary: ticket, contract, floor…
 - **[Troubleshooting](troubleshooting.md)** — symptom-first runbooks. · **[FAQ](faq.md)**
 - **[Terminology standard](TERMINOLOGY.md)** — the maintainer-facing naming standard every
   skill and agent conforms to.
-- **Spec + contract formats** — the templates ship in [`context/`](../context/README.md).
+- **Opt-in spec format** — the template ships in [`context/`](../context/README.md).
 
 ## Explanation — why it's built this way
 
@@ -55,4 +52,4 @@ Four kinds of page, four kinds of question. Start where your question lives:
 - **[Architecture](architecture.md)** — the workspace ⟷ factory split and the wiring contract.
 - **[The merge floor](merge-floor.md)** — the honest tier model and exact hook semantics.
 - **[How it compares](comparison.md)** — including when NOT to use Foundry.
-- [Identity isolation](identity-isolation.md) · [GitHub Projects projection](github-projects-projection.md)
+- [Identity isolation](identity-isolation.md)

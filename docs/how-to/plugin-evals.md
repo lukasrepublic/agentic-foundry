@@ -27,7 +27,7 @@ case is never testing skills in a vacuum with the hooks silently absent.
 From this repo's root (the plugin root, where `.claude-plugin/plugin.json` lives):
 
 ```bash
-claude plugin eval . --case keep-going --runs 1 --ablation none --trust-plugin
+claude plugin eval . --case merge-waits-with-primitive --runs 1 --ablation none --trust-plugin --scaffold --allow-tools Bash
 ```
 
 This runs one case, once, with no no-plugin baseline — the cheapest way to check a single case
@@ -35,15 +35,11 @@ still behaves before trusting the full suite. Drop `--case`/`--runs`/`--ablation
 case in `evals/` at the default three runs per arm (six runs per case: three with the plugin,
 three without).
 
-Two of the six shipped cases need flags this quick command doesn't pass:
+The shipped case needs two flags the default tool set does not give it:
 
 - **`merge-waits-with-primitive`** needs `--allow-tools Bash` (the read-only default tool set
   excludes `Bash`) and `--scaffold` (its `case.yaml` names a `scaffold_script` that stubs `gh` on
   `PATH`; without `--scaffold` the script never runs and the case has no `gh` to call).
-- **`state-read-first`** needs `--scaffold` for the same reason — its `scaffold_script` writes
-  the release's `state.yaml` into the empty workspace before Claude starts.
-- **`message-kind-lint`** needs `--allow-tools Bash` (it invokes
-  `scripts/foundry_message_kind.py`).
 
 The full local run, covering every case:
 
@@ -58,15 +54,14 @@ a report path:
 
 ```text
 CASE        WITH  W/OUT Δ      RUNS COST    NOTES
-keep-going  1.00  0.50  +0.50  6    $0.41
+merge-waits-with-primitive  1.00  0.50  +0.50  6    $0.41
 
 1 case(s) · mean Δ +0.50 · 41s · $0.41
 Report: /path/to/agentic-foundry/evals/results/<timestamp>/report.html
 ```
 
 Open the report for each grader's verdict per run. A case whose `Δ` sits at or below zero across
-two consecutive runs is a subtraction candidate — see `skills/certify-local/SKILL.md`'s "Native
-plugin eval" section.
+two consecutive runs is a subtraction candidate — the skill is not earning its place.
 
 ## Run it in CI (operator opt-in; not shipped)
 
@@ -94,18 +89,16 @@ Wiring this into `.github/workflows/` — a required check, a scheduled job, whi
 fits the bill you're willing to pay — is the operator's call, not something this plugin ships
 turned on.
 
-## The six shipped cases
+## The shipped case
 
-Each case under `evals/` targets one autonomy-continuation mining fixture (R1–R3):
+The case under `evals/` targets one autonomy-continuation mining fixture:
 
 | Case | What it checks | Release |
 | :--- | :-------------- | :------ |
-| `keep-going` | finishes a multi-step task without stopping to ask a directive question at a natural pause | v1.12.0 |
-| `blocker-with-evidence` | reports an impossible step as a shaped blocker (`claim`/`evidence`/`attempted`/`why_operator`/`handoff`), not a prose excuse | v1.12.0 |
 | `merge-waits-with-primitive` | reaches for `foundry-merge-when-green.py` instead of a hand-rolled `sleep`-then-poll loop | v1.13.0 |
-| `unauthorized-claim-refused` | refuses to merge an atom whose contract carries no `authorized` trailer, and names `/foundry:authorize` | v1.14.0 |
-| `message-kind-lint` | validates an outgoing cross-session message with `scripts/foundry_message_kind.py` before claiming it's ready to send | v1.14.0 |
-| `state-read-first` | reads a release's `state.yaml` and names its `next_action` before doing anything else | v1.14.0 |
+
+Five further cases (`keep-going`, `blocker-with-evidence`, `unauthorized-claim-refused`,
+`message-kind-lint`, `state-read-first`) went with the machinery they exercised in v2.0.0.
 
 `tests/test_plugin_eval_suite.py` validates every case's shape (frontmatter keys, grader types)
 without running any of them — that test is free and always green; this page is for the billed

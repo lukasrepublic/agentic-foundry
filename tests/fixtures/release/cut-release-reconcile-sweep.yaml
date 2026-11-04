@@ -15,7 +15,6 @@ surface_set:
   - 'scripts/foundry-release-acceptance.py'
   - 'scripts/foundry-bootstrap.sh'
   - 'skills/cut-release/SKILL.md'
-  - 'skills/release/SKILL.md'
   - 'skills/init/SKILL.md'
   - 'hooks/foundry-git-discipline.sh'
 
@@ -51,26 +50,6 @@ zero_occurrence_surfaces:
 # Grounded against the real (post-reconcile) tree, 2026-07-28: every entry below was verified by
 # actually running the sweep over the shipped tree.
 allowlist:
-  - path: skills/release/SKILL.md
-    token: 'wiring[- ]pin'
-    reason: >-
-      The "Gate-wiring pin & manifest — RETIRED (historical note)" tombstone section names the
-      retired mechanism; a retirement disclosure, not an instruction to perform a retired step.
-  - path: skills/release/SKILL.md
-    token: 'wiring[- ]hash'
-    reason: >-
-      Same tombstone section, naming foundry-wiring-hash.py and the retired doctor check; a
-      retirement disclosure.
-  - path: skills/release/SKILL.md
-    token: 'wiring[_-]hash\.pin'
-    reason: >-
-      Same tombstone section, naming the retired .foundry/wiring-hash.pin file; a retirement
-      disclosure.
-  - path: skills/release/SKILL.md
-    token: 'wiring[- ]manifest'
-    reason: >-
-      Same tombstone section, naming the retired .claude-plugin/wiring-manifest.json file; a
-      retirement disclosure.
   - path: skills/cut-release/SKILL.md
     token: 'wiring[- ]pin'
     reason: >-
@@ -109,12 +88,6 @@ allowlist:
 # elements a conformant retired disclosure must carry, authored independently of the prose it
 # checks.
 disclosure_matrix:
-  - path: skills/release/SKILL.md
-    mechanism: 'foundry-wiring-hash.py'
-    release: 'RETIRED'
-    load_bearer: 'source.sha'
-    closure_token: 'reconcile'
-    closure_token_2: 'complete'
   - path: skills/cut-release/SKILL.md
     mechanism: 'foundry-wiring-hash.py'
     release: 'Retired'
@@ -124,7 +97,7 @@ disclosure_matrix:
     release: 'Retired'
     load_bearer: 'DOCTOR-GREEN'
 
-# forbidden_deferral_tokens — applied to ALL SEVEN surfaces; no surface may defer to a follow-up.
+# forbidden_deferral_tokens — applied to ALL SIX surfaces; no surface may defer to a follow-up.
 forbidden_deferral_tokens:
   - 'needs (its own|a dedicated) follow-up'
   - 'flagged honestly'
@@ -242,4 +215,3 @@ sibling_sweep_fixture: 'tests/fixtures/subtraction/deleted-module-sweep.yaml'
 sibling_sweep_lookup_paths:
   - 'skills/cut-release/SKILL.md'
   - 'skills/init/SKILL.md'
-  - 'skills/release/SKILL.md'
