@@ -29,12 +29,23 @@ The load-bearing safety floor (§8 re-ground — Ryuk's OWNERSHIP model, not its
   * Fail-safe: on missing/ambiguous ownership the reap set is EMPTY. No blind
     `prune`/`system prune`/kill-all, ever.
 
+gv-12 (F1, F4) adds two label-scoped kinds under the PROJECT LABEL (the same value the session id
+slot carries): `worktree` (a git worktree stamped by `mark-worktree` with a `foundry-owner` file in
+its git admin dir) and `scratch` (`<project>/.foundry/scratch/<label>/`). A worktree is removed only
+when its label matches AND its branch has no unpushed commits (`git log @{u}..`) AND it is clean AND
+it is not locked (`git worktree lock`) AND its owner process is gone (the `foundry-owner` file
+records the owner pid + process start-time; a live pid with the same start-time keeps it) AND it holds
+no gitignored files (unless `--include-ignored`) AND it is not the project dir or the cwd (or an
+ancestor of them); no upstream, or any check failing, means "unknown" and it survives. The removal is a plain `git worktree remove` (no --force), so git itself refuses a dirty one.
+`hooks/foundry-env-reap.sh --subagent-stop` sweeps by an explicit label only.
+
 The reaper fires from the native SessionEnd hook (hooks/foundry-env-reap.sh) — the
 `trap`/`finally` happy-path class — so it covers the orderly-exit forgetful agent, NOT a hard
 crash (crash-survival = the deferred external reaper, out of scope; surfaced by `status`).
 """
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -42,6 +53,10 @@ import sys
 
 # The ownership label key (Ryuk-style). Stamped on containers at create-time via `--label`.
 SESSION_LABEL_KEY = "foundry.session"
+
+SCRATCH_REL = os.path.join(".foundry", "scratch")
+OWNER_FILE = "foundry-owner"
+_LABEL_RE = re.compile(r"[A-Za-z0-9._-]+")
 
 # Kinds that are shared/connectivity infrastructure — surfaced by status, NEVER in a reap set.
 STATUS_ONLY_KINDS = frozenset({"daemon", "tunnel"})
@@ -111,6 +126,15 @@ def decide_reap(candidates, session_id):
             if c.get("live_command") == rec.get("command") and c.get("live_start") == rec.get("start"):
                 reap.append(c)
             # else: recycled/unrelated pid → SKIP (never kill an unowned process)
+        elif kind == "worktree":
+            # Owned by label; removable only when provably safe. None/unknown fails closed.
+            if (c.get("label") == session_id and c.get("unpushed") is False
+                    and c.get("dirty") is False and not c.get("locked")
+                    and c.get("owner_alive") is False and not c.get("protected")):
+                reap.append(c)
+        elif kind == "scratch":
+            if c.get("name") == session_id and _LABEL_RE.fullmatch(session_id or "") and session_id not in (".", ".."):
+                reap.append(c)
         # unknown kind → fail-safe, skip
     return reap
 
@@ -158,6 +182,16 @@ def reap_resource(c, run=subprocess.run):
         except (ProcessLookupError, ValueError, PermissionError):
             pass  # already gone / not ours — tolerant
         return "pid %s" % pid_int
+    if kind == "worktree":
+        # No --force: git itself refuses a dirty or locked worktree. The branch is left alone.
+        _run(["git", "-C", str(c.get("repo")), "worktree", "remove", str(c.get("id"))], run=run)
+        return "worktree %s" % c.get("id")
+    if kind == "scratch":
+        path = str(c.get("id"))
+        if os.path.islink(path) or not os.path.isdir(path):
+            return "scratch %s (skipped: not a plain directory)" % path
+        shutil.rmtree(path, ignore_errors=True)
+        return "scratch %s" % path
     return "unknown %r" % (c.get("id"),)
 
 
@@ -261,6 +295,145 @@ def _probe_pid(pid):
         return False, None, None
 
 
+
+def _git(args, cwd):
+    try:
+        r = subprocess.run(["git", "-C", cwd] + args, capture_output=True, text=True, check=False, timeout=30)
+        return r.returncode, r.stdout
+    except Exception:
+        return 1, ""
+
+
+def proc_start(pid):
+    """(state, start): state is "alive" (start = /proc/<pid>/stat field 22, process start in clock
+    ticks), "gone" (ONLY when the stat file does not exist, ENOENT) or "unknown" (any other
+    error, including a pid <= 0). Reads /proc directly; never `ps`."""
+    try:
+        pid = int(pid)
+    except (ValueError, TypeError):
+        return "unknown", None
+    if pid <= 0:
+        return "unknown", None
+    try:
+        with open("/proc/%d/stat" % pid, "rb") as fh:
+            raw = fh.read().decode("utf-8", "replace")
+    except FileNotFoundError:
+        return "gone", None
+    except OSError:
+        return "unknown", None
+    try:
+        fields = raw[raw.rindex(")") + 2:].split()
+        return "alive", fields[19]       # field 22 overall; fields[0] is field 3
+    except (ValueError, IndexError):
+        return "unknown", None
+
+
+def _read_owner(marker):
+    """{"label","pid","start"} from the owner file; a legacy plain-label file has no pid."""
+    try:
+        with open(marker, encoding="utf-8") as fh:
+            raw = fh.read().strip()
+    except OSError:
+        return None
+    try:
+        d = json.loads(raw)
+        if isinstance(d, dict):
+            return d
+    except ValueError:
+        pass
+    return {"label": raw or None}
+
+
+def mark_worktree(path, label, pid=None, start=None):
+    """Stamp a worktree with the project label and the owning process (pid + start-time) that
+    owns it. Refuses an invalid label and refuses to overwrite a DIFFERENT existing label.
+    Returns True on success. There is no session-id fallback for the label."""
+    if not _LABEL_RE.fullmatch(label or ""):
+        return False
+    rc, out = _git(["rev-parse", "--absolute-git-dir"], path)
+    if rc != 0 or not out.strip():
+        return False
+    marker = os.path.join(out.strip(), OWNER_FILE)
+    if os.path.islink(marker):
+        return False
+    if os.path.isfile(marker):
+        old = _read_owner(marker) or {}
+        if old.get("label") and old.get("label") != label:
+            return False
+    # The owner pid is explicit: there is no default (a parent shell under a tool call is short-lived).
+    try:
+        pid = int(pid)
+    except (ValueError, TypeError):
+        return False
+    if start is None:
+        _state, start = proc_start(pid)
+        if start is None:
+            return False        # cannot record an identity for that pid
+    with open(marker, "w", encoding="utf-8") as fh:
+        json.dump({"label": label, "pid": pid, "start": start}, fh)
+        fh.write("\n")
+    return True
+
+
+def sample_worktrees(project_dir, include_ignored=False):
+    """Linked worktrees of the project repo (never the main one) with ownership + safety facts."""
+    rc, out = _git(["worktree", "list", "--porcelain"], project_dir)
+    if rc != 0:
+        return []
+    entries, cur = [], None
+    for line in out.splitlines():
+        if line.startswith("worktree "):
+            cur = {"path": line[len("worktree "):], "locked": False}
+            entries.append(cur)
+        elif cur is not None and (line == "locked" or line.startswith("locked ")):
+            cur["locked"] = True
+    cands = []
+    guard = {os.path.realpath(project_dir), os.path.realpath(os.getcwd())}
+    for e in entries[1:]:
+        wt = e["path"]
+        if not os.path.isdir(wt):
+            continue
+        rw = os.path.realpath(wt)
+        protected = any(g == rw or g.startswith(rw + os.sep) for g in guard)
+        rc, gd = _git(["rev-parse", "--absolute-git-dir"], wt)
+        label, owner = None, {}
+        marker = os.path.join(gd.strip(), OWNER_FILE) if rc == 0 else ""
+        if marker and os.path.isfile(marker) and not os.path.islink(marker):
+            owner = _read_owner(marker) or {}
+            label = owner.get("label") or None
+        rc_u, log = _git(["log", "@{u}..", "--oneline"], wt)
+        unpushed = (bool(log.strip()) if rc_u == 0 else None)   # no upstream -> unknown
+        status_args = ["status", "--porcelain"] + ([] if include_ignored else ["--ignored"])
+        rc_s, st = _git(status_args, wt)
+        dirty = (bool(st.strip()) if rc_s == 0 else None)
+        # Owner liveness: unknown (no pid recorded) fails closed (None -> survives).
+        owner_alive = None
+        if owner.get("pid") is not None:
+            state, live_start = proc_start(owner["pid"])
+            if state == "gone":
+                owner_alive = False
+            elif state == "alive" and owner.get("start") is not None:
+                owner_alive = (live_start == str(owner.get("start")))   # a different start = recycled pid
+            # anything else stays None: fail closed, the worktree survives
+        cands.append({"kind": "worktree", "id": wt, "repo": project_dir, "label": label,
+                      "unpushed": unpushed, "dirty": dirty, "locked": e["locked"],
+                      "owner_alive": owner_alive, "protected": protected})
+    return cands
+
+
+def sample_scratch(project_dir):
+    """Per-label scratch-output directories under <project>/.foundry/scratch/. Symlinks are skipped."""
+    root = os.path.join(project_dir, SCRATCH_REL)
+    out = []
+    if not os.path.isdir(root) or os.path.islink(root):
+        return out
+    for name in sorted(os.listdir(root)):
+        p = os.path.join(root, name)
+        if os.path.islink(p) or not os.path.isdir(p):
+            continue
+        out.append({"kind": "scratch", "id": p, "name": name})
+    return out
+
 def _detect_daemon():
     """Surface the shared container-runtime host as a status-only entry (never reaped)."""
     for rt in ("colima", "docker", "podman"):
@@ -269,12 +442,14 @@ def _detect_daemon():
     return None
 
 
-def enumerate_candidates(session_id, project_dir):
+def enumerate_candidates(session_id, project_dir, include_ignored=False):
     """All live candidate resources across every covered kind + the status-only infra."""
     cands = []
     cands.extend(_sample_containers())
     cands.extend(_sample_clusters())
     cands.extend(_sample_pids(project_dir))
+    cands.extend(sample_worktrees(project_dir, include_ignored))
+    cands.extend(sample_scratch(project_dir))
     daemon = _detect_daemon()
     if daemon:
         cands.append(daemon)
@@ -319,11 +494,11 @@ def cmd_status(session_id, project_dir, out=sys.stdout):
     return 0
 
 
-def cmd_reap(session_id, project_dir, out=sys.stdout):
+def cmd_reap(session_id, project_dir, out=sys.stdout, include_ignored=False):
     if not session_id:
         print("env-hygiene reap: no session id → fail-safe, reaped nothing", file=out)
         return 0
-    cands = enumerate_candidates(session_id, project_dir)
+    cands = enumerate_candidates(session_id, project_dir, include_ignored)
     to_reap = decide_reap(cands, session_id)
     left = [c for c in cands if c not in to_reap]
     reaped = [reap_resource(c) for c in to_reap]
@@ -336,19 +511,33 @@ def cmd_reap(session_id, project_dir, out=sys.stdout):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    session_id, cmd = "", None
+    session_id, cmd, wt_path, include_ignored, owner_pid = "", None, "", False, None
     i = 0
     while i < len(argv):
         a = argv[i]
-        if a == "--session" and i + 1 < len(argv):
+        if a in ("--session", "--label") and i + 1 < len(argv):
             session_id = argv[i + 1]; i += 2; continue
-        if a in ("status", "reap"):
+        if a == "--include-ignored":
+            include_ignored = True; i += 1; continue
+        if a == "--pid" and i + 1 < len(argv):
+            owner_pid = argv[i + 1]; i += 2; continue
+        if a == "--path" and i + 1 < len(argv):
+            wt_path = argv[i + 1]; i += 2; continue
+        if a in ("status", "reap", "mark-worktree"):
             cmd = a; i += 1; continue
         i += 1
+    explicit_label = session_id          # mark-worktree never falls back to the session id
     session_id = _resolve_session(session_id)
     project_dir = _resolve_project_dir()
+    if cmd == "mark-worktree":
+        try:
+            ok = bool(wt_path and explicit_label and owner_pid is not None) and mark_worktree(wt_path, explicit_label, pid=owner_pid)
+        except ValueError:
+            ok = False
+        print("env-hygiene mark-worktree: %s" % ("marked" if ok else "refused (need --path, a valid --label and an explicit --pid; a different existing label is never overwritten)"))
+        return 0 if ok else 2
     if cmd == "reap":
-        return cmd_reap(session_id, project_dir)
+        return cmd_reap(session_id, project_dir, include_ignored=include_ignored)
     return cmd_status(session_id, project_dir)
 
 

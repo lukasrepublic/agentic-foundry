@@ -26,7 +26,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-env-hygiene.py:*)",
       "tier": "allow",
-      "rationale": "status/reap over machine-scoped worker sandbox envs; confined to isolated per-worker state"
+      "rationale": "status/reap over machine-scoped worker sandbox envs; confined to isolated per-worker state. mark-worktree and every reap (label-scoped worktree and scratch removal, gv-12) are never silent: the plugin-scripts-allow hook leaves them to ask"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_blocker_check.py:*)",
@@ -37,6 +37,11 @@
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_operating_model.py:*)",
       "tier": "allow",
       "rationale": "status|validate|explain|render-tick-section only read .foundry/operating-model.yaml, the shipped schema and the .foundry/ operator style file (a regular .md or .txt file, at most 4 KiB); the script writes nothing (gv-03)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_resources.py:*)",
+      "tier": "allow",
+      "rationale": "reads /proc/loadavg, /proc/meminfo, /proc/uptime, the boot id, cgroup memory limits, statvfs of / and --path, the kernel log (/dev/kmsg or journalctl -k) when readable, the OOM-baseline file and the policy file; prints a verdict. The two verbs that read a named file or write (--from-json, --reset-oom-baseline) are never silent: the plugin-scripts-allow hook leaves them to ask (gv-12)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-permissions-compile.py --check:*)",
@@ -242,6 +247,11 @@
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_governance.py:*)",
       "tier": "ask",
       "rationale": "render writes governance/rendered/ and baseline writes governance/local/baselines/; load, validate, applicable, check and exceptions are read-only and run silently through the plugin-scripts-allow hook; no network"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-deck-heavy:*)",
+      "tier": "ask",
+      "rationale": "executes the command it is given under a host-sized flock slot, so it is never silent (gv-12)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_research_note.py:*)",

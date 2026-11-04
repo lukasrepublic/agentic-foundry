@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""foundry-deck-heavy - B2: run a heavy local command through a host-sized slot lock.
+
+  foundry-deck-heavy [--slots N] [--timeout SECONDS] [--lock-dir DIR] -- <command> [args...]
+
+Heavy commands (test suites, type checks, builds, dependency installs, container stacks, infra
+plans) go through this wrapper so only `heavy_slots` of them run at once on the host. The slot is
+an flock on a lock file. The wrapped command INHERITS the lock descriptor (pass_fds), so the slot
+stays held while the heavy command runs even if the wrapper is SIGKILLed; the kernel frees it when
+the last holder (wrapper and command) is gone. The wrapper only closes its own copy; it never
+calls LOCK_UN, which would free the slot for the child too.
+
+Slots: --slots, else the policy `deck.heavy_slots` (`auto` is sized from measured CPU and memory
+by a live measurement only; the kernel log is never read). Lock files live under
+<git common dir>/foundry-deck-heavy, else $XDG_RUNTIME_DIR/foundry-deck-heavy; with neither, pass
+--lock-dir (there is deliberately no shared /tmp fallback).
+
+Do not wrap a command that backgrounds or daemonises itself: the daemon inherits the lock
+descriptor and keeps the slot after the wrapper returns. To find the holder of a stuck slot run
+`fuser <lock-dir>/slot-N.lock` (or `lsof <lock-dir>/slot-N.lock`) and stop that process.
+Deleting the lock file frees the slot for waiters but breaks mutual exclusion while the old
+holder is still running, so prefer stopping the holder.
+
+Waiting is bounded by --timeout (default 600 s). The wait is reported on stderr as
+`deck-heavy: slot N/M acquired, waited S.SSs`. A timeout reports `timed out` and exits 75
+without running the command. Otherwise the exit status is the wrapped command's (a command
+ended by signal N exits 128+N; not executable 126; not found 127).
+"""
+import argparse
+import fcntl
+import importlib.util
+import os
+import signal
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+EX_TEMPFAIL = 75
+POLL_S = 0.1
+
+
+def lock_dir_default():
+    try:
+        r = subprocess.run(["git", "rev-parse", "--git-common-dir"], capture_output=True, text=True, timeout=10, check=False)
+        common = r.stdout.strip()
+        if r.returncode == 0 and common:
+            return os.path.join(os.path.abspath(common), "foundry-deck-heavy")
+    except (OSError, subprocess.SubprocessError):
+        pass
+    base = os.environ.get("XDG_RUNTIME_DIR")
+    return os.path.join(base, "foundry-deck-heavy") if base else None
+
+
+def slots_from_policy():
+    spec = importlib.util.spec_from_file_location("foundry_deck_resources", os.path.join(HERE, "foundry_deck_resources.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return int(mod.heavy_slots_now())
+
+
+def try_acquire(lock_dir, slots):
+    for n in range(1, slots + 1):
+        fd = os.open(os.path.join(lock_dir, "slot-%d.lock" % n), os.O_CREAT | os.O_RDWR, 0o644)  # non-inheritable
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return n, fd
+        except OSError:
+            os.close(fd)
+    return None, None
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "--" not in argv:
+        print("deck-heavy: usage: foundry-deck-heavy [--slots N] [--timeout S] [--lock-dir D] -- <command>", file=sys.stderr)
+        return 2
+    i = argv.index("--")
+    ap = argparse.ArgumentParser(prog="foundry-deck-heavy")
+    ap.add_argument("--slots", type=int)
+    ap.add_argument("--timeout", type=float, default=600.0)
+    ap.add_argument("--lock-dir")
+    a = ap.parse_args(argv[:i])
+    cmd = argv[i + 1:]
+    if not cmd:
+        print("deck-heavy: no command after --", file=sys.stderr)
+        return 2
+    slots = a.slots if a.slots is not None else slots_from_policy()
+    if slots < 1:
+        print("deck-heavy: --slots must be at least 1", file=sys.stderr)
+        return 2
+    lock_dir = a.lock_dir or lock_dir_default()
+    if not lock_dir:
+        print("deck-heavy: no git common dir and no XDG_RUNTIME_DIR; pass --lock-dir", file=sys.stderr)
+        return 2
+    os.makedirs(lock_dir, exist_ok=True)
+
+    child = {"p": None}
+    forwarded = set()
+
+    def on_signal(signum, _frame):
+        if child["p"] is not None and child["p"].poll() is None:
+            if signum in forwarded and signum == signal.SIGINT:
+                return   # a terminal Ctrl-C reaches the whole process group: the child already has it
+            forwarded.add(signum)
+            child["p"].send_signal(signum)
+        else:
+            raise SystemExit(128 + signum)
+
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(s, on_signal)
+
+    start = time.monotonic()
+    fd = None
+    try:
+        while True:
+            n, fd = try_acquire(lock_dir, slots)
+            if fd is not None:
+                break
+            if time.monotonic() - start >= a.timeout:
+                print("deck-heavy: timed out after %.2fs waiting for one of %d slots; command not run. "
+                      "To find a stuck holder: fuser %s/slot-N.lock (or lsof). Stop that process; "
+                      "deleting the lock file frees the slot but breaks exclusion while the holder runs."
+                      % (time.monotonic() - start, slots, lock_dir), file=sys.stderr)
+                return EX_TEMPFAIL
+            time.sleep(POLL_S)
+        print("deck-heavy: slot %d/%d acquired, waited %.2fs" % (n, slots, time.monotonic() - start), file=sys.stderr, flush=True)
+        try:
+            child["p"] = subprocess.Popen(cmd, pass_fds=(fd,))
+        except OSError as e:
+            print("deck-heavy: cannot run %r: %s" % (cmd[0], e), file=sys.stderr)
+            return 127 if isinstance(e, FileNotFoundError) else 126
+        rc = child["p"].wait()
+        return 128 - rc if rc < 0 else rc
+    finally:
+        if fd is not None:
+            os.close(fd)   # our copy only; the child's inherited copy keeps the slot held
+
+
+if __name__ == "__main__":
+    sys.exit(main())
