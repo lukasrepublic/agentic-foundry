@@ -261,6 +261,7 @@ def test_rego_passes_pinned_fixtures(fixture):
                                             ("bad-application.yaml", "not an exact pin"),
                                             ("bad-reusable-workflow.yaml", "not SHA-pinned"),
                                             ("bad-application-missing-revision.yaml", "not an exact pin"),
+                                            ("bad-application-sources-null.yaml", "not an exact pin"),
                                             ("bad-digest-malformed.yaml", "not immutably pinned"),
                                             ("bad-ephemeral.yaml", "container dbg")])
 def test_rego_denies_unpinned_fixtures(fixture, needle):
@@ -328,7 +329,8 @@ def test_shipped_workflows_persist_no_credentials_and_install_conftest_pinned():
                     assert st["with"]["persist-credentials"] is False, p.name
     for rel in ("architecture/templates/architecture-fitness.yml", "stack/templates/workflow-pinned.yml"):
         t = (KITS / rel).read_text()
-        assert "conftest/releases/download/v0.68.0/" in t and "sha256sum -c" in t
+        assert "conftest/releases/download/v0.68.2/" in t and "sha256sum -c" in t
+        assert ".github/workflows/*.yml" in t and ".github/workflows/*.yaml" in t
 
 
 def adr_dir(tmp_path, files):

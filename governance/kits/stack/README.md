@@ -13,5 +13,5 @@ References: [OpenSSF Scorecard](https://github.com/ossf/scorecard/blob/main/docs
 [Renovate presets](https://docs.renovatebot.com/config-presets/),
 [conftest](https://www.conftest.dev/).
 
-The shipped workflows install conftest v0.68.0 (release and sha256 verified 2026-11-04). Elsewhere conftest must
+The shipped workflows install conftest v0.68.2 (release and sha256 verified 2026-11-04). Elsewhere conftest must
 be on PATH; the kit's rego tests skip with a named reason when it is not.

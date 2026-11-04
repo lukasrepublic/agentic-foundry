@@ -122,14 +122,17 @@ _helm_sources contains {"app": name, "chart": s.chart, "rev": rev} if {
 	rev := object.get(s, "targetRevision", "")
 }
 
-_app_sources(d) := ss if {
-	ss := object.get(d.spec, "sources", [])
+_has_sources(d) if {
+	ss := object.get(d.spec, "sources", null)
+	is_array(ss)
 	count(ss) > 0
 }
 
-# An absent or empty `sources` falls back to the single `source`.
+_app_sources(d) := object.get(d.spec, "sources", []) if _has_sources(d)
+
+# An absent, null, non-array or empty `sources` falls back to the single `source`.
 _app_sources(d) := [d.spec.source] if {
-	count(object.get(d.spec, "sources", [])) == 0
+	not _has_sources(d)
 	object.get(d.spec, "source", false)
 }
 
@@ -147,7 +150,7 @@ deny contains msg if {
 # (3) GitHub Actions step `uses:` and job-level reusable-workflow `uses:`. Local actions (`uses: ./...`) have no external ref to pin.
 _sha40_re := `@[0-9a-f]{40}$`
 
-_workflow_uses contains {"job": jobname, "uses": step.uses} if {
+_workflow_uses contains {"job": jobname, "where": "step", "uses": step.uses} if {
 	some d in _docs
 	is_object(object.get(d, "jobs", false))
 	some jobname, job in d.jobs
@@ -157,7 +160,7 @@ _workflow_uses contains {"job": jobname, "uses": step.uses} if {
 }
 
 # Job-level reusable workflows: jobs.<id>.uses.
-_workflow_uses contains {"job": jobname, "uses": job.uses} if {
+_workflow_uses contains {"job": jobname, "where": "job-level", "uses": job.uses} if {
 	some d in _docs
 	is_object(object.get(d, "jobs", false))
 	some jobname, job in d.jobs
@@ -173,5 +176,5 @@ action_pinned contains x if {
 deny contains msg if {
 	some x in _workflow_uses
 	not regex.match(_sha40_re, x.uses)
-	msg := sprintf("version-pinning: workflow job %q step `uses: %s` is not SHA-pinned: pin the action to a full 40-char commit SHA (a floating tag can be re-pointed).", [x.job, x.uses])
+	msg := sprintf("version-pinning: workflow job %q %s `uses: %s` is not SHA-pinned: pin the action or reusable workflow to a full 40-char commit SHA (a floating tag can be re-pointed).", [x.job, x.where, x.uses])
 }
