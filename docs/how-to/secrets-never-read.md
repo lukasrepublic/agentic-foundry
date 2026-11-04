@@ -108,3 +108,5 @@ Do the same job by metadata: check that the secret exists and which version is c
 **version id** rather than the value. If a value really must be set, write it from a generated temp file (owner-only permissions) with
 a `trap ... EXIT` that removes the file, and never print the file. If you need the value read, say so and let the operator
 do it outside the agent session.
+
+A note on cleanup: any reaper that decides an owner is dead by looking in `/proc` is namespace-bound. A reaper in another pid namespace, or on a host mounted with a restrictive `hidepid` setting, can see `ENOENT` for a process that is alive, so treat "not found" as "unknown" there; the env reaper (hooks/foundry-env-reap.sh) scopes by label for this reason.

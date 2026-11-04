@@ -186,3 +186,33 @@ def test_read_only_verbs_stay_silently_allowed(env, script, args):
     with open(os.path.join(env["root"], "scripts", script), "w") as f:
         f.write("print('x')\n")
     assert decide(env, f"python3 {env['root']}/scripts/{script} {args}") == "allow"
+
+
+# ---- gv-11 round 2: expansion characters and lifecycle hooks --------------------------------------------------
+@pytest.mark.parametrize("args", ["{reap,--include-ignored}", "{reap,}", "r[e]ap", "re?p", "*", "reap {a,b}", "--x=[1]"])
+def test_r2_brace_and_glob_characters_in_an_argument_get_no_silent_allow(env, args):
+    with open(os.path.join(env["root"], "scripts", "foundry-env-hygiene.py"), "w") as f:
+        f.write("print('x')\n")
+    with open(os.path.join(env["root"], "scripts", "foundry-ticket.py"), "w") as f:
+        f.write("print('x')\n")
+    assert decide(env, f"python3 {env['root']}/scripts/foundry-env-hygiene.py {args}") is None
+    assert decide(env, f"python3 {env['root']}/scripts/foundry-ticket.py {args}") is None
+    assert decide(env, f"python3 {env['root']}/scripts/foundry-doctor.py {args}") is None
+
+
+def test_r2_plain_arguments_are_unchanged(env):
+    with open(os.path.join(env["root"], "scripts", "foundry-env-hygiene.py"), "w") as f:
+        f.write("print('x')\n")
+    assert decide(env, f"python3 {env['root']}/scripts/foundry-env-hygiene.py reap --session s1") == "allow"
+    assert decide(env, f"python3 {env['root']}/scripts/foundry-doctor.py --json") == "allow"
+
+
+@pytest.mark.parametrize("hook", ["foundry-env-reap.sh", "foundry-worktree-remove.sh"])
+@pytest.mark.parametrize("lead", ["bash", "sh", ""])
+def test_r2_lifecycle_hooks_are_not_tools(env, hook, lead):
+    with open(os.path.join(env["root"], "hooks", hook), "w") as f:
+        f.write("#!/bin/sh\n")
+    cmd = f"{lead} {env['root']}/hooks/{hook} --subagent-stop".strip()
+    assert decide(env, cmd) is None
+    # control: another hook script is still allowed
+    assert decide(env, f"bash {env['root']}/hooks/foundry-git-discipline.sh --protected main") == "allow"

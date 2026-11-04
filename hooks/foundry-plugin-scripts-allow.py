@@ -46,9 +46,12 @@ SUFFIXES = (".py", ".sh")
 # Characters that make a command more than one plain invocation, or that the shell would expand
 # differently from shlex: `$` (any expansion), quotes/backslash handled by requiring the parsed path
 # to equal a real file, `(` `)` subshells, backticks, redirections, separators, newlines.
-METACHARS = set(";&|<>()`$\\\n\r")
+METACHARS = set(";&|<>()`$\\\n\r{}*?[]")   # {} * ? [ ] : brace/glob expansion builds a verb the token check never sees
 # Scripts that execute commands taken from their input: never allowed silently.
 EXECUTES_INPUT = {"foundry-verify.py", "foundry-test.sh"}
+# Lifecycle hooks are not tools: they reap sessions/worktrees and run on harness events. Invoking one through Bash
+# never gets a silent allow (the session's normal permission mode decides).
+LIFECYCLE_HOOKS = {"foundry-env-reap.sh", "foundry-worktree-remove.sh"}
 # foundry-ticket.py executes input only for these shapes (v2.0.0; security review of #270, R1):
 # `done` runs the ticket's command; `--trust-author` adopts a command from outside the write team.
 _TICKET_EXECUTING = ("done", "--trust-author")
@@ -118,7 +121,7 @@ def allowed(command, root):
     if name == "foundry_usage.py" and _names_option(argv[1:], "--dataset") \
             and any(a in _USAGE_DATASET_VERBS for a in argv[1:]):
         return False
-    if name in EXECUTES_INPUT:
+    if name in EXECUTES_INPUT or name in LIFECYCLE_HOOKS:
         return False
     if name == "foundry-permissions-compile.py" and any(a == "--root" or a.startswith("--root=") for a in argv[1:]):
         return False
