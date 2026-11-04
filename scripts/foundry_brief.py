@@ -9,8 +9,8 @@ level-1 rules, the ticket's cited rule ids with statements inlined, path-scoped 
 style block (unless `communication.style` is off), hygiene and shell-shape rules.
 
 Ticket JSON: `{"title": str, "cites": ["FG-SEC-006", ...]}` (`cited_ids` is accepted as an alias).
-The style setting comes from the operating-model policy loader (`foundry_operating_model`, a sibling
-atom) when that module exists, else the default (on). `--style` overrides both.
+The style setting comes from the operating-model policy loader (`foundry_operating_model.py`, a sibling
+file in this directory, loaded by path only) when that file exists, else the default (on). `--style` overrides both.
 
 Output stays under the dispatch inline cap: every blank-line-delimited paragraph is at most the cap
 (`foundry_dispatch_lint.read_inline_cap`). Local files only; no network, no subprocess.
@@ -19,9 +19,8 @@ Exit 0 ok / 2 refused.
 from __future__ import annotations
 
 import argparse
-import importlib
+import importlib.util
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -29,7 +28,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import foundry_dispatch_lint as _lint  # noqa: E402
 import foundry_governance as _gov  # noqa: E402
 
-STYLE_ON = "simplified-technical-english"
 STYLE_BLOCK = """Communication style (simplified technical English, not strict ASD-STE100):
 - Use short, direct sentences and active voice.
 - Give one instruction per sentence.
@@ -52,94 +50,106 @@ SHELL_SHAPE = """Shell shape:
 CHARTER_CANDIDATES = (".foundry/product-charter.md", "PRODUCT-CHARTER.md", "docs/product-charter.md")
 
 
+def _style_value(val) -> str:
+    return "off" if str(val).strip().lower() == "off" else "on"
+
+
 def communication_style(proj: Path, override=None) -> str:
-    """'on' or 'off'. Policy loader when present, else on."""
+    """'on' or 'off'. Reads the sibling policy loader by FILE LOCATION only (never PYTHONPATH or
+    site-packages, so a planted module is not picked up). Absent loader: on. A loader that raises or
+    returns nothing usable: on, with one stderr line `policy-loader-error`."""
     if override:
-        return "off" if override == "off" else "on"
-    try:
-        om = importlib.import_module("foundry_operating_model")  # optional sibling module (gv-03)
-    except ImportError:
+        return _style_value(override)
+    path = Path(__file__).resolve().parent / "foundry_operating_model.py"
+    if not path.is_file():
         return "on"
     try:
-        for name in ("communication_style", "style"):
-            fn = getattr(om, name, None)
-            if callable(fn):
-                val = fn(str(proj))
-                return "off" if str(val).strip().lower() == "off" else "on"
-        res = om.resolve(str(proj)) if hasattr(om, "resolve") else om.load(str(proj))
+        spec = importlib.util.spec_from_file_location("foundry_operating_model_sibling", path)
+        om = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(om)
+        fn = getattr(om, "communication_style", None)
+        if callable(fn):
+            return _style_value(fn(str(proj)))
+        loader = getattr(om, "load", None) or getattr(om, "resolve", None)
+        if not callable(loader):
+            raise LookupError("no communication_style, load or resolve")
+        res = loader(str(proj))
         comm = res.get("communication") if isinstance(res, dict) else getattr(res, "communication", None)
         val = comm.get("style") if isinstance(comm, dict) else getattr(comm, "style", None)
-        return "off" if str(val).strip().lower() == "off" else "on"
-    except Exception:  # noqa: BLE001 -- a broken policy never blocks a brief; default on
+        if val is None:
+            raise LookupError("no communication.style")
+        return _style_value(val)
+    except Exception as exc:  # noqa: BLE001 -- a broken policy never blocks a brief; fall back to on, loudly
+        print(f"policy-loader-error: {type(exc).__name__}", file=sys.stderr)
         return "on"
 
 
-def _line(r, short=False) -> str:
-    return f"- {r['id']}: {r['statement'].strip()}"
+def _paragraphs(header: str, items: list, cap: int) -> list:
+    """Pack items into paragraphs of at most `cap` chars, repeating the header on a continuation. An item
+    (a rule statement) is never cut, even when it alone is longer than the cap."""
+    out, cur = [], header
+    for it in items:
+        if cur != header and len(cur) + 1 + len(it) > cap:
+            out.append(cur)
+            cur = f"{header} (continued)"
+        cur = f"{cur}\n{it}"
+    out.append(cur)
+    return out
 
 
 def build_brief(proj: Path, root: Path, ticket: dict, paths: list, blueprint=None, style=None, cap=None) -> str:
     kits, local = _gov.load_kits(root), _gov.load_local(proj)
-    rules = _gov._checked_effective(kits, local)
+    rules = _gov.checked_effective(kits, local)
     active = [r for r in rules if r.get("status") == "active"]
     by_id = {r["id"]: r for r in rules}
+    cap = cap if cap is not None else _lint.read_inline_cap(str(proj))
     used = set()
-    blocks = []
+    sections = []  # (header, items) or (None, [raw text])
 
-    core = ["Always-on core:"]
+    def items_of(rs):
+        return [i for r in rs for i in _gov.rule_items(r)]
+
+    cites = ticket.get("cites") or ticket.get("cited_ids") or []
+    if not isinstance(cites, list):
+        raise _gov.Refused("ticket-cites-must-be-a-list")
+    cited, inactive = [], []
+    for cid in cites:
+        if cid not in by_id:
+            raise _gov.Refused(f"cited-rule-unknown:{cid}")
+        (cited if by_id[cid].get("status") == "active" else inactive).append(by_id[cid])
+    cited_ids = {r["id"] for r in cited}
+    inactive_ids = {r["id"] for r in inactive}
+
+    core_items = []
     charter = next((c for c in CHARTER_CANDIDATES if (proj / c).is_file()), None)
     if charter:
-        core.append(f"- Product charter: read {charter} before you design.")
-    conduct = [r for r in active if r["category"] == "conduct"]
-    core += [_line(r) for r in conduct]
-    used |= {r["id"] for r in conduct}
-    blocks.append("\n".join(core))
+        core_items.append(f"- Product charter: read {charter} before you design.")
+    conduct = [r for r in active if r["category"] == "conduct" and r["id"] not in cited_ids]
+    core_items += items_of(conduct)
+    sections.append(("Always-on core:", core_items))
+    used |= {r["id"] for r in conduct} | cited_ids | inactive_ids
 
     def bp_ok(r):
         b = r["applies_to"]["blueprints"]
         return "*" in b or (blueprint is not None and blueprint in b)
 
-    cites = ticket.get("cites") or ticket.get("cited_ids") or []
-    if not isinstance(cites, list):
-        raise _gov.Refused("ticket-cites-must-be-a-list")
-    cited = []
-    for cid in cites:
-        if cid not in by_id:
-            raise _gov.Refused(f"cited-rule-unknown:{cid}")
-        cited.append(by_id[cid])
-    used |= {r["id"] for r in cited}
-
     lvl1 = [r for r in active if r["level"] == 1 and bp_ok(r) and r["id"] not in used]
     if lvl1:
-        blocks.append("\n".join(["Level-1 rules for this blueprint:"] + [_line(r) for r in lvl1]))
+        sections.append(("Level-1 rules for this blueprint:", items_of(lvl1)))
         used |= {r["id"] for r in lvl1}
-    if cited:
-        blocks.append("\n".join(["Rules this ticket cites:"] + [_line(r) for r in cited]))
-
+    if cited or inactive:
+        sections.append(("Rules this ticket cites:", items_of(cited) + [f"cited-rule-not-active:{r['id']}" for r in inactive]))
     scoped = [by_id[i] for i in _gov.applicable(rules, paths) if i not in used]
     if scoped:
-        blocks.append("\n".join(["Rules for the paths in this change:"] + [_line(r) for r in scoped]))
+        sections.append(("Rules for the paths in this change:", items_of(scoped)))
 
+    blocks = []
+    for header, items in sections:
+        blocks += _paragraphs(header, items, cap)
     if communication_style(proj, style) != "off":
         blocks.append(STYLE_BLOCK)
     blocks += [HYGIENE, SHELL_SHAPE]
-
-    cap = cap if cap is not None else _lint.read_inline_cap(str(proj))
-    out = []
-    for b in blocks:
-        if len(b) > cap:  # keep every paragraph under the inline cap: split by line, truncate a lone long line
-            piece = ""
-            for ln in b.split("\n"):
-                ln = ln if len(ln) <= cap else ln[: max(cap - 12, 0)] + " ...[more]"
-                if piece and len(piece) + 1 + len(ln) > cap:
-                    out.append(piece)
-                    piece = ln
-                else:
-                    piece = f"{piece}\n{ln}" if piece else ln
-            out.append(piece)
-        else:
-            out.append(b)
-    return "\n\n".join(out) + "\n"
+    return "\n\n".join(blocks) + "\n"
 
 
 def main(argv=None) -> int:

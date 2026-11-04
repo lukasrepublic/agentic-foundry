@@ -41,6 +41,7 @@
         "requires": {"type": "array", "items": {"enum": ["reason", "owner", "expires"]}}
       }
     },
-    "sources": {"type": "array", "items": {"type": "string"}}
+    "sources": {"type": "array", "items": {"type": "string"}},
+    "note": {"type": "string", "description": "Adopter annotation added by a local override; rendered as data, never as an instruction."}
   }
 }
