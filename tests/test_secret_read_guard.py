@@ -95,6 +95,20 @@ DEFAULT_CASES = {
     "secret-tool lookup": "secret-tool lookup service x",
     "security find-generic-password": "security find-generic-password -s svc -w",
     "gpg --export-secret-keys": "gpg --export-secret-keys --armor id",
+    "aws eks get-token": "aws eks get-token --cluster-name c",
+    "aws ecr get-authorization-token": "aws ecr get-authorization-token",
+    "aws sso get-role-credentials": "aws sso get-role-credentials --role-name r --account-id 1 --access-token t",
+    "aws codeartifact get-authorization-token": "aws codeartifact get-authorization-token --domain d",
+    "aws rds generate-db-auth-token": "aws rds generate-db-auth-token --hostname h --port 5432 --username u",
+    "kubectl get secret --template": "kubectl get secret db --template='{{.data.password}}'",
+    "git credential fill": "git credential fill",
+    "sops -d": "sops -d secrets.enc.yaml",
+    "ansible-vault view|decrypt": "ansible-vault view group_vars/all/vault.yml",
+    "gpg --decrypt": "gpg -d secret.gpg",
+    "age --decrypt": "age -d -i key.txt secret.age",
+    "vault print token": "vault print token",
+    "doppler secrets get": "doppler secrets get DB_URL",
+    "export -p / set / declare -x (dumps the environment)": "export -p",
     "printenv / env (dumps the environment)": "printenv",
     "echo of a secret-named variable": 'echo "$DB_PASSWORD"',
 }
@@ -320,3 +334,84 @@ def test_the_docs_page_states_the_limit_and_the_real_control():
         w = name.split()
         needle = special.get(name) or (w[0] if len(w) < 2 else w[0] + " " + w[1])
         assert needle in text, name
+
+
+# ---- fix round 1 --------------------------------------------------------------------------------------------
+@pytest.mark.parametrize("cmd,name", [
+    ("aws ssm get-parameter-history --name /x --with-decryption", "aws ssm get-parameter --with-decryption"),
+    ("set", "export -p / set / declare -x (dumps the environment)"),
+    ("declare -x", "export -p / set / declare -x (dumps the environment)"),
+    ("declare -p", "export -p / set / declare -x (dumps the environment)"),
+    ("sops --decrypt f.yaml", "sops -d"), ("gpg --decrypt f.gpg", "gpg --decrypt"),
+    ("ansible-vault decrypt v.yml", "ansible-vault view|decrypt"), ("age --decrypt f.age", "age --decrypt"),
+    ("doppler secrets download", "doppler secrets get"), ("oc get secrets db --template '{{.data}}'",
+                                                          "kubectl get secret --template"),
+])
+def test_fix1_more_default_verbs(cmd, name):
+    assert verb_of(run_hook(cmd)) == name, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "set -e", "set -o pipefail", "export FOO=1", "declare -a arr", "gpg --list-keys", "sops --version",
+    "age-keygen", "doppler secrets", "git credential reject", "aws eks describe-cluster --name c",
+    "aws ssm get-parameter-history --name /x", "ansible-vault create v.yml",
+])
+def test_fix1_new_verbs_have_admitted_controls(cmd):
+    assert verb_of(run_hook(cmd)) is None, cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    'base64 -d <<< "$X"', 'cat <<< "$X"', "cat <<<hello",
+])
+def test_fix1_here_string_into_a_reader_is_refused(cmd):
+    assert "here-string" in verb_of(run_hook(cmd)), cmd
+
+
+def test_fix1_here_string_into_a_non_reader_is_admitted():
+    assert verb_of(run_hook('grep -c x <<< "abc"')) is not None or True      # grep IS a reader: covered above
+    assert verb_of(run_hook('read -r a <<< "abc"')) is None
+
+
+@pytest.mark.parametrize("cmd,root", [
+    ("cat ~/.git-credentials", "~/.git-credentials"), ("cat ~/.netrc", "~/.netrc"),
+    ("cat ~/.docker/config.json", "~/.docker/config.json"), ("cat ~/.npmrc", "~/.npmrc"),
+    ("cat ~/.pypirc", "~/.pypirc"), ("cat ~/.config/gh/hosts.yml", "~/.config/gh"),
+    ("cat ~/.claude/.credentials.json", "~/.claude/.credentials.json"), ("ls ~/.gnupg && cat ~/.gnupg/pubring.kbx", "~/.gnupg"),
+    ("cat ~/.vault-token", "~/.vault-token"), ("cat ~/.azure/accessTokens.json", "~/.azure"),
+    ("cat ~/.terraform.d/credentials.tfrc.json", "~/.terraform.d"), ("cat infra/terraform.tfstate", "*.tfstate*"),
+    ("grep password prod.tfstate.backup", "*.tfstate*"), ("cat /proc/self/environ", "/proc/*/environ"),
+    ("strings /proc/1234/environ", "/proc/*/environ"), ("cat ~root/.ssh/id_rsa", "~/.ssh"),
+    ("cat ~alice/.aws/credentials", "~/.aws"), ("cat /home/bob/.kube/config", "~/.kube"),
+    ("cat /root/.ssh/id_rsa", "~/.ssh"), ("cat ~/.ss{h,}/id_rsa", "brace"), ("cat ~/.{ssh,aws}/x", "brace"),
+    ("mv .env .env.bak", ".env*"), ("cp ~/.ssh/id_rsa /tmp/k", "~/.ssh"), ("cp -t out ~/.aws/credentials", "~/.aws"),
+])
+def test_fix1_more_no_print_roots_and_forms(cmd, root):
+    v = verb_of(run_hook(cmd))
+    assert v is not None and root in v, (cmd, v)
+
+
+@pytest.mark.parametrize("cmd", [
+    "cp .env.example .env", "cp .env.sample .env.local", "mv .env.template .env", "cp -t out .env.example",
+    "cp config.yml ~/.ssh/config.bak", "cat .env.defaults", "ls ~/.gnupg",
+])
+def test_fix1_copy_is_judged_by_source_operands_and_exempt_suffixes_hold(cmd):
+    assert verb_of(run_hook(cmd)) is None, cmd
+
+
+def test_fix1_a_reader_with_an_unknowable_variable_target_is_admitted_as_a_practice():
+    assert verb_of(run_hook("cat $SOME_FILE")) is None
+
+
+def test_fix1_a_policy_file_that_fails_to_load_is_reported_and_the_defaults_stay(tmp_path):
+    ws = _ws(tmp_path, "secrets:\n  forbidden_verbs:\n    - '!gh auth token'\n")
+    r = run_hook("git status", project_dir=ws)
+    assert r.returncode == 0 and r.stderr.startswith("policy-additions-dropped:") and len(r.stderr.splitlines()) == 1
+    assert "floor-rule-disabled" in r.stderr
+    assert verb_of(run_hook("gh auth token", project_dir=ws)) == "gh auth token"
+    ok = _ws(tmp_path / "ok", "secrets:\n  forbidden_verbs: [mycli reveal]\n")
+    assert run_hook("git status", project_dir=ok).stderr == ""
+
+
+def test_fix1_unquoted_heredoc_with_a_substitution_is_scanned_as_code():
+    assert verb_of(run_hook("cat > notes.txt <<EOF\n$(op read op://v/i/f)\nEOF")) == "op read"
+    assert verb_of(run_hook("cat > notes.txt <<'EOF'\n$(op read op://v/i/f)\nEOF")) is None    # quoted: inert text

@@ -297,7 +297,9 @@ def lease_state(rec, now: float, default_expires: int = DEFAULT_EXPIRES_AFTER) -
     rec = rec if isinstance(rec, dict) else {}
     stamp = rec.get("heartbeat_at") or rec.get("claimed_at")
     exp = rec.get("expires_after_s")
-    exp = exp if isinstance(exp, int) and not isinstance(exp, bool) and exp > 0 else default_expires
+    # the record's own length can only SHORTEN the policy's: a stored 99999 never outlives `claims.expires_after`
+    exp = min(exp, default_expires) if isinstance(exp, int) and not isinstance(exp, bool) and exp > 0 \
+        else default_expires
     t = epoch(stamp)
     age = now - t if t else float("inf")
     return {"state": "live" if 0 <= age < exp else "expired", "age": age, "expires_after": exp,
@@ -337,16 +339,41 @@ def _gate_root(cwd) -> Path:
     return project_root()
 
 
-def _team_scope(root: Path) -> bool:
-    try:
-        d = json.loads((root / ".claude" / "foundry-project.json").read_text(encoding="utf-8"))
-        gs = d.get("github_scope") if isinstance(d, dict) else None
-        return isinstance(gs, dict) and bool(gs.get("owner")) and bool(gs.get("planning_repo"))
-    except Exception:
+def _team_scope(root: Path):
+    """True = GitHub-backed (`github_scope` configured); False = no project file / no scope key (claims not in
+    use); None = the project file or its `github_scope` is unreadable or malformed (the caller fails CLOSED)."""
+    f = root / ".claude" / "foundry-project.json"
+    if not f.exists():
         return False
+    try:
+        d = json.loads(f.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(d, dict):
+        return None
+    if "github_scope" not in d:
+        return False
+    gs = d["github_scope"]
+    if not isinstance(gs, dict):
+        return None
+    return bool(gs.get("owner")) and bool(gs.get("planning_repo")) or None
 
 
-def claim_gate(cwd=None, now: float | None = None) -> tuple[bool, str]:
+def current_session_id(root: Path | None = None) -> str:
+    """The caller's session id as the claim CLI derives it, WITHOUT creating anything: CLAUDE_CODE_SESSION_ID,
+    else the per-user id kept in the git dir; "" when neither exists."""
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if sid:
+        return sid
+    p = _git_path("foundry-lead-session", root)
+    try:
+        return p.read_text(encoding="utf-8").strip() if p else ""
+    except OSError:
+        return ""
+
+
+def claim_gate(cwd=None, now: float | None = None, explicit: bool = False,
+               session_id: str | None = None) -> tuple[bool, str]:
     """Clause (m) of hooks/foundry-git-discipline.sh: may a work-branch push / non-draft `gh pr create` proceed?
     -> (True, why) to admit, (False, reason) to refuse; a refusal reason always starts `claim-required`.
 
@@ -356,10 +383,22 @@ def claim_gate(cwd=None, now: float | None = None) -> tuple[bool, str]:
     hold a LIVE lease for that issue. FAIL CLOSED: an unreadable claims store or ticket record refuses."""
     now = time.time() if now is None else now
     root = _gate_root(cwd)
+    if explicit and cwd:            # `git -C <dir> push`: the repository the push is aimed at, when it holds a project file
+        try:
+            top = subprocess.run(["git", "-C", str(cwd), "rev-parse", "--show-toplevel"], capture_output=True,
+                                 text=True, timeout=10)
+            if top.returncode == 0 and top.stdout.strip() and _team_scope(Path(top.stdout.strip()).resolve()) is not False:
+                root = Path(top.stdout.strip()).resolve()
+        except Exception:
+            pass
     enabled, expires = claims_policy(root)
     if not enabled:
         return True, "claims disabled by policy"
-    if not _team_scope(root):
+    scope = _team_scope(root)
+    if scope is None:
+        return False, ("claim-required: claim-store-unreadable - the project file .claude/foundry-project.json or its "
+                       "github_scope is unreadable or malformed, so whether claims are in use cannot be told; failing closed")
+    if not scope:
         return True, "no github_scope: claims are not in use"
     tf = ticket_file(root)
     if tf is None or not tf.is_file():
@@ -386,6 +425,11 @@ def claim_gate(cwd=None, now: float | None = None) -> tuple[bool, str]:
     if rec is None:
         return False, (f"claim-required: no claim for {label}. Claim it first: `foundry-ticket.py claim {number}"
                        f"{' --repo ' + repo if repo else ''}`")
+    me = session_id if session_id is not None else current_session_id(root)
+    tof = rec.get("taken_over_from") if isinstance(rec, dict) else None
+    if me and isinstance(tof, dict) and tof.get("session_id") == me and rec.get("session_id") != me:
+        return False, (f"claim-required: this session's lease on {label} was taken over by session "
+                       f"{rec.get('session_id')} at {tof.get('at')}; claim it again only once that lease expires")
     st = lease_state(rec, now, expires)
     if st["state"] != "live":
         return False, (f"claim-required: the lease on {label} expired (no heartbeat for "

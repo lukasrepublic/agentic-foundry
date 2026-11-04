@@ -179,7 +179,7 @@ def test_scratch_resolution_order_env_then_payload_then_pattern(tmp_path):
     assert admitted(run_hook(f"rm {payload_dir}/x", payload_extra={"scratchpad_dir": str(payload_dir)}))
     r = run_hook(f"rm {payload_dir}/x", payload_extra={"tool_input": {"command": f"rm {payload_dir}/x",
                                                                           "scratch_dir": str(payload_dir)}})
-    assert admitted(r)
+    assert refused(r)           # tool_input is agent-written: never a scratch source
     assert refused(run_hook(f"rm {env_dir}/x", payload_extra={"scratchpad": str(payload_dir)}))
     # 3. the /tmp/claude-*/**/scratchpad pattern when neither is present
     assert admitted(run_hook(f"rm {SCRATCH_PATH_LAYOUT}/run/out"))
@@ -315,3 +315,103 @@ def test_resolve_command_sees_through_prefixes():
     assert s.resolve_command(["FOO=1"]) is None
     assert [i.cmd for i in s.invocations("a && b; c | d")] == ["a", "b", "c", "d"]
     assert s.invocations("echo $(rm x)")[0].has_subst is True
+
+
+# ---- fix round 1: fail-open gaps -------------------------------------------------------------------------------
+@pytest.mark.parametrize("cmd", [
+    "rm /s/{a,b}", "rm /s/a\\b", "r\\m /x", "\\rm /x", "env -S 'rm -rf /x'", "env -iS 'rm /x'", "time rm /x",
+    "time -p rm /x", "f(){ rm /x; }; f", "function f { rm /x; }; f", "find /x -exec sh -c 'rm {}' ;",
+    "find /x -exec bash -c 'rm -rf {}' +", "python3 -c \"import shutil; shutil.rmtree('/x')\"",
+    "python3 -c \"import os; os.remove('/x')\"", "python3 -c \"import pathlib; pathlib.Path('/x').unlink()\"",
+    "python3 -c \"import os; os.system('id')\"",
+])
+def test_fix1_rm_evasions_are_refused(cmd, tmp_path):
+    scratch = tmp_path / "s"
+    scratch.mkdir()
+    assert refused(run_hook(cmd.replace("/s/", f"{scratch}/"), env_extra={"CLAUDE_SCRATCHPAD": str(scratch)},
+                            cwd=str(tmp_path))), cmd
+
+
+def test_fix1_controls_still_admitted(tmp_path):
+    scratch = tmp_path / "s"
+    scratch.mkdir()
+    env = {"CLAUDE_SCRATCHPAD": str(scratch)}
+    for ok in (f"rm {scratch}/a", "time ls", "env FOO=1 ls", "python3 -c 'print(1)'", "find . -name x",
+               "bash script.sh -s", "bash script.sh -c foo", "f=1; echo $f".replace("; echo $f", "")):
+        assert admitted(run_hook(ok, env_extra=env, cwd=str(tmp_path))), ok
+    assert refused(run_hook("echo x | bash -s", env_extra=env))
+    assert refused(run_hook("bash -s", env_extra=env))
+
+
+def test_fix1_an_implausible_scratch_root_refuses_every_rm(tmp_path):
+    home = os.path.expanduser("~")
+    proj = tmp_path / "proj"
+    (proj / "sub").mkdir(parents=True)
+    for root, cwd in (("/", str(tmp_path)), (home, str(tmp_path)), (str(tmp_path), str(proj / "sub")),
+                      (str(tmp_path), str(tmp_path / "x"))):
+        r = run_hook(f"rm {root.rstrip('/')}/victim", env_extra={"CLAUDE_SCRATCHPAD": root}, cwd=cwd)
+        assert refused(r), root
+    # CLAUDE_PROJECT_DIR inside the root also disqualifies it
+    r = run_hook(f"rm {tmp_path}/victim", env_extra={"CLAUDE_SCRATCHPAD": str(tmp_path), "CLAUDE_PROJECT_DIR": str(proj)},
+                 cwd=str(proj))
+    assert refused(r)
+    # a root with the session layout is fine even though the cwd is inside it
+    lay = "/tmp/claude-1000/-proj/abc/scratchpad"
+    assert admitted(run_hook(f"rm {lay}/x", env_extra={"CLAUDE_SCRATCHPAD": lay}, cwd=lay + "/sub"))
+
+
+@pytest.mark.parametrize("cmd", [
+    "cat > notes.txt <<EOF\n$(rm -rf ~/x)\nEOF", "cat > notes.txt <<EOF\n`id`\nEOF", "cat > notes.txt <<EOF\n${X}\nEOF",
+    "cat > notes.txt <<-EOF\n\t$(id)\n\tEOF",
+])
+def test_fix1_unquoted_heredoc_with_substitution_is_code(cmd):
+    assert refused(run_hook(cmd)), cmd
+
+
+@pytest.mark.parametrize("cmd", [
+    "cat > notes.txt <<'EOF'\n$(rm -rf ~/x)\nEOF", 'cat > notes.txt <<"EOF"\n`id`\nEOF',
+    "cat > notes.txt <<EOF\nplain text with $HOME and no substitution\nEOF",
+])
+def test_fix1_quoted_or_substitution_free_heredoc_is_data(cmd):
+    assert admitted(run_hook(cmd)), cmd
+
+
+def test_fix1_data_heredoc_to_the_session_scratchpad_is_admitted():
+    lay = "/tmp/claude-1000/-proj/abc-123/scratchpad"
+    assert admitted(run_hook(f"cat > {lay}/x.sh <<'EOF'\necho hi\nEOF"))
+    assert admitted(run_hook(f"tee {lay}/sub/y.txt <<'EOF'\nhi\nEOF"))
+    for bad in ("/tmp/x.sh", "/tmp/claude-1000/-proj/abc/other/x.sh", f"{lay}/../../x.sh", "/dev/stdout"):
+        assert refused(run_hook(f"cat > {bad} <<'EOF'\necho hi\nEOF")), bad
+    r = run_hook("cat <<'EOF'\nhi\nEOF")
+    assert refused(r) and "git commit -F -" in r.stderr and "scratchpad" in r.stderr    # names the accepted sinks
+
+
+def test_fix1_has_code_heredoc_edge_cases():
+    import foundry_shell_scan as s
+    assert not s.has_code_heredoc("") and not s.has_code_heredoc("echo hi") and not s.has_code_heredoc("a <<< b")
+    assert s.has_code_heredoc("cat <<EOF\nx\n")                                   # unterminated
+    assert s.has_code_heredoc("bash <<'E'\nid\nE")                                # not a file sink
+    assert s.has_code_heredoc("cat > f <<E\n$(id)\nE")                            # unquoted + substitution
+    assert not s.has_code_heredoc("cat > f <<'E'\n$(id)\nE")
+    assert s.has_code_heredoc("cat > f <<A <<B\nx\nA\ny\nB")                      # two openers on one line
+    assert s.has_code_heredoc("cat > f <<'E'\r\nx\r\nE\r\n")                    # CRLF
+
+
+def test_fix1_subagent_stop_never_runs_the_session_reap(tmp_path):
+    """SubagentStop carries the MAIN session id: the full SessionEnd reap on it would stop the parent's resources."""
+    plug = tmp_path / "plug"
+    (plug / "hooks").mkdir(parents=True)
+    (plug / "scripts").mkdir()
+    reap = plug / "hooks" / "foundry-env-reap.sh"
+    reap.write_bytes(open(os.path.join(REPO_ROOT, "hooks", "foundry-env-reap.sh"), "rb").read())
+    reap.chmod(0o755)
+    log = tmp_path / "engine.log"
+    (plug / "scripts" / "foundry-env-hygiene.py").write_text(
+        "import sys\nopen(%r, 'a').write(' '.join(sys.argv[1:]) + '\\n')\n" % str(log))
+    env = dict(os.environ, CLAUDE_PLUGIN_ROOT=str(plug))
+    payload = json.dumps({"session_id": "main-session"})
+    sub = subprocess.run([str(reap), "--subagent-stop"], input=payload, capture_output=True, text=True, env=env)
+    assert sub.returncode == 0
+    assert not log.exists() or "--session" not in log.read_text()          # never the main session's reap
+    end = subprocess.run([str(reap)], input=payload, capture_output=True, text=True, env=env)
+    assert end.returncode == 0 and "reap --session main-session" in log.read_text()     # control: SessionEnd still reaps

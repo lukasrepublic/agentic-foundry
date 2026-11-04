@@ -1,0 +1,94 @@
+kit: operations
+version: 1.0.0
+rules:
+  - id: FG-OPS-001
+    title: Well-Architected pillar checklist mapped to repo facts
+    statement: A project MUST map the Well-Architected pillar checklist ids to facts it can read from the repo, and MUST report the result as a scorecard on a schedule. The scorecard is a report and MUST NOT block a merge.
+    category: operations
+    level: 2
+    floor: false
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: scorecard, ref: governance/kits/operations/checks/pillar-map.yaml}
+    exception: {allowed: true, requires: [reason, owner, expires]}
+    sources: ["AWS Well-Architected Framework, the pillars (2026-11-04)", "Azure Well-Architected Framework, design review checklists (2026-11-04)"]
+  - id: FG-OPS-002
+    title: SLOs and SLIs are code
+    statement: Each service MUST define its SLOs and SLIs as code in OpenSLO format, and CI MUST validate them.
+    category: operations
+    level: 2
+    floor: false
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: ci, ref: governance/kits/operations/checks/openslo-validate.yml}
+    exception: {allowed: true, requires: [reason, owner, expires]}
+    sources: ["OpenSLO specification (2026-11-04)", "Google SRE Workbook, implementing SLOs (2026-11-04)"]
+  - id: FG-OPS-003
+    title: An error-budget policy exists
+    statement: Each service with an SLO SHOULD have an error-budget policy that names its authors, its approvers, the action taken when the budget is spent and a revisit date.
+    category: operations
+    level: 2
+    floor: false
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: review-lens, ref: governance/kits/operations/templates/error-budget-policy.md}
+    exception: {allowed: true, requires: [reason, owner, expires]}
+    sources: ["Google SRE Workbook, error budget policy (2026-11-04)"]
+  - id: FG-OPS-004
+    title: Production changes are announced before and reported after
+    statement: Before each production or irreversible write, the actor MUST post one line that states what will happen, with a correlation id. After it, the actor MUST post the outcome with the same correlation id. A missed before line MUST be reported as a process miss. On a failure the actor MUST stop, clean up what it created, and report. Subagents MUST inherit this rule.
+    category: operations
+    level: 1
+    floor: true
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: hook, ref: scripts/foundry_prod_step.py}
+    exception: {allowed: false}
+    note: Binds scripts/foundry_prod_step.py (gv-13), which posts the before and after lines through the message log (gv-09). Operating model rule D2.
+    sources: ["Foundry operating model rule D2 (2026-11-04)", "Google SRE Book, managing incidents (2026-11-04)"]
+  - id: FG-OPS-005
+    title: Open changes are audited
+    statement: A change announced before and not reported after MUST be found by an audit of the message log, and each open change MUST be closed with an outcome or a stop line.
+    category: operations
+    level: 1
+    floor: true
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: ci, ref: scripts/foundry_message_log.py}
+    exception: {allowed: false}
+    note: Binds the audit verb of scripts/foundry_message_log.py (gv-09).
+    sources: ["Foundry operating model rule D2 (2026-11-04)"]
+  - id: FG-OPS-006
+    title: Production-readiness checklist per blueprint
+    statement: Each blueprint that deploys MUST have a production-readiness checklist, and a service MUST complete it before its first production release.
+    category: operations
+    level: 2
+    floor: false
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: review-lens, ref: governance/kits/operations/templates/readiness-checklist.md}
+    exception: {allowed: true, requires: [reason, owner, expires]}
+    sources: ["Google SRE Book, launch coordination checklist (2026-11-04)", "AWS Well-Architected, operational readiness reviews (2026-11-04)"]
+  - id: FG-OPS-007
+    title: Every alert links a runbook
+    statement: Every alert rule MUST carry a runbook link, and CI MUST fail on an alert without one.
+    category: operations
+    level: 2
+    floor: false
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: lint, ref: governance/kits/operations/checks/pint.hcl}
+    exception: {allowed: true, requires: [reason, owner, expires]}
+    sources: ["pint, Prometheus rule linter, alerts annotation check (2026-11-04)", "Google SRE Workbook, on-call (2026-11-04)"]
+  - id: FG-OPS-008
+    title: Progressive rollout where the blueprint deploys
+    statement: A deploy to production SHOULD roll out progressively (canary or staged), with a stated abort condition, and a reviewer SHOULD check that the rollout plan names one.
+    category: operations
+    level: 3
+    floor: false
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: review-lens, ref: agents/pr-reviewer.md}
+    exception: {allowed: true, requires: [reason, owner, expires]}
+    note: The rollout lens is added to agents/pr-reviewer.md by gv-16.
+    sources: ["Google SRE Workbook, canarying releases (2026-11-04)"]

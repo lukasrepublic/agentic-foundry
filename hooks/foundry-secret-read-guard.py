@@ -36,7 +36,11 @@ documented output is the secret value itself:
   pass show, gopass show, secret-tool lookup, security find-*-password, gpg --export-secret-keys
   printenv / env that dumps the environment, echo/printf of a $SECRET-like variable
   a READER (cat, head, grep, cp, scp, tar, curl -d @file, an interpreter's inline open(), …) pointed at a
-  NO-PRINT ROOT: ~/.ssh, ~/.aws, ~/.config/gcloud, ~/.kube, .env* (not .env.example/.sample/.template/.dist)
+  NO-PRINT ROOT: ~/.ssh, ~/.aws, ~/.config/gcloud, ~/.kube, .env* (not .env.example/.sample/.template/.dist/.defaults),
+  ~/.git-credentials, ~/.netrc, ~/.docker/config.json, ~/.npmrc, ~/.pypirc, ~/.config/gh, ~/.claude/.credentials.json,
+  ~/.gnupg, ~/.vault-token, ~/.azure, ~/.terraform.d, *.tfstate*, /proc/*/environ (`~/x` also means x under any
+  user's home; cp/mv/install are judged by their SOURCE operands; here-strings into a reader and brace-expanded
+  reader paths are refused; a reader whose target is an unknowable `$VAR` is ADMITTED - a practice, not a control)
 NOT BANNED, on purpose: `kubectl describe secret` (prints key names and byte sizes only), `aws secretsmanager
 describe-secret|list-secrets`, `gcloud secrets versions describe|list`, `kubectl get secret -o name|wide`,
 `gcloud iam service-accounts keys list` — metadata verification is what D1 asks for.
@@ -140,6 +144,16 @@ def _gcloud_sa_keys(cmd, args):
     return not rest or rest[0] not in ("list", "describe", "get-public-key")
 
 
+def _env_listing(cmd, args):
+    if cmd == "export":
+        return _flag(args, "-p")
+    if cmd == "set":
+        return not args
+    if cmd in ("declare", "typeset"):
+        return any(re.fullmatch(r"-[A-Za-z]*[xp][A-Za-z]*", a) for a in args)
+    return False
+
+
 def _env_dump(cmd, args):
     if cmd == "env":
         return not args or all(a.startswith("-") for a in args)
@@ -162,8 +176,13 @@ DEFAULT_VERBS = [
     ("aws secretsmanager batch-get-secret-value", _verb(["aws"], "secretsmanager", "batch-get-secret-value")),
     ("aws ssm get-parameter --with-decryption",
      lambda c, a: c == "aws" and _subseq(_words(a), ["ssm"]) and any(
-         w in ("get-parameter", "get-parameters", "get-parameters-by-path") for w in _words(a))
-     and _flag(a, "--with-decryption")),
+         w in ("get-parameter", "get-parameters", "get-parameters-by-path", "get-parameter-history")
+         for w in _words(a)) and _flag(a, "--with-decryption")),
+    ("aws eks get-token", _verb(["aws"], "eks", "get-token")),
+    ("aws ecr get-authorization-token", _verb(["aws"], "ecr", "get-authorization-token")),
+    ("aws sso get-role-credentials", _verb(["aws"], "sso", "get-role-credentials")),
+    ("aws codeartifact get-authorization-token", _verb(["aws"], "codeartifact", "get-authorization-token")),
+    ("aws rds generate-db-auth-token", _verb(["aws"], "rds", "generate-db-auth-token")),
     ("aws kms decrypt", _verb(["aws"], "kms", "decrypt")),
     ("aws configure export-credentials", _verb(["aws"], "configure", "export-credentials")),
     ("aws configure get <secret key>", _aws_configure_get),
@@ -186,6 +205,8 @@ DEFAULT_VERBS = [
     ("vault kv get", _verb(["vault"], "kv", "get")),
     ("vault read", _verb(["vault"], "read")),
     ("kubectl get secret -o yaml|json|jsonpath", _kube_get_secret),
+    ("kubectl get secret --template", lambda c, a: c in ("kubectl", "oc") and "get" in _words(a) and any(
+        re.search(r"(^|,)secrets?(\.[a-z0-9.]+)?(/|,|$)", w, re.I) for w in _words(a)) and _flag(a, "--template")),
     ("kubectl config view --raw", _verb(["kubectl", "oc"], "config", "view", when=lambda a: _flag(a, "--raw"))),
     ("kubectl create token", _verb(["kubectl", "oc"], "create", "token")),
     ("kubectl view-secret", _verb(["kubectl", "oc"], "view-secret")),
@@ -206,17 +227,32 @@ DEFAULT_VERBS = [
         w in ("find-generic-password", "find-internet-password") for w in _words(a)) and _flag(a, "-w", "-g")),
     ("gpg --export-secret-keys", lambda c, a: c in ("gpg", "gpg2") and _flag(a, "--export-secret-keys",
                                                                               "--export-secret-subkeys")),
+    ("git credential fill", _verb(["git"], "credential", "fill")),
+    ("sops -d", lambda c, a: c == "sops" and (_flag(a, "-d", "--decrypt") or "decrypt" in _words(a)
+                                                or "exec-env" in _words(a) or "exec-file" in _words(a))),
+    ("ansible-vault view|decrypt", lambda c, a: c == "ansible-vault" and any(
+        w in ("view", "decrypt") for w in _words(a))),
+    ("gpg --decrypt", lambda c, a: c in ("gpg", "gpg2") and (
+        _flag(a, "-d", "--decrypt", "--decrypt-files") or any(re.fullmatch(r"-[A-Za-z]*d[A-Za-z]*", x) for x in a))),
+    ("age --decrypt", lambda c, a: c in ("age", "rage") and (_flag(a, "--decrypt") or any(
+        re.fullmatch(r"-[A-Za-z]*d[A-Za-z]*", x) for x in a))),
+    ("vault print token", _verb(["vault"], "print", "token")),
+    ("doppler secrets get", lambda c, a: c == "doppler" and _subseq(_words(a), ["secrets"]) and any(
+        w in ("get", "download") for w in _words(a))),
+    ("export -p / set / declare -x (dumps the environment)", _env_listing),
     ("printenv / env (dumps the environment)", _env_dump),
     ("echo of a secret-named variable", _echo_secret_var),
 ]
 DEFAULT_VERB_NAMES = [n for n, _ in DEFAULT_VERBS]
 
-DEFAULT_ROOTS = ["~/.ssh", "~/.aws", "~/.config/gcloud", "~/.kube", ".env*"]
+DEFAULT_ROOTS = ["~/.ssh", "~/.aws", "~/.config/gcloud", "~/.kube", ".env*", "~/.git-credentials", "~/.netrc",
+                 "~/.docker/config.json", "~/.npmrc", "~/.pypirc", "~/.config/gh", "~/.claude/.credentials.json",
+                 "~/.gnupg", "~/.vault-token", "~/.azure", "~/.terraform.d", "*.tfstate*", "/proc/*/environ"]
 ROOT_EXEMPT_SUFFIX = (".example", ".sample", ".template", ".dist", ".defaults")
 READERS = {
     "cat", "tac", "less", "more", "head", "tail", "bat", "batcat", "nl", "od", "xxd", "hexdump", "strings", "base64",
     "cut", "sort", "uniq", "grep", "egrep", "fgrep", "rg", "ag", "awk", "gawk", "sed", "paste", "fold", "rev", "jq",
-    "yq", "cp", "scp", "rsync", "sftp", "tar", "zip", "gzip", "bzip2", "xz", "7z", "zstd", "diff", "cmp", "comm",
+    "yq", "cp", "mv", "install", "scp", "rsync", "sftp", "tar", "zip", "gzip", "bzip2", "xz", "7z", "zstd", "diff", "cmp", "comm",
     "openssl", "tee", "dd", "curl", "wget", "xclip", "pbcopy", "wl-copy", "source", ".", "vi", "vim", "nano", "emacs",
 }
 INTERPRETERS = re.compile(r"^(python[0-9.]*|node|nodejs|ruby|perl|php|lua|deno|bun)$")
@@ -228,8 +264,10 @@ _UPLOAD_FLAGS = ("-d", "--data", "--data-binary", "--data-raw", "--data-urlencod
 # ---------------------------------------------------------------------------------- root matching --
 def _expand(word, cwd):
     w = word.replace("${HOME}", "~").replace("$HOME", "~")
-    if w.startswith("~") and (w == "~" or w.startswith("~/")):
-        w = os.path.expanduser(w)
+    if w.startswith("~"):
+        w = os.path.expanduser(w)                       # `~` and `~user` (an unknown user stays `~user/…`)
+        if w.startswith("~"):
+            w = "/home/" + w[1:]
     if not os.path.isabs(w):
         w = os.path.join(cwd, w)
     return os.path.normpath(w)
@@ -248,10 +286,22 @@ def _root_matcher(root, cwd):
     if root.startswith("~") or root.startswith("/"):
         rcomp = _components(os.path.normpath(os.path.expanduser(root)))
 
+        tail = _components(root[2:]) if root.startswith("~/") else None
+
+        def _run(pcomp, rc_list):
+            return len(pcomp) >= len(rc_list) and all(fnmatch.fnmatchcase(rc, pc) or fnmatch.fnmatchcase(pc, rc)
+                                                      for rc, pc in zip(rc_list, pcomp))
+
         def m(path, raw):
             pcomp = _components(path)
-            return len(pcomp) >= len(rcomp) and all(fnmatch.fnmatchcase(rc, pc) or fnmatch.fnmatchcase(pc, rc)
-                                                    for rc, pc in zip(rcomp, pcomp))
+            if _run(pcomp, rcomp):
+                return True
+            if tail:                      # `~/x` is x under ANY user's home, not only the current user's
+                for skip in (1, 2):       # /root/x, /home/<u>/x, /Users/<u>/x
+                    if (len(pcomp) > skip and ((skip == 1 and pcomp[0] == "root") or (
+                            skip == 2 and pcomp[0] in ("home", "Users"))) and _run(pcomp[skip:], tail)):
+                        return True
+            return False
         return m
     if "/" not in root:
         def m(path, raw):         # the WORD's own components: the session cwd's names are not the target's
@@ -337,8 +387,15 @@ def check_invocation(inv, cwd, verbs, matchers, depth=0):
             root = _touches_root(tgt, cwd, matchers)
             if root:
                 return Verdict("read of no-print root %s" % root, "`<` redirect from %s" % tgt)
+    if reads and any(w.startswith("<<<") for w in words):
+        return Verdict("here-string into %s" % cmd, "`%s <<<` decodes or prints a value this scan cannot see" % cmd)
     if reads:
-        for w in args:
+        operands = args
+        if cmd in ("cp", "mv", "install"):       # judged by SOURCE operands only: `cp .env.example .env` is fine
+            operands = _copy_sources(args)
+        for w in operands:
+            if "{" in w and "}" in w and ("," in w or ".." in w):
+                return Verdict("brace expansion in %s path" % cmd, "`%s` path %s uses brace expansion" % (cmd, w))
             root = _touches_root(w, cwd, matchers)
             if root:
                 return Verdict("%s of no-print root %s" % (cmd, root), "`%s` reads %s" % (cmd, w))
@@ -349,6 +406,25 @@ def check_invocation(inv, cwd, verbs, matchers, depth=0):
             if root:
                 return Verdict("%s naming no-print root %s" % (cmd, root), "inline `%s` text names %s" % (cmd, tok))
     return None
+
+
+def _copy_sources(args):
+    """The SOURCE operands of cp/mv/install: every operand but the last, or every operand but the `-t DIR` value."""
+    ops, target_dir, skip = [], False, False
+    for i, a in enumerate(args):
+        if skip:
+            skip = False
+            continue
+        if a in ("-t", "--target-directory"):
+            target_dir, skip = True, True
+            continue
+        if a.startswith("--target-directory="):
+            target_dir = True
+            continue
+        if a.startswith("-") and len(a) > 1:
+            continue
+        ops.append(a)
+    return ops if target_dir else ops[:-1]
 
 
 def check_text(text, cwd, verbs, matchers, depth=0):
@@ -381,7 +457,9 @@ def load_policy_additions(project_dir):
         verbs = pol.get("secrets.forbidden_verbs") or []
         roots = pol.get("secrets.no_print_roots") or []
         return ([v for v in verbs if isinstance(v, str)], [r for r in roots if isinstance(r, str)])
-    except Exception:
+    except Exception as e:
+        reason = (getattr(e, "errors", None) or [str(e) or type(e).__name__])[0]
+        sys.stderr.write("policy-additions-dropped:%s\n" % re.sub(r"\s+", " ", str(reason))[:120])
         return [], []
 
 

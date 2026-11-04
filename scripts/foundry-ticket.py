@@ -961,18 +961,15 @@ def cmd_claim(args: list[str], run, now: float) -> int:
         return 2
     # B5 lease: a claim another session holds LIVE is not ours to take; only an EXPIRED lease can be taken over.
     sid = _session_id(root, a.session_id, socket.gethostname())
-    _enabled, expires_s = store.claims_policy(root)
+    lease_on, expires_s = store.claims_policy(root)      # claims.enabled false: the lease is recorded, never enforced
     prior_lease = claims.get(key) or {}
-    taken_over = None
-    if prior_lease.get("session_id") and prior_lease["session_id"] != sid:
+    if lease_on and prior_lease.get("session_id") and prior_lease["session_id"] != sid:
         st = store.lease_state(prior_lease, now, expires_s)
         if st["state"] == "live":
             print(f"claim refused: lease-held: {key} is held by session {prior_lease['session_id']} (operator "
                   f"{prior_lease.get('operator')}), heartbeat {int(st['age'])}s ago; the lease lasts {st['expires_after']}s and "
                   "only an expired lease can be taken over", file=sys.stderr)
             return 2
-        taken_over = {"session_id": prior_lease["session_id"], "operator": prior_lease.get("operator"),
-                      "last_heartbeat_at": st["heartbeat_at"], "at": _iso(now)}
     if pred_key is not None:
         pred = claims.get(pred_key)
         if pred_key == key:
@@ -1030,21 +1027,45 @@ def cmd_claim(args: list[str], run, now: float) -> int:
            "claimed_at": prior.get("claimed_at") or _iso(now) if keep else _iso(now),
            "start_idempotency_key": ev.idempotency_key, "exception": exc_text,
            "session_id": sid, "heartbeat_at": _iso(now), "expires_after_s": expires_s}
-    if taken_over:
-        rec["taken_over_from"] = taken_over
-        rec["claimed_at"] = _iso(now)          # a new holder: the lease starts now
     if pred_key is not None:
         rec["successor_of"] = pred_key
-    path = save_claim(root, key, rec)
-    if pred_key is not None:
-        def _supersede(cl, _p=pred_key, _k=key):
-            if isinstance(cl.get(_p), dict):
-                cl[_p]["superseded_by"] = _k
-                cl[_p]["heartbeat_at"] = _iso(now)
-        try:
-            store.update_claims(root, _supersede)
-        except store.ClaimsUnreadable as e:
-            print(f"claim: warning - could not mark {pred_key} superseded ({store.redact(str(e))})", file=sys.stderr)
+    taken_box: list = []
+
+    class _LeaseHeld(Exception):
+        pass
+
+    def _put(cl):
+        # the lease is judged AGAIN inside the claims lock (the read above was not under it): a contender that
+        # took the lease between that read and this write makes this claim lose, never overwrite
+        cur = cl.get(key)
+        cur = cur if isinstance(cur, dict) else {}
+        tk = None
+        if lease_on and cur.get("session_id") and cur["session_id"] != sid:
+            st2 = store.lease_state(cur, now, expires_s)
+            if st2["state"] == "live":
+                raise _LeaseHeld(f"{key} is held by session {cur['session_id']} (heartbeat {int(st2['age'])}s ago)")
+            tk = {"session_id": cur["session_id"], "operator": cur.get("operator"),
+                  "last_heartbeat_at": st2["heartbeat_at"], "at": _iso(now)}
+        rec.pop("taken_over_from", None)
+        if tk:
+            rec["taken_over_from"] = tk
+            rec["claimed_at"] = _iso(now)          # a new holder: the lease starts now
+        taken_box.append(tk)
+        cl[key] = rec
+        if pred_key is not None and isinstance(cl.get(pred_key), dict):
+            cl[pred_key]["superseded_by"] = key
+            cl[pred_key]["heartbeat_at"] = _iso(now)
+
+    try:
+        path = store.update_claims(root, _put)
+    except _LeaseHeld as e:
+        print(f"claim refused: lease-held: {e}; only an expired lease can be taken over", file=sys.stderr)
+        return 2
+    except store.ClaimsUnreadable as e:
+        if "not a git repository" in str(e):
+            raise GhError(str(e))
+        raise
+    taken_over = taken_box[0] if taken_box else None
     note = " [acceptance baseline kept: pass --rebase-acceptance to adopt the current body]" \
         if keep and prior["body_sha256"] != vetted["body_sha256"] else ""
     lease = (f"; took over from session {taken_over['session_id']} (lease expired)" if taken_over else "") + \

@@ -145,6 +145,14 @@ try:
 except Exception:
     print("")' 2>/dev/null || true)"
 
+# The calling session's id (clause (m) compares it with a claim's takeover record). Best effort: absent => "".
+payload_session="$(printf '%s' "$payload" | python3 -c 'import sys,json
+try:
+    c = json.load(sys.stdin).get("session_id", "")
+    print(c if isinstance(c, str) else "")
+except Exception:
+    print("")' 2>/dev/null || true)"
+
 # ----------------------------------------------------------------------------------------
 # The decision is delegated to a single python3 evaluator over the recovered command. It is
 # a PURE token scan (no shell execution of the command). Force intent is refspec-aware. The
@@ -156,7 +164,7 @@ except Exception:
 # (feat-foundry-bash32-parse-guard), so the substitution below contains only the function call.
 _git_discipline_eval() {
   PROTECTED="$PROTECTED" STRICT_HISTORY="$STRICT_HISTORY" LOCAL_GREEN="$LOCAL_GREEN" CMD="$cmd" PLUGIN_ROOT="$PLUGIN_ROOT" \
-    PAYLOAD_CWD="$payload_cwd" python3 - <<'PY'
+    PAYLOAD_CWD="$payload_cwd" PAYLOAD_SESSION="$payload_session" python3 - <<'PY'
 import json, os, re, shlex, subprocess, sys
 
 sys.path.insert(0, os.path.join(os.environ.get("PLUGIN_ROOT", ""), "scripts"))
@@ -530,10 +538,12 @@ _CLAIM_REMEDY = ("Claim the bound issue first (`foundry-ticket.py claim <n>`), o
                  "without a heartbeat.")
 
 
-def _claim_gate_or_block(what):
+def _claim_gate_or_block(what, repo_dir=None):
     try:
         import foundry_ticket_store as _claims_store
-        ok_, why_ = _claims_store.claim_gate(os.environ.get("PAYLOAD_CWD", "") or os.getcwd())
+        ok_, why_ = _claims_store.claim_gate(repo_dir or os.environ.get("PAYLOAD_CWD", "") or os.getcwd(),
+                                             explicit=bool(repo_dir),
+                                             session_id=os.environ.get("PAYLOAD_SESSION") or None)
     except Exception as e_:
         ok_, why_ = False, "claim-required: the claim check failed (%s: %s); failing closed" % (type(e_).__name__, e_)
     if not ok_:
@@ -591,7 +601,11 @@ for i, t in enumerate(low):
                 or ("--tags" in lrest and not refspecs_c) \
                 or (refspecs_c and all(r.startswith(":") for r in refspecs_c)):
             return
-        _claim_gate_or_block("push")
+        repo_c, literal_c = os.environ.get("PAYLOAD_CWD", "") or os.getcwd(), False
+        for opt_, val_ in git_globals:      # `git -C <dir> push`: the claim is looked up in THAT repository
+            if opt_ == "-C" and val_ and not any(c in val_ for c in ("$", "`", "*", "?")):
+                repo_c, literal_c = os.path.join(repo_c, os.path.expanduser(val_)), True
+        _claim_gate_or_block("push", repo_c if literal_c else None)
 
     def _require_local_green():
         _require_claim_push()                           # clause (m)
@@ -742,7 +756,7 @@ for i, t in enumerate(low):
         if _skip_m:
             _skip_m = False
             continue
-        if _a in ("-r", "--repo"):
+        if _a in ("-r", "--repo", "--hostname"):
             _skip_m = True
             continue
         if not _a.startswith("-"):

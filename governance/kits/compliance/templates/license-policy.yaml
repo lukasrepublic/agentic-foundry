@@ -1,0 +1,11 @@
+# License policy (FG-LIC-001). Identifiers are SPDX. Anything not allowed is denied (deny unknown).
+allow:
+  permissive: [MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD]
+  weak-copyleft: [MPL-2.0]
+deny: [AGPL-3.0-only, AGPL-3.0-or-later, SSPL-1.0]
+exceptions:
+  # - package: example-lib
+  #   license: LGPL-3.0-only
+  #   reason: dynamically linked, legal reviewed
+  #   owner: team-name
+  #   expires: 2027-01-31

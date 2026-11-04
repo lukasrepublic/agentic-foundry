@@ -57,16 +57,19 @@ DELETE_VERBS = {"rm", "unlink", "shred", "rmdir"}
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 SCRATCH_PATTERN = re.compile(r"^/tmp/claude-[^/]+/(?:[^/]+/)+scratchpad/.+$")
 _GLOB = re.compile(r"[*?\[]")
+_PY_DESTRUCTIVE = re.compile(r"rmtree|shutil|unlink|os\s*\.\s*(remove|rmdir|removedirs|system|popen|exec|spawn)|subprocess|rmdir|__import__")
 _PACKED = re.compile(r";|&&|\|\||\n|<<")
 
-SHAPE_RM = ("delete only inside the session scratch directory (use an absolute path under "
-            "$CLAUDE_SCRATCHPAD, or `git worktree remove <path>` for a worktree); a fresh scratch "
-            "directory per run needs no cleanup")
+SHAPE_RM = ("delete only inside the session scratch directory, naming the LITERAL expanded absolute path "
+            "(a `$VAR`, `{a,b}`, backslash or substitution target is refused, not expanded for you), or "
+            "`git worktree remove <path>` for a worktree; a fresh scratch directory per run needs no cleanup")
 SHAPE_PACKED = ("write the script to a file (the Write tool, or `cat > file <<'EOF'` as its own command) "
                 "and run it by name: `bash /abs/path/script.sh`; a single simple command may be passed "
                 "to `-c` as one string")
-SHAPE_HEREDOC = ("a heredoc may only feed a file (`cat > notes.txt <<'EOF' … EOF`, one command, the file "
-                 "not run in the same call); write any script to a file and run it by name")
+SHAPE_HEREDOC = ("a heredoc may only feed a file: `cat > file <<'EOF'`, `cat >> file`, `tee file`, "
+                 "`git commit -F -` or `gh pr create --body-file -`, ONE command, a plain path (not /dev, not /tmp "
+                 "except the session scratchpad), a QUOTED delimiter if the body holds `$(`, backticks or `${`, and "
+                 "the file not used elsewhere in the same call; write any script to a file and run it by name")
 SHAPE_CD = "use `git -C <abs-dir> …` and absolute paths; `cd` moves the session's write boundary"
 SHAPE_STRICT = "one simple command per call (no `;`, `&&`, `||`, `|`, `&` or newline)"
 
@@ -78,18 +81,39 @@ class Refuse(Exception):
 
 
 # ------------------------------------------------------------------------------------ scratch --
-def scratch_root(payload):
-    """(kind, value): ("path", realpath) for an explicit root, ("pattern", None) for the layout pattern."""
+def _root_ok(real, cwd):
+    """An explicit scratch root must look like a scratch directory: never `/`, `$HOME`, an ancestor of the
+    project directory, or a proper ancestor of the cwd - unless it has the session-scratch layout itself."""
+    if SCRATCH_PATTERN.match(real.rstrip("/") + "/x"):
+        return True
+    if real in ("/", os.path.realpath(os.path.expanduser("~"))):
+        return False
+    pre = real.rstrip("/") + "/"
+    proj = os.environ.get("CLAUDE_PROJECT_DIR")
+    if proj:
+        pr = os.path.realpath(proj)
+        if pr == real or pr.startswith(pre):
+            return False
+    if os.path.realpath(cwd).startswith(pre):
+        return False
+    return True
+
+
+def scratch_root(payload, cwd=None):
+    """(kind, value): ("path", realpath) for an explicit root, ("pattern", None) for the layout pattern,
+    ("none", None) for an explicit root that is not a plausible scratch directory (every rm is then refused).
+    The payload's `tool_input` is agent-written and is NEVER a source."""
+    cwd = cwd or os.getcwd()
     env = os.environ.get("CLAUDE_SCRATCHPAD", "")
     if env and os.path.isabs(env):
-        return "path", os.path.realpath(env)
+        real = os.path.realpath(env)
+        return ("path", real) if _root_ok(real, cwd) else ("none", None)
     if isinstance(payload, dict):
-        tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
-        for src in (payload, tool_input):
-            for key in ("scratchpad", "scratchpad_dir", "scratch_dir"):
-                v = src.get(key)
-                if isinstance(v, str) and os.path.isabs(v):
-                    return "path", os.path.realpath(v)
+        for key in ("scratchpad", "scratchpad_dir", "scratch_dir"):
+            v = payload.get(key)
+            if isinstance(v, str) and os.path.isabs(v):
+                real = os.path.realpath(v)
+                return ("path", real) if _root_ok(real, cwd) else ("none", None)
     return "pattern", None
 
 
@@ -103,7 +127,7 @@ def _literal_prefix(target):
 
 def inside_scratch(target, cwd, root):
     """True only when `target` is provably strictly inside the scratch root."""
-    if not target or any(c in target for c in ("$", "`")):
+    if not target or any(c in target for c in ("$", "`", "{", "\\")):
         return False
     t = target
     if t.startswith("~"):
@@ -121,6 +145,8 @@ def inside_scratch(target, cwd, root):
             return False
         real = real.rstrip("/") + "/*"                     # the glob stays under the resolved directory
     kind, base = root
+    if kind == "none":
+        return False
     if kind == "path":
         return real.startswith(base.rstrip("/") + "/") and real != base
     return SCRATCH_PATTERN.match(real) is not None
@@ -152,10 +178,11 @@ def _check_delete(inv, cwd, root):
 
 def _check_find(inv, cwd, root):
     args = inv.args
-    destructive = "-delete" in args or any(a in ("-exec", "-execdir", "-ok", "-okdir") and
-                                           i + 1 < len(args) and
-                                           scan._cmd_basename(args[i + 1]) in DELETE_VERBS
-                                           for i, a in enumerate(args))
+    risky = SHELLS | DELETE_VERBS | {"eval", "xargs", "env", "sudo", "nohup"}
+    destructive = "-delete" in args or any(
+        a in ("-exec", "-execdir", "-ok", "-okdir") and i + 1 < len(args) and
+        (scan._cmd_basename(args[i + 1]) in risky or re.fullmatch(r"python[0-9.]*", scan._cmd_basename(args[i + 1])))
+        for i, a in enumerate(args))
     if not destructive:
         return
     paths = []
@@ -164,10 +191,10 @@ def _check_find(inv, cwd, root):
             break
         paths.append(a)
     if not paths or inv.has_subst:
-        raise Refuse("`find … -delete/-exec rm` without literal start paths", SHAPE_RM)
+        raise Refuse("`find … -delete/-exec <rm|shell>` without literal start paths", SHAPE_RM)
     for p in paths:
         if not inside_scratch(p, cwd, root):
-            raise Refuse("`find %s … -delete/-exec rm` outside the session scratch directory" % p, SHAPE_RM)
+            raise Refuse("`find %s … -delete/-exec <rm|shell>` outside the session scratch directory" % p, SHAPE_RM)
 
 
 _SH_C = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
@@ -188,6 +215,19 @@ def _payload_after_c(args, flag_re, takes):
             return args[i + 1] if i + 1 < len(args) else ""
         i += 2 if a in takes else 1
     return None
+
+
+def _leading_flag(args, takes, flag):
+    """True when `flag` is among the interpreter's LEADING options (before the script word)."""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == flag:
+            return True
+        if not a.startswith(("-", "+")) or a in ("-", "--"):
+            return False
+        i += 2 if a in takes else 1
+    return False
 
 
 def _leading_dash(args, takes):
@@ -212,7 +252,7 @@ def _check_packed(inv, depth, cwd, root, strict_mode):
                 raise Refuse("`%s -c` with a command substitution in its payload" % cmd, SHAPE_PACKED)
             _judge_payload(cmd + " -c", payload, depth, cwd, root, strict_mode)
             return
-        if not args or "-s" in args or _leading_dash(args, _SH_TAKES):
+        if not args or _leading_flag(args, _SH_TAKES, "-s") or _leading_dash(args, _SH_TAKES):
             raise Refuse("`%s` reading a script from stdin" % cmd, SHAPE_PACKED)
     elif cmd == "eval":
         payload = " ".join(args)
@@ -231,6 +271,8 @@ def _judge_payload(what, payload, depth, cwd, root, strict_mode, python=False):
     if _PACKED.search(payload):
         raise Refuse("packed `%s` script (a payload with ;, &&, ||, a newline or a heredoc)" % what, SHAPE_PACKED)
     if python:
+        if _PY_DESTRUCTIVE.search(payload):
+            raise Refuse("a python -c payload that deletes files or runs commands", SHAPE_PACKED)
         return              # a one-statement python payload is not shell text
     if depth + 1 > MAX_DEPTH:
         raise Refuse("`%s` nested more than %d deep" % (what, MAX_DEPTH), SHAPE_PACKED)
@@ -247,6 +289,10 @@ def analyze(command, depth, cwd, root, strict):
     for inv in scan.invocations(command):
         if inv.cmd in ("cd", "pushd", "popd"):
             raise Refuse("`%s` as a command" % inv.cmd, SHAPE_CD)
+        if "env-S" in inv.wrappers:
+            raise Refuse("`env -S` (it runs a command string that cannot be judged)", SHAPE_PACKED)
+        if inv.cmd == "function" or "()" in inv.cmd or (inv.args and inv.args[0].startswith("()")):
+            raise Refuse("a shell function definition (its body cannot be judged where it is called)", SHAPE_PACKED)
         if inv.cmd in DELETE_VERBS:
             _check_delete(inv, cwd, root)
         elif inv.cmd == "find":
@@ -259,7 +305,7 @@ def decide(payload, command, strict):
     """None = admit; a Refuse = deny."""
     cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) and payload.get("cwd") else os.getcwd()
     try:
-        analyze(command, 0, cwd, scratch_root(payload), strict)
+        analyze(command, 0, cwd, scratch_root(payload, cwd), strict)
     except Refuse as r:
         return r
     return None

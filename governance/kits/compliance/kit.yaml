@@ -1,0 +1,14 @@
+kit: compliance
+version: 1.0.0
+category: compliance
+rules:
+- FG-LIC-001
+- FG-LIC-002
+- FG-LIC-003
+checks:
+- checks/license_policy_check.py
+- checks/reuse-lint.sh
+- checks/sbom.sh
+templates:
+- templates/license-policy.yaml
+migrations: []

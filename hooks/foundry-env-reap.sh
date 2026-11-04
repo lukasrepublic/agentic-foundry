@@ -18,6 +18,11 @@
 # never blocks (always exit 0).
 set -uo pipefail
 
+# SubagentStop (hooks.json) passes --subagent-stop. A subagent stop must NEVER run the full SessionEnd reap: its
+# payload carries the MAIN session's id, so reaping would stop the parent's containers, clusters and dev servers
+# mid-work. gv-12 replaces this with the label-scoped sweep.
+[ "${1:-}" = "--subagent-stop" ] && exit 0
+
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 ENGINE="${PLUGIN_ROOT}/scripts/foundry-env-hygiene.py"
 PER_WORKER_ENV_CHECK="${PLUGIN_ROOT}/scripts/foundry_env_isolation.py"

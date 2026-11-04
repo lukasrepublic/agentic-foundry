@@ -1,0 +1,10 @@
+# CODEOWNERS template. Replace the owners. Every governed path needs an owner.
+# The last matching pattern wins. Place this file at CODEOWNERS, .github/CODEOWNERS or docs/CODEOWNERS.
+*                         @OWNER-TEAM
+/governance/              @GOVERNANCE-OWNERS
+/.github/workflows/       @CI-OWNERS
+/.foundry/                @GOVERNANCE-OWNERS
+/.claude/                 @GOVERNANCE-OWNERS
+/scripts/                 @OWNER-TEAM
+/hooks/                   @GOVERNANCE-OWNERS
+CODEOWNERS                @GOVERNANCE-OWNERS

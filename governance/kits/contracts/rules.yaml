@@ -130,7 +130,7 @@ rules:
   sources:
   - Foundry governance design 2026-11-04, section 2.5
   - Confluent Schema Registry compatibility, https://docs.confluent.io/platform/current/schema-registry/fundamentals/schema-evolution.html, accessed 2026-11-04
-- id: FG-DATA-001
+- id: FG-DCON-001
   title: Shared datasets have an ODCS data contract
   statement: Every dataset shared across a team boundary MUST have a data contract in the Open Data Contract Standard format that validates against the ODCS JSON schema.
   category: contracts

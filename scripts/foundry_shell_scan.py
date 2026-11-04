@@ -326,6 +326,8 @@ def _scan(cmd: str, emit_words: bool):
             flush_word()
             pending.append({
                 "delim": delim, "strip_tabs": strip_tabs,
+                # a QUOTED delimiter suppresses all expansion in the body; an unquoted one does not
+                "quoted": ("'" in cmd[open_pos:j]) or ('"' in cmd[open_pos:j]),
                 "clause_prefix": cmd[hard_clause_start:open_pos],
             })
             i = j
@@ -341,7 +343,7 @@ def _scan(cmd: str, emit_words: bool):
                     body_end, term_end, found = _find_heredoc_end(
                         cmd, body_start, hd["delim"], hd["strip_tabs"])
                     heredoc_regions.append({
-                        "delim": hd["delim"], "strip_tabs": hd["strip_tabs"],
+                        "delim": hd["delim"], "strip_tabs": hd["strip_tabs"], "quoted": hd["quoted"],
                         "body_start": body_start, "body_end": body_end, "term_end": term_end,
                         "clause_prefix": hd["clause_prefix"],
                         "hard_clause_start": hard_clause_start, "line_end": line_end_pos,
@@ -396,7 +398,7 @@ def _scan(cmd: str, emit_words: bool):
     if pending:
         for hd in pending:
             heredoc_regions.append({
-                "delim": hd["delim"], "strip_tabs": hd["strip_tabs"],
+                "delim": hd["delim"], "strip_tabs": hd["strip_tabs"], "quoted": hd["quoted"],
                 "body_start": n, "body_end": n, "term_end": n,
                 "clause_prefix": hd["clause_prefix"],
                 "hard_clause_start": hard_clause_start, "line_end": n,
@@ -412,6 +414,9 @@ def _path_word(tok: str) -> str:
     return parts[-1] if parts else tok
 
 
+_SCRATCH_SINK_RE = re.compile(r"^/tmp/claude-[^/]+/(?:[^/.][^/]*/)+scratchpad/[^/.][^/]*(?:/[^/.][^/]*)*$")
+
+
 def _valid_sink_path(path: str) -> bool:
     """AC-GSO-2(iii): a plain relative or absolute regular-file path."""
     if not path or path == "-":
@@ -421,9 +426,12 @@ def _valid_sink_path(path: str) -> bool:
         return False
     if path.startswith("/dev/") or path.startswith("/proc/"):
         return False
-    for pre in _temp_prefixes():
-        if path == pre.rstrip("/") or path.startswith(pre):
-            return False
+    if _SCRATCH_SINK_RE.match(path):
+        pass       # gv-11: the Claude session scratch directory is where "write the script to a file" goes
+    else:
+        for pre in _temp_prefixes():
+            if path == pre.rstrip("/") or path.startswith(pre):
+                return False
     expanded = os.path.expanduser(path)
     try:
         if os.path.exists(expanded):
@@ -548,6 +556,12 @@ def _classify_region(cmd: str, region: Dict, all_regions: List[Dict], has_crlf: 
         return False
     if region["other_consumer"]:
         return False
+    if not region.get("quoted"):
+        # gv-11: bash EXPANDS an unquoted-delimiter body (`$(…)`, backticks, `${…}` run before the sink sees
+        # the text), so it is code, whatever the sink.
+        body = cmd[region["body_start"]:region["body_end"]]
+        if "$(" in body or "`" in body or "${" in body:
+            return False
     sink_path = _match_inert_sink(region["clause_prefix"])
     if sink_path is None:
         return False
@@ -652,7 +666,7 @@ class Invocation(NamedTuple):
 
 
 _ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\+?=")
-_PREFIX_KEYWORDS = {"{", "(", "!", "then", "do", "else", "elif", "if", "while", "until", "time", "coproc"}
+_PREFIX_KEYWORDS = {"{", "(", "!", "then", "do", "else", "elif", "if", "while", "until", "coproc"}
 # wrapper -> (options that consume the next word, positional words to skip after the options)
 _WRAPPERS = {
     "sudo": ({"-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "-T", "-R"}, 0),
@@ -667,12 +681,13 @@ _WRAPPERS = {
     "timeout": ({"-s", "-k", "--signal", "--kill-after"}, 1),
     "stdbuf": ({"-i", "-o", "-e"}, 0),
     "setsid": (set(), 0),
+    "time": (set(), 0),
     "xargs": ({"-I", "-n", "-P", "-L", "-d", "-E", "-s", "-a", "-l", "-i"}, 0),
 }
 
 
 def _cmd_basename(word: str) -> str:
-    w = word.lstrip("\\")
+    w = word.replace("\\", "")        # bash removes an unquoted backslash: `r\m` runs `rm`
     return w.rsplit("/", 1)[-1] if "/" in w else w
 
 
@@ -711,12 +726,16 @@ def _resolve(words: List[str]) -> Optional[Tuple[str, List[str], Tuple[str, ...]
                     i += 1
                     continue
                 if t.startswith("-") and len(t) > 1:
+                    if base == "env" and ((not t.startswith("--") and "S" in t[1:]) or t.startswith("--split-string")):
+                        seen.append("env-S")          # `env -S 'cmd args'` runs a command string we cannot see
                     i += 2 if t in argopts else 1
                     continue
                 break
             i += positional
             continue
         return base, [a.rstrip(")") if a.endswith(")") and "(" not in a else a for a in words[i + 1:]], tuple(seen)
+    if "env-S" in seen:
+        return "env", [], tuple(seen)
     if seen and seen[-1] == "env":          # a bare `env` (no command) prints the environment: it IS the command
         return "env", [], tuple(seen[:-1])
     return None

@@ -1,0 +1,7 @@
+kit: operations
+version: 1.0.0
+category: operations
+rules: [FG-OPS-001, FG-OPS-002, FG-OPS-003, FG-OPS-004, FG-OPS-005, FG-OPS-006, FG-OPS-007, FG-OPS-008]
+checks: [checks/pillar-map.yaml, checks/openslo-validate.yml, checks/pint.hcl]
+templates: [templates/error-budget-policy.md, templates/readiness-checklist.md]
+migrations: []

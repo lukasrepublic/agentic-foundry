@@ -286,3 +286,87 @@ def test_claim_gate_unit_reasons(team):
     # a future heartbeat is not a live lease
     set_claim(team, age=-10 * H)
     assert not store.claim_gate(str(team))[0]
+
+
+# ---- fix round 1 ---------------------------------------------------------------------------------------------
+def test_fix1_a_malformed_project_file_fails_closed(team):
+    set_ticket(team)
+    set_claim(team, age=60)
+    assert gd(team, PUSH).returncode == 0                                   # control: well-formed and live
+    for bad in ("{not json", "[1]", json.dumps({"github_scope": "x"}), json.dumps({"github_scope": {"owner": "o"}})):
+        (team / ".claude" / "foundry-project.json").write_text(bad)
+        r = gd(team, PUSH)
+        assert refused_claim(r) and "claim-store-unreadable" in r.stdout + r.stderr, bad
+    (team / ".claude" / "foundry-project.json").unlink()                    # no project file at all: claims not in use
+    assert gd(team, PUSH).returncode == 0
+
+
+def test_fix1_gh_hostname_does_not_hide_pr_create(team):
+    set_ticket(team)
+    assert refused_claim(gd(team, "gh --hostname github.example.invalid pr create --title t"))
+    assert refused_claim(gd(team, "gh -R example-org/app pr create --title t"))
+    assert gd(team, "gh --hostname h pr create --draft --title t").returncode == 0
+
+
+def test_fix1_git_dash_C_picks_the_repository_the_push_is_aimed_at(team, tmp_path):
+    other = tmp_path / "other-ws"
+    (other / ".claude").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", "-b", "feature-x", str(other)], check=True)
+    (other / ".claude" / "foundry-project.json").write_text(json.dumps(
+        {"github_scope": {"owner": "example-org", "planning_repo": "planning"}}))
+    set_ticket(other)
+    env = dict(os.environ)
+    env.pop("CLAUDE_PROJECT_DIR", None)
+    def run(cmd, cwd):
+        return subprocess.run([str(HOOK), "--local-green=off"], capture_output=True, text=True, env=env,
+                              input=json.dumps({"tool_input": {"command": cmd}, "cwd": str(cwd)}))
+    assert refused_claim(run(f"git -C {other} push origin feature-x", team))     # judged in `other`, which has no claim
+    set_claim(other, age=30)
+    assert run(f"git -C {other} push origin feature-x", team).returncode == 0
+    assert run("git push origin feature-x", team).returncode == 0               # `team` has no ticket: not gated
+
+
+def test_fix1_claims_disabled_means_the_claim_verb_does_not_enforce_the_lease(ws):
+    (ws / ".foundry").mkdir()
+    (ws / ".foundry" / "operating-model.yaml").write_text("claims:\n  enabled: false\n")
+    claim(ws, 2, "A")
+    rc, out, err = claim(ws, 2, "B", now=NOW + 60)
+    assert rc == 0, err
+    assert rec(ws)["session_id"] == "B" and "taken_over_from" not in rec(ws)
+
+
+def test_fix1_the_lease_is_rechecked_inside_the_claims_lock(ws, monkeypatch):
+    """A contender that takes the lease between the early read and the locked write makes the later claim LOSE."""
+    claim(ws, 2, "A")
+    real = store.update_claims
+
+    def sneaky(root, fn):          # B's claim lands first, inside the window A's early check cannot see
+        def both(cl):
+            cl["example-org/app#2"] = {**cl["example-org/app#2"], "session_id": "B", "heartbeat_at": store.iso(NOW + 2 * H + 5)}
+            fn(cl)
+        return real(root, both)
+    monkeypatch.setattr(store, "update_claims", sneaky)
+    rc, out, err = claim(ws, 2, "C", now=NOW + 2 * H + 10)       # C saw A's claim as expired; B renewed it meanwhile
+    assert rc == 2 and "lease-held" in err
+    assert rec(ws)["session_id"] != "C" and "taken_over_from" not in rec(ws)
+
+
+def test_fix1_the_record_length_is_bounded_by_policy_and_the_smaller_wins():
+    r = {"heartbeat_at": store.iso(NOW), "expires_after_s": 99999}
+    assert store.lease_state(r, NOW + 2 * H, 2 * H)["state"] == "expired"        # policy 2h wins over a stored 99999
+    r["expires_after_s"] = 600
+    assert store.lease_state(r, NOW + 601, 2 * H)["state"] == "expired"          # a shorter record wins
+    assert store.lease_state(r, NOW + 599, 2 * H)["state"] == "live"
+
+
+def test_fix1_a_session_whose_lease_was_taken_over_may_not_push(team):
+    set_ticket(team)
+    set_claim(team, age=30, session_id="B", taken_over_from={"session_id": "A", "at": store.iso(time.time() - 60)})
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=str(team))
+    def push(session):
+        return subprocess.run([str(HOOK), "--local-green=off"], capture_output=True, text=True, env=env,
+                              input=json.dumps({"tool_input": {"command": PUSH}, "cwd": str(team), "session_id": session}))
+    r = push("A")
+    assert refused_claim(r) and "taken over" in r.stdout + r.stderr
+    assert push("B").returncode == 0                  # the new holder
+    assert push("some-subagent").returncode == 0      # a worker dispatched by the holder is not the displaced session

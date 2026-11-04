@@ -10,6 +10,8 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 
 ## v2.0.0 — unreleased (the delivery rebase)
 
+- **gv-11 guard hooks.** New PreToolUse Bash hooks `foundry-shell-shape.py` (B6) and `foundry-secret-read-guard.py` (D1); claims are leases with heartbeat, recorded takeover and `--successor-of`; git-discipline clause (m) refuses a work-branch push or non-draft `gh pr create` without a live claim. `hooks/foundry-worktree-create.sh` now runs its inline python with `-I`, so it ignores `PYTHONPATH` and the user site-packages directory: a dependency installed only with `pip install --user` is no longer visible to it. `foundry-env-reap.sh --subagent-stop` is a no-op until the label-scoped sweep lands.
+
 ### One artifact per change: a ticket with a runnable "Done means". The platform is the gate.
 
 `create-agentic-workspace` and `update-agentic-workspace` ship with this release (versions set at the cut).

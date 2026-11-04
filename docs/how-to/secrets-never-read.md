@@ -35,6 +35,8 @@ Each refusal prints the verb. The verbs are the ones whose documented output is 
 - `aws secretsmanager get-secret-value`, `aws secretsmanager batch-get-secret-value`
 - `aws ssm get-parameter --with-decryption` (also `get-parameters`, `get-parameters-by-path`)
 - `aws kms decrypt`, `aws configure export-credentials`, `aws configure get <secret key>`
+- `aws eks get-token`, `aws ecr get-authorization-token`, `aws sso get-role-credentials`,
+  `aws codeartifact get-authorization-token`, `aws rds generate-db-auth-token`, `aws ssm get-parameter-history --with-decryption`
 - `aws sts get-session-token`, `aws sts assume-role`, `aws iam create-access-key`,
   `aws iam create-service-specific-credential`, `aws ecr get-login-password`
 - `gcloud secrets versions access`, `gcloud auth print-access-token` (and `print-identity-token`),
@@ -47,12 +49,21 @@ Each refusal prints the verb. The verbs are the ones whose documented output is 
 - `op read`, `op item get`, `op inject`, `op document get`
 - `gh auth token`, `gh auth status --show-token`
 - `terraform show -json`, `terraform state pull`, `terraform state show`, `terraform output -json|-raw` (and `tofu`)
+- `git credential fill`, `sops -d`, `ansible-vault view|decrypt`, `gpg --decrypt` (`-d`), `age --decrypt` (`-d`), `vault print token`,
+  `doppler secrets get|download`, `kubectl get secret --template`
 - `pass show`, `secret-tool lookup`, `security find-generic-password`, `gpg --export-secret-keys`
-- `printenv` or `env` that dumps the environment, and `echo`/`printf` of a variable named like a secret
-- **No-print roots:** a reader (`cat`, `head`, `grep`, `cp`, `scp`, `tar`, `curl -d @file`, a `<` redirect, an
-  interpreter's inline `open(...)`) pointed at `~/.ssh`, `~/.aws`, `~/.config/gcloud`, `~/.kube` or `.env*`.
-  `.env.example`, `.env.sample`, `.env.template` and `.env.dist` are exempt. Using a key without printing it
+- `printenv`, bare `env`, `export -p`, bare `set` or `declare -x|-p` that dump the environment, and `echo`/`printf` of a variable named like a secret
+- **No-print roots:** a reader (`cat`, `head`, `grep`, `cp`, `mv`, `scp`, `tar`, `curl -d @file`, a `<` redirect, a
+  here-string, an interpreter's inline `open(...)`) pointed at one of: `~/.ssh`, `~/.aws`, `~/.config/gcloud`,
+  `~/.kube`, `.env*`, `~/.git-credentials`, `~/.netrc`, `~/.docker/config.json`, `~/.npmrc`, `~/.pypirc`,
+  `~/.config/gh`, `~/.claude/.credentials.json`, `~/.gnupg`, `~/.vault-token`, `~/.azure`, `~/.terraform.d`,
+  `*.tfstate*`, `/proc/*/environ`. `~/x` means `x` under any user's home (`~root`, `/home/alice`). The `.env*` exempt
+  suffixes are `.example`, `.sample`, `.template`, `.dist` and `.defaults`. `cp`, `mv` and `install` are judged by their
+  SOURCE operands, so `cp .env.example .env` works. A here-string into a reader (`base64 -d <<< "$X"`) and a
+  brace-expanded reader path (`cat ~/.ss{h,}/id_rsa`) are refused. Using a key without printing it
   (`ssh -i ~/.ssh/id_ed25519 host`, `kubectl --kubeconfig ~/.kube/config get pods`) is not a read and is admitted.
+  **A reader whose target is an unknowable `$VAR` or command substitution is admitted** - that is a practice, not a
+  control; the IAM boundary above is the control.
 
 ## Metadata verbs that are fine
 
@@ -89,7 +100,7 @@ Both lists are merged **over** the built-in defaults. They can only add. A defau
 in the hook, an item that starts with `!` or `-` (or a `remove:` mapping) makes
 `foundry_operating_model.py validate` fail with `floor-rule-disabled:secrets.forbidden_verbs.removal` (or
 `...no_print_roots.removal`), `value_reads_forbidden: false` fails with `floor-rule-disabled:secrets.value_reads_forbidden`,
-and a policy file the hook cannot read leaves the defaults in force.
+and a policy file the hook cannot load leaves the defaults in force and prints one `policy-additions-dropped:<reason>` line on stderr.
 
 ## When the guard refuses you
 

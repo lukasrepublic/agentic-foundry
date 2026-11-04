@@ -186,7 +186,7 @@ hook_comment_expectation:
   #      fail-closed on an unreadable claims store; inert where claims are not in use. Every other clause
   #      byte-identical. Corpus: tests/test_claims_expiry.py. NOTE: gv-10 re-baselines this same digest for its
   #      clauses (k)/(l); whichever lands second recomputes it over the merged hook.
-  executable_content_sha256: '373e44716895d53cd08e18a524c40062a79d8232faf616d5cdc65f4edfebd0f4'  # re-baselined for entry 12 (gv-11)
+  executable_content_sha256: 'e7f80bf9690a74e9a173ad4de7435a9f02bc56912ea46ab542e53d0b5b4eb327'  # re-baselined for entry 12 (gv-11)
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
 operator_registry_shape:
