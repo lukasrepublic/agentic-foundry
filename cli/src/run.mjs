@@ -20,6 +20,7 @@ import {
 import { reconcileGitignorePlan, applyGitignorePlan, renderGitignoreRow } from './gitignoreReconcile.mjs';
 import { planAmendmentsBackfill, applyAmendmentsBackfill, renderAmendmentsRow } from './amendmentsBackfill.mjs';
 import { planStatuslineWiring, applyStatuslineWiring, renderStatuslineRows, wrapperIsOurs } from './statuslineWiring.mjs';
+import { readCutoverState, legacyOffCondition, CUTOVER_RECORD_REL } from './upgradeCompat.mjs';
 
 export { DECLARED_PATH_SET };
 
@@ -191,8 +192,16 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
     // and no `## Amendments` section after it gets the empty section `/foundry:amend` requires.
     // Planned here for the same reason as the gitignore block — --dry-run reports the same row a
     // real run would act on — and `null` when the workspace has no specs at all (a fresh scaffold).
-    const amendmentsPlan = planAmendmentsBackfill({ physicalRoot });
-    const amendmentsRow = renderAmendmentsRow(amendmentsPlan);
+    //
+    // AC-NPX-9 (feat-foundry-adoption-npx-upgrade-2-0): this edits retained history, so it runs ONLY
+    // while --legacy-maintenance is given AND the cutover state is `pending`. A recorded or unknown
+    // cutover keeps it off (fail closed), as does the flag's absence; the preview names which.
+    const cutover = readCutoverState(physicalRoot);
+    const legacyOff = legacyOffCondition({ flag: answers.legacyMaintenance, cutover });
+    const readOnlyAmendments = planAmendmentsBackfill({ physicalRoot });
+    const amendmentsPlan = legacyOff === null ? readOnlyAmendments : null;
+    const amendmentsRow = amendmentsPlan ? renderAmendmentsRow(amendmentsPlan)
+      : (readOnlyAmendments.toAppend.length > 0 ? `  [legacy-maintenance] Amendments backfill not run: ${legacyOff} (cutover record: ${CUTOVER_RECORD_REL})` : null);
     if (amendmentsRow) {
       if (!gitignoreRow) print('');
       print(amendmentsRow);
@@ -288,7 +297,7 @@ export async function runCli(argv, { cwd, isTTY, input, output, homeDir, pkgDir 
     applyGitignorePlan(gitignorePlan);
     // Same never-clobber posture as the gitignore block: only a spec classified `absent` is ever
     // written, and it is re-classified immediately before the atomic append (AC-AMB-2).
-    applyAmendmentsBackfill(amendmentsPlan);
+    if (amendmentsPlan) applyAmendmentsBackfill(amendmentsPlan);
 
     if (floorHasWork) {
       // floorPlan.settingsObj is ALREADY post-retirement (planReconcile derived it that way) —

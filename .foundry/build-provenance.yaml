@@ -1,6 +1,6 @@
-atom: gn-14-cutover-impl
-spec_ref: specs/features/foundry/adoption/artifact-disposition-and-cutover/feat-foundry-adoption-artifact-disposition-and-cutover.md
-workspace_commit: ba69988
+atom: gn-13-npx-upgrade-impl
+spec_ref: specs/features/foundry/adoption/npx-upgrade-2-0/feat-foundry-adoption-npx-upgrade-2-0.md
+workspace_commit: f5bed31
 auth_seq: 1
-spec_sha256: 9486699dc45608a8c24a9345dd6a84e4f2da86285d287e6ab56f93edb8b6f0f1
-contract_sha256: 947cb71f134ce0967c959d35a5501539f31b6c6a47ec5a40910c35cd8c62e213
+spec_sha256: 1c0d0f928f04d324e3e8039d0c0a84b1313ec09cbf8601348577a310a4ed8ab9
+contract_sha256: ba408282d3a709f5761f5e6314d4341389d9047bb06226792922f3a972cbd7e9

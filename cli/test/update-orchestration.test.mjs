@@ -123,6 +123,15 @@ function steadyStateFixture(prefix) {
     permissions: { allow: [], ask: [], deny: [] }, extraKnownMarketplaces: tagless, enabledPlugins: { [PLUGIN_KEY]: true },
   });
   writeManifest(configDir, BASE_MANIFEST());
+  // a supported, complete install: the registry names a project-scope record at the pinned version
+  // and its install directory carries the plugin manifest at that version (otherwise every run
+  // records `source-version-unknown` and ends attention-needed, exit 2)
+  const installPath = path.join(configDir, 'plugins', 'cache', MARKETPLACE, PLUGIN, PINS.plugin_version);
+  writeJson(path.join(installPath, '.claude-plugin', 'plugin.json'), { name: PLUGIN, version: PINS.plugin_version });
+  writeJson(path.join(configDir, 'plugins', 'installed_plugins.json'), {
+    version: 2,
+    plugins: { [PLUGIN_KEY]: [{ scope: 'project', projectPath: cwd, version: PINS.plugin_version, installPath }] },
+  });
   return { root, cwd, configDir };
 }
 
@@ -380,9 +389,9 @@ test('Phase 4 leaves an already-converged gitignore block untouched (no write sy
 // `changed`, and the very next run reports `backfilled 0` and `already current`.
 test('Phase 4 backfills the Amendments section on a pre-amend spec, then settles', async () => {
   const { cwd, configDir } = steadyStateFixture('amb-uaw-');
-  const first = await invokeUpdate({ cwd, configDir });
+  const first = await invokeUpdate({ cwd, configDir, argv: ['--legacy-maintenance'] });
   assert.notEqual(first.res.exitCode, 1, first.res.output);
-  const settled = await invokeUpdate({ cwd, configDir });
+  const settled = await invokeUpdate({ cwd, configDir, argv: ['--legacy-maintenance'] });
   assert.match(settled.res.output, /\[reinitialization] already current/, settled.res.output);
 
   const specPath = path.join(cwd, 'specs', 'features', 'p', 'd', 'c', 'feat-old.md');
@@ -390,7 +399,7 @@ test('Phase 4 backfills the Amendments section on a pre-amend spec, then settles
   const normative = '# feat-old\n\n<!-- normative -->\n- **AC-OLD-1**: it works.\n<!-- /normative -->\n';
   fs.writeFileSync(specPath, normative);
 
-  const { res, text } = await invokeUpdate({ cwd, configDir });
+  const { res, text } = await invokeUpdate({ cwd, configDir, argv: ['--legacy-maintenance'] });
   assert.notEqual(res.exitCode, 1, res.output);
   assert.match(text, /\[amendments] backfilled 1 of 3 specs \(0 already present, 2 skipped: no normative region\)/, text);
   // ER #228 (v1.17.2): the run says WHICH updater ran, first; the report carries the denominator
@@ -400,7 +409,7 @@ test('Phase 4 backfills the Amendments section on a pre-amend spec, then settles
   assert.ok(after.startsWith(normative), 'the spec body above the section was not preserved');
   assert.ok(after.endsWith('## Amendments\n\n| date | what changed | why reality required it | auth_seq |\n|---|---|---|---|\n'));
 
-  const again = await invokeUpdate({ cwd, configDir });
+  const again = await invokeUpdate({ cwd, configDir, argv: ['--legacy-maintenance'] });
   assert.match(again.text, /\[amendments] backfilled 0 of 3 specs \(1 already present, 2 skipped: no normative region\)/, again.text);
   assert.match(again.res.output, /\[reinitialization] already current/, again.res.output);
   assert.equal(fs.readFileSync(specPath, 'utf-8'), after);
@@ -413,9 +422,9 @@ test('every completed run writes .foundry/upgrade-report.json and ends with the 
   const { res, text } = await invokeUpdate({ cwd, configDir });
   assert.notEqual(res.exitCode, 1, res.output);
   const lines = res.output.trimEnd().split('\n');
-  assert.equal(lines[lines.length - 1], 'next: run /foundry:post-upgrade in your next session (report: .foundry/upgrade-report.json)', text);
+  assert.equal(lines[lines.length - 1], 'outcome: complete · next: run /foundry:post-upgrade in your next session (report: .foundry/upgrade-report.json) · cutover: pending', text);
   const report = JSON.parse(fs.readFileSync(path.join(cwd, '.foundry', 'upgrade-report.json'), 'utf-8'));
-  assert.equal(report.schema_version, 1);
+  assert.equal(report.schema_version, 2);
   assert.equal(report.to_plugin_version, PINS.plugin_version);
   assert.ok(Array.isArray(report.phases) && report.phases.some((p) => p.name === 'reinitialization'));
   assert.ok(['created', 'kept'].includes(report.permissions_policy), report.permissions_policy);
