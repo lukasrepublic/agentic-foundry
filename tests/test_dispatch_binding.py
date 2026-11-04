@@ -33,7 +33,7 @@ def ws(tmp_path):
     _init(str(root))
     _init(str(root / "app"))
     (root / ".claude" / "foundry-project.json").write_text(
-        json.dumps({"schema_version": 1, "operating_mode": "team", "github_scope": {"owner": "example-org", "planning_repo": "planning"}, "repos": {"app": {"path": "app", "repo": "o/r"}}}))
+        json.dumps({"schema_version": 1, "github_scope": {"owner": "example-org", "planning_repo": "planning"}, "repos": {"app": {"path": "app", "repo": "o/r"}}}))
     (root / ".claude" / "foundry-operators.json").write_text(
         json.dumps({"schema_version": 1, "operators": {"op_lukas": {"name": "L"}}}))
     _claim(root, "ab" * 32)
@@ -342,3 +342,41 @@ def test_matching_claim_and_configured_repo_proceed(ws):
     _manifest(ws, assignment=_assignment())
     r = _run(ws)
     assert r.returncode == 0, r.stderr
+
+
+def test_issue_lane_dropped_without_github_scope(ws):
+    """gv-02: the issue-assignment lane needs github_scope; the drop is typed and logged, the manifest consumed."""
+    (ws / ".claude" / "foundry-project.json").write_text(
+        json.dumps({"schema_version": 1, "repos": {"app": {"path": "app", "repo": "o/r"}}}))
+    _manifest(ws, assignment=_assignment())
+    r = _run(ws)
+    assert r.returncode != 0 and r.stdout == ""
+    assert "github-scope-missing" in _log(ws)
+    assert not list((ws / ".foundry" / "dispatch-queue").glob("*.json"))
+
+
+def test_contract_lane_runs_without_github_scope(ws):
+    """gv-02 control: a scope-less manifest does not drop the CONTRACT lane with github-scope-missing."""
+    (ws / ".claude" / "foundry-project.json").write_text(
+        json.dumps({"schema_version": 1, "repos": {"app": {"path": "app", "repo": "o/r"}}}))
+    (ws / "spec.md").write_text("# s\n\n<!-- normative -->\nx\n<!-- /normative -->\n")
+    (ws / "contract.yaml").write_text("spec_ref: spec.md\ntarget_repo: app\n")
+    _manifest(ws, contract_ref="contract.yaml")
+    _run(ws)
+    assert "github-scope-missing" not in _log(ws)
+
+
+def test_issue_lane_check_crash_is_dropped_with_typed_line(ws, tmp_path):
+    """gv-02: the scope check itself failing (python exits non-zero) fails closed with the typed line."""
+    real = subprocess.check_output(["bash", "-c", "command -v python3"], text=True).strip()
+    shim = tmp_path / "shim"
+    shim.mkdir()
+    py = shim / "python3"
+    py.write_text('#!/bin/sh\ncase "$*" in *foundry_github_capabilities*) exit 3;; esac\nexec "%s" "$@"\n' % real)
+    py.chmod(0o755)
+    _manifest(ws, assignment=_assignment())
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=str(ws), PATH=f"{shim}:{os.environ['PATH']}")
+    r = subprocess.run(["bash", HOOK], input="{}", capture_output=True, text=True, env=env)
+    assert r.returncode != 0 and r.stdout == ""
+    assert "github-scope-missing" in _log(ws)
+    assert not list((ws / ".foundry" / "dispatch-queue").glob("*.json"))

@@ -25,9 +25,9 @@ it. This tool makes the move concrete and reviewable, in steps that each leave s
       Writes .foundry/migration/authority.yaml (exclusive create). Only a registered operator, naming
       themselves, can do it; the tool never infers adoption.
 
-Operating mode: `cutover` (every form: it reads and writes GitHub) is a team-mode surface and is gated
-with foundry_operating_mode.require_team before any gh call. `inventory` and `preview` are read-only and
-run in both modes (the spec is silent on them).
+GitHub scope: `cutover` (every form: it reads and writes GitHub) requires a well-formed `github_scope`
+and refuses with `github-scope-missing` before any gh call. `inventory` and `preview` are read-only and
+need no scope.
 
 Exit: 0 ok, 1 refused/failed (reason tokens are printed), 2 usage / mode gate.
 """
@@ -1781,8 +1781,8 @@ def main(argv=None, opts: Options | None = None) -> int:
         return 2
     rs = RunState(ws, opts)
     if args.cmd == "cutover":
-        import foundry_operating_mode as om
-        rc = om.gate(ws, "cutover")
+        import foundry_github_capabilities as ghc
+        rc = ghc.gate(ws, "cutover")
         if rc is not None:
             return rc
     gh_ro = Gh(read_only=True)

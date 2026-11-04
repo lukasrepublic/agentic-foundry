@@ -223,7 +223,7 @@ def test_no_scope_configured(tmp_path):
     (tmp_path / ".claude").mkdir()
     (tmp_path / ".claude" / "foundry-project.json").write_text("{}")
     assert ghc.collect(str(tmp_path), Fake()) is None
-    assert ghc.advisory_line(str(tmp_path), Fake()) == "n/a (single-operator mode)"  # gn-17
+    assert ghc.advisory_line(str(tmp_path), Fake()) == "n/a (no github_scope configured)"
 
 
 def test_cli_help_and_no_scope(tmp_path):
@@ -245,7 +245,7 @@ def _doctor():
 
 
 def test_doctor_check_na(tmp_path):
-    assert _doctor().check_github_capabilities(str(tmp_path)) == (True, "n/a (single-operator mode)")  # gn-17
+    assert _doctor().check_github_capabilities(str(tmp_path)) == (True, "n/a (no github_scope configured)")
 
 
 def test_doctor_check_partial_and_crash(proj, monkeypatch):
@@ -273,7 +273,7 @@ def test_doctor_renders_one_line_never_red_and_skips_session_start(tmp_path):
     (tmp_path / ".claude" / "foundry-project.json").write_text("{}")
     full = _run_doctor([], tmp_path)
     assert full.stdout.count("github-capabilities:") == 1
-    assert "n/a (single-operator mode)" in full.stdout  # gn-17: default mode, no network
+    assert "n/a (no github_scope configured)" in full.stdout  # no scope: no network
     ss = _run_doctor(["--session-start"], tmp_path)
     assert "github-capabilities" not in ss.stdout
 
@@ -282,8 +282,7 @@ def test_doctor_failing_gh_stays_advisory_end_to_end(tmp_path):
     """A github_scope with every gh call failing must not add a RED."""
     (tmp_path / ".claude").mkdir()
     (tmp_path / ".claude" / "foundry-project.json").write_text(
-        json.dumps({"operating_mode": "team",
-                    "github_scope": {"owner": "example-org", "planning_repo": "planning",
+        json.dumps({"github_scope": {"owner": "example-org", "planning_repo": "planning",
                                      "project_number": 1, "operators": {}},
                     "usage": {"dataset": 5}}))
     bin_dir = tmp_path / "bin"

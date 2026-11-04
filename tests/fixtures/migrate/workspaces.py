@@ -29,7 +29,7 @@ def spec(title, acs):
 def common():
     return {
         ".claude/foundry-project.json": __import__("json").dumps(
-            {"schema_version": 1, "operating_mode": "team", "github_scope": SCOPE}),
+            {"schema_version": 1, "github_scope": SCOPE}),
         ".claude/foundry-operators.json": '{"schema_version": 1, "operators": {"op_test": {"name": "T"}}}',
         ".claude/settings.json": "{}\n",
         ".claude/hooks/h.sh": "#!/bin/sh\n",

@@ -157,7 +157,6 @@ _WRITERS = [
     ("foundry_inbox.py", "schedule u --target t"), ("foundry_inbox.py", "resolve u --evidence e"),
     ("foundry-ticket.py", "claim 7"), ("foundry-ticket.py", "claim 7 --trust"),
     ("foundry-ticket.py", "start 7 --trust-author"), ("foundry-ticket.py", "start 7 --trust"),
-    ("foundry_operating_mode.py", "enable-team"), ("foundry_operating_mode.py", "disable-team"),
     ("foundry_usage.py", "bind --session s --issue i"),
     ("foundry_usage.py", "fallback-transcripts --cli-version 1"),
     ("foundry_usage.py", "--dataset /d fallback-transcripts --cli-version 1"),
@@ -169,7 +168,6 @@ _READERS = [
     ("foundry_inbox.py", "scan"), ("foundry_inbox.py", "pending"),
     ("foundry-ticket.py", "read-issue 7 --json"), ("foundry-ticket.py", "next --json"),
     ("foundry-ticket.py", "reconcile"), ("foundry-ticket.py", "lead renew"),
-    ("foundry_operating_mode.py", "status"),
     ("foundry_usage.py", "ingest /c"), ("foundry_usage.py", "attribute"), ("foundry_usage.py", "coverage"),
 ]
 
