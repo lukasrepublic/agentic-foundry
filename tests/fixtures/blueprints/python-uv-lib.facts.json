@@ -1,0 +1,11 @@
+{
+  "paths": [
+    "pyproject.toml",
+    "uv.lock",
+    "src/mylib/__init__.py",
+    "tests/unit/test_x.py"
+  ],
+  "dependencies": [
+    "pydantic"
+  ]
+}
