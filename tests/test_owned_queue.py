@@ -92,7 +92,7 @@ class FakeGh:
             key = f"{args[args.index('-R') + 1]}#{args[2]}"
             self.comments.append({"_issue": key, "id": f"c{len(self.comments)}", "body": stdin,
                                   "createdAt": "2026-11-03T00:00:00Z", "author": {"login": self.login},
-                                  "authorAssociation": "MEMBER"})
+                                  "authorAssociation": "OWNER"})
             return ""
         raise AssertionError(f"unexpected gh call: {args}")
 

@@ -201,8 +201,24 @@ def cmd_start(args: list[str]) -> int:
     login = ((issue.get("author") or {}).get("login")) or ""
     issue_repo = repo_of_issue(issue, repo)
     trusted_by = "author"
+    editor = None
+    if done:
+        # the same reader the claim path uses (never a second GraphQL shape): who last edited the body
+        try:
+            live = read_issue(default_run, issue_repo or "", int(issue["number"]), trust_author=True)
+        except (GhError, ValueError):
+            live = None
+        if not live or live.get("done_sha256") != store.command_digest(done):
+            sys.exit("foundry-ticket: could not read the issue's last editor consistently (or the body changed "
+                     "while reading); nothing was recorded. Retry `start`.")
+        editor = live.get("last_edited_by")
+        vetted = store.claim_done_digest(project_root(), issue_repo or "", issue["number"])
+        if vetted and vetted != store.command_digest(done):
+            sys.exit("foundry-ticket: done-means-changed — the Done-means command differs from the one vetted at "
+                     "`claim` time; it will not run. Re-read it and run `foundry-ticket.py claim` again "
+                     "(--trust-author does not override this). Nothing was recorded.")
     if done and not trust:
-        ok, why = author_trusted(issue_repo, login)
+        ok, why = done_trust(issue_repo, login, editor)
         if not ok:
             sys.exit("foundry-ticket: the Done-means command in this issue was not adopted — " + why +
                      ". The Stop hook would run it unattended, so a command from outside the repository's "
@@ -256,6 +272,9 @@ def run_done(doc: dict, root: Path, timeout: int = 1800) -> tuple[int, str]:
         return 0, "no Done-means command declared"
     if store.command_digest(cmd) != doc.get("done_sha256"):
         return 125, "the recorded Done-means command does not match its digest; re-run `start`"
+    vetted = store.claim_done_digest(root, doc.get("repo") or "", doc.get("issue"))
+    if vetted and vetted != store.command_digest(cmd):
+        return 125, "done-means-changed: the command differs from the one vetted at `claim` time; run `claim` again"
     proc = None
     try:
         proc = subprocess.Popen(["/bin/bash", "-c", cmd], cwd=str(root), stdout=subprocess.PIPE,

@@ -269,7 +269,7 @@ def test_fetch_issues_through_runner():
             if "closed" in argv:
                 return Res(rc=0, stdout="[]")
             return Res(rc=0, stdout=json.dumps([{"number": 7, "title": "t", "labels": [{"name": "work:operations"}],
-                                                 "author": {"login": "alice"}, "authorAssociation": "MEMBER", "createdAt": "2026-11-01T00:00:00Z",
+                                                 "author": {"login": "alice"}, "authorAssociation": "OWNER", "createdAt": "2026-11-01T00:00:00Z",
                                                  "projectItems": [{"title": "Delivery"}], "body": "Reverts: example-org/planning#2"}]))
         if argv[1] == "api" and "graphql" in argv:
             return Res(rc=0, stdout=json.dumps({"data": {"repository": {"issue": {"timelineItems": {
@@ -292,7 +292,7 @@ def test_fetch_issues_through_runner():
 def _marker(i, event, at, by, target=None, blocking=None, **extra):
     body = {"v": 1, "event": event, "idempotency_key": f"{event}-{i}-{at}-{target}", "target": target,
             "blocking": blocking, "at": at, "by": by, "evidence": ["https://example.com/e"], **extra}
-    return {"author": {"login": by if by in ("alice", "bob", "carol") else "alice"}, "authorAssociation": "MEMBER", "id": f"{event}-{at}-{target}", "createdAt": at,
+    return {"author": {"login": by if by in ("alice", "bob", "carol") else "alice"}, "authorAssociation": "OWNER", "id": f"{event}-{at}-{target}", "createdAt": at,
             "body": "<!-- foundry-deck: " + json.dumps(body) + " -->\nrecorded"}
 
 

@@ -29,11 +29,11 @@ Design decisions (charter gn-04):
   * AUTHORITY (security): a marker is authoritative only when its COMMENT AUTHOR is trusted (`Trust`):
     the authenticated login (`gh api user`, cached per adapter), a login listed in
     `github_scope.operators` (the keys of that object in .claude/foundry-project.json), or, ONLY when
-    the scope lists no operators, an `authorAssociation` of OWNER / MEMBER / COLLABORATOR. A marker
+    the scope lists no operators, the repository OWNER or a login with write/maintain/admin permission on the comment's repo (a bare MEMBER or read-level COLLABORATOR is foreign). A marker
     from anyone else is returned as `unparsed` with detail `foreign_author` — visible, never
     authoritative: it cannot resolve/accept/ack anything, cannot start work, and cannot squat an
     idempotency key (`emit` ignores it in its same-key presence check). `parse`/`_markers_in` take a
-    `trust` predicate (default: association fallback only, i.e. fail-closed); `GhAdapter.trust()`
+    `trust` predicate (default: OWNER only, i.e. fail-closed); `GhAdapter.trust()`
     supplies the real one and `emit`/`fetch_history` thread it. `gh issue view --json comments` already
     carries `author.login` and `authorAssociation`, so no extra query is needed.
   * Every `gh` call lives in ONE adapter object (`GhAdapter`); tests inject a stub. `parse` is pure.
@@ -102,15 +102,35 @@ _URL_RE = re.compile(r"https?://[^\s/]+\S*")
 _SHA_RE = re.compile(r"(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,64}")
 
 
-TRUSTED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+WRITE_PERMISSIONS = frozenset({"write", "maintain", "admin"})
+_COMMENT_REPO_RE = re.compile(r"^https://[^/\s]+/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/(?:issues|pull)/\d+")
+_LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\[bot\])?$")
 
 
 class Trust:
-    """Predicate over one comment: is its author allowed to write authoritative deck markers?"""
+    """Predicate over one comment: is its author allowed to write authoritative deck markers?
 
-    def __init__(self, operators=(), me=None):
+    Fallback (ONLY when no operators are configured): the repository OWNER, or a login whose
+    `repos/{repo}/collaborators/{login}/permission` is write/maintain/admin. `permission(repo, login)` is
+    the injected lookup (None => no lookup possible => OWNER only); a failed lookup is untrusted; results
+    are cached per Trust instance. Bare MEMBER / read-level COLLABORATOR never qualifies."""
+
+    def __init__(self, operators=(), me=None, permission=None):
         self.logins = {str(x).lower() for x in (operators or ()) if x}
         self.me = str(me).lower() if me else None
+        self.permission = permission
+        self._cache = {}
+
+    def _writes(self, repo, login) -> bool:
+        if not self.permission or not repo or not _LOGIN_RE.match(login):
+            return False
+        key = (repo.lower(), login.lower())
+        if key not in self._cache:
+            try:
+                self._cache[key] = str(self.permission(repo, login) or "").lower() in WRITE_PERMISSIONS
+            except Exception:  # noqa: BLE001 — a failed lookup is untrusted
+                self._cache[key] = False
+        return self._cache[key]
 
     def __call__(self, comment) -> bool:
         login = ((comment.get("author") or {}).get("login") if isinstance(comment, dict) else None)
@@ -119,8 +139,13 @@ class Trust:
         low = login.lower()
         if low == self.me or low in self.logins:
             return True
-        if not self.logins:     # no configured operators: the repository-role fallback
-            return str(comment.get("authorAssociation") or "").upper() in TRUSTED_ASSOCIATIONS
+        if not self.logins:     # no configured operators: the repository write-permission fallback
+            assoc = str(comment.get("authorAssociation") or "").upper()
+            if assoc == "OWNER":
+                return True
+            if assoc in ("MEMBER", "COLLABORATOR"):
+                m = _COMMENT_REPO_RE.match(str(comment.get("url") or ""))
+                return self._writes(m.group(1) if m else None, login)
         return False
 
 
@@ -489,8 +514,11 @@ class GhAdapter:
                 me = (json.loads(self._run(["api", "user"])) or {}).get("login")
             except (RuntimeError, ValueError, AttributeError, OSError):
                 me = None
-            self._trust = Trust(scope_operators(), me)
+            self._trust = Trust(scope_operators(), me, permission=self._permission)
         return self._trust
+
+    def _permission(self, repo, login):
+        return (json.loads(self._run(["api", f"repos/{repo}/collaborators/{login}/permission"])) or {}).get("permission")
 
     def _run(self, args, stdin=None):
         r = subprocess.run(["gh", *args], input=stdin, capture_output=True, text=True, timeout=120)

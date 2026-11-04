@@ -19,7 +19,7 @@ END = "2026-12-31T00:00:00Z"
 def fx(name):
     d = json.loads((FX / f"{name}.json").read_text())
     for c in d["comments"]:     # fixtures model repository members unless a case says otherwise
-        c.setdefault("authorAssociation", "MEMBER")
+        c.setdefault("authorAssociation", "OWNER")
     return d["timeline"], d["comments"]
 
 
@@ -44,7 +44,7 @@ class Stub:
     def post_comment(self, issue, body):
         self.posted.append((issue, body))
         self.cs.append({"id": f"IC_new{len(self.posted)}", "createdAt": "2026-11-01T00:00:00Z",
-                        "author": {"login": "alice"}, "authorAssociation": "MEMBER", "body": body})
+                        "author": {"login": "alice"}, "authorAssociation": "OWNER", "body": body})
 
     def timeline(self, issue):
         return list(self.tl)
@@ -238,7 +238,7 @@ def test_unknown_version_and_malformed_markers_are_returned_unparsed_with_commen
 
 def test_marker_for_native_only_event_or_missing_field_is_unparsed():
     def c(i, obj):
-        return {"id": i, "createdAt": "2026-10-01T00:00:00Z", "author": {"login": "x"}, "authorAssociation": "MEMBER",
+        return {"id": i, "createdAt": "2026-10-01T00:00:00Z", "author": {"login": "x"}, "authorAssociation": "OWNER",
                 "body": f"<!-- foundry-deck: {json.dumps(obj)} -->\nline\n"}
     base = {"v": 1, "event": "ready", "idempotency_key": "k", "target": None, "blocking": None,
             "at": "x", "by": "x", "evidence": []}
@@ -347,7 +347,7 @@ def test_reblock_then_ack_posts_a_second_blocker_ack():
 def _ack_marker(i, day, key):
     obj = {"v": 1, "event": "blocker_ack", "idempotency_key": key, "target": OTHER, "blocking": OTHER,
            "at": "x", "by": "alice", "evidence": []}
-    return {"id": i, "createdAt": f"2026-10-{day:02d}T12:00:00Z", "author": {"login": "alice"}, "authorAssociation": "MEMBER",
+    return {"id": i, "createdAt": f"2026-10-{day:02d}T12:00:00Z", "author": {"login": "alice"}, "authorAssociation": "OWNER",
             "body": f"<!-- foundry-deck: {json.dumps(obj)} -->\nack\n"}
 
 
@@ -499,7 +499,7 @@ def test_trust_rules_me_operators_and_association_fallback():
     c = _cm("alice", _obj("ack"), "2026-11-01T00:00:00Z", "c1")
     assert de.Trust(me="alice")(c) and de.Trust(operators=["ALICE"])(c)
     assert not de.Trust()(c)                                   # no association, no listing
-    assert de.Trust()(dict(c, authorAssociation="COLLABORATOR"))
+    assert de.Trust()(dict(c, authorAssociation="OWNER"))
     # with operators configured the association fallback is OFF
     assert not de.Trust(operators=["bob"])(dict(c, authorAssociation="OWNER"))
     assert not de.Trust()(dict(c, authorAssociation="CONTRIBUTOR"))
@@ -560,3 +560,36 @@ def test_load_scope_rejects_an_owner_that_is_not_a_plain_login(tmp_path):
     assert ghc.load_scope(str(tmp_path))[1] is not None
     f.write_text(json.dumps({"github_scope": {"owner": "o -f x=y", "planning_repo": "p"}}))
     assert ghc.load_scope(str(tmp_path))[1] is None
+
+
+# --- security follow-up of #286: the no-operators fallback is repository WRITE permission --------------
+
+def _perm_cm(login, assoc, repo="o/r"):
+    return dict(_cm(login, _obj("ack"), "2026-11-01T00:00:00Z", "c1", assoc),
+                url=f"https://github.com/{repo}/issues/7#issuecomment-1")
+
+
+def test_fallback_member_without_write_is_foreign_and_write_collaborator_is_trusted():
+    seen = []
+
+    def perm(repo, login):
+        seen.append((repo, login))
+        return {"member": "read", "writer": "write", "boss": "admin", "boom": None}[login] if login != "err" else (_ for _ in ()).throw(RuntimeError("x"))
+    t = de.Trust(permission=perm)
+    assert not t(_perm_cm("member", "MEMBER"))
+    assert not t(_perm_cm("member", "COLLABORATOR"))
+    assert t(_perm_cm("writer", "COLLABORATOR")) and t(_perm_cm("boss", "MEMBER"))
+    assert not t(_perm_cm("err", "MEMBER"))                    # failed lookup = untrusted
+    assert not t(_perm_cm("writer", "CONTRIBUTOR")) and not t(_perm_cm("writer", "NONE"))
+    assert t(_perm_cm("anyone", "OWNER"))
+    n = len(seen)
+    t(_perm_cm("writer", "COLLABORATOR"))
+    assert len(seen) == n                                       # cached per run
+    assert not de.Trust()(_perm_cm("writer", "COLLABORATOR"))   # no lookup available => OWNER only
+    assert not t(dict(_perm_cm("writer", "COLLABORATOR"), url=""))   # repo unknown => untrusted
+
+
+def test_configured_operators_disable_the_write_fallback():
+    t = de.Trust(operators=["bob"], permission=lambda r, l: "admin")
+    assert not t(_perm_cm("writer", "COLLABORATOR")) and not t(_perm_cm("o", "OWNER"))
+    assert t(_perm_cm("bob", "NONE"))

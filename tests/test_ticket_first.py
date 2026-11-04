@@ -363,3 +363,63 @@ def test_release_cadence_refuses_within_30_days_unless_hotfix(tmp_path):
     _git(root, "tag", "staging-20261007")
     ok, detail = fcr.release_cadence(str(root), "1.1.0")
     assert not ok and "v1.0.0" in detail
+
+
+# --- security follow-up of #286: the vetted Done-means digest is enforced where the command EXECUTES ------
+
+def _start_world(tmp_path, monkeypatch, body_cmd, editor, claim_cmd="true", author="alice", trusted=("alice",)):
+    root = _repo(tmp_path)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    body = "## Done means\n```\n%s\n```\n" % body_cmd
+    issue = {"number": 7, "title": "t", "body": body, "url": "https://github.com/o/r/issues/7",
+             "author": {"login": author}, "state": "OPEN"}
+    monkeypatch.setattr(foundry_ticket, "_gh_json", lambda a: issue)
+    digest = foundry_ticket.store.command_digest(body_cmd)
+    monkeypatch.setattr(foundry_ticket, "read_issue", lambda run, repo, n, **k: {"done_sha256": digest, "last_edited_by": editor})
+    monkeypatch.setattr(foundry_ticket, "author_trusted", lambda repo, login, gh_json=None: (login in trusted, "w"))
+    if claim_cmd is not None:
+        cf = Path(_git(root, "rev-parse", "--absolute-git-dir")) / "foundry-claims.json"
+        cf.write_text(json.dumps({"o/r#7": {"done_digest": foundry_ticket.store.command_digest(claim_cmd)}}))
+    return root
+
+
+def test_start_refuses_a_post_claim_edit_by_an_untrusted_editor(tmp_path, monkeypatch):
+    root = _start_world(tmp_path, monkeypatch, "true", editor="mallory", claim_cmd=None)
+    with pytest.raises(SystemExit) as e:
+        foundry_ticket.cmd_start(["7"])
+    assert "mallory" in str(e.value) and foundry_ticket.load(root) is None
+
+
+def test_start_refuses_a_changed_command_even_from_a_trusted_author_and_with_the_flag(tmp_path, monkeypatch):
+    root = _start_world(tmp_path, monkeypatch, "touch PWNED", editor="alice", claim_cmd="true")
+    for argv in (["7"], ["7", "--trust-author"]):
+        with pytest.raises(SystemExit) as e:
+            foundry_ticket.cmd_start(argv)
+        assert "done-means-changed" in str(e.value)
+    assert foundry_ticket.load(root) is None
+
+
+def test_start_happy_path_still_records_and_run_done_executes(tmp_path, monkeypatch):
+    root = _start_world(tmp_path, monkeypatch, "true", editor="alice", claim_cmd="true")
+    assert foundry_ticket.cmd_start(["7"]) == 0
+    doc = foundry_ticket.load(root)
+    assert foundry_ticket.run_done(doc, root)[0] == 0
+
+
+def test_run_done_and_stop_hook_refuse_when_the_stored_command_differs_from_the_claim(tmp_path, monkeypatch):
+    root = _repo(tmp_path)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    cmd = "touch " + str(root / "PWNED4")
+    tf = _ticket(root, done=cmd)
+    doc = json.loads(tf.read_text())
+    doc.update({"repo": "o/r", "issue": 7})
+    tf.write_text(json.dumps(doc))
+    cf = Path(_git(root, "rev-parse", "--absolute-git-dir")) / "foundry-claims.json"
+    cf.write_text(json.dumps({"o/r#7": {"done_digest": foundry_ticket.store.command_digest("true")}}))
+    rc, why = foundry_ticket.run_done(doc, root)
+    assert rc == 125 and "done-means-changed" in why
+    p = _hook("foundry-ticket-stop.py", {}, root)
+    assert p.returncode == 0 and "done-means-changed" in p.stderr and not (root / "PWNED4").exists()
+    # claim digest matching the stored command: the hook runs it
+    cf.write_text(json.dumps({"o/r#7": {"done_digest": foundry_ticket.store.command_digest(cmd)}}))
+    assert _hook("foundry-ticket-stop.py", {}, root).returncode == 0 and (root / "PWNED4").exists()

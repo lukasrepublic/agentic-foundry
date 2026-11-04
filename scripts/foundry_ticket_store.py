@@ -56,6 +56,19 @@ def claims_file(root: Path | None = None) -> Path | None:
     return _git_path(CLAIMS_BASENAME, root)
 
 
+def claim_done_digest(root: Path | None, repo: str, number) -> str | None:
+    """The vetted Done-means digest a `claim` recorded for repo#number in the git dir, or None when there is
+    no claim record carrying one (the unclaimed path keeps its existing behaviour)."""
+    p = claims_file(root)
+    try:
+        d = json.loads(p.read_text(encoding="utf-8")) if p and p.is_file() else {}
+        rec = d.get(f"{repo}#{number}") if isinstance(d, dict) else None
+    except (OSError, ValueError):
+        return None
+    dd = rec.get("done_digest") if isinstance(rec, dict) else None
+    return dd if isinstance(dd, str) and dd else None
+
+
 def lease_file(root: Path | None = None) -> Path:
     return (root or project_root()) / LEASE_RELPATH
 
