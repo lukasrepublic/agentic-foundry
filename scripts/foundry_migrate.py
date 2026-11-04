@@ -67,10 +67,10 @@ SEG_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 OWNER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
 PRIORITY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._-]{0,31}$")
 REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+$")
-# Guard pattern G. The spec quotes `(?i)^\s{0,3}(#{1,6}\s+)?(done means|paper allowed)`; this is a strict
+# Guard pattern G (any run of hashes: the ticket tool's heading regexes take `##+`). The spec quotes `(?i)^\s{0,3}(#{1,6}\s+)?(done means|paper allowed)`; this is a strict
 # superset of it (optional whitespace after the hashes, any run of blanks inside the phrase), so it also
 # covers every heading the ticket tool's own `^##+[ \t]*done[ \t]+means\b` / paper-allowed regexes match.
-GUARD_G = re.compile(r"(?i)^\s{0,3}(#{1,6}[ \t]*)?(done[ \t]+means|paper[ \t]+allowed)")
+GUARD_G = re.compile(r"(?i)^\s{0,3}(#+[ \t]*)?(done[ \t]+means|paper[ \t]+allowed)")
 MARKER_ANY = re.compile(r"foundry-migrated:")
 FLAG_ORDER = ("likely-shipped", "coupled", "program-closed", "program-unresolved")
 FLOOR_PHRASES = ("front-authoriz", "merge floor", "merge-floor", "security review", "security-review",
@@ -129,10 +129,25 @@ def dump_yaml(data) -> str:
     return yaml.safe_dump(data, sort_keys=False, default_flow_style=False, allow_unicode=True)
 
 
+def ensure_dir(ws: str, d: str):
+    """makedirs, but containment is decided on the nearest existing ancestor BEFORE anything is created,
+    and the migration directory itself may never be a symlink."""
+    if os.path.islink(os.path.join(ws, MIG_DIR)):
+        raise PermissionError(f"{MIG_DIR} is a symlink")
+    cur = d
+    while not os.path.lexists(cur):
+        cur = os.path.dirname(cur)
+    if not os.path.isdir(cur) or not inside(ws, cur):
+        raise PermissionError(f"refusing to create a directory outside the workspace: {d}")
+    os.makedirs(d, exist_ok=True)
+    if not inside(ws, d):
+        raise PermissionError(f"refusing to use a directory outside the workspace: {d}")
+
+
 def atomic_write(ws: str, rel: str, data: bytes, mode_from: str | None = None):
     target = os.path.join(ws, rel)
     parent = os.path.dirname(target)
-    os.makedirs(parent, exist_ok=True)
+    ensure_dir(ws, parent)
     if not inside(ws, parent) or (os.path.lexists(target) and not inside(ws, target)):
         raise PermissionError(f"refusing to write outside the workspace: {rel}")
     fd, tmp = tempfile.mkstemp(dir=parent, prefix=".migrate-")
@@ -579,6 +594,8 @@ def authority_state(ctx: Ctx):
             return "unreadable", f"missing-field:{k}"
     if data.get("workspace") != ctx.workspace:
         return "unreadable", "foreign-workspace"
+    if data.get("recorded_by") not in operators(ctx.ws):
+        return "unreadable", "recorded-by-not-registered"
     return "present", None
 
 
@@ -652,10 +669,15 @@ def bears_marker(issue: dict, marker: str) -> bool:
 
 
 def adoptable(issue, login, reopen):
-    """(ok, token). token is the refusal token when not ok."""
+    """(ok, token). token is the refusal token when not ok.
+
+    Trust choice (fix round, deliberately STRICTER than the spec's OWNER/MEMBER/COLLABORATOR rule): a
+    marker issue is adopted only when its author IS the authenticated `gh` login. The ticket tool trusts
+    write/maintain/admin, but reading a collaborator permission is not in the AC-CUT-3 gh read allowlist
+    and this tool adds no call, so the association is not trusted at all. The refusal keeps the spec's
+    token `marker-issue-untrusted` and carries the detail `adoption-untrusted`."""
     user = (issue.get("user") or {}).get("login")
-    assoc = issue.get("author_association")
-    if not ((login and user == login) or assoc in TRUSTED_ASSOC):
+    if not (login and user == login):
         return False, "marker-issue-untrusted"
     if issue.get("state") == "closed" and issue.get("state_reason") in ("not_planned", "duplicate") and not reopen:
         return False, "marker-issue-closed-not-planned"
@@ -679,8 +701,14 @@ def spec_h1_and_acs(ctx: Ctx, spec_ref: str):
             if re.match(r"^\s*[-*]\s+\*\*AC-[A-Za-z0-9]+-\d+[a-z]?\*\*", line):
                 cur = [line]
                 acs.append(cur)
-            elif cur is not None:
+            elif cur is not None and (not line.strip() or line[0] in " \t"):
                 cur.append(line)
+            elif cur is not None:
+                # a non-continuation line ends the AC; a line the guard would refuse is kept in the body so
+                # the item is refused (body-guard) instead of the heading being silently dropped
+                if GUARD_G.match(line) or MARKER_ANY.search(line):
+                    cur.append(line)
+                cur = None
         acs = ["\n".join(a).rstrip() for a in acs]
     return h1, acs
 
@@ -930,6 +958,8 @@ def closed_issue_check(ctx, gh, idx, offline, issues=None):
         return {"status": "skipped", "reason": "offline"}, {}
     if not repo:
         return {"status": "skipped", "reason": "target-repository-unknown"}, {}
+    if not isinstance(repo, str) or not REPO_RE.match(repo):
+        return {"status": "skipped", "reason": "target-repo-invalid"}, {}
     if not migrated:
         return {"status": "ok", "checked": 0}, {}
     if issues is None:
@@ -964,7 +994,8 @@ def diagnose(ctx, inv, gh, offline, issues=None):
             reason = "no-migrated_to-entry"
         else:
             iss = by_url.get(e.get("issue_url"))
-            if iss and iss.get("state") == "closed" and iss.get("state_reason") == "not_planned":
+            # `duplicate` counts like `not_planned` (adoption refuses both): such an issue is not authority
+            if iss and iss.get("state") == "closed" and iss.get("state_reason") in ("not_planned", "duplicate"):
                 reason = "issue-closed-not-planned"
         if reason:
             diags.append({"name": "migrated-item-reactivated", "next_action": reactivate_next,
@@ -1220,11 +1251,42 @@ def cmd_preview(ctx, args, gh):
     return 0
 
 
-def local_dirty(ctx, idx):
+APPENDED_LINE = re.compile(r'^(migrated_to:|  "[^"\n]*": "[^"\n]*")$')
+
+
+def pure_migrated_to_append(ctx, rel) -> bool:
+    """True when the working copy of `rel` is the HEAD blob plus appended migrated_to lines only."""
+    rc, head, _ = ctx.git("show", f"HEAD:{rel}")
+    if rc != 0:
+        return False
+    try:
+        with open(os.path.join(ctx.ws, rel), "rb") as fh:
+            work = fh.read().decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    if not work.startswith(head) or work == head:
+        return False
+    tail = work[len(head):]
+    if head and not head.endswith("\n"):
+        if not tail.startswith("\n"):
+            return False
+        tail = tail[1:]
+    lines = tail.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return bool(lines) and all(APPENDED_LINE.match(l) for l in lines)
+
+
+def local_dirty(ctx, idx, inv=None):
     rc, out, _ = ctx.git("status", "--porcelain", "-z", "--untracked-files=no")
     if rc != 0:
         return True
-    allowed = {f".foundry/releases/{i.split('/')[0]}/release.yaml" for i in ((idx or {}).get("items") or {})}
+    rids = {i.split("/")[0] for i in ((idx or {}).get("items") or {})}
+    if inv is not None:
+        for (d, kind), m in inv.manifests.items():
+            if kind == "release.yaml" and m.ok and "migrated_to" in m.data:
+                rids.add(d)
+    allowed = {f".foundry/releases/{d}/release.yaml" for d in rids}
     toks = out.split("\0")
     paths = []
     k = 0
@@ -1237,7 +1299,13 @@ def local_dirty(ctx, idx):
                 if k < len(toks):
                     paths.append(toks[k])
         k += 1
-    return any(not (p.startswith(MIG_DIR + "/") or p in allowed) for p in paths)
+    for p in paths:
+        if p.startswith(MIG_DIR + "/"):
+            continue
+        if p in allowed and pure_migrated_to_append(ctx, p):
+            continue
+        return True
+    return False
 
 
 def head_on_default(ctx) -> bool:
@@ -1281,11 +1349,12 @@ def cmd_cutover_plan_or_apply(ctx, args, gh_ro, gh_rw):
     lock_path = os.path.join(ctx.ws, MIG_DIR, ".lock")
     try:
         if apply_:
-            os.makedirs(os.path.dirname(lock_path), exist_ok=True)
-            if not inside(ctx.ws, os.path.dirname(lock_path)):
-                print("migration directory resolves outside the workspace", file=sys.stderr)
+            try:
+                ensure_dir(ctx.ws, os.path.dirname(lock_path))
+                lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o644)
+            except OSError as exc:      # PermissionError (unsafe dir) and ELOOP (symlinked lock) both land here
+                print(f"REFUSED migration-directory-unsafe ({exc})")
                 return 1
-            lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
             try:
                 fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError:
@@ -1320,7 +1389,11 @@ def _plan_or_apply(ctx, args, gh, apply_, overrides, refuse, reasons):
     idx, idx_err = load_index(ws)
     if idx_err:
         refuse("index-unreadable", None, idx_err)
-    repo = args.repo or (idx or {}).get("target_repo")
+    itr = (idx or {}).get("target_repo")
+    if itr is not None and (not isinstance(itr, str) or not REPO_RE.match(itr)):
+        refuse("target-repo-invalid", None, "index target_repo is not OWNER/NAME")
+        return _report_refusals(reasons)
+    repo = args.repo or itr
     if not repo:
         print("--repo OWNER/NAME is required (no index records a target repository yet)", file=sys.stderr)
         return 2
@@ -1346,9 +1419,13 @@ def _plan_or_apply(ctx, args, gh, apply_, overrides, refuse, reasons):
         refuse("schema-newer")
     if not head_on_default(ctx):
         refuse("head-not-on-default-branch")
-    if local_dirty(ctx, idx):
+    if local_dirty(ctx, idx, inv):
         refuse("working-tree-dirty")
 
+    for oi, fl in sorted(overrides.items()):
+        for f in sorted(fl):
+            if oi not in inv.items or f not in inv.items[oi].flags:
+                refuse("override-flag-unknown", oi, f"{oi}={f}")
     # item-level, local
     plans, complete = {}, set()
     for iid in proc:
@@ -1363,10 +1440,9 @@ def _plan_or_apply(ctx, args, gh, apply_, overrides, refuse, reasons):
         if full and iid in sel:
             complete.add(iid)
             continue
-        if iid in sel:
-            for f in it.flags:
-                if f not in overrides.get(iid, set()):
-                    refuse(f"flagged:{f}", iid)
+        for f in it.flags:                     # every processed item, selected or pending
+            if f not in overrides.get(iid, set()):
+                refuse(f"flagged:{f}", iid)
         pl = build_plan(ctx, inv, idx, it, args, overrides)
         plans[iid] = pl
         for p in pl.problems:
@@ -1413,19 +1489,28 @@ def _plan_or_apply(ctx, args, gh, apply_, overrides, refuse, reasons):
     if issues is not None:
         for iid, pl in plans.items():
             hits = [i for i in issues if bears_marker(i, pl.marker)]
-            recorded = item_url(inv, idx, iid)
+            recorded = item_url(inv, idx, iid) or (load_sidecar(ws, iid)[0] or {}).get("issue_url")
             if len(hits) > 1:
                 refuse("marker-ambiguous", iid, ", ".join(str(h.get("html_url")) for h in hits))
             elif len(hits) == 1:
                 ok, tok = adoptable(hits[0], login, args.reopen)
                 if not ok:
-                    refuse(tok, iid, str(hits[0].get("html_url")))
+                    refuse(tok, iid, ("adoption-untrusted: " if tok == "marker-issue-untrusted" else "")
+                           + str(hits[0].get("html_url")))
+                elif not guard_body(hits[0].get("body") or "", pl.marker):
+                    refuse("marker-issue-body-guard", iid, str(hits[0].get("html_url")))
                 elif recorded and recorded != hits[0].get("html_url"):
                     refuse("marker-ambiguous", iid, f"recorded {recorded} vs {hits[0].get('html_url')}")
                 else:
                     decisions[iid] = ("adopt", hits[0])
+            elif recorded:
+                known = {i.get("html_url") for i in issues}
+                if issue_number(recorded, repo) is None or recorded not in known:
+                    refuse("recorded-url-foreign", iid, str(recorded))
+                else:
+                    decisions[iid] = ("recorded", recorded)
             else:
-                decisions[iid] = ("recorded", recorded) if recorded else ("create", None)
+                decisions[iid] = ("create", None)
     if reasons:
         return _report_refusals(reasons)
 
@@ -1525,14 +1610,24 @@ def _apply(ctx, args, inv, idx0, repo, order, plans, complete, decisions, overri
                     break
             maybe_crash(2)
             # step 3
-            sc = dict(pl.sidecar)
-            sc["issue_url"] = url
-            sc["migrated_at"] = now()
-            atomic_write(ws, sidecar_rel(iid), dump_yaml(sc).encode())
-            wrote = True
+            old_sc, _ = load_sidecar(ws, iid)
+            if old_sc is not None and old_sc.get("issue_url") == url:
+                pass                                  # complete sidecar: a resume leaves it byte-identical
+            else:
+                sc = dict(pl.sidecar)
+                sc["issue_url"] = url
+                sc["migrated_at"] = (old_sc or {}).get("migrated_at") or now()
+                if old_sc and isinstance(old_sc.get("flags_overridden"), list):
+                    sc["flags_overridden"] = old_sc["flags_overridden"]
+                atomic_write(ws, sidecar_rel(iid), dump_yaml(sc).encode())
+                wrote = True
             maybe_crash(3)
             # step 4
             if manifest_migrated_to(inv, iid) is None:
+                if already_migrated:                  # heal: the index must not say migrated until the manifest does
+                    items[iid] = {"status": "pending", "issue_url": url, "updated_at": now()}
+                    write_index()
+                    wrote = True
                 if not append_migrated_to(ctx, inv, it, url):
                     print(f"REFUSED migrated-to-reparse-mismatch item={iid}")
                     rc_final = 1
@@ -1599,8 +1694,8 @@ def operators(ws):
     data, err = load_yaml_rel(ws, ".claude/foundry-operators.json")
     if err or not isinstance(data, dict):
         return set()
-    ops = data.get("operators")
-    return set(ops) if isinstance(ops, dict) else {k for k in data if isinstance(k, str)}
+    ops = data.get("operators")        # only the `operators` mapping counts; anything else fails closed
+    return {k for k in ops if isinstance(k, str)} if isinstance(ops, dict) else set()
 
 
 def cmd_record(ctx, args):
@@ -1647,11 +1742,12 @@ def cmd_record(ctx, args):
         print(text, end="")
         return 0
     mig = os.path.join(ws, MIG_DIR)
-    os.makedirs(mig, exist_ok=True)
-    if not inside(ws, mig):
-        print("REFUSED migration-directory-outside-workspace")
+    try:
+        ensure_dir(ws, mig)
+        lock_fd = os.open(os.path.join(mig, ".lock"), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o644)
+    except OSError as exc:
+        print(f"REFUSED migration-directory-unsafe ({exc})")
         return 1
-    lock_fd = os.open(os.path.join(mig, ".lock"), os.O_CREAT | os.O_RDWR, 0o644)
     try:
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)

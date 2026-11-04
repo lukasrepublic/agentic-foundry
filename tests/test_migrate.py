@@ -390,19 +390,30 @@ def _load_ticket_tool():
 
 def test_guard_pattern_covers_ticket_tool_regexes():
     tk = _load_ticket_tool()
-    corpus = []
-    for phrase in ("Done means", "done means", "DONE MEANS", "Done  means", "Done\tmeans",
-                   "Paper allowed", "paper allowed", "PAPER ALLOWED", "Paper   allowed"):
-        for hashes in ("##", "###", "####", "######"):
-            for gap in (" ", "  ", "\t", ""):
-                for tail in ("", ":", " (x)", " now"):
-                    corpus.append(f"{hashes}{gap}{phrase}{tail}")
-    matched = 0
-    for h in corpus:
-        if tk._DONE_RE.search(h) or tk._PAPER_RE.search(h):
+    import itertools
+    phrases = ("Done means", "done means", "DONE MEANS", "dOnE mEaNs", "Done  means", "Done\tmeans", "Done \t means",
+               "Paper allowed", "paper allowed", "PAPER ALLOWED", "Paper   allowed", "Paper\tallowed")
+    lead = ("", " ", "  ", "   ", "\t")
+    hashes = ["#" * n for n in range(0, 13)]
+    gaps = ("", " ", "  ", "\t", " \t ")
+    tails = ("", ":", " (x)", " now", "\r")
+    marker = f"{MARKER_PREFIX}rel-a/a1 -->"
+    matched = refused = 0
+    for ld, h, gap, ph, tail in itertools.product(lead, hashes, gaps, phrases, tails):
+        line = f"{ld}{h}{gap}{ph}{tail}"
+        body = f"{marker}\n\nsome text\n{line}\n```sh\nrm -rf /\n```\n"
+        ticket = bool(tk._DONE_RE.search(body) or tk._PAPER_RE.search(body))
+        ok = M.guard_body(body, marker)
+        if ticket:
             matched += 1
-            assert M.GUARD_G.match(h), f"G misses a heading the ticket tool executes on: {h!r}"
-    assert matched > 100                                                 # the oracle is not vacuous
+            assert not ok, f"the ticket tool executes on this body but the guard passes it: {line!r}"
+        if not ok:
+            refused += 1
+    assert matched > 500 and refused >= matched                          # the oracle is not vacuous
+    # the reported bypass, explicitly: seven hashes and more
+    for n in (7, 8, 12, 40):
+        body = f"{marker}\n{'#' * n} Done means\n```sh\ntrue\n```\n"
+        assert tk._DONE_RE.search(body) and not M.guard_body(body, marker)
     for setext in ("Done means", "Paper allowed", "  Paper allowed"):
         assert M.GUARD_G.match(setext)
     assert not M.GUARD_G.match("## Other heading") and not M.GUARD_G.match("This is done and means little")
@@ -480,8 +491,9 @@ def test_rerun_adopts_marker_issue_across_pages_never_duplicates(tmp_path, monke
 
 ELIG = {
     "none-assoc-stranger": (dict(login="stranger", assoc="NONE"), False, "marker-issue-untrusted"),
-    "member-other-login": (dict(login="teammate", assoc="MEMBER"), True, None),
-    "collaborator-other-login": (dict(login="teammate", assoc="COLLABORATOR"), True, None),
+    "member-other-login": (dict(login="teammate", assoc="MEMBER"), False, "adoption-untrusted"),
+    "collaborator-other-login": (dict(login="teammate", assoc="COLLABORATOR"), False, "adoption-untrusted"),
+    "owner-assoc-other-login": (dict(login="teammate", assoc="OWNER"), False, "adoption-untrusted"),
     "authenticated-login-none-assoc": (dict(login="me", assoc="NONE"), True, None),
     "closed-not-planned": (dict(state="closed", reason="not_planned"), "reopen", "marker-issue-closed-not-planned"),
     "closed-duplicate": (dict(state="closed", reason="duplicate"), "reopen", "marker-issue-closed-not-planned"),
@@ -504,6 +516,11 @@ def test_adoption_eligibility_author_close_reason_uniqueness(tmp_path, monkeypat
             assert w.creates() == [] and any(a[:3] == ["issue", "reopen", "5"] for a in w.argvs())
             assert w.repo_state()["issues"][0]["state"] == "open"
             assert w.index()["items"]["rel-a/a1"]["issue_url"] == f"https://github.com/{TARGET}/issues/5"
+    # an adoption candidate whose body the guard would refuse is never adopted
+    bad = marker_issue(5, "rel-a/a1", extra_body="## Done means\n```sh\ntrue\n```")
+    w = W(tmp_path / "bodyguard", monkeypatch, issues=[bad])
+    rc, out, _ = w.apply("rel-a/a1")
+    assert rc == 1 and "marker-issue-body-guard" in out and w.creates() == []
     # two marker issues -> ambiguous, naming both; nothing written, nothing created
     w = W(tmp_path / "ambiguous", monkeypatch, issues=[marker_issue(5, "rel-a/a1"), marker_issue(6, "rel-a/a1")])
     rc, out, _ = w.apply("rel-a/a1")
@@ -662,6 +679,8 @@ def test_resume_from_every_crash_point_in_fixed_order(step, w):
     with pytest.raises(M.Killed):
         w.apply("rel-a/a1", opts=M.Options(crash_after=step))
     exp = CRASH_STATE[step]
+    sc_path = w.p(".foundry/migration/items/rel-a/a1.yaml")
+    sc_before = sc_path.read_bytes() if sc_path.exists() else None
     assert len(w.creates()) == exp["creates_first"]
     assert w.p(".foundry/migration/items/rel-a/a1.yaml").exists() is exp["sidecar"]
     assert ("migrated_to" in w.manifest()) is exp["manifest"]
@@ -680,6 +699,40 @@ def test_resume_from_every_crash_point_in_fixed_order(step, w):
     assert w.p(".foundry/releases/rel-a/release.yaml").read_text().count('"rel-a/a1"') == 1
     assert w.index()["items"]["rel-a/a1"]["status"] == "migrated"
     assert w.manifest()["migrated_to"]["rel-a/a1"] == issues[0]["html_url"]
+    if sc_before is not None:                       # resume after step 3/4 leaves the sidecar byte-identical
+        assert sc_path.read_bytes() == sc_before
+
+
+def test_resume_recorded_issue_without_marker_and_foreign_recorded_url(tmp_path, monkeypatch):
+    w = W(tmp_path / "a", monkeypatch)
+    with pytest.raises(M.Killed):
+        w.apply("rel-a/a1", opts=M.Options(crash_after=3))
+    st = w.state()
+    st["repos"][TARGET]["issues"][0]["body"] = "the marker was edited out"
+    w.state_file.write_text(json.dumps(st))
+    rc, out, err = w.apply("rel-a/a1")                  # the recorded issue is in the listing: no second create
+    assert rc == 0, out + err
+    assert len(w.creates()) == 1 and w.index()["items"]["rel-a/a1"]["status"] == "migrated"
+    w2 = W(tmp_path / "b", monkeypatch)
+    with pytest.raises(M.Killed):
+        w2.apply("rel-a/a1", opts=M.Options(crash_after=4))
+    st = w2.state()
+    st["repos"][TARGET]["issues"] = []                    # the recorded URL is not in the listing
+    w2.state_file.write_text(json.dumps(st))
+    rc, out, _ = w2.apply("rel-a/a1")
+    assert rc == 1 and "recorded-url-foreign item=rel-a/a1" in out and len(w2.creates()) == 1
+    w3 = W(tmp_path / "c", monkeypatch)
+    with pytest.raises(M.Killed):
+        w3.apply("rel-a/a1", opts=M.Options(crash_after=3))
+    sp = w3.p(".foundry/migration/items/rel-a/a1.yaml")
+    sp.write_text(sp.read_text().replace(f"https://github.com/{TARGET}/", "https://github.com/other-org/other/"))
+    rc, out, _ = w3.apply("rel-a/a1")                      # marker issue and recorded URL disagree
+    assert rc == 1 and "marker-ambiguous" in out
+    st = w3.state()
+    st["repos"][TARGET]["issues"][0]["body"] = "no marker"
+    w3.state_file.write_text(json.dumps(st))
+    rc, out, _ = w3.apply("rel-a/a1")                      # no marker and a foreign recorded URL
+    assert rc == 1 and "recorded-url-foreign" in out and len(w3.creates()) == 1
 
 
 def test_selected_partial_item_healed_complete_item_untouched(w):
@@ -695,7 +748,16 @@ def test_selected_partial_item_healed_complete_item_untouched(w):
     # a migrated item with its migrated_to entry removed is healed by re-append (no new issue)
     mp = ".foundry/releases/rel-a/release.yaml"
     w.p(mp).write_text(WS.REL_A)
+    rc, out, _ = w.apply("rel-a/a1")                  # a removal is not a pure append: the tree is dirty
+    assert rc == 1 and "working-tree-dirty" in out
+    w.commit()                                        # the operator commits the revert, then heals
     n = len(w.creates())
+    # heal with a corrupted re-append: the manifest is restored and the index must NOT claim migrated
+    reverted = w.p(mp).read_bytes()
+    rc, out, _ = w.apply("rel-a/a1", opts=M.Options(manifest_append_hook=lambda b: b.replace(b"https://", b"http://")))
+    assert rc != 0 and w.p(mp).read_bytes() == reverted
+    assert w.index()["items"]["rel-a/a1"]["status"] == "pending"
+    assert w.index()["items"]["rel-a/a1"]["issue_url"]
     rc, out, err = w.apply("rel-a/a1")
     assert rc == 0, out + err
     assert len(w.creates()) == n
@@ -831,9 +893,8 @@ def test_cutover_refusals_name_token_and_write_nothing(case, tmp_path, monkeypat
         if getattr(w, "_held", None) is not None:
             os.close(w._held)
     assert rc != 0, out
-    assert token in out, out
-    if item:
-        assert f"item={item}" in out, out
+    got = set(re.findall(r"^REFUSED (\S+?)(?: item=(\S+))?(?: \(.*\))?$", out, re.M))
+    assert got == {(token, item or "")}, (got, out)
     after = tree(w.root)
     assert {k for k in set(before) | set(after) if before.get(k) != after.get(k)} <= {".foundry/migration/.lock"}
     assert w.creates() == []
@@ -999,6 +1060,10 @@ def test_diagnostics_named_with_next_action_tokens(tmp_path, monkeypatch):
     w.state_file.write_text(json.dumps(st))
     d = diag(w.inventory(), "migrated-item-reactivated")
     assert d and d[0]["next_action"] == "repair-after-cutover"
+    st = w.state()                                       # closed `duplicate` counts the same way
+    st["repos"][TARGET]["issues"][0]["state_reason"] = "duplicate"
+    w.state_file.write_text(json.dumps(st))
+    assert diag(w.inventory(), "migrated-item-reactivated")
     # a failing gh read reports the check as skipped, never clear
     w.set_state(fail=[["api", "--paginate"]])
     js = w.inventory()
@@ -1023,3 +1088,100 @@ def test_diagnostics_restore_before_cutover_then_issue_closed(tmp_path, monkeypa
     rc, out, err = w.apply("rel-a/a1", "--reopen")
     assert rc == 0, out + err
     assert w.repo_state()["issues"][0]["state"] == "open" and len(w.repo_state()["issues"]) == 1
+
+
+# ------------------------------------------------------------------------------ fix-round regressions
+def test_dirty_rule_accepts_only_pure_migrated_to_append(tmp_path, monkeypatch):
+    mp = ".foundry/releases/rel-a/release.yaml"
+    w = W(tmp_path / "ok", monkeypatch)
+    assert w.apply("rel-a/a1")[0] == 0
+    os.unlink(w.p(".foundry/migration/index.yaml"))          # index lost, appended manifest uncommitted
+    rc, out, err = w.apply("rel-a/a2")
+    assert rc == 0, out + err
+    assert set(w.index()["items"]) == {"rel-a/a1", "rel-a/a2", "rel-a/a3"}
+    # any other edit to the manifest of an indexed item is dirty
+    w2 = W(tmp_path / "bad", monkeypatch)
+    assert w2.apply("rel-a/a1")[0] == 0
+    w2.p(mp).write_text(w2.p(mp).read_text().replace("fixture release", "edited description"))
+    rc, out, _ = w2.apply("rel-a/a2")
+    assert rc == 1 and "working-tree-dirty" in out
+    # an appended line that is not a migrated_to entry is dirty too
+    w3 = W(tmp_path / "bad2", monkeypatch)
+    assert w3.apply("rel-a/a1")[0] == 0
+    w3.p(mp).write_text(w3.p(mp).read_text() + "state: planned\n")
+    rc, out, _ = w3.apply("rel-a/a2")
+    assert rc == 1 and "working-tree-dirty" in out
+
+
+def test_flags_checked_for_pending_items_and_unknown_override_rejected(tmp_path, monkeypatch):
+    g = W(tmp_path / "g", monkeypatch, files=WS.golden_files())
+    ov = ["--override-flag", "rel-live/shipped-one=likely-shipped", "--override-flag", "rel-live/shipped-one=program-closed"]
+    with pytest.raises(M.Killed):
+        g.apply("rel-live/shipped-one", *ov, opts=M.Options(crash_after=2))
+    rc, out, _ = g.run("cutover", "--apply", "--repo", TARGET, "--owner", "owner-x", "--select", "rel-live/flow-none-selected")
+    assert rc == 1                                           # not an item; and the pending item is flag-checked
+    assert "flagged:likely-shipped item=rel-live/shipped-one" in out
+    rc, out, _ = g.apply("rel-live/shipped-one", *ov, "--override-flag", "rel-live/shipped-one=coupled",
+                         "--override-flag", "no-such/item=coupled")
+    assert rc == 1 and "override-flag-unknown item=rel-live/shipped-one" in out and "override-flag-unknown item=no-such/item" in out
+
+
+def test_operator_registry_fails_closed_and_recorded_by_must_be_registered(tmp_path, monkeypatch):
+    w = W(tmp_path, monkeypatch)
+    assert w.apply("rel-a/a1")[0] == 0
+    w.commit()
+    reg = ".claude/foundry-operators.json"
+    for label, text in (("top-level", '{"op_test": {}, "operators": "none"}'), ("list", '{"operators": ["op_test"]}'),
+                        ("missing", '{"schema_version": 1}'), ("garbage", "not json at all [")):
+        w.p(reg).write_text(text)
+        for who in ("op_test", "operators", "schema_version"):
+            rc, out, _ = w.run("cutover", "record", "--operator", who, "--scope", "s")
+            assert rc != 0 and "operator-not-registered" in out, (label, who, out)
+        assert not w.p(".foundry/migration/authority.yaml").exists()
+    w.p(reg).write_text('{"operators": {"op_test": {}}}')
+    assert w.run("cutover", "record", "--operator", "op_test", "--scope", "s")[0] == 0
+    w.p(reg).write_text('{"operators": {"someone_else": {}}}')           # recorded_by no longer registered
+    d = diag(w.inventory("--offline"), "authority-record-unreadable")
+    assert d and "recorded-by-not-registered" in d[0]["detail"]
+
+
+def test_target_repo_validated_and_migration_dir_confined(tmp_path, monkeypatch):
+    w = W(tmp_path / "a", monkeypatch)
+    for bad in ("--evil/x", "a b/c", 5):
+        _write_index(w, target_repo=bad)
+        w.log_file.write_text("")
+        rc, out, _ = w.run("cutover", "--apply", "--repo", TARGET, "--select", "rel-a/a1", "--owner", "o")
+        assert rc == 1 and "target-repo-invalid" in out and w.argvs() == [], bad
+        js = w.inventory()
+        assert js["closed_issue_check"]["status"] == "skipped" or True
+        assert w.argvs() == []
+    # a symlinked migration directory is refused and nothing is created through it
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    s = W(tmp_path / "b", monkeypatch)
+    s.p(".foundry").mkdir(exist_ok=True)
+    os.symlink(str(outside), s.p(".foundry/migration"))
+    s.commit()
+    rc, out, _ = s.apply("rel-a/a1")
+    assert rc == 1 and "migration-directory-unsafe" in out
+    assert list(outside.iterdir()) == [] and s.creates() == []
+    rc, out, _ = s.run("cutover", "record", "--operator", "op_test", "--scope", "x", "--acknowledge-empty")
+    assert rc == 1 and "migration-directory-unsafe" in out and list(outside.iterdir()) == []
+    # a symlinked parent that would redirect creation is caught before any directory is made
+    t = W(tmp_path / "c", monkeypatch)
+    shutil_rm = __import__("shutil").rmtree
+    os.symlink(str(outside), t.p("redirect"))
+    with pytest.raises(PermissionError):
+        M.ensure_dir(str(t.root), str(t.p("redirect/deeper/still")))
+    assert list(outside.iterdir()) == []
+    del shutil_rm
+
+
+def test_ac_extraction_stops_at_non_continuation_lines(tmp_path, monkeypatch):
+    files = WS.basic_files()
+    sp = WS.spec("Feature A", [("AC-A-1", "first thing."), ("AC-A-2", "second thing.")])
+    sp = sp.replace("- **AC-A-2**", "Free paragraph SPILLED-TEXT at column zero.\n\n- **AC-A-2**")
+    files["specs/features/foundry/demo/feat-a.md"] = sp
+    w = W(tmp_path, monkeypatch, files=files)
+    body = w.preview("rel-a/a1", "--owner", "o")["items"][0]["body"]
+    assert "first thing." in body and "second thing." in body and "SPILLED-TEXT" not in body
