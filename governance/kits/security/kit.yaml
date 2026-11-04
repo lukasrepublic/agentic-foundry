@@ -37,8 +37,13 @@ rules:
 checks:
 - checks/gitleaks.toml
 - checks/scorecard-map.yaml
-- checks/semgrep-ruleset.yaml
+- checks/semgrep-rules.yaml
 - checks/conftest-bundle.yaml
+- checks/asvs-level-1.yaml
+- checks/asvs-level-2.yaml
+- checks/asvs-level-3.yaml
+- checks/policy/workloads.rego
+- checks/policy/iam.rego
 - checks/ci-gitleaks.yml.tmpl
 - checks/ci-semgrep.yml.tmpl
 - checks/ci-release-attest.yml.tmpl

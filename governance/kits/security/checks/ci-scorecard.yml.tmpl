@@ -1,6 +1,8 @@
-# Enforces FG-SEC-012 to FG-SEC-021 (see scorecard-map.yaml).
+# Enforces the gated rows of scorecard-map.yaml (FG-SEC-012, 015, 017, 019, 020, 021); other rows are reported only.
 name: scorecard
 on:
+  push:
+    branches: [main]
   schedule:
     - cron: "0 6 * * 1"
 permissions:
@@ -9,7 +11,6 @@ jobs:
   analysis:
     runs-on: ubuntu-latest
     permissions:
-      security-events: write
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -17,5 +18,10 @@ jobs:
           persist-credentials: false
       - uses: ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e # v2.5.0
         with:
-          results_file: results.sarif
-          results_format: sarif
+          results_file: results.json
+          results_format: json
+          publish_results: false
+      - name: gate
+        # A check scoring -1 is inconclusive and is skipped. Gated names come from scorecard-map.yaml (gate: true).
+        run: |
+          jq -e --argjson t 7 '[.checks[] | select(.name as $n | ["Pinned-Dependencies","Vulnerabilities","Branch-Protection","Token-Permissions","Dangerous-Workflow","Security-Policy"] | index($n)) | select(.score >= 0 and .score < $t)] | length == 0' results.json

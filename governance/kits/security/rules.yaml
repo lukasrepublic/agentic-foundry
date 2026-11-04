@@ -37,15 +37,15 @@ rules:
     blueprints:
     - '*'
   check:
-    kind: lint
-    ref: governance/kits/security/checks/semgrep-ruleset.yaml
+    kind: review-lens
+    ref: agents/security-reviewer.md
   exception: *id002
   sources:
   - OWASP ASVS 5.0 project, https://github.com/OWASP/ASVS/tree/master/5.0/en (retrieved 2026-11-04)
   - Semgrep rule syntax, https://docs.semgrep.dev/writing-rules/rule-syntax (retrieved 2026-11-04)
 - id: FG-SEC-003
   title: Level 1 requirement subset is met
-  statement: Code MUST meet the level-1 requirement subset selected for the blueprint, and static rules SHOULD carry cwe and owasp metadata that maps back to a cited id.
+  statement: Code MUST meet the level-1 requirement subset listed in asvs-level-1.yaml.
   category: security
   level: 1
   floor: false
@@ -55,15 +55,15 @@ rules:
     blueprints:
     - '*'
   check:
-    kind: lint
-    ref: governance/kits/security/checks/semgrep-ruleset.yaml
+    kind: declared
+    ref: governance/kits/security/checks/asvs-level-1.yaml
   exception: *id002
   sources:
   - OWASP ASVS 5.0 project, https://github.com/OWASP/ASVS/tree/master/5.0/en (retrieved 2026-11-04)
   - Semgrep rule syntax, https://docs.semgrep.dev/writing-rules/rule-syntax (retrieved 2026-11-04)
 - id: FG-SEC-004
   title: Level 2 requirement subset is met
-  statement: Where level 2 is declared, code MUST meet the level-2 subset in addition to level 1.
+  statement: Where level 2 is declared, code MUST meet the requirements in asvs-level-2.yaml in addition to level 1.
   category: security
   level: 2
   floor: false
@@ -73,15 +73,15 @@ rules:
     blueprints:
     - '*'
   check:
-    kind: review-lens
-    ref: agents/security-reviewer.md
+    kind: declared
+    ref: governance/kits/security/checks/asvs-level-2.yaml
   exception: *id002
   sources:
   - OWASP ASVS 5.0 project, https://github.com/OWASP/ASVS/tree/master/5.0/en (retrieved 2026-11-04)
   - Foundry governance design 2026-11-04, section 2.4
 - id: FG-SEC-005
   title: Level 3 requirement subset is met
-  statement: Where level 3 is declared, code MUST meet the level-3 subset in addition to level 2 and the reviewer MUST confirm it by requirement id.
+  statement: Where level 3 is declared, code MUST meet the requirements in asvs-level-3.yaml in addition to levels 1 and 2.
   category: security
   level: 3
   floor: false
@@ -91,15 +91,15 @@ rules:
     blueprints:
     - '*'
   check:
-    kind: review-lens
-    ref: agents/security-reviewer.md
+    kind: declared
+    ref: governance/kits/security/checks/asvs-level-3.yaml
   exception: *id002
   sources:
   - OWASP ASVS 5.0 project, https://github.com/OWASP/ASVS/tree/master/5.0/en (retrieved 2026-11-04)
   - Foundry governance design 2026-11-04, section 2.4
 - id: FG-SEC-006
   title: Threat model is declared
-  statement: A threat model naming components, trust boundaries and authentication of each link MUST exist before the first release and SHOULD be hand-authored from the template.
+  statement: A threat model naming components, trust boundaries and authentication of each link MUST exist before the first release. It SHOULD be hand-authored from the template.
   category: security
   level: 2
   floor: false
@@ -163,8 +163,8 @@ rules:
     blueprints:
     - '*'
   check:
-    kind: ci
-    ref: governance/kits/security/checks/gitleaks.toml
+    kind: review-lens
+    ref: agents/security-reviewer.md
   exception: *id002
   sources:
   - OWASP ASVS 5.0 project, https://github.com/OWASP/ASVS/tree/master/5.0/en (retrieved 2026-11-04)
@@ -216,7 +216,6 @@ rules:
   status: active
   applies_to:
     paths: &id003
-    - package.json
     - '**/package.json'
     - '**/package-lock.json'
     - '**/requirements*.txt'
@@ -226,7 +225,7 @@ rules:
     - '**/go.sum'
     - '**/Cargo.toml'
     - '**/Cargo.lock'
-    - '**/Dockerfile'
+    - '**/Dockerfile*'
     - .github/workflows/**
     - '**/.github/dependabot.yml'
     blueprints:
@@ -276,7 +275,7 @@ rules:
   - NIST SP 800-218 SSDF v1.1, https://csrc.nist.gov/pubs/sp/800/218/final (retrieved 2026-11-04)
 - id: FG-SEC-015
   title: Known-vulnerable dependencies are gated
-  statement: A dependency with a known vulnerability MUST be fixed, replaced or recorded as an exception before release.
+  statement: A dependency with a known vulnerability MUST be fixed or replaced before release.
   category: security
   level: 1
   floor: false
@@ -288,7 +287,8 @@ rules:
   check:
     kind: scorecard
     ref: scorecard:Vulnerabilities
-  exception: *id002
+  exception:
+    allowed: false
   sources:
   - OpenSSF Scorecard checks, https://raw.githubusercontent.com/ossf/scorecard/main/docs/checks.md (retrieved 2026-11-04)
   - NIST SP 800-218 SSDF v1.1, https://csrc.nist.gov/pubs/sp/800/218/final (retrieved 2026-11-04)
@@ -300,7 +300,21 @@ rules:
   floor: false
   status: active
   applies_to:
-    paths: *id003
+    paths:
+    - '**/package.json'
+    - '**/package-lock.json'
+    - '**/requirements*.txt'
+    - '**/pyproject.toml'
+    - '**/poetry.lock'
+    - '**/go.mod'
+    - '**/go.sum'
+    - '**/Cargo.toml'
+    - '**/Cargo.lock'
+    - '**/Dockerfile*'
+    - .github/workflows/**
+    - '**/.github/dependabot.yml'
+    - renovate.json
+    - .github/renovate.json
     blueprints:
     - '*'
   check:
@@ -330,9 +344,9 @@ rules:
   - Foundry governance design 2026-11-04, section 2.4
 - id: FG-SEC-018
   title: Merge needs review
-  statement: A change MUST be reviewed by someone other than its author before it reaches the protected branch.
+  statement: Where more than one person can merge, a change MUST be reviewed by someone other than its author before it reaches the protected branch.
   category: security
-  level: 1
+  level: 2
   floor: false
   status: active
   applies_to:
@@ -404,9 +418,9 @@ rules:
   - OpenSSF Scorecard checks, https://raw.githubusercontent.com/ossf/scorecard/main/docs/checks.md (retrieved 2026-11-04)
 - id: FG-SEC-022
   title: Static analysis runs in CI
-  statement: Static application security analysis MUST run on every pull request using the pinned ruleset.
+  statement: Static application security analysis MUST run on every pull request, and its rules SHOULD carry cwe and owasp metadata that maps back to a cited requirement id.
   category: security
-  level: 2
+  level: 1
   floor: false
   status: active
   applies_to:
@@ -458,7 +472,7 @@ rules:
   - Foundry governance design 2026-11-04, section 2.4
 - id: FG-SEC-025
   title: Push protection is enabled
-  statement: Platform push protection for secrets SHOULD be enabled on every repository.
+  statement: Platform push protection for secrets SHOULD be enabled on every repository; the kit README describes how.
   category: security
   level: 1
   floor: false
@@ -473,6 +487,7 @@ rules:
   exception: *id002
   sources:
   - Foundry governance design 2026-11-04, section 2.4
+  - GitHub push protection, https://docs.github.com/en/code-security/secret-scanning/introduction/about-push-protection (retrieved 2026-11-04)
 - id: FG-SEC-026
   title: Agents never read a secret value
   statement: An agent MUST NOT read, print or transmit a credential value; the secret-read guard hook blocks the attempt.
@@ -566,7 +581,7 @@ rules:
   - Claude Code settings, https://code.claude.com/docs/en/settings (retrieved 2026-11-04)
 - id: FG-SEC-031
   title: Infrastructure checks use a policy bundle
-  statement: Infrastructure definitions MUST pass a versioned policy-as-code bundle referenced by tag.
+  statement: Infrastructure definitions MUST pass the policy-as-code bundle in checks/policy, or an adopter bundle that denies at least the same cases.
   category: security
   level: 2
   floor: false
@@ -584,7 +599,7 @@ rules:
     - '*'
   check:
     kind: ci
-    ref: governance/kits/security/checks/conftest-bundle.yaml
+    ref: governance/kits/security/checks/policy
   exception: *id002
   sources:
   - Conftest, https://www.conftest.dev/ (retrieved 2026-11-04)
@@ -602,13 +617,20 @@ rules:
     - '**/auth/**'
     - '**/authn/**'
     - '**/authz/**'
+    - '**/oauth/**'
     - '**/secrets/**'
     - '**/payments/**'
     - '**/billing/**'
     - '**/external/**'
     - '**/integrations/**'
+    - '**/webhooks/**'
     - .github/workflows/**
-    - '**/Dockerfile'
+    - .github/actions/**
+    - .github/CODEOWNERS
+    - '**/Dockerfile*'
+    - '**/package.json'
+    - '**/pyproject.toml'
+    - '**/requirements*.txt'
     - '**/package-lock.json'
     - '**/poetry.lock'
     - '**/go.sum'
