@@ -107,6 +107,9 @@ def _full_app_doc(**overrides):
     doc = {
         "id": "x-app", "version": "0.1.0", "requires_core": ">=0.1",
         "matches": {"languages": ["python"], "frameworks": [], "package_managers": ["uv"]},
+        "governance": {"kits": {"quality": {"level": 1}}, "design_required_paths": []},
+        "surfaces": ["api"],
+        "detect": {"signals": [{"kind": "manifest", "pattern": "x.toml", "weight": 1}], "confidence_threshold": 0.5},
         "architecture": {"layers": ["a"], "allowed_dependencies": [], "conventions_doc": "c.md"},
         "implementation_skills": ["s.md"],
         "security_checklist": "n/a", "performance_checklist": "n/a",
@@ -125,6 +128,9 @@ def _full_lib_doc(**overrides):
     doc = {
         "id": "x-lib", "version": "0.1.0", "requires_core": ">=0.1",
         "matches": {"languages": ["python"], "frameworks": [], "package_managers": ["uv"]},
+        "governance": {"kits": {"quality": {"level": 1}}, "design_required_paths": []},
+        "surfaces": ["api"],
+        "detect": {"signals": [{"kind": "manifest", "pattern": "x.toml", "weight": 1}], "confidence_threshold": 0.5},
         "architecture": {"layers": ["a"], "allowed_dependencies": [], "conventions_doc": "c.md"},
         "implementation_skills": ["s.md"],
         "security_checklist": "n/a", "performance_checklist": "n/a",

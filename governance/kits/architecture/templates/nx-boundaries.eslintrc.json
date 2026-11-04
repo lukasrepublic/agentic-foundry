@@ -1,0 +1,22 @@
+// Researched 2026-11-04. JSONC: ESLint accepts comments in .eslintrc.json.
+{
+  "overrides": [
+    {
+      "files": ["*.ts", "*.tsx", "*.js", "*.jsx"],
+      "rules": {
+        "@nx/enforce-module-boundaries": [
+          "error",
+          {
+            "enforceBuildableLibDependency": true,
+            "allow": [],
+            "depConstraints": [
+              { "sourceTag": "layer:interface", "onlyDependOnLibsWithTags": ["layer:application", "layer:domain"] },
+              { "sourceTag": "layer:application", "onlyDependOnLibsWithTags": ["layer:domain"] },
+              { "sourceTag": "layer:domain", "onlyDependOnLibsWithTags": ["layer:domain"] }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

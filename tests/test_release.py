@@ -41,6 +41,9 @@ def _seed_verify_plugin_root(tmp_path, *, static_cmds, test_cmds):
     doc = {
         "id": "demo", "version": "1.0.0", "requires_core": ">=0.1",
         "matches": {"languages": ["x"], "frameworks": ["x"], "package_managers": ["x"]},
+        "governance": {"kits": {"quality": {"level": 1}}, "design_required_paths": []},
+        "surfaces": ["api"],
+        "detect": {"signals": [{"kind": "manifest", "pattern": "x.toml", "weight": 1}], "confidence_threshold": 0.5},
         "architecture": {"layers": ["a"], "allowed_dependencies": [], "conventions_doc": "conventions.md"},
         "implementation_skills": ["conventions.md"],
         "static_validation": static_cmds,

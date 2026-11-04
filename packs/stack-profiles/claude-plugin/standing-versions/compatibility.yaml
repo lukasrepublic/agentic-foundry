@@ -1,0 +1,20 @@
+# claude-plugin -- standing-versions platform-anchored compatibility + skew (gv-08).
+# Research timestamp: 2026-11-04; source: each package's PyPI classifiers / the Node.js release index,
+# checked against the anchored CPython minor and the node floor the CLI declares (engines.node >=22).
+pins_valid_as_of: "2026-11-04"
+
+python_minor: "3.13"
+
+skew:
+  - component: pytest
+    anchor: python_minor
+    policy: "pytest_supports_python(python_minor)"
+    note: "the pinned pytest release must support the anchored CPython minor"
+  - component: jsonschema
+    anchor: python_minor
+    policy: "jsonschema_supports_python(python_minor)"
+    note: "the pinned jsonschema (and PyYAML) must publish support for the anchored CPython minor"
+  - component: nodejs-lts
+    anchor: python_minor
+    policy: "node_pin_satisfies_cli_engines_floor"
+    note: "the pinned Node LTS (26.13.0) must satisfy cli/package.json engines.node (>=22.0.0); the node and python halves are independent runtimes anchored separately"
