@@ -164,23 +164,35 @@ def test_kyverno_policy_and_cli_cases():
     pol = yaml.safe_load((d / "restrict-privileged-toleration.kyverno.yaml").read_text())
     assert pol["kind"] == "ClusterPolicy" and "validationFailureAction" not in pol["spec"]
     rules = {r["name"]: r for r in pol["spec"]["rules"]}
-    assert set(rules) == {"only-in-signer-namespace", "only-the-signer-service-account"}
+    assert set(rules) == {"only-in-signer-namespace", "only-the-signer-service-account",
+                          "no-node-name-outside-signer-namespace"}
+    assert rules["no-node-name-outside-signer-namespace"]["match"]["any"][0]["resources"]["operations"] == ["CREATE"]
+    pol_text = (d / "restrict-privileged-toleration.kyverno.yaml").read_text()
+    assert "fails OPEN" in pol_text and "(key || '')" in pol_text and "!(key || '')" in pol_text
+    assert "nodeSelectorTerms || `[]`" in pol_text
     assert all(r["validate"]["failureAction"] == "Enforce" for r in rules.values())
     text = json.dumps(rules)
     # both bypass forms, nodeName and the selector/affinity paths are covered by the deny conditions
-    assert "operator==" in text and "Exists" in text and "!key" in text
+    assert "operator==" in text and "Exists" in text and "!(key || '')" in text
     assert "spec.nodeName" in text and "nodeSelector" in text and "nodeAffinity" in text
     assert "tolerations || `[]`" in text
     cases = yaml.safe_load((d / "kyverno-tests/kyverno-test.yaml").read_text())
     res = {r["resources"][0]: (r["rule"], r["result"]) for r in cases["results"]}
     pods = {x["metadata"]["name"]: x for x in yaml.safe_load_all((d / "kyverno-tests/resources.yaml").read_text())}
     assert set(res) == set(pods)
-    for bypass in ("bypass-key-exists", "bypass-no-key-exists", "bypass-node-name"):
+    for bypass in ("bypass-key-exists", "bypass-no-key-exists", "bypass-node-name", "bypass-affinity"):
         assert res[bypass][1] == "fail"
     assert res["signer-equal-form"] == ("only-the-signer-service-account", "pass")
     assert pods["bypass-no-key-exists"]["spec"]["tolerations"] == [{"operator": "Exists"}]
     assert pods["signer-equal-form"]["spec"]["tolerations"][0]["operator"] == "Equal"
     assert "NoExecute" in (d / "scale-to-zero-pattern.md").read_text()
+
+
+@pytest.mark.skipif(not shutil.which("kyverno"), reason="kyverno CLI not on PATH: policy evaluation not run")
+def test_kyverno_cli_evaluates_the_cases():
+    r = subprocess.run(["kyverno", "test", str(ROOT / "governance/kits/cost/templates/kyverno-tests/")],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
 
 
 def test_infracost_script_shape():
