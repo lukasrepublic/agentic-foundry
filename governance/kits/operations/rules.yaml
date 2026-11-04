@@ -36,7 +36,7 @@ rules:
     sources: ["Google SRE Workbook, error budget policy (2026-11-04)"]
   - id: FG-OPS-004
     title: Production changes are announced before and reported after
-    statement: Before each production or irreversible write, the actor MUST post one line that states what will happen, with a correlation id. After it, the actor MUST post the outcome with the same correlation id. A missed before line MUST be reported as a process miss.
+    statement: Before each production or irreversible write, the actor MUST post one line that states what will happen, with a correlation id. After it, the actor MUST post the outcome with the same correlation id. A missed before line MUST be reported as a process miss. On a failure the actor MUST stop, clean up what it created, and report. Subagents MUST inherit this rule.
     category: operations
     level: 1
     floor: true
@@ -90,4 +90,5 @@ rules:
     applies_to: {paths: ["**"], blueprints: ["*"]}
     check: {kind: review-lens, ref: agents/pr-reviewer.md}
     exception: {allowed: true, requires: [reason, owner, expires]}
+    note: The rollout lens is added to agents/pr-reviewer.md by gv-16.
     sources: ["Google SRE Workbook, canarying releases (2026-11-04)"]

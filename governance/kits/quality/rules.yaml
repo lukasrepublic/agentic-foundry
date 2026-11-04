@@ -11,6 +11,7 @@ rules:
     applies_to: {paths: ["**"], blueprints: ["*"]}
     check: {kind: review-lens, ref: agents/pr-reviewer.md}
     exception: {allowed: false}
+    note: The conformance lens is added to agents/pr-reviewer.md by gv-16.
     sources: ["Google engineering practices, code review standard (2026-11-04)", "Foundry governance design 2026-11-04, section 2.6"]
   - id: FG-QA-002
     title: Style is delegated to linters and formatters
@@ -53,18 +54,19 @@ rules:
     floor: false
     status: active
     applies_to: {paths: ["**"], blueprints: ["*"]}
-    check: {kind: lint, ref: governance/kits/quality/checks/quarantine_check.py}
+    check: {kind: declared, ref: governance/kits/quality/checks/coverage-ci.yml}
     exception: {allowed: true, requires: [reason, owner, expires]}
+    note: Declared. The CI job re-runs a failed test once and the report lists first-attempt failures apart from the final result (see the junit rerun snippet in checks/coverage-ci.yml).
     sources: ["GitLab handbook, quarantined tests (2026-11-04)", "Datadog Test Optimization, flaky test management (2026-11-04)"]
   - id: FG-QA-006
     title: Done means the Done-means command passes again on merged main
-    statement: A ticket's Done-means command is the definition of done. After merge, it MUST be re-run on the merged main, and the ticket MUST NOT be marked done until that re-run passes. The deck's verify-after-merge step and the ticket tool's done verb carry this.
+    statement: A fix is done only when it is re-measured. After a merge, the check the fix targets (the ticket's Done-means command) MUST be re-run on the merged main, and the ticket MUST NOT be marked done until that re-run passes. All of a tick's re-checks MUST be batched into one record PR. Items recorded as fixed MUST be re-audited before any formal run.
     category: quality
     level: 1
     floor: true
     status: active
     applies_to: {paths: ["**"], blueprints: ["*"]}
-    check: {kind: hook, ref: skills/command-deck}
+    check: {kind: ci, ref: scripts/foundry-ticket.py}
     exception: {allowed: false}
-    note: Binds the deck's verify-after-merge and scripts/foundry-ticket.py done (shipped by gv-13).
+    note: Binds the done verb of scripts/foundry-ticket.py and the deck's verify-after-merge step in skills/command-deck (shipped by gv-13). Operating model rule A6.
     sources: ["Foundry governance design 2026-11-04, section 2.6", "Foundry operating model rule A6 (2026-11-04)"]

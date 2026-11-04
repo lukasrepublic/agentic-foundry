@@ -1,4 +1,10 @@
-# Coverage floor snippet. Copy into the project's CI job. Set the floor per blueprint in the test strategy doc.
-# The floor is a number: change it only by a reviewed edit.
+# Coverage floor snippet. Copy into the project's CI job.
+# The floor number comes from the blueprint's test strategy; replace COVERAGE_FLOOR with it.
+# Change the number only by a reviewed edit.
 - name: Tests with coverage floor
-  run: python3 -m pytest --cov --cov-fail-under=80 -q
+  run: python3 -m pytest --cov --cov-fail-under=COVERAGE_FLOOR -q
+
+# Retry budget 1 and first-attempt reporting (FG-QA-005): rerun a failed test once, and keep the
+# junit report so first-attempt failures show apart from the final result.
+- name: Tests with a retry budget of one
+  run: python3 -m pytest --reruns 1 --junitxml=junit.xml -q

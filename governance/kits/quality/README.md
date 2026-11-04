@@ -6,3 +6,8 @@ Review, tests and done. Rules: `rules.yaml` (FG-QA-001..006). Floors: one separa
 Check snippets in `checks/`: the quarantine record schema and its checker
 (`python3 quarantine_check.py <file> [--today YYYY-MM-DD]`; exit 1 on a missing field or an expired entry),
 a review checklist, and a coverage CI snippet.
+
+## Planned
+
+The conformance lens that FG-QA-001 names is added to `agents/pr-reviewer.md` by gv-16. The deck's
+verify-after-merge step (FG-QA-006) ships with gv-13.

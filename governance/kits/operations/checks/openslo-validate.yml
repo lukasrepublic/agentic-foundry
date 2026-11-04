@@ -1,3 +1,9 @@
 # OpenSLO validate snippet. Copy into the project's CI. SLO files live under slo/.
+# Pin the oslo version in the project's version matrix; do not install a floating version.
+# oslo validates one file per call, so loop over the directory.
+- name: Install oslo
+  run: go install github.com/OpenSLO/oslo/cmd/oslo@PINNED_VERSION
 - name: Validate OpenSLO definitions
-  run: oslo validate -f slo/
+  run: |
+    set -e
+    for f in slo/*.yaml; do oslo validate -f "$f"; done

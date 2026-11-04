@@ -35,8 +35,8 @@ rules:
     exception: {allowed: true, requires: [reason, owner, expires]}
     sources: ["Semantic Versioning 2.0.0 (2026-11-04)", "release-please documentation (2026-11-04)"]
   - id: FG-DLV-004
-    title: Merge-queue discipline
-    statement: A PR MUST enter the merge queue only on a green required check at the current head, after the base is merged in. It MUST NOT be merged by admin bypass or auto-merge. A rejected PR MUST be re-queued at most once for a failure outside its diff.
+    title: Merge the base first, then test what changed
+    statement: Before a PR enters the merge queue, the target branch MUST be merged into the PR branch, and the tests that cover what changed MUST then run on that merged result.
     category: delivery
     level: 1
     floor: true
@@ -44,8 +44,8 @@ rules:
     applies_to: {paths: ["**"], blueprints: ["*"]}
     check: {kind: ci, ref: scripts/foundry_queue_land.py}
     exception: {allowed: false}
-    note: Binds scripts/foundry_queue_land.py (shipped by gv-10). Operating model rule A2.
-    sources: ["GitHub docs, managing a merge queue (2026-11-04)", "Foundry operating model rule A2 (2026-11-04)"]
+    note: Binds scripts/foundry_queue_land.py (shipped by gv-10). Operating model rule A2, obligation 1.
+    sources: ["Foundry operating model rule A2 (2026-11-04)", "GitHub docs, managing a merge queue (2026-11-04)"]
   - id: FG-DLV-005
     title: Coarse PRs and a merge plan
     statement: Work for one area SHOULD land in one coarse PR, and a merge plan SHOULD order PRs so that a shared catalogue changes once per round.
@@ -60,7 +60,7 @@ rules:
     sources: ["Foundry operating model rule A1 (2026-11-04)", "Google engineering practices, small CLs (2026-11-04)"]
   - id: FG-DLV-006
     title: Full suite only when required
-    statement: A branch MUST run the full test suite only when a shared catalogue changed or the policy key merge.full_suite_on_branch requires it. Otherwise it MUST run the tests the change affects.
+    statement: A branch MUST NOT run the full test suite unless a shared catalogue changed or a queue rejection occurred. Otherwise the queue's own run is the gate. A diagnostic run MUST be cancelled as soon as a lane goes red.
     category: delivery
     level: 2
     floor: false
@@ -72,13 +72,13 @@ rules:
     sources: ["Foundry operating model rule A3 (2026-11-04)"]
   - id: FG-DLV-007
     title: Release cadence floor and release record
-    statement: A project MUST release at least once per period it declares, and each release MUST leave a release record that names the version, the commit and who built it.
+    statement: A project MUST release at least once per period it declares, and each release MUST leave a release record that names the version and the commit.
     category: delivery
     level: 2
     floor: false
     status: active
     applies_to: {paths: ["**"], blueprints: ["*"]}
-    check: {kind: ci, ref: governance/kits/delivery/checks/release-please-config.json}
+    check: {kind: declared, ref: governance/kits/delivery/checks/release-please-config.json}
     exception: {allowed: true, requires: [reason, owner, expires]}
     sources: ["Accelerate / DORA delivery metrics (2026-11-04)", "Foundry governance design 2026-11-04, section 2.7"]
   - id: FG-DLV-008
@@ -91,29 +91,161 @@ rules:
     applies_to: {paths: ["**"], blueprints: ["*"]}
     check: {kind: review-lens, ref: agents/pr-reviewer.md}
     exception: {allowed: true, requires: [reason, owner, expires]}
+    note: The flag-cleanup lens is added to agents/pr-reviewer.md by gv-16.
     sources: ["Uber Piranha, automated stale feature flag cleanup (2026-11-04)", "Foundry governance design 2026-11-04, section 2.7"]
   - id: FG-DLV-009
     title: CODEOWNERS covers governed paths
-    statement: Every governed path MUST have an owner in CODEOWNERS, and the branch protection MUST require owner review for those paths.
+    statement: Every governed path SHOULD have an owner in CODEOWNERS, and branch protection SHOULD require owner review for those paths unless merge.human_review_required is false, which is the default. Agent review (FG-QA-001) is the floor.
     category: delivery
-    level: 1
+    level: 2
     floor: false
     status: active
     applies_to: {paths: ["**"], blueprints: ["*"]}
     check: {kind: ci, ref: governance/kits/delivery/templates/CODEOWNERS.template}
     exception: {allowed: true, requires: [reason, owner, expires]}
-    sources: ["GitHub docs, about code owners (2026-11-04)", "Foundry governance design 2026-11-04, section 2.7"]
+    note: Operating model rule A4. Human code-owner review is optional by configuration.
+    sources: ["GitHub docs, about code owners (2026-11-04)", "Foundry operating model rule A4 (2026-11-04)"]
   - id: FG-DLV-010
     title: Never edit CI to make a PR pass
-    statement: A PR MUST NOT edit CI workflows, CI scripts, test configs or quarantine lists to make that PR pass. Such an edit is allowed only when the active ticket names the path.
+    statement: A PR MUST NOT edit CI workflows, CI scripts, test configs or quarantine lists to make that PR pass.
     category: delivery
     level: 1
     floor: true
     status: active
     applies_to:
-      paths: [".github/workflows/**", ".github/actions/**", "ci/**", "**/pytest.ini", "**/conftest.py", "**/tox.ini", "**/jest.config.*", "**/quarantine*.yaml", "**/quarantine*.json"]
+      paths:
+        - ".github/**"
+        - ".gitlab-ci.yml"
+        - ".circleci/**"
+        - "Jenkinsfile"
+        - "azure-pipelines.yml"
+        - "scripts/ci/**"
+        - "ci/**"
+        - "Makefile"
+        - "pyproject.toml"
+        - "setup.cfg"
+        - ".coveragerc"
+        - "**/pytest.ini"
+        - "**/conftest.py"
+        - "**/tox.ini"
+        - "**/jest.config.*"
+        - "**/vitest.config.*"
+        - "**/playwright.config.*"
+        - "**/karma.conf.*"
+        - ".mocharc.*"
+        - "**/quarantine*.yaml"
+        - "**/quarantine*.yml"
+        - "**/quarantine*.json"
       blueprints: ["*"]
     check: {kind: hook, ref: hooks/foundry-paper-guard.py}
     exception: {allowed: false}
-    note: Binds the ci class of hooks/foundry-paper-guard.py (shipped by gv-10). Operating model rule A2.
+    note: Enforced by the ci class of hooks/foundry-paper-guard.py (gv-10), which admits a CI edit only when the active ticket names the path. Operating model rule A2.
     sources: ["Foundry operating model rule A2 (2026-11-04)"]
+  - id: FG-DLV-011
+    title: A delivery record names who delivered it
+    statement: The delivered-by record (PR, merger login, head sha) MUST be written in the same action as the merge. Authorship alone MUST NOT be taken as proof of attestation.
+    category: delivery
+    level: 1
+    floor: true
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: ci, ref: scripts/foundry_queue_land.py}
+    exception: {allowed: false}
+    note: Binds scripts/foundry_queue_land.py (gv-10) and scripts/foundry-merge-when-green.py. Agent identity can equal the operator's git identity. Operating model rule G2.
+    sources: ["Foundry operating model rule G2 (2026-11-04)"]
+  - id: FG-DLV-012
+    title: A shared catalogue change runs every test that names it
+    statement: A change to a shared catalogue MUST run every test that names that catalogue before the PR is enqueued.
+    category: delivery
+    level: 1
+    floor: true
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: ci, ref: scripts/foundry_queue_land.py}
+    exception: {allowed: false}
+    note: Binds scripts/foundry_queue_land.py (gv-10). Operating model rule A2, obligation 2.
+    sources: ["Foundry operating model rule A2 (2026-11-04)"]
+  - id: FG-DLV-013
+    title: Enqueue only on a green required check at the current head
+    statement: A PR MUST be enqueued only on a green required check at its current head.
+    category: delivery
+    level: 1
+    floor: true
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: ci, ref: scripts/foundry_queue_land.py}
+    exception: {allowed: false}
+    note: Binds scripts/foundry_queue_land.py (gv-10). Operating model rule A2, obligation 3.
+    sources: ["Foundry operating model rule A2 (2026-11-04)"]
+  - id: FG-DLV-014
+    title: No bypass flags, and no push to a queued PR
+    statement: A merge MUST NOT use admin bypass, auto-merge or force flags. A push to a queued PR MUST NOT happen. The PR MUST be dequeued first.
+    category: delivery
+    level: 1
+    floor: true
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: ci, ref: scripts/foundry_queue_land.py}
+    exception: {allowed: false}
+    note: Binds scripts/foundry_queue_land.py (gv-10). Operating model rule A2, obligation 4.
+    sources: ["Foundry operating model rule A2 (2026-11-04)", "GitHub docs, managing a merge queue (2026-11-04)"]
+  - id: FG-DLV-015
+    title: Read the queue entry twice
+    statement: After enqueue, the queue entry MUST be read twice, because it can appear late.
+    category: delivery
+    level: 1
+    floor: true
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: ci, ref: scripts/foundry_queue_land.py}
+    exception: {allowed: false}
+    note: Binds scripts/foundry_queue_land.py (gv-10). Operating model rule A2, obligation 5.
+    sources: ["Foundry operating model rule A2 (2026-11-04)"]
+  - id: FG-DLV-016
+    title: Post the one-line record before each enqueue
+    statement: Before each enqueue, the actor MUST post the one-line record "PR | head | base merged at | catalogue tests | branch full suite | queued". If a column cannot be filled honestly, the PR MUST NOT be queued.
+    category: delivery
+    level: 1
+    floor: true
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: ci, ref: scripts/foundry_queue_land.py}
+    exception: {allowed: false}
+    note: Binds scripts/foundry_queue_land.py (gv-10). Operating model rule A2, obligation 6.
+    sources: ["Foundry operating model rule A2 (2026-11-04)"]
+  - id: FG-DLV-017
+    title: On a rejection, read the failed log first
+    statement: On a queue rejection the failed log MUST be read first. A failure in the PR's own files MUST be fixed. A failure outside the diff MUST be reported with evidence, and the PR MAY be re-queued once. The same failure a second time MUST go to the test owner as a quarantine request, and there MUST NOT be a third re-queue.
+    category: delivery
+    level: 1
+    floor: true
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: ci, ref: scripts/foundry_queue_land.py}
+    exception: {allowed: false}
+    note: Binds scripts/foundry_queue_land.py (gv-10). Operating model rule A2, obligation 7.
+    sources: ["Foundry operating model rule A2 (2026-11-04)"]
+  - id: FG-DLV-018
+    title: A skipped check is not a pass
+    statement: A skipped check MUST NOT be counted as a pass. The workflow that owns the check MUST be read to tell a skip from a pass.
+    category: delivery
+    level: 1
+    floor: true
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: ci, ref: scripts/foundry_queue_land.py}
+    exception: {allowed: false}
+    note: Binds scripts/foundry_queue_land.py (gv-10). Operating model rule A2, obligation 8.
+    sources: ["Foundry operating model rule A2 (2026-11-04)"]
+  - id: FG-DLV-019
+    title: Read the live ruleset before relying on it
+    statement: The live ruleset MUST be read before it is relied on. A queue waits only for the checks the ruleset names.
+    category: delivery
+    level: 1
+    floor: true
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: ci, ref: scripts/foundry_queue_land.py}
+    exception: {allowed: false}
+    note: Binds scripts/foundry_queue_land.py (gv-10). Operating model rule A2, obligation 9.
+    sources: ["Foundry operating model rule A2 (2026-11-04)", "GitHub docs, about rulesets (2026-11-04)"]
