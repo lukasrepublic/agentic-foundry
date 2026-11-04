@@ -27,7 +27,7 @@ session's normal permission mode.
 ALSO NEVER ALLOWED SILENTLY (security review of #286) — the verbs the permission floor tiers `ask` because
 they write to GitHub or redirect writes: `foundry_migrate.py cutover`, `foundry_deck_events.py emit`,
 `foundry_inbox.py check|ack|schedule|resolve`, `foundry-ticket.py claim`,
-`foundry_governance.py render|baseline`, `foundry_usage.py bind|fallback-transcripts` and `ingest|attribute` when `--dataset` is named, and any
+`foundry_governance.py render|baseline`, `foundry_research_note.py` (any invocation), `foundry_usage.py bind|fallback-transcripts` and `ingest|attribute` when `--dataset` is named, and any
 abbreviation of `--trust-author`. The hook is the only silent-allow mechanism, so without this the `ask` rows
 would never be enforced.
 
@@ -65,6 +65,9 @@ _ASK_VERBS = {
     "foundry_governance.py": {"render", "baseline"},  # write governance/rendered/ and governance/local/baselines/
     "foundry_usage.py": {"bind", "fallback-transcripts"},  # the floor row is ask with or without --dataset
 }
+# Scripts the floor tiers `ask` as a whole because every invocation writes (gv-14: foundry_research_note.py writes
+# .foundry/research/ and .foundry/decisions/). foundry_blocker_check.py is read-only and stays silently allowed.
+_ASK_SCRIPTS = {"foundry_research_note.py"}
 _USAGE_DATASET_VERBS = {"ingest", "attribute"}   # ask only when a dataset is NAMED (`--dataset`, any argparse abbreviation)
 
 
@@ -112,6 +115,8 @@ def allowed(command, root):
     name = os.path.basename(real)
     if name == "foundry-ticket.py" and (any(a in _TICKET_EXECUTING for a in argv[1:])
                                          or _names_option(argv[1:], "--trust-author")):
+        return False
+    if name in _ASK_SCRIPTS:
         return False
     if any(a in _ASK_VERBS.get(name, ()) for a in argv[1:]):
         return False
