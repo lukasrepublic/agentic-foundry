@@ -1,11 +1,20 @@
-# Limit the privileged-job toleration to the signer namespace and service account (FG-COST-004).
-# A taint alone does not restrict access. Pin Kyverno per the stack kit's version-matrix template.
+# Keep the privileged-job node class for the signer only (FG-COST-004).
+# A taint alone does not restrict access. Targets Kyverno 1.13 or later (per-rule `failureAction`; the spec-level
+# `validationFailureAction` is deprecated). Pin Kyverno per the stack kit's version-matrix template
+# (governance/kits/stack/templates/version-matrix.md). Verify with the Kyverno CLI: `kyverno test kyverno-tests/`.
+#
+# Outside the signer namespace, a Pod is denied when it:
+#   - has a toleration that can match dedicated=privileged-job: key dedicated with operator Exists or value
+#     privileged-job, or no key with operator Exists (tolerates everything);
+#   - sets spec.nodeName (bypasses the scheduler and ignores NoSchedule);
+#   - selects the class with nodeSelector or required node affinity on node-class=privileged-job.
+# Inside the signer namespace, only the signer service account may do the same.
+# Kyverno's default resourceFilters skip kube-system, kube-public and kube-node-lease: this policy does not cover them.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
   name: restrict-privileged-job-toleration
 spec:
-  validationFailureAction: Enforce
   background: false
   rules:
     - name: only-in-signer-namespace
@@ -18,11 +27,21 @@ spec:
           - resources:
               namespaces: ["privileged-jobs"]
       validate:
-        message: "Only the privileged-jobs namespace may tolerate dedicated=privileged-job."
+        failureAction: Enforce
+        message: "Only the privileged-jobs namespace may target the privileged-job node class."
         deny:
           conditions:
             any:
-              - key: "{{ request.object.spec.tolerations[?key=='dedicated' && value=='privileged-job'] | length(@) }}"
+              - key: "{{ request.object.spec.tolerations || `[]` | [?(key=='dedicated' && (operator=='Exists' || value=='privileged-job')) || (!key && operator=='Exists')] | length(@) }}"
+                operator: GreaterThan
+                value: 0
+              - key: "{{ request.object.spec.nodeName || '' }}"
+                operator: NotEquals
+                value: ""
+              - key: "{{ request.object.spec.nodeSelector.\"node-class\" || '' }}"
+                operator: Equals
+                value: "privileged-job"
+              - key: "{{ request.object.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[].matchExpressions[?key=='node-class' && contains(values || `[]`, 'privileged-job')][] | length(@) }}"
                 operator: GreaterThan
                 value: 0
     - name: only-the-signer-service-account
@@ -32,11 +51,12 @@ spec:
               kinds: ["Pod"]
               namespaces: ["privileged-jobs"]
       validate:
-        message: "Only the signer service account may tolerate dedicated=privileged-job."
+        failureAction: Enforce
+        message: "Only the signer service account may target the privileged-job node class."
         deny:
           conditions:
             all:
-              - key: "{{ request.object.spec.tolerations[?key=='dedicated' && value=='privileged-job'] | length(@) }}"
+              - key: "{{ request.object.spec.tolerations || `[]` | [?(key=='dedicated' && (operator=='Exists' || value=='privileged-job')) || (!key && operator=='Exists')] | length(@) }}"
                 operator: GreaterThan
                 value: 0
               - key: "{{ request.object.spec.serviceAccountName || '' }}"

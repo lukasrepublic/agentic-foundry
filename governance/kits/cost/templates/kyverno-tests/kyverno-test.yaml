@@ -1,0 +1,17 @@
+# Kyverno CLI test cases for restrict-privileged-toleration (run: kyverno test kyverno-tests/).
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-privileged-job-toleration
+policies:
+  - ../restrict-privileged-toleration.kyverno.yaml
+resources:
+  - resources.yaml
+results:
+  - {policy: restrict-privileged-job-toleration, rule: only-in-signer-namespace, kind: Pod, resources: [bypass-key-exists], result: fail}
+  - {policy: restrict-privileged-job-toleration, rule: only-in-signer-namespace, kind: Pod, resources: [bypass-no-key-exists], result: fail}
+  - {policy: restrict-privileged-job-toleration, rule: only-in-signer-namespace, kind: Pod, resources: [bypass-node-name], result: fail}
+  - {policy: restrict-privileged-job-toleration, rule: only-in-signer-namespace, kind: Pod, resources: [bypass-node-selector], result: fail}
+  - {policy: restrict-privileged-job-toleration, rule: only-in-signer-namespace, kind: Pod, resources: [plain-pod-no-tolerations], result: pass}
+  - {policy: restrict-privileged-job-toleration, rule: only-the-signer-service-account, kind: Pod, resources: [signer-equal-form], result: pass}
+  - {policy: restrict-privileged-job-toleration, rule: only-the-signer-service-account, kind: Pod, resources: [other-sa-in-signer-namespace], result: fail}

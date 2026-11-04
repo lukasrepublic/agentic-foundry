@@ -1,6 +1,7 @@
 # Weaver registry policy for FG-OBS-001: every custom attribute defined in this registry MUST sit under the owner
 # prefix. Attributes taken from upstream semantic conventions are referenced with `ref`, not defined with `id`.
-# Weaver runs this before resolution. Verify the violation shape against the pinned weaver version.
+# Weaver runs this before resolution. The violation shape (id, type, category plus extra fields) follows the Weaver
+# policy documentation; confirm it against the weaver version pinned in the stack kit's version-matrix template.
 package before_resolution
 
 import rego.v1
@@ -16,6 +17,7 @@ deny contains violation if {
 		"id": "FG-OBS-001",
 		"type": "semconv_attribute",
 		"category": "custom_name_without_owner_prefix",
+		"group": group.id,
 		"attr": attr.id,
 	}
 }

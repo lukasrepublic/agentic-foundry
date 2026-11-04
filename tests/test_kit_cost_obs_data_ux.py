@@ -81,9 +81,10 @@ def test_data_classification_enum_is_fixed():
     assert d["handling"]["restricted"]["retention_max_days"] == 365
 
 
-def _kit_files():
+def _kit_files(root=None):
+    base = root or ROOT / "governance" / "kits"
     for name in KITS:
-        for f in (ROOT / "governance" / "kits" / name).rglob("*"):
+        for f in (base / name).rglob("*"):
             if f.is_file() and "__pycache__" not in f.parts and f.suffix != ".pyc":
                 yield f
 
@@ -96,24 +97,44 @@ def _denylist():
     return []
 
 
+def scan(files, terms):
+    """Return [(file name, term index)] for every hit. Never returns the term text itself."""
+    hits = []
+    for f in files:
+        low = f.read_text().lower()
+        for i, term in enumerate(terms):
+            if term in low:
+                hits.append((f.name, i))
+        if re.search(r"\bctx", low):
+            hits.append((f.name, "ctx"))
+    return hits
+
+
 def test_no_framework_text_no_ctx_no_denylisted_names():
-    terms = _denylist()
+    hits = scan(_kit_files(), _denylist())  # computed outside the assert: a failure prints indices only
+    assert hits == [], f"denylist/ctx hits (file, term index): {hits}"
     for f in _kit_files():
         low = f.read_text().lower()
         for banned in ("soc 2", "soc2", "iso 27001", "iso27001", "pci-dss", "hipaa"):
-            assert banned not in low, f"{f}: {banned}"
-        assert not re.search(r"\bctx", low), f"{f}: ctx"
-        for term in terms:
-            assert term not in low, f"{f}: denylisted term"
+            assert banned not in low, f"{f.name}: {banned}"
 
 
-def test_private_name_check_is_not_vacuous(tmp_path, monkeypatch):  # planted-name control
-    d = tmp_path / ".claude"
-    d.mkdir()
-    (d / "foundry-leak-denylist.txt").write_text("planted-secret-name\n")
-    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
-    assert _denylist() == ["planted-secret-name"]
-    assert re.search(r"\bctx", "the ctx dir")
+def test_detector_fires_on_a_planted_name(tmp_path):  # planted-name control
+    copy = tmp_path / "kits"
+    shutil.copytree(ROOT / "governance" / "kits", copy, ignore=shutil.ignore_patterns("__pycache__"))
+    assert scan(_kit_files(copy), ["planted-secret-name"]) == []
+    target = copy / "cost" / "README.md"
+    target.write_text(target.read_text() + "\nplanted-secret-name\n")
+    assert scan(_kit_files(copy), ["planted-secret-name"]) == [("README.md", 0)]
+    target.write_text("a ctx directory\n")
+    assert scan(_kit_files(copy), []) == [("README.md", "ctx")]
+
+
+def test_no_private_design_labels():
+    for f in _kit_files():
+        s = f.read_text()
+        assert "operating model" not in s.lower(), f.name
+        assert not re.search(r"\(C[123]\)", s), f.name
 
 
 def test_sources_are_public_prior_art():
@@ -136,13 +157,35 @@ def test_scale_to_zero_templates():
     pools = {d["metadata"]["name"]: d for d in docs if d["kind"] == "NodePool"}
     assert {"privileged-job", "non-prod"} <= set(pools)
     assert pools["privileged-job"]["spec"]["template"]["spec"]["taints"] != pools["non-prod"]["spec"]["template"]["spec"]["taints"]
-    pol = yaml.safe_load((ROOT / "governance/kits/cost/templates/restrict-privileged-toleration.kyverno.yaml").read_text())
-    assert pol["kind"] == "ClusterPolicy" and pol["spec"]["validationFailureAction"] == "Enforce"
+
+
+def test_kyverno_policy_and_cli_cases():
+    d = ROOT / "governance/kits/cost/templates"
+    pol = yaml.safe_load((d / "restrict-privileged-toleration.kyverno.yaml").read_text())
+    assert pol["kind"] == "ClusterPolicy" and "validationFailureAction" not in pol["spec"]
+    rules = {r["name"]: r for r in pol["spec"]["rules"]}
+    assert set(rules) == {"only-in-signer-namespace", "only-the-signer-service-account"}
+    assert all(r["validate"]["failureAction"] == "Enforce" for r in rules.values())
+    text = json.dumps(rules)
+    # both bypass forms, nodeName and the selector/affinity paths are covered by the deny conditions
+    assert "operator==" in text and "Exists" in text and "!key" in text
+    assert "spec.nodeName" in text and "nodeSelector" in text and "nodeAffinity" in text
+    assert "tolerations || `[]`" in text
+    cases = yaml.safe_load((d / "kyverno-tests/kyverno-test.yaml").read_text())
+    res = {r["resources"][0]: (r["rule"], r["result"]) for r in cases["results"]}
+    pods = {x["metadata"]["name"]: x for x in yaml.safe_load_all((d / "kyverno-tests/resources.yaml").read_text())}
+    assert set(res) == set(pods)
+    for bypass in ("bypass-key-exists", "bypass-no-key-exists", "bypass-node-name"):
+        assert res[bypass][1] == "fail"
+    assert res["signer-equal-form"] == ("only-the-signer-service-account", "pass")
+    assert pods["bypass-no-key-exists"]["spec"]["tolerations"] == [{"operator": "Exists"}]
+    assert pods["signer-equal-form"]["spec"]["tolerations"][0]["operator"] == "Equal"
+    assert "NoExecute" in (d / "scale-to-zero-pattern.md").read_text()
 
 
 def test_infracost_script_shape():
     s = (ROOT / "governance/kits/cost/checks/infracost-comment.sh").read_text()
-    assert "pull_request_target" in s and "NEVER" in s
+    assert "pull_request_target" in s and "NEVER" in s and "Fork PRs" in s and s.count("--project-name cost-diff") == 2
     assert "git worktree add" in s and "mktemp -d" in s and "/tmp/infracost" not in s
     assert "always exit 0" not in s
     assert "--path . --format json" not in s
@@ -162,6 +205,15 @@ def opa_deny(rego_dir, query, tmp_path, doc):
                        capture_output=True, text=True, check=True)
     res = json.loads(r.stdout).get("result", [])
     return sorted(res[0]["expressions"][0]["value"]) if res else []
+
+
+def opa_deny_raw(rego_dir, query, tmp_path, doc):
+    inp = tmp_path / "in2.json"
+    inp.write_text(json.dumps(doc))
+    r = subprocess.run([OPA, "eval", "-f", "json", "-d", str(rego_dir), "-i", str(inp), query],
+                       capture_output=True, text=True, check=True)
+    res = json.loads(r.stdout).get("result", [])
+    return res[0]["expressions"][0]["value"] if res else []
 
 
 def rc(addr, typ, after, unknown=None, mode="managed", actions=("create",)):
@@ -184,11 +236,15 @@ def test_required_tags_rego(tmp_path):
         rc("aws_s3_bucket.tagged", "aws_s3_bucket", {"tags": FULL}),
         rc("aws_s3_bucket.default_tags", "aws_s3_bucket", {"tags": {}, "tags_all": FULL}),
         rc("data.aws_s3_bucket.d", "aws_s3_bucket", {"tags": {}}, mode="data"),
+        rc("aws_s3_bucket.emptyval", "aws_s3_bucket", {"tags": {"owner": "", "environment": "dev", "cost-center": "1"}}),
+        rc("aws_s3_bucket.listtags", "aws_s3_bucket", {"tags": ["owner"]}),
+        rc("aws_s3_bucket.stringtags", "aws_s3_bucket", {"tags": "owner"}),
         rc("aws_s3_bucket.gone", "aws_s3_bucket", None, actions=("delete",)),
     ]}
     msgs = opa_deny(d, "data.main.deny", tmp_path, plan)
     flagged = {m.split()[1] for m in msgs}
-    assert flagged == {"aws_s3_bucket.untagged", "aws_s3_bucket.nulltags", "aws_s3_bucket.partial", "aws_s3_bucket.computed"}
+    assert flagged == {"aws_s3_bucket.untagged", "aws_s3_bucket.nulltags", "aws_s3_bucket.partial", "aws_s3_bucket.computed",
+                       "aws_s3_bucket.emptyval", "aws_s3_bucket.listtags", "aws_s3_bucket.stringtags"}
 
 
 @pytest.mark.skipif(not OPA, reason="opa not installed")
@@ -196,7 +252,8 @@ def test_owner_prefix_policy(tmp_path):
     d = ROOT / "governance/kits/observability/templates/telemetry-policies"
     bad = {"groups": [{"id": "g", "attributes": [{"id": "other.x", "type": "string"}, {"ref": "http.request.method"}]}]}
     ok = {"groups": [{"id": "g", "attributes": [{"id": "example.x", "type": "string"}, {"ref": "http.request.method"}]}]}
-    assert len(opa_deny(d, "data.before_resolution.deny", tmp_path, bad)) == 1
+    got = opa_deny_raw(d, "data.before_resolution.deny", tmp_path, bad)
+    assert len(got) == 1 and got[0]["group"] == "g" and got[0]["attr"] == "other.x"
     assert opa_deny(d, "data.before_resolution.deny", tmp_path, ok) == []  # control
 
 
@@ -275,6 +332,10 @@ def test_license_cli_input_errors_exit_2(tmp_path):
     assert lic.main([str(nullpol), str(FIX / "packages-pass.json")]) == 2
     assert lic.main([str(POLICY), str(FIX / "packages-pass.json"), "--today", "not-a-date"]) == 2
     assert lic.main([str(POLICY)]) == 2
+    for bad in ('deny: "AGPL-3.0-only"\nallow: {a: [MIT]}\n', 'deny: []\nallow: {a: MIT}\n', 'deny: []\nallow: [MIT]\n'):
+        bp = tmp_path / "bad.yaml"
+        bp.write_text(bad)
+        assert lic.main([str(bp), str(FIX / "packages-pass.json")]) == 2
     assert lic.main([str(POLICY), str(tmp_path / "missing.json")]) == 2
 
 

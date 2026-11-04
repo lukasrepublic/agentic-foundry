@@ -22,10 +22,21 @@ class Refused(ValueError):
     pass
 
 
+def _list(v, what):
+    if v is None:
+        return []
+    if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+        raise Refused(f"{what}-not-a-list-of-strings")
+    return v
+
+
 def _allowed_ids(policy):
+    allow = policy.get("allow") or {}
+    if not isinstance(allow, dict):
+        raise Refused("allow-not-a-mapping")
     ids = set()
-    for group in (policy.get("allow") or {}).values():
-        ids.update(group or [])
+    for name, group in allow.items():
+        ids.update(_list(group, f"allow.{name}"))
     return ids
 
 
@@ -47,7 +58,7 @@ def evaluate(policy, packages, today=None):
     if not isinstance(packages, list):
         raise Refused("packages-not-a-list")
     today = today or datetime.date.today()
-    allowed, denied = _allowed_ids(policy), set(policy.get("deny") or [])
+    allowed, denied = _allowed_ids(policy), set(_list(policy.get("deny"), "deny"))
     excs = set()
     for e in policy.get("exceptions") or []:
         exp = e.get("expires")

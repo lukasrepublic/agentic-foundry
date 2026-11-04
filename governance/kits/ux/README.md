@@ -9,4 +9,4 @@ until then `render` still emits the ux category.
 Automated accessibility checks cover a minority of WCAG success criteria (roughly a third); the rest
 (manual and assistive-technology review) is a practice, not a control.
 
-The Lighthouse budget reports and does not gate (operating model rule C2).
+The Lighthouse budget reports and does not gate.
