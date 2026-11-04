@@ -16,13 +16,13 @@ import { isProtected } from './pathClasses.mjs';
 import { DECLARED_PATH_SET } from './scaffold.mjs';
 import { RefusalError } from './util.mjs';
 
-let ctx = null;
+let guardState = null;
 
 /** Install the guard for `physicalRoot`; returns the function that removes it. */
 export function installWriteGuard(physicalRoot, extra = []) {
-  const prev = ctx;
-  ctx = { root: realOrSelf(physicalRoot), extra: [...extra] };
-  return () => { ctx = prev; };
+  const prev = guardState;
+  guardState = { root: realOrSelf(physicalRoot), extra: [...extra] };
+  return () => { guardState = prev; };
 }
 
 function realOrSelf(p) {
@@ -47,11 +47,11 @@ function resolveReal(abs) {
 }
 
 export function assertProtected(abs, { creating = false } = {}) {
-  if (!ctx) return;
+  if (!guardState) return;
   const real = resolveReal(abs);
-  const rel = path.relative(ctx.root, real).split(path.sep).join('/');
+  const rel = path.relative(guardState.root, real).split(path.sep).join('/');
   if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return; // outside the workspace: not this guard's set
-  if (!isProtected(rel, ctx.extra)) return;
+  if (!isProtected(rel, guardState.extra)) return;
   const absent = !fs.existsSync(real) && !fs.lstatSync(path.resolve(abs), { throwIfNoEntry: false });
   if (creating && absent && DECLARED_PATH_SET.includes(rel)) return;
   throw new RefusalError(`refusing: a write targets the protected path ${rel}`, 'protected');

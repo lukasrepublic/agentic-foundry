@@ -657,3 +657,15 @@ def test_team_mode_skill_and_gating_notes():
         assert "**Team mode only.**" in t and "foundry_operating_mode.py" in t and "enable-team" in t
     assert "/foundry:team-mode" in open(os.path.join(REPO_ROOT, "docs", "VERBS-QUICK-REF.md")).read()
     assert "## Operating modes" in open(os.path.join(REPO_ROOT, "README.md")).read()
+
+
+def test_enable_refuses_a_claude_dir_that_resolves_outside_the_workspace(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "foundry-project.json").write_text(json.dumps({"schema_version": 1, "github_scope": SCOPE}))
+    (ws / ".claude").symlink_to(outside)
+    with pytest.raises(OSError):
+        om._write_key(str(ws), "team")
+    assert "operating_mode" not in json.loads((outside / "foundry-project.json").read_text())

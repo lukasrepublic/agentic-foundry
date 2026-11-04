@@ -1278,11 +1278,11 @@ test('AC-NPX-13 cleanup quarantines only unreferenced entries and refuses any sy
     fs.mkdirSync(sub('specs', 'x'), { recursive: true });
     fs.mkdirSync(sub('specs', 'y'), { recursive: true });
     fs.mkdirSync(sub('specs', 'z'), { recursive: true });
-    const ctx = setup({ root, sub, outside });
+    const fixture = setup({ root, sub, outside });
     const plan = planRetiredArtifacts({ physicalRoot: root, catalogue: catalogue() });
-    const entryRow = plan.rows.find((x) => x.relPath === ctx.entry);
-    assert.ok(entryRow, `${name}: no plan row for ${ctx.entry}`);
-    if (ctx.afterPlan) ctx.afterPlan();
+    const entryRow = plan.rows.find((x) => x.relPath === fixture.entry);
+    assert.ok(entryRow, `${name}: no plan row for ${fixture.entry}`);
+    if (fixture.afterPlan) fixture.afterPlan();
     const beforeTree = snap(root, []);
     const moved = applyRetiredArtifacts(plan, root, { runId: RID });
     assert.equal(moved, 0, `${name}: something was moved`);
@@ -1290,10 +1290,10 @@ test('AC-NPX-13 cleanup quarantines only unreferenced entries and refuses any sy
     if (expectWhy) assert.equal(entryRow.why, expectWhy, `${name}: why`);
     assert.deepEqual(snap(root, []), beforeTree, `${name}: the tree changed`);
     assert.deepEqual(fs.readdirSync(outside), [], `${name}: something was written outside the root`);
-    assert.deepEqual(fs.readdirSync(sub('specs', 'y')), ctx.yContents || [], `${name}: a class boundary was crossed (specs/y)`);
-    assert.deepEqual(fs.readdirSync(sub('specs', 'z')), ctx.zContents || [], `${name}: a class boundary was crossed (specs/z)`);
+    assert.deepEqual(fs.readdirSync(sub('specs', 'y')), fixture.yContents || [], `${name}: a class boundary was crossed (specs/y)`);
+    assert.deepEqual(fs.readdirSync(sub('specs', 'z')), fixture.zContents || [], `${name}: a class boundary was crossed (specs/z)`);
     if (replan) {
-      const again = planRetiredArtifacts({ physicalRoot: root, catalogue: catalogue() }).rows.find((x) => x.relPath === ctx.entry);
+      const again = planRetiredArtifacts({ physicalRoot: root, catalogue: catalogue() }).rows.find((x) => x.relPath === fixture.entry);
       assert.equal(again.state, 'refused', `${name}: a fresh plan must refuse it too`);
     }
     return entryRow;

@@ -467,7 +467,7 @@ def _run(project_dir, runner, timeout, queue_status, clock, record):
             del pending[url]
 
     # ---- read back durable markers, detect blockers --------------------------------------------------
-    events, planned, emitted, ctx = [], [], set(), {}
+    events, planned, emitted, held = [], [], set(), {}
     for url, it in list(pending.items()):
         ref = ref_of(url)
         it["ref"] = ref
@@ -481,24 +481,24 @@ def _run(project_dir, runner, timeout, queue_status, clock, record):
             blockers = []
             if it["kind"] == "request":
                 blockers = _blockers(ref, adapter, runner, timeout, by, operators)
-            ctx[url] = (marks, blockers)
+            held[url] = (marks, blockers)
             it["blocked"] = [{"url": b["url"], "owner": b["owner"]} for b in blockers]   # persisted
         except RuntimeError as exc:
             for s in it["sources"]:
                 rows[s].update(status="error", detail=f"read-back failed for {url}: {exc}"[:240])
-            ctx.pop(url, None)
+            held.pop(url, None)
 
     failed = [n for n in SOURCES if rows[n]["status"] != "ok"]
     for it in pending.values():
         it["stale"] = bool(set(it["sources"]) & set(failed))
 
     # ---- queue positions among schedulable, non-blocker items ---------------------------------------
-    queue = sorted((u for u, it in pending.items() if it["kind"] != "mention" and u in ctx and not ctx[u][1]),
+    queue = sorted((u for u, it in pending.items() if it["kind"] != "mention" and u in held and not held[u][1]),
                    key=lambda u: (pending[u].get("created_at") or "", u))
     position = {u: i + 1 for i, u in enumerate(queue)}
     default_target = str(cfg.get("default_target") or DEFAULT_TARGET)
 
-    for url, (marks, blockers) in ctx.items():
+    for url, (marks, blockers) in held.items():
         it, ref = pending[url], pending[url]["ref"]
         it["acked"] = any(e.event == "ack" and e.target == ref for e in marks)
         it["blocker"] = bool(blockers)

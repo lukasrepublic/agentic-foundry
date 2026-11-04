@@ -220,7 +220,7 @@ def _is_outcome(f, parents):
 
 # ------------------------------------------------------------------ observation tables ----------------------
 
-class Ctx:
+class RunState:
     pass
 
 

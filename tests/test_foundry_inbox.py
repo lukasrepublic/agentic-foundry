@@ -774,3 +774,18 @@ def test_foreign_resolved_marker_does_not_hold_but_a_trusted_one_does():
     ok = A([cm("alice", "MEMBER")])
     marks, comments = inbox._read(ok, ref)
     assert inbox._resolved_holds(ok, ref, marks, comments) is True
+
+
+def test_inbox_runtime_state_is_confined_to_the_workspace(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (ws / ".foundry").symlink_to(elsewhere)
+    with pytest.raises(PermissionError):
+        inbox.save_state(str(ws), {"pending": {}})
+    assert list(elsewhere.iterdir()) == []
+    ok = tmp_path / "ok"
+    ok.mkdir()
+    inbox.save_state(str(ok), {"pending": {}})
+    assert (ok / ".foundry" / "runtime" / ".gitignore").read_text() == "*\n"

@@ -194,7 +194,7 @@ def read_text_rel(ws: str, rel: str):
 
 
 # ------------------------------------------------------------------------------------------- context
-class Ctx:
+class RunState:
     def __init__(self, ws: str, opts: Options):
         self.ws = ws
         self.opts = opts
@@ -336,8 +336,8 @@ def _walk(ws: str):
     return sorted(set(files)), unreadable
 
 
-def _catalogue(ctx: Ctx):
-    path = os.path.join(ctx.plugin_root, "cli", "retired-artifacts.json")
+def _catalogue(rs: RunState):
+    path = os.path.join(rs.plugin_root, "cli", "retired-artifacts.json")
     try:
         with open(path, encoding="utf-8") as fh:
             doc = json.load(fh)
@@ -373,8 +373,8 @@ def _catalogue_matches(ws: str, entries):
     return hits
 
 
-def build_inventory(ctx: Ctx) -> Inventory:
-    ws = ctx.ws
+def build_inventory(rs: RunState) -> Inventory:
+    ws = rs.ws
     inv = Inventory()
     files, unread = _walk(ws)
     inv.unreadable.extend(unread)
@@ -411,7 +411,7 @@ def build_inventory(ctx: Ctx) -> Inventory:
                 if sr:
                     frozen.add(sr)
 
-    cat = _catalogue(ctx)
+    cat = _catalogue(rs)
     if cat is None:
         inv.residue_ok = False
         inv.unreadable.append(("cli/retired-artifacts.json", "residue-catalogue-unavailable"))
@@ -576,13 +576,13 @@ def load_sidecar(ws, item_id):
     return d, None
 
 
-def authority_state(ctx: Ctx):
+def authority_state(rs: RunState):
     """('absent'|'present'|'unreadable', detail)."""
     rel = f"{MIG_DIR}/authority.yaml"
-    p = os.path.join(ctx.ws, rel)
+    p = os.path.join(rs.ws, rel)
     if not os.path.lexists(p):
         return "absent", None
-    data, err = load_yaml_rel(ctx.ws, rel)
+    data, err = load_yaml_rel(rs.ws, rel)
     if err:
         return "unreadable", err
     need = ("schema_version", "recorded_by", "at", "planning_authority", "scope",
@@ -592,9 +592,9 @@ def authority_state(ctx: Ctx):
     for k in need:
         if k not in data or data[k] is None and k != "instructions_reconciled":
             return "unreadable", f"missing-field:{k}"
-    if data.get("workspace") != ctx.workspace:
+    if data.get("workspace") != rs.workspace:
         return "unreadable", "foreign-workspace"
-    if data.get("recorded_by") not in operators(ctx.ws):
+    if data.get("recorded_by") not in operators(rs.ws):
         return "unreadable", "recorded-by-not-registered"
     return "present", None
 
@@ -685,8 +685,8 @@ def adoptable(issue, login, reopen):
 
 
 # ------------------------------------------------------------------------------- issue body / plan
-def spec_h1_and_acs(ctx: Ctx, spec_ref: str):
-    rc, out, _ = ctx.git("show", f"HEAD:{spec_ref}")
+def spec_h1_and_acs(rs: RunState, spec_ref: str):
+    rc, out, _ = rs.git("show", f"HEAD:{spec_ref}")
     text = out if rc == 0 else ""
     h1 = None
     for line in text.splitlines():
@@ -713,12 +713,12 @@ def spec_h1_and_acs(ctx: Ctx, spec_ref: str):
     return h1, acs
 
 
-def blob_link(ctx: Ctx, rel: str) -> str:
-    return f"https://github.com/{ctx.workspace}/blob/{ctx.head}/{quote(rel)}"
+def blob_link(rs: RunState, rel: str) -> str:
+    return f"https://github.com/{rs.workspace}/blob/{rs.head}/{quote(rel)}"
 
 
-def marker_for(ctx: Ctx, item_id: str) -> str:
-    return f"<!-- foundry-migrated: {ctx.workspace}/{item_id} -->"
+def marker_for(rs: RunState, item_id: str) -> str:
+    return f"<!-- foundry-migrated: {rs.workspace}/{item_id} -->"
 
 
 def dep_ids(inv: Inventory, item: Item):
@@ -808,12 +808,12 @@ def guard_body(body: str, marker: str) -> bool:
     return len(eq) == 1 and len(anym) == 1
 
 
-def build_plan(ctx: Ctx, inv: Inventory, idx, item: Item, args, overrides, live=None) -> Plan:
+def build_plan(rs: RunState, inv: Inventory, idx, item: Item, args, overrides, live=None) -> Plan:
     """Static, gh-free assembly of one item's proposal. `live` maps item id -> url for migrated-this-run."""
     live = live or {}
     pl = Plan(item=item)
     e, man = item.entry, item.manifest.data
-    pl.marker = marker_for(ctx, item.id)
+    pl.marker = marker_for(rs, item.id)
 
     def pick(key):
         for src in (e, man):
@@ -843,10 +843,10 @@ def build_plan(ctx: Ctx, inv: Inventory, idx, item: Item, args, overrides, live=
     clean = {}
     for k, v in refs.items():
         n = norm_rel(v)
-        if n is None or not inside(ctx.ws, os.path.join(ctx.ws, n)):
+        if n is None or not inside(rs.ws, os.path.join(rs.ws, n)):
             outside = True
             continue
-        rc, _, _ = ctx.git("cat-file", "-e", f"HEAD:{n}")
+        rc, _, _ = rs.git("cat-file", "-e", f"HEAD:{n}")
         if rc != 0:
             missing = True
             continue
@@ -867,7 +867,7 @@ def build_plan(ctx: Ctx, inv: Inventory, idx, item: Item, args, overrides, live=
     # title / acceptance
     h1 = None
     if "spec_ref" in clean:
-        h1, acs = spec_h1_and_acs(ctx, clean["spec_ref"])
+        h1, acs = spec_h1_and_acs(rs, clean["spec_ref"])
         pl.acceptance = acs
     else:
         pl.acceptance = ["No spec recorded for this item."]
@@ -884,11 +884,11 @@ def build_plan(ctx: Ctx, inv: Inventory, idx, item: Item, args, overrides, live=
         if st == "migrated" and n:
             pl.blocked_by.append(n)
     rels, _ = dep_release_ids(item)
-    rel_links = [blob_link(ctx, f".foundry/releases/{r}/release.yaml") for r in rels]
+    rel_links = [blob_link(rs, f".foundry/releases/{r}/release.yaml") for r in rels]
 
     # context links
     srcs = [item.manifest.rel] + [clean[k] for k in ("spec_ref", "contract_ref", "charter_ref") if k in clean]
-    pl.context_links = [blob_link(ctx, s) for s in srcs] + rel_links
+    pl.context_links = [blob_link(rs, s) for s in srcs] + rel_links
 
     lines = [pl.marker, "",
              "Migrated from a local planning record. The recorded state below is unverified; the owner "
@@ -921,7 +921,7 @@ def build_plan(ctx: Ctx, inv: Inventory, idx, item: Item, args, overrides, live=
         "migrated_at": "<set at apply>",
         "source": {"manifest": item.manifest.rel,
                    **{k: clean[k] for k in ("spec_ref", "contract_ref", "charter_ref") if k in clean},
-                   "commit": ctx.head},
+                   "commit": rs.head},
         "context_links": list(pl.context_links), "pending_dependencies": pending,
         "flags_overridden": sorted(overrides.get(item.id, set()) & set(item.flags)),
     }
@@ -949,7 +949,7 @@ def topo_order(inv: Inventory, ids):
 
 
 # ------------------------------------------------------------------------------------ diagnostics
-def closed_issue_check(ctx, gh, idx, offline, issues=None):
+def closed_issue_check(rs, gh, idx, offline, issues=None):
     """-> (status dict, {url: issue} for the target repo or {})."""
     repo = (idx or {}).get("target_repo")
     migrated = [i for i, e in ((idx or {}).get("items") or {}).items()
@@ -969,11 +969,11 @@ def closed_issue_check(ctx, gh, idx, offline, issues=None):
     return {"status": "ok", "checked": len(migrated)}, {i.get("html_url"): i for i in issues}
 
 
-def diagnose(ctx, inv, gh, offline, issues=None):
-    ws = ctx.ws
+def diagnose(rs, inv, gh, offline, issues=None):
+    ws = rs.ws
     idx, idx_err = load_index(ws)
     diags = []
-    astate, adetail = authority_state(ctx)
+    astate, adetail = authority_state(rs)
     if astate == "absent":
         diags.append({"name": "cutover-pending", "next_action": "record-cutover-when-decided"})
     elif astate == "unreadable":
@@ -985,7 +985,7 @@ def diagnose(ctx, inv, gh, offline, issues=None):
     for iid, e in sorted(items.items()):
         if isinstance(e, dict) and e.get("status") == "pending":
             diags.append({"name": "migration-interrupted", "next_action": "rerun-cutover-apply", "item": iid})
-    status, by_url = closed_issue_check(ctx, gh, idx, offline, issues)
+    status, by_url = closed_issue_check(rs, gh, idx, offline, issues)
     for iid, e in sorted(items.items()):
         if not (isinstance(e, dict) and e.get("status") == "migrated"):
             continue
@@ -1116,14 +1116,14 @@ def sentences(text: str):
     return out
 
 
-def instruction_proposals(ctx: Ctx):
+def instruction_proposals(rs: RunState):
     pats = load_patterns()
     props = []
     for name in INSTRUCTION_FILES:
-        path = os.path.join(ctx.ws, name)
-        if not os.path.isfile(path) or not inside(ctx.ws, path):
+        path = os.path.join(rs.ws, name)
+        if not os.path.isfile(path) or not inside(rs.ws, path):
             continue
-        txt = read_text_rel(ctx.ws, name) or ""
+        txt = read_text_rel(rs.ws, name) or ""
         for ln, s in sentences(txt):
             low = s.lower()
             if any(p in low for p in FLOOR_PHRASES):
@@ -1181,10 +1181,10 @@ def parse_overrides(lst):
     return out
 
 
-def cmd_inventory(ctx, args, gh):
-    inv = build_inventory(ctx)
-    idx, _ = load_index(ctx.ws)
-    diags, status = diagnose(ctx, inv, gh, args.offline)
+def cmd_inventory(rs, args, gh):
+    inv = build_inventory(rs)
+    idx, _ = load_index(rs.ws)
+    diags, status = diagnose(rs, inv, gh, args.offline)
     rows = [{"path": p, "class": c, "rule": r} for p, c, r in inv.paths]
     items = [{"id": i, "rule": "R-ACT-1", "status": item_status(inv, idx, i), "flags": it.flags}
              for i, it in sorted(inv.items.items())]
@@ -1215,12 +1215,12 @@ def _item_report(pl: Plan):
             "blocked_by": pl.blocked_by, "body": pl.body, "sidecar": pl.sidecar, "problems": pl.problems}
 
 
-def cmd_preview(ctx, args, gh):
-    if not ctx.workspace or not ctx.head:
+def cmd_preview(rs, args, gh):
+    if not rs.workspace or not rs.head:
         print("preview needs a git workspace with an origin remote and a HEAD commit", file=sys.stderr)
         return 2
-    inv = build_inventory(ctx)
-    idx, _ = load_index(ctx.ws)
+    inv = build_inventory(rs)
+    idx, _ = load_index(rs.ws)
     overrides = {}
     sel = parse_select(args.select)
     bad = [s for s in sel if s not in inv.items]
@@ -1228,9 +1228,9 @@ def cmd_preview(ctx, args, gh):
         for b in bad:
             print(f"REFUSED not-an-item item={b}")
         return 1
-    reports = [_item_report(build_plan(ctx, inv, idx, inv.items[s], args, overrides)) for s in sel]
-    props = instruction_proposals(ctx)
-    diags, status = diagnose(ctx, inv, gh, args.offline)
+    reports = [_item_report(build_plan(rs, inv, idx, inv.items[s], args, overrides)) for s in sel]
+    props = instruction_proposals(rs)
+    diags, status = diagnose(rs, inv, gh, args.offline)
     if args.json:
         print(json.dumps({"items": reports, "instruction_conflicts": props, "diagnostics": diags,
                           "closed_issue_check": status}, indent=2))
@@ -1254,13 +1254,13 @@ def cmd_preview(ctx, args, gh):
 APPENDED_LINE = re.compile(r'^(migrated_to:|  "[^"\n]*": "[^"\n]*")$')
 
 
-def pure_migrated_to_append(ctx, rel) -> bool:
+def pure_migrated_to_append(rs, rel) -> bool:
     """True when the working copy of `rel` is the HEAD blob plus appended migrated_to lines only."""
-    rc, head, _ = ctx.git("show", f"HEAD:{rel}")
+    rc, head, _ = rs.git("show", f"HEAD:{rel}")
     if rc != 0:
         return False
     try:
-        with open(os.path.join(ctx.ws, rel), "rb") as fh:
+        with open(os.path.join(rs.ws, rel), "rb") as fh:
             work = fh.read().decode("utf-8")
     except (OSError, UnicodeDecodeError):
         return False
@@ -1277,8 +1277,8 @@ def pure_migrated_to_append(ctx, rel) -> bool:
     return bool(lines) and all(APPENDED_LINE.match(l) for l in lines)
 
 
-def local_dirty(ctx, idx, inv=None):
-    rc, out, _ = ctx.git("status", "--porcelain", "-z", "--untracked-files=no")
+def local_dirty(rs, idx, inv=None):
+    rc, out, _ = rs.git("status", "--porcelain", "-z", "--untracked-files=no")
     if rc != 0:
         return True
     rids = {i.split("/")[0] for i in ((idx or {}).get("items") or {})}
@@ -1302,33 +1302,33 @@ def local_dirty(ctx, idx, inv=None):
     for p in paths:
         if p.startswith(MIG_DIR + "/"):
             continue
-        if p in allowed and pure_migrated_to_append(ctx, p):
+        if p in allowed and pure_migrated_to_append(rs, p):
             continue
         return True
     return False
 
 
-def head_on_default(ctx) -> bool:
-    rc, out, _ = ctx.git("symbolic-ref", "-q", "refs/remotes/origin/HEAD")
+def head_on_default(rs) -> bool:
+    rc, out, _ = rs.git("symbolic-ref", "-q", "refs/remotes/origin/HEAD")
     ref = out.strip()
     if rc != 0 or not ref.startswith("refs/remotes/origin/") or ref == "refs/remotes/origin/HEAD":
         return False
-    rc, _, _ = ctx.git("merge-base", "--is-ancestor", "HEAD", ref)
+    rc, _, _ = rs.git("merge-base", "--is-ancestor", "HEAD", ref)
     return rc == 0
 
 
-def cmd_cutover(ctx, args, gh_ro, gh_rw):
+def cmd_cutover(rs, args, gh_ro, gh_rw):
     if args.action == "record":
-        return cmd_record(ctx, args)
-    return cmd_cutover_plan_or_apply(ctx, args, gh_ro, gh_rw)
+        return cmd_record(rs, args)
+    return cmd_cutover_plan_or_apply(rs, args, gh_ro, gh_rw)
 
 
-def cmd_cutover_plan_or_apply(ctx, args, gh_ro, gh_rw):
+def cmd_cutover_plan_or_apply(rs, args, gh_ro, gh_rw):
     apply_ = bool(args.apply and not args.dry_run)
     if args.dry_run and not args.apply:
         print("--dry-run is only valid with --apply or `cutover record`", file=sys.stderr)
         return 2
-    if not ctx.workspace or not ctx.head:
+    if not rs.workspace or not rs.head:
         print("cutover needs a git workspace with an origin remote and a HEAD commit", file=sys.stderr)
         return 2
     try:
@@ -1346,11 +1346,11 @@ def cmd_cutover_plan_or_apply(ctx, args, gh_ro, gh_rw):
 
     gh = gh_rw if apply_ else gh_ro
     lock_fd = None
-    lock_path = os.path.join(ctx.ws, MIG_DIR, ".lock")
+    lock_path = os.path.join(rs.ws, MIG_DIR, ".lock")
     try:
         if apply_:
             try:
-                ensure_dir(ctx.ws, os.path.dirname(lock_path))
+                ensure_dir(rs.ws, os.path.dirname(lock_path))
                 lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o644)
             except OSError as exc:      # PermissionError (unsafe dir) and ELOOP (symlinked lock) both land here
                 print(f"REFUSED migration-directory-unsafe ({exc})")
@@ -1371,7 +1371,7 @@ def cmd_cutover_plan_or_apply(ctx, args, gh_ro, gh_rw):
                 os.close(fd)
             if reasons:
                 return _report_refusals(reasons)
-        return _plan_or_apply(ctx, args, gh, apply_, overrides, refuse, reasons)
+        return _plan_or_apply(rs, args, gh, apply_, overrides, refuse, reasons)
     finally:
         if lock_fd is not None:
             os.close(lock_fd)
@@ -1383,9 +1383,9 @@ def _report_refusals(reasons):
     return 1
 
 
-def _plan_or_apply(ctx, args, gh, apply_, overrides, refuse, reasons):
-    ws = ctx.ws
-    inv = build_inventory(ctx)
+def _plan_or_apply(rs, args, gh, apply_, overrides, refuse, reasons):
+    ws = rs.ws
+    inv = build_inventory(rs)
     idx, idx_err = load_index(ws)
     if idx_err:
         refuse("index-unreadable", None, idx_err)
@@ -1417,9 +1417,9 @@ def _plan_or_apply(ctx, args, gh, apply_, overrides, refuse, reasons):
             newer |= not isinstance(sv, int) or sv > SCHEMA_VERSION
     if newer:
         refuse("schema-newer")
-    if not head_on_default(ctx):
+    if not head_on_default(rs):
         refuse("head-not-on-default-branch")
-    if local_dirty(ctx, idx, inv):
+    if local_dirty(rs, idx, inv):
         refuse("working-tree-dirty")
 
     for oi, fl in sorted(overrides.items()):
@@ -1443,7 +1443,7 @@ def _plan_or_apply(ctx, args, gh, apply_, overrides, refuse, reasons):
         for f in it.flags:                     # every processed item, selected or pending
             if f not in overrides.get(iid, set()):
                 refuse(f"flagged:{f}", iid)
-        pl = build_plan(ctx, inv, idx, it, args, overrides)
+        pl = build_plan(rs, inv, idx, it, args, overrides)
         plans[iid] = pl
         for p in pl.problems:
             refuse(p, iid)
@@ -1516,12 +1516,12 @@ def _plan_or_apply(ctx, args, gh, apply_, overrides, refuse, reasons):
 
     order = topo_order(inv, [i for i in proc if i in plans])
     if not apply_:
-        return _print_plan(ctx, args, inv, idx, order, plans, complete, decisions, gh, issues, repo)
-    return _apply(ctx, args, inv, idx, repo, order, plans, complete, decisions, overrides, gh, login, issues)
+        return _print_plan(rs, args, inv, idx, order, plans, complete, decisions, gh, issues, repo)
+    return _apply(rs, args, inv, idx, repo, order, plans, complete, decisions, overrides, gh, login, issues)
 
 
-def _print_plan(ctx, args, inv, idx, order, plans, complete, decisions, gh, issues, repo):
-    diags, status = diagnose(ctx, inv, gh, args.offline, issues if idx and idx.get("target_repo") == repo else None)
+def _print_plan(rs, args, inv, idx, order, plans, complete, decisions, gh, issues, repo):
+    diags, status = diagnose(rs, inv, gh, args.offline, issues if idx and idx.get("target_repo") == repo else None)
     if args.json:
         print(json.dumps({"preflight": "ok", "order": order, "already_migrated": sorted(complete),
                           "actions": {k: v[0] for k, v in decisions.items()},
@@ -1539,11 +1539,11 @@ def _print_plan(ctx, args, inv, idx, order, plans, complete, decisions, gh, issu
     return 0
 
 
-def _apply(ctx, args, inv, idx0, repo, order, plans, complete, decisions, overrides, gh, login, issues):
-    ws = ctx.ws
-    opts = ctx.opts
+def _apply(rs, args, inv, idx0, repo, order, plans, complete, decisions, overrides, gh, login, issues):
+    ws = rs.ws
+    opts = rs.opts
     idx = idx0 if idx0 is not None else {"schema_version": SCHEMA_VERSION, "tool_version": TOOL_VERSION,
-                                          "workspace": ctx.workspace, "target_repo": repo, "items": {}}
+                                          "workspace": rs.workspace, "target_repo": repo, "items": {}}
     idx.setdefault("target_repo", repo)
     if not idx.get("target_repo"):
         idx["target_repo"] = repo
@@ -1567,7 +1567,7 @@ def _apply(ctx, args, inv, idx0, repo, order, plans, complete, decisions, overri
         for iid in order:
             it = inv.items[iid]
             kind, payload = decisions[iid]
-            pl = build_plan(ctx, inv, idx, it, args, overrides, live)   # refreshed: deps migrated this run
+            pl = build_plan(rs, inv, idx, it, args, overrides, live)   # refreshed: deps migrated this run
             if pl.problems:
                 for p in pl.problems:
                     print(f"REFUSED {p} item={iid}")
@@ -1628,7 +1628,7 @@ def _apply(ctx, args, inv, idx0, repo, order, plans, complete, decisions, overri
                     items[iid] = {"status": "pending", "issue_url": url, "updated_at": now()}
                     write_index()
                     wrote = True
-                if not append_migrated_to(ctx, inv, it, url):
+                if not append_migrated_to(rs, inv, it, url):
                     print(f"REFUSED migrated-to-reparse-mismatch item={iid}")
                     rc_final = 1
                     break
@@ -1654,14 +1654,14 @@ def _apply(ctx, args, inv, idx0, repo, order, plans, complete, decisions, overri
     if rc_final:
         return rc_final
     print()
-    inv2 = build_inventory(ctx)
-    diags, status = diagnose(ctx, inv2, gh, args.offline, issues)
+    inv2 = build_inventory(rs)
+    diags, status = diagnose(rs, inv2, gh, args.offline, issues)
     print_diags(diags, status)
     return 0
 
 
-def append_migrated_to(ctx: Ctx, inv: Inventory, item: Item, url: str) -> bool:
-    ws = ctx.ws
+def append_migrated_to(rs: RunState, inv: Inventory, item: Item, url: str) -> bool:
+    ws = rs.ws
     rel = item.manifest.rel
     path = os.path.join(ws, rel)
     with open(path, "rb") as fh:
@@ -1671,7 +1671,7 @@ def append_migrated_to(ctx: Ctx, inv: Inventory, item: Item, url: str) -> bool:
     lead = b"" if (not pre or pre.endswith(b"\n")) else b"\n"
     add = (entry if "migrated_to" in data else "migrated_to:\n" + entry).encode("utf-8")
     new = pre + lead + add
-    hook = ctx.opts.manifest_append_hook
+    hook = rs.opts.manifest_append_hook
     if hook is not None:
         new = hook(new)
     atomic_write(ws, rel, new, mode_from=path)
@@ -1698,8 +1698,8 @@ def operators(ws):
     return {k for k in ops if isinstance(k, str)} if isinstance(ops, dict) else set()
 
 
-def cmd_record(ctx, args):
-    ws = ctx.ws
+def cmd_record(rs, args):
+    ws = rs.ws
     fails = []
     if not args.operator:
         fails.append("operator-missing")
@@ -1728,7 +1728,7 @@ def cmd_record(ctx, args):
             recon.append(n)
         else:
             fails.append(f"reconciled-path-invalid:{r}")
-    if not ctx.workspace or not ctx.head:
+    if not rs.workspace or not rs.head:
         fails.append("workspace-unresolved")
     if fails:
         for f in fails:
@@ -1736,7 +1736,7 @@ def cmd_record(ctx, args):
         return 1
     rec = {"schema_version": SCHEMA_VERSION, "recorded_by": args.operator, "at": now(),
            "planning_authority": "github", "scope": args.scope, "instructions_reconciled": recon,
-           "workspace": ctx.workspace, "head": ctx.head}
+           "workspace": rs.workspace, "head": rs.head}
     text = dump_yaml(rec)
     if args.dry_run:
         print(text, end="")
@@ -1779,7 +1779,7 @@ def main(argv=None, opts: Options | None = None) -> int:
     if ws is None:
         print("not inside a git workspace", file=sys.stderr)
         return 2
-    ctx = Ctx(ws, opts)
+    rs = RunState(ws, opts)
     if args.cmd == "cutover":
         import foundry_operating_mode as om
         rc = om.gate(ws, "cutover")
@@ -1787,10 +1787,10 @@ def main(argv=None, opts: Options | None = None) -> int:
             return rc
     gh_ro = Gh(read_only=True)
     if args.cmd == "inventory":
-        return cmd_inventory(ctx, args, gh_ro)
+        return cmd_inventory(rs, args, gh_ro)
     if args.cmd == "preview":
-        return cmd_preview(ctx, args, gh_ro)
-    return cmd_cutover(ctx, args, gh_ro, Gh(read_only=False))
+        return cmd_preview(rs, args, gh_ro)
+    return cmd_cutover(rs, args, gh_ro, Gh(read_only=False))
 
 
 if __name__ == "__main__":

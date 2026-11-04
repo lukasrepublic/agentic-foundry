@@ -550,3 +550,13 @@ def test_gh_adapter_trust_uses_authenticated_login_and_scope_operators(tmp_path,
     assert ad.trust() is t and calls == [["api", "user"]]       # cached per adapter
     c = {"author": {"login": "dave"}}
     assert t(c) and t({"author": {"login": "carol"}}) and not t({"author": {"login": "eve"}, "authorAssociation": "OWNER"})
+
+
+def test_load_scope_rejects_an_owner_that_is_not_a_plain_login(tmp_path):
+    import foundry_github_capabilities as ghc
+    (tmp_path / ".claude").mkdir()
+    f = tmp_path / ".claude" / "foundry-project.json"
+    f.write_text(json.dumps({"github_scope": {"owner": "good-org", "planning_repo": "p"}}))
+    assert ghc.load_scope(str(tmp_path))[1] is not None
+    f.write_text(json.dumps({"github_scope": {"owner": "o -f x=y", "planning_repo": "p"}}))
+    assert ghc.load_scope(str(tmp_path))[1] is None
