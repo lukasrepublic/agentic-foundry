@@ -363,3 +363,253 @@ def test_release_cadence_refuses_within_30_days_unless_hotfix(tmp_path):
     _git(root, "tag", "staging-20261007")
     ok, detail = fcr.release_cadence(str(root), "1.1.0")
     assert not ok and "v1.0.0" in detail
+
+
+# --- security follow-up of #286: the vetted Done-means digest is enforced where the command EXECUTES ------
+
+def _start_world(tmp_path, monkeypatch, body_cmd, editor, claim_cmd="true", author="alice", trusted=("alice",)):
+    root = _repo(tmp_path)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    body = "## Done means\n```\n%s\n```\n" % body_cmd
+    issue = {"number": 7, "title": "t", "body": body, "url": "https://github.com/o/r/issues/7",
+             "author": {"login": author}, "state": "OPEN"}
+    monkeypatch.setattr(foundry_ticket, "_gh_json", lambda a: issue)
+    digest = foundry_ticket.store.command_digest(body_cmd)
+    monkeypatch.setattr(foundry_ticket, "read_issue", lambda run, repo, n, **k: {"done_sha256": digest, "last_edited_by": editor})
+    monkeypatch.setattr(foundry_ticket, "author_trusted", lambda repo, login, gh_json=None: (login in trusted, "w"))
+
+    def _no_gh(run):    # no test may spawn the real gh (CI has no token): a failed lookup is the default
+        raise foundry_ticket.QueueUnavailable("stubbed: no gh in tests")
+    monkeypatch.setattr(foundry_ticket, "operator_login", _no_gh)
+    if claim_cmd is not None:
+        cf = Path(_git(root, "rev-parse", "--absolute-git-dir")) / "foundry-claims.json"
+        cf.write_text(json.dumps({"o/r#7": {"done_digest": foundry_ticket.store.command_digest(claim_cmd)}}))
+    return root
+
+
+def test_start_refuses_a_post_claim_edit_by_an_untrusted_editor(tmp_path, monkeypatch):
+    root = _start_world(tmp_path, monkeypatch, "true", editor="mallory", claim_cmd=None)
+    with pytest.raises(SystemExit) as e:
+        foundry_ticket.cmd_start(["7"])
+    assert "mallory" in str(e.value) and foundry_ticket.load(root) is None
+
+
+def test_start_refuses_a_changed_command_even_from_a_trusted_author_and_with_the_flag(tmp_path, monkeypatch):
+    root = _start_world(tmp_path, monkeypatch, "touch PWNED", editor="alice", claim_cmd="true")
+    for argv in (["7"], ["7", "--trust-author"]):
+        with pytest.raises(SystemExit) as e:
+            foundry_ticket.cmd_start(argv)
+        assert "done-means-changed" in str(e.value)
+    assert foundry_ticket.load(root) is None
+
+
+def test_start_happy_path_still_records_and_run_done_executes(tmp_path, monkeypatch):
+    root = _start_world(tmp_path, monkeypatch, "true", editor="alice", claim_cmd="true")
+    assert foundry_ticket.cmd_start(["7"]) == 0
+    doc = foundry_ticket.load(root)
+    assert foundry_ticket.run_done(doc, root)[0] == 0
+
+
+def test_run_done_and_stop_hook_refuse_when_the_stored_command_differs_from_the_claim(tmp_path, monkeypatch):
+    root = _repo(tmp_path)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    cmd = "touch " + str(root / "PWNED4")
+    tf = _ticket(root, done=cmd)
+    doc = json.loads(tf.read_text())
+    doc.update({"repo": "o/r", "issue": 7})
+    tf.write_text(json.dumps(doc))
+    cf = Path(_git(root, "rev-parse", "--absolute-git-dir")) / "foundry-claims.json"
+    cf.write_text(json.dumps({"o/r#7": {"done_digest": foundry_ticket.store.command_digest("true")}}))
+    rc, why = foundry_ticket.run_done(doc, root)
+    assert rc == 125 and "done-means-changed" in why
+    p = _hook("foundry-ticket-stop.py", {}, root)
+    assert p.returncode == 0 and "done-means-changed" in p.stderr and not (root / "PWNED4").exists()
+    # claim digest matching the stored command: the hook runs it
+    cf.write_text(json.dumps({"o/r#7": {"done_digest": foundry_ticket.store.command_digest(cmd)}}))
+    assert _hook("foundry-ticket-stop.py", {}, root).returncode == 0 and (root / "PWNED4").exists()
+
+
+# --- review round on #287: claim-key normalisation, the shared (common-dir) claims file, unreadable files ----
+
+def test_claim_key_case_insensitive_both_directions(tmp_path):
+    root = _repo(tmp_path)
+    st = foundry_ticket.store
+    d = st.command_digest("true")
+    foundry_ticket.save_claim(root, "Example-Org/Repo#7", {"done_digest": d})
+    assert st.claim_done_digest(root, "example-org/repo", 7) == d
+    assert st.claim_done_digest(root, "EXAMPLE-ORG/REPO", 7) == d
+    other = tmp_path / "r2"
+    other.mkdir()
+    _git(other, "init", "-q")
+    foundry_ticket.save_claim(other, "example-org/repo#7", {"done_digest": d})
+    assert st.claim_done_digest(other, "Example-Org/Repo", 7) == d
+    assert st.claim_done_digest(other, "example-org/repo", 8) is None
+
+
+def test_claim_in_main_checkout_protects_a_linked_worktree(tmp_path, monkeypatch):
+    main = _repo(tmp_path)
+    wt = tmp_path / "wt"
+    _git(main, "worktree", "add", "-q", "-b", "w", str(wt))
+    st = foundry_ticket.store
+    foundry_ticket.save_claim(main, "o/r#7", {"done_digest": st.command_digest("true")})
+    assert st.claim_done_digest(wt, "o/r", 7) == st.command_digest("true")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(wt))
+    body_cmd = "touch PWNED5"
+    issue = {"number": 7, "title": "t", "body": "## Done means\n```\n%s\n```\n" % body_cmd,
+             "url": "https://github.com/O/R/issues/7", "author": {"login": "alice"}, "state": "OPEN"}
+    monkeypatch.setattr(foundry_ticket, "_gh_json", lambda a: issue)
+    monkeypatch.setattr(foundry_ticket, "read_issue", lambda run, repo, n, **k: {
+        "done_sha256": st.command_digest(body_cmd), "last_edited_by": "alice", "name_with_owner": "o/r"})
+    monkeypatch.setattr(foundry_ticket, "author_trusted", lambda *a, **k: (True, "w"))
+    with pytest.raises(SystemExit) as e:
+        foundry_ticket.cmd_start(["7"])
+    assert "done-means-changed" in str(e.value) and "--rebase-acceptance" in str(e.value)
+
+
+def test_legacy_per_worktree_claims_file_is_still_read(tmp_path):
+    main = _repo(tmp_path)
+    wt = tmp_path / "wt2"
+    _git(main, "worktree", "add", "-q", "-b", "w2", str(wt))
+    st = foundry_ticket.store
+    assert st.legacy_claims_file(wt) != st.claims_file(wt)
+    st.legacy_claims_file(wt).parent.mkdir(parents=True, exist_ok=True)
+    st.legacy_claims_file(wt).write_text(json.dumps({"o/r#7": {"done_digest": "abc"}}))
+    assert not st.claims_file(wt).exists()
+    assert st.claim_done_digest(wt, "O/R", 7) == "abc"
+
+
+def test_unreadable_claims_file_refuses_everywhere_but_absent_means_unclaimed(tmp_path, monkeypatch):
+    root = _repo(tmp_path)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    st = foundry_ticket.store
+    assert st.claim_done_digest(root, "o/r", 7) is None                       # no file: unclaimed path
+    st.claims_file(root).write_text("{not json")
+    with pytest.raises(st.ClaimsUnreadable):
+        st.claim_done_digest(root, "o/r", 7)
+    tf = _ticket(root, done="touch " + str(root / "PWNED6"))
+    doc = json.loads(tf.read_text())
+    doc.update({"repo": "o/r", "issue": 7})
+    tf.write_text(json.dumps(doc))
+    rc, why = foundry_ticket.run_done(doc, root)
+    assert rc == 125 and "claims-unreadable" in why
+    p = _hook("foundry-ticket-stop.py", {}, root)
+    assert p.returncode == 0 and "claims-unreadable" in p.stderr and not (root / "PWNED6").exists()
+    st.claims_file(root).write_text(json.dumps({"o/r#7": "garbage"}))
+    with pytest.raises(st.ClaimsUnreadable):
+        st.claim_done_digest(root, "o/r", 7)
+
+
+def test_start_warns_when_assigned_to_me_but_unclaimed(tmp_path, monkeypatch, capsys):
+    root = _start_world(tmp_path, monkeypatch, "true", editor="alice", claim_cmd=None)
+    monkeypatch.setattr(foundry_ticket, "read_issue", lambda run, repo, n, **k: {
+        "done_sha256": foundry_ticket.store.command_digest("true"), "last_edited_by": "alice", "assignees": ["me"]})
+    monkeypatch.setattr(foundry_ticket, "operator_login", lambda run: "me")
+    assert foundry_ticket.cmd_start(["7"]) == 0
+    assert "no local claim" in capsys.readouterr().err
+
+
+def test_start_unclaimed_warning_path_survives_a_failed_login_lookup_and_compares_case_insensitively(
+        tmp_path, monkeypatch, capsys):
+    root = _start_world(tmp_path, monkeypatch, "true", editor="alice", claim_cmd=None)
+    assert foundry_ticket.cmd_start(["7"]) == 0           # QueueUnavailable from operator_login: no traceback, no warning
+    assert "no local claim" not in capsys.readouterr().err
+    monkeypatch.setattr(foundry_ticket, "read_issue", lambda run, repo, n, **k: {
+        "done_sha256": foundry_ticket.store.command_digest("true"), "last_edited_by": "alice", "assignees": ["Me"]})
+    monkeypatch.setattr(foundry_ticket, "operator_login", lambda run: "ME")
+    assert foundry_ticket.cmd_start(["7"]) == 0
+    assert "no local claim" in capsys.readouterr().err
+
+
+def test_save_claim_never_overwrites_an_unreadable_claims_file(tmp_path):
+    root = _repo(tmp_path)
+    st = foundry_ticket.store
+    p = st.claims_file(root)
+    p.write_text("{corrupt")
+    with pytest.raises(st.ClaimsUnreadable):
+        foundry_ticket.save_claim(root, "o/r#7", {"done_digest": "x"})
+    assert p.read_text() == "{corrupt"
+
+
+def test_read_claims_merges_legacy_and_common(tmp_path):
+    main = _repo(tmp_path)
+    wt = tmp_path / "wa"
+    _git(main, "worktree", "add", "-q", "-b", "wa", str(wt))
+    st = foundry_ticket.store
+    st.legacy_claims_file(wt).parent.mkdir(parents=True, exist_ok=True)
+    st.legacy_claims_file(wt).write_text(json.dumps({"o/r#7": {"done_digest": "legacy7"},
+                                                     "o/r#9": {"done_digest": "legacy9"}}))
+    foundry_ticket.save_claim(main, "o/r#8", {"done_digest": "common8"})
+    foundry_ticket.save_claim(main, "o/r#9", {"done_digest": "common9"})
+    assert st.claim_done_digest(wt, "o/r", 7) == "legacy7"      # legacy-only key survives a common file
+    assert st.claim_done_digest(wt, "o/r", 8) == "common8"
+    assert st.claim_done_digest(wt, "o/r", 9) == "common9"      # common wins on collision
+    st.legacy_claims_file(wt).write_text("{bad")
+    with pytest.raises(st.ClaimsUnreadable):
+        st.claim_done_digest(wt, "o/r", 8)
+
+
+def test_raw_keys_that_normalise_alike_prefer_the_newest_claimed_at(tmp_path):
+    root = _repo(tmp_path)
+    st = foundry_ticket.store
+    st.claims_file(root).write_text(json.dumps({
+        "O/R#7": {"done_digest": "new", "claimed_at": "2026-11-02T00:00:00Z"},
+        "o/r#7": {"done_digest": "old", "claimed_at": "2026-11-01T00:00:00Z"}}))
+    assert st.claim_done_digest(root, "o/R", 7) == "new"
+
+
+def test_concurrent_claim_writers_do_not_lose_updates(tmp_path):
+    import threading
+    root = _repo(tmp_path)
+    st = foundry_ticket.store
+    errs = []
+
+    def writer(i):
+        try:
+            for j in range(10):
+                foundry_ticket.save_claim(root, f"o/r#{i * 100 + j}", {"done_digest": f"d{i}-{j}"})
+        except Exception as e:  # noqa: BLE001
+            errs.append(e)
+    ts = [threading.Thread(target=writer, args=(i,)) for i in range(1, 5)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert not errs
+    claims, _ = st.read_claims(root)
+    assert len(claims) == 40
+
+
+def test_claim_refuses_when_the_claims_file_is_unreadable(tmp_path, monkeypatch, capsys):
+    root = _repo(tmp_path)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    foundry_ticket.store.claims_file(root).write_text("{corrupt")
+    target = {"repo": "o/r", "number": 7, "assignees": ["me"], "status": "ready", "blocked_by": [], "state": "OPEN"}
+    monkeypatch.setattr(foundry_ticket, "load_config", lambda r: {"repos": {"r": "o/r"}, "project_number": None})
+    monkeypatch.setattr(foundry_ticket, "parse_ref", lambda i, r, repos: ("o/r", 7))
+    monkeypatch.setattr(foundry_ticket, "operator_login", lambda run: "me")
+    monkeypatch.setattr(foundry_ticket, "read_queue", lambda run, cfg: [target])
+    monkeypatch.setattr(foundry_ticket, "read_issue", lambda *a, **k: {
+        "_has_done": False, "done_trusted": True, "done": "", "done_digest": "d", "body_sha256": "b",
+        "name_with_owner_raw": "O/R", "name_with_owner": "o/r"})
+    rc = foundry_ticket.cmd_claim(["7"], lambda a, stdin=None: "", 0.0)
+    assert rc == 2 and "claims-unreadable" in capsys.readouterr().err
+
+
+def test_claim_emits_the_start_marker_with_the_canonical_case_target(tmp_path, monkeypatch):
+    root = _repo(tmp_path)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    target = {"repo": "o/r", "number": 7, "assignees": ["me"], "status": "ready", "blocked_by": [], "state": "OPEN"}
+    monkeypatch.setattr(foundry_ticket, "load_config", lambda r: {"repos": {"r": "o/r"}, "project_number": None})
+    monkeypatch.setattr(foundry_ticket, "parse_ref", lambda i, r, repos: ("o/r", 7))
+    monkeypatch.setattr(foundry_ticket, "operator_login", lambda run: "me")
+    monkeypatch.setattr(foundry_ticket, "read_queue", lambda run, cfg: [target])
+    monkeypatch.setattr(foundry_ticket, "read_issue", lambda *a, **k: {
+        "_has_done": False, "done_trusted": True, "done": "", "done_digest": "d", "body_sha256": "b",
+        "name_with_owner_raw": "Org/Repo", "name_with_owner": "org/repo"})
+    seen = {}
+
+    class Ev:
+        idempotency_key = "k"
+    monkeypatch.setattr(foundry_ticket.deck, "emit", lambda ref, ev, payload, adapter=None: seen.update(ref=ref, p=payload) or Ev())
+    rc = foundry_ticket.cmd_claim(["7"], lambda a, stdin=None: "", 0.0)
+    assert rc == 0, rc
+    assert seen["ref"] == "Org/Repo#7" and seen["p"]["target"] == "Org/Repo#7"
+    assert foundry_ticket.store.read_claims(root)[0].get("org/repo#7")

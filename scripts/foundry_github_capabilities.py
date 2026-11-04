@@ -12,7 +12,7 @@ Config (`.claude/foundry-project.json`):
 
 `github_scope.operators` is also the TRUST LIST for deck-event markers (foundry_deck_events.Trust): a
 `foundry-deck` marker comment is authoritative only when its author is the authenticated login, a login
-listed here, or - ONLY when this object is empty/absent - has authorAssociation OWNER/MEMBER/COLLABORATOR.
+listed here, or - ONLY when this object is empty/absent - is the repository OWNER or has write/maintain/admin permission on the repo.
 List every operator login here in a team workspace; a marker from anyone else is shown as `foreign_author`.
 `owner` must match ^[A-Za-z0-9-]+$ (it reaches `gh api` arguments).
 
@@ -405,6 +405,9 @@ def collect(project_dir, runner=default_runner, timeout=DEFAULT_TIMEOUT, now=Non
         probe_usage(project_dir, manifest, now),
         probe_issue_artifacts(timeout, runner),
     ]
+    if not cfg.get("operators"):
+        rows.append(_row("operators", "ok", "not configured — falling back to repository write permission",
+                         "github_scope.operators", state="fallback"))
     out = summarize(rows)
     out["sources"] = rows
     return out

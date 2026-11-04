@@ -149,6 +149,8 @@ function canonicalJson(v) {
 // A plain release tag (v1.2.3 / 1.2.3) or a SLASH-FREE branch name: `refs/pull/N/head`, `pull/N/merge` and any
 // other path-shaped ref (an attacker-controlled PR ref) are never "ours" (security review of #286).
 const REF_RE = /^(?:v?[0-9]+\.[0-9]+\.[0-9]+|[A-Za-z0-9][A-Za-z0-9._-]{0,99})$/;
+// An all-hex 7-40 char ref is a commit SHA pin: it is never "ours" by shape, only by an exact supported_sources entry.
+const HEX_SHA_RE = /^[0-9a-fA-F]{7,40}$/;
 export function isOurSource(src, marketplaceRepo, supportedSources = []) {
   // Fail closed (a decision the spec leaves open): a github source is ours only when it carries NOTHING
   // beyond `source` and `repo`, plus at most a plain tag/branch `ref` (the pre-1.7 tag pin the updater
@@ -156,7 +158,7 @@ export function isOurSource(src, marketplaceRepo, supportedSources = []) {
   // thing to fetch, so it must equal a shipped `supported_sources` entry exactly.
   const keys = isPlainObject(src) ? Object.keys(src) : [];
   const plainKeys = keys.every((k) => k === 'source' || k === 'repo' || k === 'ref');
-  const refOk = !keys.includes('ref') || (typeof src.ref === 'string' && REF_RE.test(src.ref) && !src.ref.includes('..'));
+  const refOk = !keys.includes('ref') || (typeof src.ref === 'string' && REF_RE.test(src.ref) && !HEX_SHA_RE.test(src.ref) && !src.ref.includes('..'));
   if (isPlainObject(src) && plainKeys && refOk && src.source === 'github' && typeof src.repo === 'string' && REPO_RE.test(src.repo)
     && typeof marketplaceRepo === 'string' && marketplaceRepo !== '' && asciiLower(src.repo) === asciiLower(marketplaceRepo)) {
     return true;

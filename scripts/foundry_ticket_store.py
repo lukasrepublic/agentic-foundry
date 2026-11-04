@@ -16,6 +16,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 from pathlib import Path
 
 TICKET_BASENAME = "foundry-ticket.json"
@@ -51,9 +52,132 @@ def ticket_file(root: Path | None = None) -> Path | None:
     return _git_path(TICKET_BASENAME, root)
 
 
+class ClaimsUnreadable(ValueError):
+    """The claims file exists but is unreadable or malformed — never treated as "no claim"."""
+
+
+def _git_common_path(basename: str, root: Path | None = None) -> Path | None:
+    root = root or project_root()
+    try:
+        out = subprocess.run(["git", "-C", str(root), "rev-parse", "--git-common-dir"],
+                             capture_output=True, text=True, timeout=10)
+    except Exception:
+        return None
+    if out.returncode != 0 or not out.stdout.strip():
+        return None
+    p = Path(out.stdout.strip())
+    return (p if p.is_absolute() else (root / p)).resolve() / basename
+
+
 def claims_file(root: Path | None = None) -> Path | None:
-    """The git-dir path of the claim records for `root` (None when root is not a git repository)."""
+    """Where claim records are WRITTEN: the repository's common git dir, shared by the main checkout and
+    every linked worktree (None when root is not a git repository)."""
+    return _git_common_path(CLAIMS_BASENAME, root)
+
+
+def legacy_claims_file(root: Path | None = None) -> Path | None:
+    """The pre-fix per-worktree location; read only when the common file does not exist."""
     return _git_path(CLAIMS_BASENAME, root)
+
+
+def norm_repo(repo) -> str:
+    """ASCII-lowercase `owner/name` (GitHub logins and repo names are case-insensitive)."""
+    return "".join(c.lower() if "A" <= c <= "Z" else c for c in str(repo or ""))
+
+
+def claim_key(repo, number) -> str:
+    return f"{norm_repo(repo)}#{number}"
+
+
+def _parse_claims_file(p: Path) -> dict:
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise ClaimsUnreadable(f"{p.name}: {e}")
+    if not isinstance(d, dict):
+        raise ClaimsUnreadable(f"{p.name}: not a JSON object")
+    out: dict = {}
+    for k, v in d.items():
+        repo, sep, num = str(k).rpartition("#")
+        nk = f"{norm_repo(repo)}#{num}" if sep else str(k)
+        if nk in out:   # two raw keys normalise alike: the newest claimed_at wins
+            old = out[nk]
+            ts = lambda r: str(r.get("claimed_at") or "") if isinstance(r, dict) else ""  # noqa: E731
+            if ts(v) < ts(old):
+                continue
+        out[nk] = v
+    return out
+
+
+def read_claims(root: Path | None = None) -> tuple[dict, bool]:
+    """(claims keyed by lower-cased repo#N, found). found=False when no claims file exists anywhere.
+    The common-dir file and the legacy per-worktree file are MERGED (common wins on a collision, legacy-only
+    keys are kept). Raises ClaimsUnreadable when either present file is unreadable or not a JSON object."""
+    common, legacy = claims_file(root), legacy_claims_file(root)
+    paths = [p for p in (legacy, common) if p is not None and p.is_file()]
+    if legacy is not None and common is not None and legacy.resolve() == common.resolve():
+        paths = [common] if common.is_file() else []
+    merged: dict = {}
+    for p in paths:          # legacy first, then common overlays it
+        merged.update(_parse_claims_file(p))
+    return merged, bool(paths)
+
+
+class claims_lock:
+    """Exclusive advisory lock (flock on a sibling file in the common dir) around a claims read-modify-write."""
+
+    def __init__(self, root: Path | None = None):
+        p = claims_file(root)
+        self.path = p.with_name(CLAIMS_BASENAME + ".lock") if p else None
+        self.fd = None
+
+    def __enter__(self):
+        import fcntl
+        if self.path is None:
+            return self
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.fd = os.open(str(self.path), os.O_RDWR | os.O_CREAT, 0o600)
+        fcntl.flock(self.fd, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc):
+        if self.fd is not None:
+            os.close(self.fd)   # closing releases the flock
+            self.fd = None
+        return False
+
+
+def update_claims(root: Path | None, fn) -> Path:
+    """Locked read-modify-write of the common claims file. `fn(claims_dict)` mutates in place. Raises
+    ClaimsUnreadable (never overwrites an unreadable file)."""
+    p = claims_file(root)
+    if p is None:
+        raise ClaimsUnreadable("not a git repository — the claim record lives in the git dir")
+    with claims_lock(root):
+        claims, _ = read_claims(root)
+        fn(claims)
+        atomic_write_json(p, claims)
+    return p
+
+
+def claim_done_digest(root: Path | None, repo: str, number) -> str | None:
+    """The vetted Done-means digest a `claim` recorded for repo#number, or None when there is no file / no
+    record carrying one (the unclaimed path). Raises ClaimsUnreadable when the file is present but unusable
+    or the record is malformed."""
+    claims, found = read_claims(root)
+    if not found:
+        return None
+    rec = claims.get(claim_key(repo, number))
+    if rec is None:
+        return None
+    if not isinstance(rec, dict):
+        raise ClaimsUnreadable(f"record for {claim_key(repo, number)} is malformed")
+    if "done_digest" not in rec:
+        return None
+    dd = rec["done_digest"]
+    if not isinstance(dd, str) or not dd:
+        raise ClaimsUnreadable(f"record for {claim_key(repo, number)} has a malformed done_digest")
+    return dd
 
 
 def lease_file(root: Path | None = None) -> Path:
@@ -99,7 +223,7 @@ def ensure_runtime_dir(ws) -> Path:
 def atomic_write_json(path: Path, doc: dict) -> None:
     """temp file in the same directory + rename, so a reader never sees a half-written file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(tmp, path)
 

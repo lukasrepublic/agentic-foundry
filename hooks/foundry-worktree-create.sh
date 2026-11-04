@@ -273,9 +273,10 @@ if sys.argv[3] == "issue":
             allowed.add(cfg["planning_repo"])
         elif cfg.get("owner") and cfg.get("planning_repo"):
             allowed.add(cfg["owner"] + "/" + cfg["planning_repo"])
-        if repo not in allowed:
+        allowed = {store.norm_repo(x) for x in allowed}   # GitHub owner/repo names are case-insensitive
+        if store.norm_repo(repo) not in allowed:
             print("assignment-repo-unconfigured"); sys.exit(0)
-        claim = ft.load_claims(ws).get(repo + "#" + num)
+        claim = ft.load_claims(ws).get(store.claim_key(repo, num))
     except Exception:
         print("assignment-no-claim"); sys.exit(0)
     if not isinstance(claim, dict) or not claim.get("body_sha256"):
@@ -709,7 +710,7 @@ PY
   printf '{ "schema_version":1, "operating_mode":"team", "github_scope":{"owner":"o","planning_repo":"p"}, "repos": { "app": { "path": "app", "repo": "o/r" } } }\n' > "$ws/.claude/foundry-project.json"
   printf '{ "schema_version":1, "operators": { "op_test": { "name":"T" } } }\n' > "$ws/.claude/foundry-operators.json"
   local sha_a sha_b; sha_a="$(printf 'a%.0s' $(seq 1 64))"; sha_b="$(printf 'b%.0s' $(seq 1 64))"
-  _issue_manifest() { printf '{"target_repo":"app","task":"t-iss","agent":"app-engineer","assignment":{"issue_url":"https://github.com/o/r/issues/7","issue_number":7,"repo_key":"app","operator":"op_test","lane":"charter","acceptance_revision":{"body_sha256":"%s","documents":[]}}}\n' "$1" > "$ws/.foundry/dispatch-queue/t-iss.json"; }
+  _issue_manifest() { local iu="${2:-https://github.com/o/r/issues/7}"; printf '{"target_repo":"app","task":"t-iss","agent":"app-engineer","assignment":{"issue_url":"'"$iu"'","issue_number":7,"repo_key":"app","operator":"op_test","lane":"charter","acceptance_revision":{"body_sha256":"%s","documents":[]}}}\n' "$1" > "$ws/.foundry/dispatch-queue/t-iss.json"; }
   local oc rc_c
   rm -f "$cgp"; _issue_manifest "$sha_a"
   oc="$(CLAUDE_PROJECT_DIR="$ws" bash "$0" </dev/null 2>/dev/null)"; rc_c=$?
@@ -723,6 +724,12 @@ PY
   printf '{"o/r#7":{"issue":"o/r#7","number":7,"repo":"o/r","body_sha256":"%s"}}\n' "$sha_a" > "$cgp"; _issue_manifest "$sha_a"
   oc="$(CLAUDE_PROJECT_DIR="$ws" bash "$0" </dev/null 2>/dev/null)"; rc_c=$?
   { [ "$rc_c" -eq 0 ] && [ -d "$oc" ]; } || { echo "  claim: a matching claim was refused rc=$rc_c" >&2; rcl=0; }
+  # a mixed-case URL repo (GitHub names are case-insensitive) still finds the lower-cased claim and passes `allowed`
+  rm -f "$ws/.foundry/dispatch-queue/"*.json
+  [ -d "$oc" ] && git -C "$ws/app" worktree remove --force "$oc" 2>/dev/null   # free the task's worktree for the re-run
+  _issue_manifest "$sha_a" "https://github.com/O/R/issues/7"
+  oc="$(CLAUDE_PROJECT_DIR="$ws" bash "$0" </dev/null 2>/dev/null)"; rc_c=$?
+  { [ "$rc_c" -eq 0 ] && [ -d "$oc" ]; } || { echo "  claim: a mixed-case issue URL was refused rc=$rc_c: $(tail -2 "$ws/.foundry/dispatch.log")" >&2; rcl=0; }
   if [ "$rcl" -eq 1 ]; then echo "SEC-286 issue-lane-claim-verified: PASS"; else echo "SEC-286 issue-lane-claim-verified: FAIL"; ok=0; fi
 
   [ "$ok" -eq 1 ] && echo "FOUNDRY-WORKTREE-CREATE-SELFTEST-GREEN" || { echo "FOUNDRY-WORKTREE-CREATE-SELFTEST-RED"; return 1; }

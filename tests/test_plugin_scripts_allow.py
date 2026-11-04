@@ -159,6 +159,9 @@ _WRITERS = [
     ("foundry-ticket.py", "start 7 --trust-author"), ("foundry-ticket.py", "start 7 --trust"),
     ("foundry_operating_mode.py", "enable-team"), ("foundry_operating_mode.py", "disable-team"),
     ("foundry_usage.py", "bind --session s --issue i"),
+    ("foundry_usage.py", "fallback-transcripts --cli-version 1"),
+    ("foundry_usage.py", "--dataset /d fallback-transcripts --cli-version 1"),
+    ("foundry_usage.py", "--dat=/d fallback-transcripts --cli-version 1"),
     ("foundry_usage.py", "--dataset /d ingest /c"), ("foundry_usage.py", "--dat=/d attribute"),
 ]
 _READERS = [

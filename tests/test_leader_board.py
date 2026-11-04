@@ -269,7 +269,7 @@ def test_fetch_issues_through_runner():
             if "closed" in argv:
                 return Res(rc=0, stdout="[]")
             return Res(rc=0, stdout=json.dumps([{"number": 7, "title": "t", "labels": [{"name": "work:operations"}],
-                                                 "author": {"login": "alice"}, "authorAssociation": "MEMBER", "createdAt": "2026-11-01T00:00:00Z",
+                                                 "author": {"login": "alice"}, "authorAssociation": "OWNER", "createdAt": "2026-11-01T00:00:00Z",
                                                  "projectItems": [{"title": "Delivery"}], "body": "Reverts: example-org/planning#2"}]))
         if argv[1] == "api" and "graphql" in argv:
             return Res(rc=0, stdout=json.dumps({"data": {"repository": {"issue": {"timelineItems": {
@@ -292,7 +292,7 @@ def test_fetch_issues_through_runner():
 def _marker(i, event, at, by, target=None, blocking=None, **extra):
     body = {"v": 1, "event": event, "idempotency_key": f"{event}-{i}-{at}-{target}", "target": target,
             "blocking": blocking, "at": at, "by": by, "evidence": ["https://example.com/e"], **extra}
-    return {"author": {"login": by if by in ("alice", "bob", "carol") else "alice"}, "authorAssociation": "MEMBER", "id": f"{event}-{at}-{target}", "createdAt": at,
+    return {"author": {"login": by if by in ("alice", "bob", "carol") else "alice"}, "authorAssociation": "OWNER", "id": f"{event}-{at}-{target}", "createdAt": at,
             "body": "<!-- foundry-deck: " + json.dumps(body) + " -->\nrecorded"}
 
 
@@ -664,3 +664,30 @@ def test_foreign_accepted_marker_is_not_an_acceptance():
     assert w(rep)["operators"].get("op-alice", {}).get("throughput", {}).get("ids", []) == []
     good = run(_base([_outcome(1, "alice", "2026-11-02T06:00:00Z")]))
     assert w(good)["operators"]["op-alice"]["throughput"]["ids"] == [P + "1"]
+
+
+# ---- security follow-up of #286: the leader board agrees with the inbox/claim marker-trust fallback ------
+
+def _perm_comment(login, assoc, repo="example-org/planning"):
+    return {"author": {"login": login}, "authorAssociation": assoc, "_fetched_repo": repo,
+            "url": f"https://github.com/{repo}/issues/7#issuecomment-1", "body": "x"}
+
+
+def test_leader_board_fallback_trust_uses_write_permission(monkeypatch):
+    Res = lb.default_runner.__globals__["Result"]
+    cs = [_perm_comment("writer", "COLLABORATOR"), _perm_comment("reader", "MEMBER")]
+    asked = []
+
+    def runner(argv, timeout):
+        asked.append(argv[2])
+        lvl = "write" if "/writer/" in argv[2] else "read"
+        return Res(rc=0, stdout=json.dumps({"permission": lvl}))
+    perms = lb._resolve_permissions([{"comments": cs}], runner, 5)
+    assert len(asked) == 2 and perms == {"example-org/planning|writer": "write", "example-org/planning|reader": "read"}
+    seen = {}
+    monkeypatch.setattr(lb, "_facts", lambda iss, cutoff, trust=None: seen.setdefault("t", trust) and None)
+    lb.compute({"scope": {"operators": {}, "permissions": perms}, "issues": [{"ref": "a/b#1"}]}, CUT)
+    t = seen["t"]
+    assert t(cs[0]) and not t(cs[1])
+    # a comment whose url points into a different repo than it was fetched for is never trusted
+    assert not t(dict(cs[0], _fetched_repo="other/repo"))

@@ -294,3 +294,15 @@ def test_doctor_failing_gh_stays_advisory_end_to_end(tmp_path):
     line = [ln for ln in res.stdout.splitlines() if "github-capabilities:" in ln]
     assert len(line) == 1 and "[adv ]" in line[0]
     assert "[XX ] github-capabilities" not in res.stdout
+
+
+def test_operators_fallback_is_reported_as_a_coverage_line(proj):
+    mp = os.path.join(proj, ".claude", "foundry-project.json")
+    m = json.load(open(mp))
+    m["github_scope"].pop("operators", None)
+    json.dump(m, open(mp, "w"))
+    row = rows(ghc.collect(proj, Fake()))["operators"]
+    assert row["detail"] == "not configured — falling back to repository write permission"
+    m["github_scope"]["operators"] = {"alice": "op_a"}
+    json.dump(m, open(mp, "w"))
+    assert "operators" not in rows(ghc.collect(proj, Fake()))

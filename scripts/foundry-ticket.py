@@ -180,6 +180,9 @@ def done_trust(repo: str | None, author: str, editor: str | None, gh_json=_gh_js
     return ok, why
 
 
+RECOVERY = "`foundry-ticket.py claim <n> --rebase-acceptance` (a plain re-claim keeps the old vetted digest)"
+
+
 def cmd_start(args: list[str]) -> int:
     if not args:
         sys.exit("usage: foundry-ticket.py start <issue|url> [--repo OWNER/NAME] [--trust-author]")
@@ -201,8 +204,37 @@ def cmd_start(args: list[str]) -> int:
     login = ((issue.get("author") or {}).get("login")) or ""
     issue_repo = repo_of_issue(issue, repo)
     trusted_by = "author"
+    editor = None
+    if done:
+        # the same reader the claim path uses (never a second GraphQL shape): who last edited the body
+        try:
+            live = read_issue(default_run, issue_repo or "", int(issue["number"]), trust_author=True)
+        except (GhError, ValueError):
+            live = None
+        if not live or live.get("done_sha256") != store.command_digest(done):
+            sys.exit("foundry-ticket: could not read the issue's last editor consistently (or the body changed "
+                     "while reading); nothing was recorded. Retry `start`.")
+        editor = live.get("last_edited_by")
+        issue_repo = live.get("name_with_owner") or issue_repo
+        try:
+            vetted = store.claim_done_digest(project_root(), issue_repo or "", issue["number"])
+        except store.ClaimsUnreadable as e:
+            sys.exit(f"foundry-ticket: claims-unreadable — the local claim record cannot be read ({e}); the Done-means "
+                     "command will not run. Repair or remove the claims file in the git common dir. Nothing was recorded.")
+        if vetted and vetted != store.command_digest(done):
+            sys.exit("foundry-ticket: done-means-changed — the Done-means command differs from the one vetted at "
+                     "`claim` time; it will not run. Re-read it and run " + RECOVERY +
+                     " (--trust-author does not override this). Nothing was recorded.")
+        if vetted is None:
+            try:
+                me = operator_login(default_run)
+            except (GhError, QueueUnavailable, ValueError):
+                me = None   # advisory only: a failed login lookup prints nothing and never aborts
+            if me and me.lower() in {str(x).lower() for x in (live.get("assignees") or [])}:
+                print(f"foundry-ticket: warning — {issue_repo}#{issue['number']} is assigned to you but has no local claim "
+                      "record; its Done-means command was not vetted at claim time.", file=sys.stderr)
     if done and not trust:
-        ok, why = author_trusted(issue_repo, login)
+        ok, why = done_trust(issue_repo, login, editor)
         if not ok:
             sys.exit("foundry-ticket: the Done-means command in this issue was not adopted — " + why +
                      ". The Stop hook would run it unattended, so a command from outside the repository's "
@@ -256,6 +288,12 @@ def run_done(doc: dict, root: Path, timeout: int = 1800) -> tuple[int, str]:
         return 0, "no Done-means command declared"
     if store.command_digest(cmd) != doc.get("done_sha256"):
         return 125, "the recorded Done-means command does not match its digest; re-run `start`"
+    try:
+        vetted = store.claim_done_digest(root, doc.get("repo") or "", doc.get("issue"))
+    except store.ClaimsUnreadable as e:
+        return 125, f"claims-unreadable: the local claim record cannot be read ({e}); not run"
+    if vetted and vetted != store.command_digest(cmd):
+        return 125, "done-means-changed: the command differs from the one vetted at `claim` time; run " + RECOVERY
     proc = None
     try:
         proc = subprocess.Popen(["/bin/bash", "-c", cmd], cwd=str(root), stdout=subprocess.PIPE,
@@ -348,7 +386,7 @@ _REF_RE = re.compile(r"^(?:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#)?(\d+)$")
 # `totalCount`; `_nodes` raises GhError when totalCount > the nodes returned, so an issue with more than
 # 30 assignees / 60 labels / 50 blockers / 20 linked PRs / 20 project items is UNREADABLE (-> QueueUnavailable,
 # `unverified`), never silently truncated. closedByPullRequestsReferences is covered the same way via its totalCount.
-_ISSUE_FIELDS = """number title body url state stateReason author{login} editor{login} lastEditedAt
+_ISSUE_FIELDS = """number title repository{nameWithOwner} body url state stateReason author{login} editor{login} lastEditedAt
 assignees(first:30){totalCount nodes{login}} labels(first:60){totalCount nodes{name}}
 blockedBy(first:50){totalCount nodes{number state repository{nameWithOwner}}}
 blocking(first:50){totalCount nodes{number state repository{nameWithOwner}}}
@@ -512,6 +550,7 @@ def _nodes(node: dict, key: str) -> list:
 def normalize(node: dict, repo: str, project_number: int | None) -> dict:
     """GraphQL issue node → the owner-aware record. Every field the ticket reader returned before is kept."""
     body = node.get("body") or ""
+    nwo = (node.get("repository") or {}).get("nameWithOwner")
     labels = [x["name"] for x in _nodes(node, "labels") if x.get("name")]
     status, source, prio = None, "label", None
     if project_number is not None:
@@ -542,6 +581,7 @@ def normalize(node: dict, repo: str, project_number: int | None) -> dict:
         "last_edited_by": (node.get("editor") or {}).get("login") or None,
         "last_edited_at": node.get("lastEditedAt") or None, "state": (node.get("state") or "").upper(),
         "state_reason": (node.get("stateReason") or "").upper() or None, "repo": repo,
+        "name_with_owner": store.norm_repo(nwo) if nwo else None, "name_with_owner_raw": nwo or None,
         "assignees": [a["login"] for a in _nodes(node, "assignees") if a.get("login")],
         "labels": labels, "status": status, "status_source": source, "priority": prio,
         "blocked_by": refs("blockedBy"), "blocking": refs("blocking"),
@@ -664,22 +704,24 @@ def _open_blockers(issue: dict) -> list[dict]:
 
 
 def load_claims(root: Path) -> dict:
-    p = store.claims_file(root)
+    """Claim records keyed by the lower-cased `owner/name#N` (common git dir; legacy per-worktree file read
+    when no common one exists). An unreadable file yields {} here — the execution paths use
+    `store.claim_done_digest`, which refuses instead."""
     try:
-        d = json.loads(p.read_text(encoding="utf-8")) if p and p.is_file() else {}
-        return d if isinstance(d, dict) else {}
-    except (OSError, ValueError):
+        return store.read_claims(root)[0]
+    except store.ClaimsUnreadable:
         return {}
 
 
 def save_claim(root: Path, key: str, rec: dict) -> Path:
-    p = store.claims_file(root)
-    if not p:
-        raise GhError("not a git repository — the claim record lives in the git dir")
-    claims = load_claims(root)
-    claims[key] = rec
-    store.atomic_write_json(p, claims)
-    return p
+    r, sep, n = key.rpartition("#")
+    nk = store.claim_key(r, n) if sep else key
+    try:
+        return store.update_claims(root, lambda claims: claims.__setitem__(nk, rec))
+    except store.ClaimsUnreadable as e:
+        if "not a git repository" in str(e):
+            raise GhError(str(e))
+        raise
 
 
 def judge(issue: dict, login: str, claim: dict | None, withdrawn_by: tuple | None = None) -> dict:
@@ -689,7 +731,7 @@ def judge(issue: dict, login: str, claim: dict | None, withdrawn_by: tuple | Non
     no status, unknown status), `acceptance_changed`. A local claim supplies only the baseline body
     hash to compare against — never an authorization. `withdrawn_by`: (True, actor) when history shows a
     return to Backlog after start."""
-    key = f"{issue['repo']}#{issue['number']}"
+    key = store.claim_key(issue['repo'], issue['number'])
     base = {"issue": key, "number": issue["number"], "repo": issue["repo"]}
     if issue["state"] == "CLOSED":
         reason = {"NOT_PLANNED": "cancelled", "DUPLICATE": "duplicate"}.get(issue.get("state_reason") or "", "closed")
@@ -768,7 +810,7 @@ def select_next(run, root: Path, now: float) -> dict:
         if login not in i["assignees"]:
             skip(i, "other-owner"); continue
         if i["status"] in STARTED_STATUSES:
-            v = judge(i, login, claims.get(f"{i['repo']}#{i['number']}"))
+            v = judge(i, login, claims.get(store.claim_key(i['repo'], i['number'])))
             if v["stop_dispatch"]:
                 skip(i, "stop-dispatch:" + v["reason"])
             elif untrusted_done(i):
@@ -824,7 +866,7 @@ def wip_count(issues: list[dict], login: str, claims: dict, exclude: str | None 
     occupies WIP; so does a Ready issue with an open blocker that this machine has claimed before."""
     n = 0
     for i in issues:
-        key = f"{i['repo']}#{i['number']}"
+        key = store.claim_key(i['repo'], i['number'])
         if i["state"] != "OPEN" or login not in i["assignees"] or key == exclude:
             continue
         if i["status"] in STARTED_STATUSES or i["status"] == "blocked" or (_open_blockers(i) and key in claims):
@@ -890,19 +932,26 @@ def cmd_claim(args: list[str], run, now: float) -> int:
     if login not in target["assignees"]:
         print(f"claim refused: {repo}#{number} is assigned to {', '.join(target['assignees'])}, not {login}", file=sys.stderr)
         return 2
-    key = f"{repo}#{number}"
+    key = store.claim_key(repo, number)
     try:
         vetted = read_issue(run, repo, number, cfg["project_number"], trust_author=a.trust_author)
     except (GhError, ValueError) as e:
         print(f"claim refused: the issue could not be read completely: {store.redact(str(e))}", file=sys.stderr)
         return 2
+    key = store.claim_key(vetted.get("name_with_owner") or repo, number)   # the canonical GraphQL name wins
     has_done = bool(vetted["_has_done"])
     if has_done and not vetted["done_trusted"]:
         print(f"done-means-untrusted: claim refused: the Done-means command in {key} is not author-trusted — "
               f"{store.redact(vetted['done_reason'])}. The worker would run it, so the OPERATOR must read it and re-run "
               f"`claim --trust-author`. Nothing was recorded.", file=sys.stderr)
         return 2
-    claims = load_claims(root)
+    try:
+        claims = store.read_claims(root)[0]
+    except store.ClaimsUnreadable as e:
+        print(f"claims-unreadable: claim refused: the local claim record cannot be read ({store.redact(str(e))}); repair or "
+              "remove the claims file in the git common dir (it holds every vetted Done-means digest). Nothing was recorded.",
+              file=sys.stderr)
+        return 2
     wip = wip_count(issues, login, claims, exclude=key)
     reason = store.redact((a.allow_exception or "").strip()) or None
     exceptions = []
@@ -930,10 +979,11 @@ def cmd_claim(args: list[str], run, now: float) -> int:
     exc_text = f"{'+'.join(dict.fromkeys(exceptions))}: {reason}" if exceptions else None
     # The WIP-exception record is the human line of the `start` comment + the local claim record: gn-04's
     # marker fields are closed (and `evidence` must be shared references), so the reason rides in `note`.
-    payload = {"by": login, "target": key,
-               "note": store.redact(f"start recorded by {login} for {key}" + (f" (exception, {exc_text})" if exc_text else ""))}
+    ref = f"{vetted.get('name_with_owner_raw') or repo}#{number}"   # canonical case for GitHub; `key` is only the local map key
+    payload = {"by": login, "target": ref,
+               "note": store.redact(f"start recorded by {login} for {ref}" + (f" (exception, {exc_text})" if exc_text else ""))}
     try:
-        ev = deck.emit(key, "start", payload, adapter=_Adapter(run))
+        ev = deck.emit(ref, "start", payload, adapter=_Adapter(run))
     except (ValueError, RuntimeError) as e:
         print(f"claim refused: recording `start` failed: {store.redact(str(e))}", file=sys.stderr)
         return 2
@@ -1035,7 +1085,7 @@ def cmd_reconcile(args: list[str], run, now: float) -> int:
         print(f"reconcile: {e}", file=sys.stderr)
         return 2
     for repo, number in targets:
-        claim = claims.get(f"{repo}#{number}")
+        claim = claims.get(store.claim_key(repo, number))
         if cfg is None or login is None:
             results.append({"issue": f"{repo}#{number}", "number": number, "repo": repo, "stop_dispatch": True,
                             "reason": "unverified", "cause": store.redact(cause or "")})
@@ -1043,11 +1093,14 @@ def cmd_reconcile(args: list[str], run, now: float) -> int:
             results.append(reconcile_one(run, cfg, login, repo, number, claim, now))
     # a claim record for an issue GitHub reports closed is dead weight: prune it (a cache, never authority)
     closed = {r["issue"] for r in results if r["reason"] in ("closed", "cancelled", "duplicate")}
-    pruned = [k for k in closed if k in claims]
+    nk = lambda k: store.claim_key(*k.rpartition("#")[::2])   # noqa: E731
+    pruned = [k for k in closed if nk(k) in claims]
     if pruned:
-        p = store.claims_file(root)
-        if p:
-            store.atomic_write_json(p, {k: v for k, v in claims.items() if k not in pruned})
+        drop = {nk(x) for x in pruned}
+        try:
+            store.update_claims(root, lambda cl: [cl.pop(k, None) for k in drop])
+        except store.ClaimsUnreadable as e:
+            print(f"reconcile: claims-unreadable — not pruning ({store.redact(str(e))})", file=sys.stderr)
     out = {"results": results, "complete": cause is None, "pruned_claims": sorted(pruned)}
     if cause:
         out["cause"] = store.redact(cause)

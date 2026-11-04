@@ -81,7 +81,7 @@ class FakeGh:
             body = argv[argv.index("--body") + 1]
             lst = self.comments.setdefault(ref, [])
             lst.append({"id": f"c{len(lst) + 1}", "createdAt": self.now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                        "author": {"login": "alice"}, "authorAssociation": "MEMBER", "body": body})
+                        "author": {"login": "alice"}, "authorAssociation": "OWNER", "body": body})
             return R()
         if argv[:3] == ["gh", "issue", "view"]:
             fields = argv[argv.index("--json") + 1]
@@ -771,7 +771,7 @@ def test_foreign_resolved_marker_does_not_hold_but_a_trusted_one_does():
     bad = A([cm("random-outsider", "NONE")])
     marks, comments = inbox._read(bad, ref)
     assert marks == [] and inbox._resolved_holds(bad, ref, marks, comments) is False
-    ok = A([cm("alice", "MEMBER")])
+    ok = A([cm("alice", "OWNER")])
     marks, comments = inbox._read(ok, ref)
     assert inbox._resolved_holds(ok, ref, marks, comments) is True
 

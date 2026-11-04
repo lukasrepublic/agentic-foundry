@@ -1435,7 +1435,13 @@ test('AC-NPX-13 cleanup quarantines only unreferenced entries and refuses any sy
 test('isOurSource: only a release tag or a slash-free branch is a plain ref (no refs/ or pull/ paths)', () => {
   const src = (ref) => ({ source: 'github', repo: REPO, ref });
   for (const ok of ['v1.5.0', '1.5.0', 'main', 'release-2.0']) assert.equal(isOurSource(src(ok), REPO), true, ok);
-  for (const bad of ['refs/pull/1/head', 'pull/1/merge', 'refs/heads/main', 'a/b', 'feature/x', '../x', 'a..b', '', '-x']) {
+  for (const bad of ['refs/pull/1/head', 'pull/1/merge', 'refs/heads/main', 'a/b', 'feature/x', '../x', 'a..b', '', '-x',
+    'deadbeef', '0123456789abcdef0123456789abcdef01234567', 'ABCDEF1', '1234567']) {
     assert.equal(isOurSource(src(bad), REPO), false, bad);
   }
+  // a pinned SHA is ours only when it equals a supported_sources entry exactly
+  const pin = src('deadbeef');
+  assert.equal(isOurSource(pin, REPO, [pin]), true);
+  assert.equal(isOurSource(src('deadbee'), REPO, [pin]), false);
+  assert.equal(isOurSource(src('deadbeeg'), REPO), true, 'not all-hex: still a plain branch name');
 });
