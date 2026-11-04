@@ -188,7 +188,11 @@ hook_comment_expectation:
   #      `get-url --push`, skipping value-taking push flags, and refusing an unresolvable non-local host
   #      (`remote-host-unresolvable`). Every other clause byte-identical. Corpus:
   #      tests/test_git_discipline_queue.py, tests/test_hooks_guards.py::test_v118b2_*.
-  executable_content_sha256: 'ce0882e44093870771b3bfed3a8b2a09a9982223eace8cc42c699df560f49f3b'  # re-baselined for entry 12 (gv-10)
+  #  13. gv-10 round 2 (2026-11-04, security lane, PR #296): refusal text no longer carries URL userinfo
+  #      (`https://user:<token>@host` is stripped centrally in _redact), and clause (l) passes the push command's
+  #      inline `-c k=v` into the `get-url --push` probe, refusing a `-c url.*`/`remote.*` rewrite whose result is
+  #      neither local nor a host gh knows. Corpus: tests/test_git_discipline_queue.py (round 2 section).
+  executable_content_sha256: 'cf48708473b417a8c053cd292f7a7c6e0fc96a618226978c5469f40c9dc443a6'  # re-baselined for entry 13 (gv-10 round 2)
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
 operator_registry_shape:
