@@ -1,0 +1,13 @@
+kit: ux
+version: 1.0.0
+category: ux
+rules:
+- FG-UX-001
+- FG-UX-002
+- FG-UX-003
+checks:
+- checks/axe-e2e.spec.ts
+- checks/lighthouserc.json
+- checks/eslint-i18next.config.js
+templates: []
+migrations: []

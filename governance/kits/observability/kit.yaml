@@ -1,0 +1,12 @@
+kit: observability
+version: 1.0.0
+category: observability
+rules:
+- FG-OBS-001
+- FG-OBS-002
+- FG-OBS-003
+checks:
+- checks/weaver-registry-check.sh
+- checks/pint-ci.sh
+templates: []
+migrations: []

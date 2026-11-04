@@ -1,0 +1,75 @@
+kit: ux
+version: 1.0.0
+rules:
+- id: FG-UX-001
+  title: WCAG target and axe in e2e
+  statement: A UI MUST declare a WCAG 2.2 conformance target. The end-to-end suite MUST run axe on key pages. Automated checks cover a minority of WCAG; a manual pass is a practice, not a control.
+  category: ux
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - ui
+  check:
+    kind: ci
+    ref: governance/kits/ux/checks/axe-e2e.spec.ts
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.13
+  - W3C WCAG 2.2; Deque axe-core documentation (automated coverage is partial), accessed 2026-11-04
+- id: FG-UX-002
+  title: Front-end performance budget as a report
+  statement: A front-end performance budget SHOULD be run on purpose as a report. It MUST NOT be a required, gating CI check.
+  category: ux
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - ui
+  check:
+    kind: scorecard
+    ref: governance/kits/ux/checks/lighthouserc.json
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.13
+  - Lighthouse CI documentation (budgets, assertions); operating model rule C2, accessed 2026-11-04
+- id: FG-UX-003
+  title: No literal strings; locale handling
+  statement: User-visible text MUST come from a message catalog, not string literals in components. Dates, numbers and plurals MUST use locale-aware formatting. An i18n lint MUST pass.
+  category: ux
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - ui
+  check:
+    kind: lint
+    ref: governance/kits/ux/checks/eslint-i18next.config.js
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.13
+  - eslint-plugin-i18next documentation (no-literal-string); ICU MessageFormat, accessed 2026-11-04

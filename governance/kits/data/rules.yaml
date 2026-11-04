@@ -1,0 +1,75 @@
+kit: data
+version: 1.0.0
+rules:
+- id: FG-DATA-001
+  title: Data classification scheme and handling matrix
+  statement: Every data store and data flow MUST be classified with one of public, internal, confidential or restricted. A handling matrix MUST state storage, transport and access handling for each class.
+  category: data
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: declared
+    ref: governance/kits/data/templates/data-classification.yaml
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.11
+  - NIST SP 800-60 and FIPS 199 impact categorization; common four-tier public/internal/confidential/restricted schemes, accessed 2026-11-04
+- id: FG-DATA-002
+  title: Retention declared per store and matched to class
+  statement: Each data store MUST declare a retention period matched to its class. Where the platform supports it, a checkov-style policy check SHOULD verify it.
+  category: data
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: governance/kits/data/checks/retention-checks.md
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.11
+  - Checkov policy index, log-group retention and bucket lifecycle checks, accessed 2026-11-04
+- id: FG-DATA-003
+  title: Privacy declarations as code where personal data exists
+  statement: Where a store or flow holds personal data, the Design MUST declare the data categories, purpose, legal basis owner and deletion path as code next to the store. Reviewers MUST check the declaration.
+  category: data
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: review-lens
+    ref: skills/pr-reviewer
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.11
+  - Privacy-by-design engineering practice; ISO-neutral data inventory guidance (record of processing as code), accessed 2026-11-04

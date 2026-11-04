@@ -1,0 +1,32 @@
+# Karpenter NodePool: tainted, scales to zero when empty. Pin the Karpenter version per docs/standing-versions.md.
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: privileged-job
+spec:
+  template:
+    metadata:
+      labels:
+        node-class: privileged-job
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: privileged-job
+      taints:
+        - key: dedicated
+          value: privileged-job
+          effect: NoSchedule
+      requirements:
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand"]
+  limits:
+    cpu: "8"
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 60s
+---
+# The job opts in with a selector and a toleration:
+#   nodeSelector: {node-class: privileged-job}
+#   tolerations: [{key: dedicated, operator: Equal, value: privileged-job, effect: NoSchedule}]

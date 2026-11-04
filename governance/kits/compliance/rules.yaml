@@ -1,0 +1,75 @@
+kit: compliance
+version: 1.0.0
+rules:
+- id: FG-LIC-001
+  title: 'License policy: allowlist by category, per-package exceptions, deny unknown'
+  statement: Dependencies MUST be checked against a license policy. The policy MUST allow licenses by category, MAY list per-package exceptions with an owner and expiry, and MUST deny any license not listed.
+  category: compliance
+  level: 2
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: governance/kits/compliance/checks/license_policy_check.py
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.12
+  - OSS Review Toolkit (ORT) policy rules and evaluator; SPDX license list, accessed 2026-11-04
+- id: FG-LIC-002
+  title: SPDX headers where the blueprint requires
+  statement: Where the blueprint requires it, each source file MUST carry an SPDX-License-Identifier header and a copyright line. The REUSE lint MUST pass.
+  category: compliance
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: governance/kits/compliance/checks/reuse-lint.sh
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.12
+  - REUSE specification, reuse.software, accessed 2026-11-04
+- id: FG-LIC-003
+  title: SBOM per release
+  statement: Every release MUST publish a software bill of materials in SPDX or CycloneDX form, generated from the released artifact.
+  category: compliance
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: governance/kits/compliance/checks/sbom.sh
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.12
+  - Anchore Syft and Aqua Trivy SBOM documentation; SPDX and CycloneDX specifications, accessed 2026-11-04

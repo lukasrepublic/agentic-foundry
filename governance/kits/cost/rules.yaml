@@ -1,0 +1,106 @@
+kit: cost
+version: 1.0.0
+rules:
+- id: FG-COST-001
+  title: Cost is a decision input; always-on resources carry a priced ask
+  statement: Every deck decision MUST weigh cost. A new always-on resource MUST carry a priced ask (purpose plus a cost breakdown). A capacity raise MUST be a priced option for the operator, never a PR.
+  category: cost
+  level: 1
+  floor: true
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: lint
+    ref: scripts/foundry_blocker_check.py
+  exception:
+    allowed: false
+  sources:
+  - Foundry governance design 2026-11-04, section 2.9
+  - FinOps Foundation framework, Inform and Optimize phases, finops.org, accessed 2026-11-04
+- id: FG-COST-002
+  title: Required cost-allocation tags in IaC plans
+  statement: Every taggable resource in an IaC plan MUST carry the required cost-allocation tags (owner, environment, cost-center). The plan check MUST fail when a tag is missing.
+  category: cost
+  level: 2
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**/*.tf'
+    - '**/*.tfvars'
+    - infra/**
+    - deploy/**
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: governance/kits/cost/checks/required-tags.rego
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.9
+  - FinOps Foundation, tagging and allocation guidance; Open Policy Agent conftest documentation, accessed 2026-11-04
+- id: FG-COST-003
+  title: Cost diff on infra PRs is a comment, not a gate
+  statement: An infra PR SHOULD receive a cost diff as a PR comment. The cost diff MUST NOT be a required check.
+  category: cost
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**/*.tf'
+    - '**/*.tfvars'
+    - infra/**
+    - deploy/**
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: governance/kits/cost/checks/infracost-comment.sh
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.9
+  - Infracost CI/CD integration documentation (comment mode); operating model rule C2, accessed 2026-11-04
+- id: FG-COST-004
+  title: Scale-to-zero for non-prod and rare privileged jobs
+  statement: Non-production environments and rare privileged jobs (for example a signer) SHOULD run on a dedicated, tainted node class that scales to zero when idle. They MUST NOT share nodes with general
+    build runners.
+  category: cost
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**/*.tf'
+    - '**/*.tfvars'
+    - infra/**
+    - deploy/**
+    - '**/*.yaml'
+    blueprints:
+    - '*'
+  check:
+    kind: review-lens
+    ref: governance/kits/cost/templates/scale-to-zero-pattern.md
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.9
+  - Karpenter NodePool and disruption documentation (consolidation, taints); operating model rule C3, accessed 2026-11-04

@@ -1,0 +1,79 @@
+kit: observability
+version: 1.0.0
+rules:
+- id: FG-OBS-001
+  title: OTel semantic conventions and owner-prefixed custom names
+  statement: Telemetry MUST use OpenTelemetry semantic conventions where one exists. A custom attribute or metric name MUST carry the owning team prefix. The telemetry registry MUST pass the Weaver registry
+    check.
+  category: observability
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: governance/kits/observability/checks/weaver-registry-check.sh
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.10
+  - OpenTelemetry semantic conventions; OpenTelemetry Weaver registry check documentation, accessed 2026-11-04
+- id: FG-OBS-002
+  title: Alert-rule hygiene
+  statement: Prometheus alert and recording rules MUST pass pint lint in CI. Each alert SHOULD carry a severity label and a runbook annotation.
+  category: observability
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**/*.rules.yaml'
+    - '**/*.rules.yml'
+    - '**/alerts/**'
+    - '**/rules/**'
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: governance/kits/observability/checks/pint-ci.sh
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.10
+  - Cloudflare pint documentation (rule linting), accessed 2026-11-04
+- id: FG-OBS-003
+  title: The factory's own usage collection is declared
+  statement: 'The factory''s own usage collection MUST be declared: what is recorded, where it is written and how it is read. It MUST be read through the usage script only.'
+  category: observability
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: declared
+    ref: scripts/foundry_usage.py
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.10
+  - Foundry governance design 2026-11-04, section 2.10 (gn-05 usage collection), accessed 2026-11-04

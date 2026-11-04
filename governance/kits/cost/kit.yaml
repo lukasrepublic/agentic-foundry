@@ -1,0 +1,15 @@
+kit: cost
+version: 1.0.0
+category: cost
+rules:
+- FG-COST-001
+- FG-COST-002
+- FG-COST-003
+- FG-COST-004
+checks:
+- checks/required-tags.rego
+- checks/infracost-comment.sh
+templates:
+- templates/scale-to-zero-pattern.md
+- templates/scale-to-zero-nodeclass.yaml
+migrations: []
