@@ -568,7 +568,7 @@ def test_hooks_json_matcher_covers_all_sessionstart_sources():
     ]
     assert len(matchers) == 1, f"expected exactly one SessionStart entry for the hook, got {matchers}"
     sources = set(matchers[0].split("|"))
-    assert sources == {"startup", "resume", "clear", "compact"}, sources
+    assert sources == {"startup", "resume", "clear", "compact", "fork"}, sources  # fork: v2.0.0
     print("PSM-HOOKS-JSON-MATCHER-COVERS-ALL-SOURCES-OK")
 
 

@@ -28,7 +28,9 @@ ADMIT = 0
 def run_hook(command, extra_args=()):
     """Drive the real hook with a PreToolUse-shaped payload; return its exit code."""
     proc = subprocess.run(
-        ["bash", HOOK, "--protected", "main", *extra_args],
+        # --local-green=off: this file tests verb-path resolution, not clause (j) (v2.0.0),
+        # which is covered by tests/test_ticket_first.py.
+        ["bash", HOOK, "--protected", "main", "--local-green=off", *extra_args],
         input=json.dumps({"tool_input": {"command": command}}),
         capture_output=True, text=True, timeout=60,
     )

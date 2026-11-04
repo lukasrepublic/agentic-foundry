@@ -1212,16 +1212,15 @@ def test_claude_md_carries_one_stage_mode_line(tmp_path):
     assert matches == ["scale"]
 
 
-def test_claude_md_carries_the_atomic_spec_convention_line(tmp_path):
+def test_claude_md_carries_the_ticket_first_operating_model(tmp_path):
+    # v2.0.0 (ticket #269): the scaffolded CLAUDE.md points at the one-page operating model and
+    # names the ticket as the unit of work; the atomic-spec convention line is gone from the default.
     proc, home, target = _scaffold(tmp_path)
     assert proc.returncode == 0
     text = (target / "CLAUDE.md").read_text()
-    hit = [
-        line
-        for line in text.splitlines()
-        if "specs/features/" in line and "<!-- normative -->" in line and "acceptance-contract.yaml" in line
-    ]
-    assert len(hit) == 1, text
+    assert "context/operating-model.md" in text, text
+    assert "foundry-ticket.py" in text and "foundry-test.sh" in text, text
+    assert "acceptance-contract.yaml" not in text, text
 
 
 def test_gitignore_lines_are_root_anchored(tmp_path):

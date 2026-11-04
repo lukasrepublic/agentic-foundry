@@ -61,7 +61,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-doctor.py)",
       "tier": "allow",
-      "rationale": "bare invocation runs the thin 5-check health probe; read-only, fail-open; exact rule deliberately — flag-qualified forms fall through to a prompt so no allow-prefix can reach the --heal ceremony (security review 2026-08-02)."
+      "rationale": "bare invocation runs the thin 5-check health probe; read-only, fail-open; exact rule deliberately \u2014 flag-qualified forms fall through to a prompt so no allow-prefix can reach the --heal ceremony (security review 2026-08-02)."
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-done-when-backfill.py --dry-run:*)",
@@ -216,7 +216,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_repo_fleet.py validate:*)",
       "tier": "allow",
-      "rationale": "read-only manifest⟷reality⟷gitignore round-trip incl. the reverse scan; surfaces, never fixes."
+      "rationale": "read-only manifest\u27f7reality\u27f7gitignore round-trip incl. the reverse scan; surfaces, never fixes."
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_repo_registry.py:*)",
@@ -241,7 +241,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-amend.py:*)",
       "tier": "ask",
-      "rationale": "writes the frozen authorized: trailer (re-freeze after a non-widening amendment) — operator-prompted until permissions.yaml (R1) tiers it; a widening is refused by the verb itself"
+      "rationale": "writes the frozen authorized: trailer (re-freeze after a non-widening amendment) \u2014 operator-prompted until permissions.yaml (R1) tiers it; a widening is refused by the verb itself"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-bootstrap.sh:*)",
@@ -276,7 +276,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-merge-when-green.py:*)",
       "tier": "ask",
-      "rationale": "issues gh pr merge <pr> --squash once every check is green — a merge is a repo-state mutation, ask like foundry-authorize.py/foundry-amend.py, never a self-grant"
+      "rationale": "issues gh pr merge <pr> --squash once every check is green \u2014 a merge is a repo-state mutation, ask like foundry-authorize.py/foundry-amend.py, never a self-grant"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-project-sync.py:*)",
@@ -286,7 +286,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-stack-profile.py --relock:*)",
       "tier": "ask",
-      "rationale": "pinned ceremony (AC-PFM-3): re-writes the lock in place; leading flag verified prefix-keyable; the split tier with --validate/--load is safe ONLY because main() checks those flags before --relock — a combined invocation runs the earlier-checked verb (security review 2026-08-02)."
+      "rationale": "pinned ceremony (AC-PFM-3): re-writes the lock in place; leading flag verified prefix-keyable; the split tier with --validate/--load is safe ONLY because main() checks those flags before --relock \u2014 a combined invocation runs the earlier-checked verb (security review 2026-08-02)."
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-upstream-submit.py:*)",
@@ -321,12 +321,12 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_repo_fleet.py foreach:*)",
       "tier": "ask",
-      "rationale": "foreach fans an operator-supplied command over every present repo — arbitrary exec from the agent's hands prompts; the operator's own in-terminal use is unaffected."
+      "rationale": "foreach fans an operator-supplied command over every present repo \u2014 arbitrary exec from the agent's hands prompts; the operator's own in-terminal use is unaffected."
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_repo_fleet.py sync:*)",
       "tier": "ask",
-      "rationale": "sync clones/fetches from manifest-declared remotes — the factory's first network egress; the manifest write is the standing consent, the ask is the per-run operator moment (feat-foundry-workspace-repo-verbs). Subcommand split is reach-disjoint: argparse positional subcommands, first token decides the verb."
+      "rationale": "sync clones/fetches from manifest-declared remotes \u2014 the factory's first network egress; the manifest write is the standing consent, the ask is the per-run operator moment (feat-foundry-workspace-repo-verbs). Subcommand split is reach-disjoint: argparse positional subcommands, first token decides the verb."
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_repo_attach.py attach:*)",
@@ -357,6 +357,41 @@
       "rule": "Bash(tofu destroy -auto-approve:*)",
       "tier": "deny",
       "rationale": "absolute anti-pattern: unattended destructive infra apply with no plan review"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-delivery-metrics.py:*)",
+      "tier": "allow",
+      "rationale": "read-only: git log numstat + gh pr list over the window; prints one measured line per repo (paper:code, PRs, lead time); replaces status reports"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py start:*)",
+      "tier": "allow",
+      "rationale": "adopts a GitHub issue as the active ticket: writes only the git-dir ticket file; refuses a Done-means command from an author without write access on the issue's repo unless --trust-author (which the plugin-scripts-allow hook never auto-allows \u2014 the session's own permission mode decides)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py allow:*)",
+      "tier": "allow",
+      "rationale": "records a paper path on the active ticket (git-dir file only)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py status:*)",
+      "tier": "allow",
+      "rationale": "read-only"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py clear:*)",
+      "tier": "allow",
+      "rationale": "deletes the git-dir ticket file only"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py done:*)",
+      "tier": "ask",
+      "rationale": "EXECUTES the ticket's Done-means command (input taken from an issue body): the session's permission flow decides, never a silent allow (security review of #270, R1)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-test.sh:*)",
+      "tier": "ask",
+      "rationale": "EXECUTES the repository's own test command (Taskfile/Makefile/npm/pytest \u2014 code the branch defines): the session's permission flow decides; local-green is a delivery convenience, not a reason for a silent allow (security review of #270, R2)"
     }
   ],
   "not_invoked": [
@@ -382,7 +417,7 @@
     },
     {
       "script": "foundry-autonomy-instrument.py",
-      "rationale": "deferred, not tiered: a standing Bash allow-rule is coordinator work (round-2 review remediation, PR #152) — the operator runs this report-only CLI manually and grants it per-invocation or via their own settings, never via a plugin-shipped allow row"
+      "rationale": "deferred, not tiered: a standing Bash allow-rule is coordinator work (round-2 review remediation, PR #152) \u2014 the operator runs this report-only CLI manually and grants it per-invocation or via their own settings, never via a plugin-shipped allow row"
     },
     {
       "script": "foundry_authz.py",
@@ -467,6 +502,10 @@
     {
       "script": "foundry-direnv-lib.sh",
       "rationale": "direnv global-lib file, sourced by direnv, definitions only; not owner-executable, outside the AC-PFM-2 closed world"
+    },
+    {
+      "script": "foundry_ticket_store.py",
+      "rationale": "library: no argparse/__main__; the git-dir ticket location + output redactor imported by foundry-ticket.py and the two ticket hooks"
     }
   ]
 }

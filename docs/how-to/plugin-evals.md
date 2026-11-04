@@ -78,8 +78,8 @@ claude plugin eval . \
   --trust-plugin \
   --json results.json \
   --threshold 0.8 \
-  --model claude-sonnet-5 \
-  --judge-model claude-haiku-4-5 \
+  --model claude-sonnet-5-5 \
+  --judge-model claude-opus-5-5 \
   --no-publish \
   --max-cost-usd 20
 ```
