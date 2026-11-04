@@ -1,0 +1,12 @@
+{
+  "sweeps": [
+    {
+      "domain": "Where to keep the queue (synthetic example)",
+      "consensus": ["Queue records are append-only."],
+      "no_consensus": ["One file vs one file per writer: both are used. Recommend one file per period."],
+      "negative_findings": [],
+      "gaps": ["Write rate not measured."],
+      "sources": [{"title": "Example Queue Guide", "url": "https://example.org/queue", "retrieved": "2026-11-04"}]
+    }
+  ]
+}

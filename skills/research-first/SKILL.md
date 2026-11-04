@@ -94,12 +94,36 @@ comment on the ticket, and author the ADR (at the configured `governance.decisio
 disconfirming evidence is **NEVER dropped** — that is what lets a later reader re-judge whether the
 claimed consensus actually held.
 
+### Save the sweep and write the ruling (rule B3 — use the script, do not hand-write)
+
+When the sweep returns structured output (`{"sweeps": [{consensus, no_consensus, negative_findings, gaps, sources[{title, url, retrieved}], ...}]}`),
+save it, with provenance, in one verb (tier `ask`: it writes under `.foundry/`):
+
+```
+python3 ${CLAUDE_PLUGIN_ROOT}/scripts/foundry_research_note.py --in <sweep.json> --slug <slug> [--run-id <workflow-run-id>]
+```
+
+- Always writes **`.foundry/research/<date>-<slug>.md`** — run id, sources with retrieval dates, patterns,
+  consensus, no-consensus, negative findings, gaps. Re-running overwrites the same files; it never duplicates.
+- `no_consensus` empty and `consensus` non-empty → also writes **`.foundry/decisions/<date>-<slug>.md`**, a
+  dated ruling. Adopt it and move on; do not ask the operator.
+- `no_consensus` non-empty → **no ruling**; the script prints a blocker **candidate** (`why_operator:
+  no-consensus-after-research`, with `options`, `evidence`, `recommendation`, `one_word_ask`). Run it through
+  `foundry_blocker_check.py --in` and, if it stays a blocker, ask the operator for **one word**.
+- A converging line that mentions auth, secrets, credentials, tokens or the permission floor is **held**: the
+  script writes the note and a candidate (status `escalate`), not a ruling. Adopting it is a practice the
+  operator's test pass covers, not a control.
+- The raw sweep is kept beside the note as `<date>-<slug>.json`; a stale ruling from an earlier run of the same
+  date and slug is removed when the new run no longer supports it.
+- The two always-escalate exceptions below still override a written ruling.
+
 ## The decision rule — consensus → ADOPT; no-consensus → escalate
 
 - **Consensus exists → ADOPT it autonomously.** Build the standard thing; do **not** invent an alternative;
   do **not** escalate; **record** the grounding. Adopting the industry consensus is the default outcome.
 - **Genuine no-consensus (the best shops disagree) → consult the operator BEFORE building**, via
-  `AskUserQuestion`, presenting the conflicting approaches + the trade-off for the operator to resolve.
+  `AskUserQuestion`, presenting the **options, the evidence and a recommendation** and asking for **one word**
+  (the candidate `foundry_research_note.py` emits carries all three).
   Escalate a *genuine* fork only — not design churn the primitive should resolve itself.
 
 ## The security guardrail — two ALWAYS-escalate exceptions (REGARDLESS of consensus)
