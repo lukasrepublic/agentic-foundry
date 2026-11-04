@@ -139,11 +139,11 @@ rules:
       blueprints: ["*"]
     check: {kind: hook, ref: hooks/foundry-paper-guard.py}
     exception: {allowed: false}
-    note: Enforced by the ci class of hooks/foundry-paper-guard.py (gv-10), which admits a CI edit only when the active ticket names the path. Operating model rule A2.
+    note: Enforced by the paper guard's ci class (hooks/foundry-paper-guard.py, gv-10). The only admitted path is a ticket that names the file in ci_allowed, which is the operator's grant and not an exception to this rule. Operating model rule A2.
     sources: ["Foundry operating model rule A2 (2026-11-04)"]
   - id: FG-DLV-011
     title: A delivery record names who delivered it
-    statement: The delivered-by record (PR, merger login, head sha) MUST be written in the same action as the merge. Authorship alone MUST NOT be taken as proof of attestation.
+    statement: The delivered-PR field MUST be written in the same action as the merge. Authorship alone MUST NOT be taken as proof of attestation.
     category: delivery
     level: 1
     floor: true
@@ -151,7 +151,7 @@ rules:
     applies_to: {paths: ["**"], blueprints: ["*"]}
     check: {kind: ci, ref: scripts/foundry_queue_land.py}
     exception: {allowed: false}
-    note: Binds scripts/foundry_queue_land.py (gv-10) and scripts/foundry-merge-when-green.py. Agent identity can equal the operator's git identity. Operating model rule G2.
+    note: Shipped record shape is PR, merger login and head sha. Binds scripts/foundry_queue_land.py (gv-10) and scripts/foundry-merge-when-green.py. Agent identity can equal the operator's git identity. Operating model rule G2.
     sources: ["Foundry operating model rule G2 (2026-11-04)"]
   - id: FG-DLV-012
     title: A shared catalogue change runs every test that names it
@@ -185,9 +185,9 @@ rules:
     floor: true
     status: active
     applies_to: {paths: ["**"], blueprints: ["*"]}
-    check: {kind: ci, ref: scripts/foundry_queue_land.py}
+    check: {kind: hook, ref: hooks/foundry-git-discipline.sh}
     exception: {allowed: false}
-    note: Binds scripts/foundry_queue_land.py (gv-10). Operating model rule A2, obligation 4.
+    note: Binds hooks/foundry-git-discipline.sh; the bypass-flag and queued-PR clauses are shipped by gv-10. A CI script cannot see a push or a flag. Operating model rule A2, obligation 4.
     sources: ["Foundry operating model rule A2 (2026-11-04)", "GitHub docs, managing a merge queue (2026-11-04)"]
   - id: FG-DLV-015
     title: Read the queue entry twice
@@ -215,7 +215,7 @@ rules:
     sources: ["Foundry operating model rule A2 (2026-11-04)"]
   - id: FG-DLV-017
     title: On a rejection, read the failed log first
-    statement: On a queue rejection the failed log MUST be read first. A failure in the PR's own files MUST be fixed. A failure outside the diff MUST be reported with evidence, and the PR MAY be re-queued once. The same failure a second time MUST go to the test owner as a quarantine request, and there MUST NOT be a third re-queue.
+    statement: On a queue rejection the failed log MUST be read first. A failure in the PR's own files MUST be fixed. For a failure outside the diff, the evidence MUST be posted before any re-queue, and the PR MUST NOT be re-queued more than once. The same failure a second time (the same failing test id or an identical failure signature) MUST go to the test owner as a quarantine request, and there MUST NOT be a third roll.
     category: delivery
     level: 1
     floor: true
@@ -239,7 +239,7 @@ rules:
     sources: ["Foundry operating model rule A2 (2026-11-04)"]
   - id: FG-DLV-019
     title: Read the live ruleset before relying on it
-    statement: The live ruleset MUST be read before it is relied on. A queue waits only for the checks the ruleset names.
+    statement: The live ruleset MUST be read before it is relied on. A queue waits only for the checks the ruleset names, so a PR MUST NOT be enqueued when the base's ruleset names no required status check.
     category: delivery
     level: 1
     floor: true

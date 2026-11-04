@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import foundry_governance as gov  # noqa: E402
 
+TOK = "c" + "tx"
 KITS = ("quality", "delivery", "operations")
 FIX = ROOT / "tests" / "fixtures" / "governance"
 CHECK = ROOT / "governance" / "kits" / "quality" / "checks" / "quarantine_check.py"
@@ -27,9 +28,10 @@ FLOOR_REFS = {
     "FG-QA-006": "scripts/foundry-ticket.py",
     "FG-DLV-001": "hooks/foundry-git-discipline.sh",
     "FG-DLV-004": QUEUE,
+    "FG-DLV-014": "hooks/foundry-git-discipline.sh",
     "FG-DLV-010": "hooks/foundry-paper-guard.py",
     "FG-DLV-011": QUEUE,
-    **{f"FG-DLV-{n:03d}": QUEUE for n in range(12, 20)},
+    **{f"FG-DLV-{n:03d}": QUEUE for n in (12, 13, 15, 16, 17, 18, 19)},
     "FG-OPS-004": "scripts/foundry_prod_step.py",
     "FG-OPS-005": "scripts/foundry_message_log.py",
 }
@@ -100,7 +102,7 @@ def test_rules_have_sources_dated_and_no_private_names():
             assert r["sources"] and all("2026-11-04" in s for s in r["sources"]), r["id"]
         for f in base.rglob("*"):
             if f.is_file():
-                assert not re.search(r"\bctx", f.read_text(), re.I), f
+                assert not re.search(r"\b" + TOK, f.read_text(), re.I), f
 
 
 def test_kit_yaml_files_listed_exist():
@@ -147,9 +149,18 @@ def test_every_statement_has_an_rfc2119_keyword_and_kit_ids_match():
             assert re.search(r"\b(MUST|MUST NOT|SHOULD|SHOULD NOT|MAY)\b", r["statement"]), r["id"]
 
 
-def test_floor_statements_carry_no_exception_clause():
-    for i in ("FG-DLV-010",):
-        assert "allowed only" not in load_rules()[i]["statement"]
+def test_floor_statements_carry_no_exception_wording():
+    floors = [r for r in load_rules().values() if r["floor"]]
+    assert floors
+    for r in floors:
+        low = r["statement"].lower()
+        for word in ("unless", "except", "allowed only"):
+            assert word not in low, f"{r['id']}: {word}"
+
+
+def test_dlv_014_binds_the_git_discipline_hook():
+    r = load_rules()["FG-DLV-014"]
+    assert r["check"] == {"kind": "hook", "ref": "hooks/foundry-git-discipline.sh"}
 
 
 def test_notes_flag_lenses_added_by_gv16():
