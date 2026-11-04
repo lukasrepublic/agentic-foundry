@@ -29,6 +29,11 @@
       "rationale": "status/reap over machine-scoped worker sandbox envs; confined to isolated per-worker state"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_operating_model.py:*)",
+      "tier": "allow",
+      "rationale": "status|validate|explain|render-tick-section only read .foundry/operating-model.yaml, the shipped schema and the .foundry/ operator style file (a regular .md or .txt file, at most 4 KiB); the script writes nothing (gv-03)"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-permissions-compile.py --check:*)",
       "tier": "allow",
       "rationale": "read-only drift check over .foundry/permissions.yaml vs .claude/settings.json; never writes"

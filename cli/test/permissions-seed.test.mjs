@@ -35,7 +35,7 @@ test('the manifest carries the seed entry, flagged, and the declared set names i
   assert.equal(entry.template, 'permissions.yaml.tmpl');
   assert.ok(DECLARED_PATH_SET.includes(SEED_REL));
   const seeds = TEMPLATE_ENTRIES.filter((e) => e.seed);
-  assert.deepEqual(seeds.map((e) => e.target), [SEED_REL], 'exactly one seed entry');
+  assert.deepEqual(seeds.map((e) => e.target), [SEED_REL, '.foundry/operating-model.yaml'], 'exactly the two seed entries (permissions, operating-model)');
 });
 
 test('absent -> create; the written bytes are the template, verbatim', () => {

@@ -1,0 +1,10 @@
+# Conftest policy for infrastructure. Enforces: FG-SEC-031.
+# Local policy (no registry needed): checks/policy/*.rego
+#   conftest test -p <path-to>/checks/policy <manifest-or-iam-files>
+# It denies: image not pinned to a digest, container without securityContext, IAM statement allowing every action.
+# Exceptions use conftest's own `exception` rules and are counted in its output.
+policy_dir: governance/kits/security/checks/policy
+command: conftest test -p governance/kits/security/checks/policy
+# PLACEHOLDER (not shipped): an adopter MAY publish its own bundle to an OCI registry and pull it with
+# `conftest pull` / `conftest test --update`. No bundle is published by this kit; the reference below is not real.
+optional_remote: PLACEHOLDER

@@ -1,0 +1,10 @@
+{
+  "paths": [
+    "terraform/main.tf",
+    "terraform/.terraform.lock.hcl",
+    "terraform/karpenter-nodepool.tf",
+    "gitops/apps/platform.yaml",
+    "charts/x/Chart.yaml"
+  ],
+  "dependencies": []
+}

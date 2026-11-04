@@ -188,7 +188,7 @@ grouped by stage, is on **[docs/VERBS-QUICK-REF.md](docs/VERBS-QUICK-REF.md)**.
 
 `init → dispatch → merge-when-green`
 
-That's the whole discipline, plus your own CI. The other ~31 skills are an **optional catalog** —
+That's the whole discipline, plus your own CI. The other ~32 skills are an **optional catalog** —
 the opt-in spec lane (`intake`, `authorize`), infra-delivery (`id-*`) craft for OpenTofu/K8s/ArgoCD
 shops, multi-repo (`repos`), release cutting and upgrade tooling. Use three verbs, ignore the rest,
 add lanes when you need them. Want zero ceremony for a small change? Plain Claude Code on a branch

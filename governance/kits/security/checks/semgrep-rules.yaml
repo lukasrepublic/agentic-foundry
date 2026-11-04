@@ -1,0 +1,39 @@
+# Own Semgrep rules. Enforces FG-SEC-022 (and evidences FG-SEC-003). Run with: semgrep scan --config <this file>
+# Each rule carries cwe and owasp metadata so a finding maps back to a cited requirement id.
+rules:
+  - id: fg-sec-022-python-eval
+    message: eval on non-literal input allows code injection (FG-SEC-022).
+    severity: ERROR
+    languages: [python]
+    pattern: eval(...)
+    metadata:
+      cwe: ["CWE-95"]
+      owasp: ["A03:2021 - Injection"]
+      rule: FG-SEC-022
+  - id: fg-sec-022-python-shell-true
+    message: A subprocess call with shell=True risks command injection (FG-SEC-022).
+    severity: ERROR
+    languages: [python]
+    pattern: subprocess.$FUNC(..., shell=True, ...)
+    metadata:
+      cwe: ["CWE-78"]
+      owasp: ["A03:2021 - Injection"]
+      rule: FG-SEC-022
+  - id: fg-sec-022-python-tls-verify-off
+    message: Disabling TLS certificate verification (FG-SEC-022).
+    severity: ERROR
+    languages: [python]
+    pattern: requests.$FUNC(..., verify=False, ...)
+    metadata:
+      cwe: ["CWE-295"]
+      owasp: ["A02:2021 - Cryptographic Failures"]
+      rule: FG-SEC-022
+  - id: fg-sec-022-js-eval
+    message: eval on non-literal input allows code injection (FG-SEC-022).
+    severity: ERROR
+    languages: [javascript, typescript]
+    pattern: eval(...)
+    metadata:
+      cwe: ["CWE-95"]
+      owasp: ["A03:2021 - Injection"]
+      rule: FG-SEC-022

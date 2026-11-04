@@ -168,6 +168,8 @@ _READERS = [
     ("foundry_inbox.py", "scan"), ("foundry_inbox.py", "pending"),
     ("foundry-ticket.py", "read-issue 7 --json"), ("foundry-ticket.py", "next --json"),
     ("foundry-ticket.py", "reconcile"), ("foundry-ticket.py", "lead renew"),
+    ("foundry_operating_model.py", "status"), ("foundry_operating_model.py", "validate"),
+    ("foundry_operating_model.py", "explain deck.max_builders"), ("foundry_operating_model.py", "render-tick-section E2"),
     ("foundry_usage.py", "ingest /c"), ("foundry_usage.py", "attribute"), ("foundry_usage.py", "coverage"),
 ]
 

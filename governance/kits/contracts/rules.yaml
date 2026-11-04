@@ -1,0 +1,182 @@
+kit: contracts
+version: 1.0.0
+rules:
+- id: FG-API-001
+  title: HTTP API follows the numbered style guide
+  statement: An HTTP API description MUST pass the Spectral ruleset, which encodes the numbered style guide the project adopts by reference.
+  category: contracts
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**/openapi*.yaml'
+    - '**/openapi*.yml'
+    - '**/openapi*.json'
+    blueprints:
+    - '*'
+  check:
+    kind: lint
+    ref: governance/kits/contracts/checks/spectral-openapi.yaml
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.5
+  - Zalando RESTful API Guidelines, https://opensource.zalando.com/restful-api-guidelines/, accessed 2026-11-04
+  - Google API Improvement Proposals, https://google.aip.dev/, accessed 2026-11-04
+  - Spectral, https://github.com/stoplightio/spectral, accessed 2026-11-04
+- id: FG-API-002
+  title: HTTP API breaking changes are gated against main
+  statement: A change to an OpenAPI description MUST be checked for breaking changes against the main branch, and a breaking change MUST fail the gate.
+  category: contracts
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**/openapi*.yaml'
+    - '**/openapi*.yml'
+    - '**/openapi*.json'
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: governance/kits/contracts/checks/oasdiff-breaking.yml
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.5
+  - oasdiff, https://github.com/oasdiff/oasdiff, accessed 2026-11-04
+- id: FG-API-003
+  title: Protobuf breaking changes are gated against main
+  statement: A change to a .proto file MUST be checked with buf breaking against the main branch, and a breaking change MUST fail the gate.
+  category: contracts
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**/*.proto'
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: governance/kits/contracts/checks/buf-breaking.yml
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.5
+  - buf breaking, https://buf.build/docs/breaking/, accessed 2026-11-04
+- id: FG-EVT-001
+  title: Events are described in AsyncAPI
+  statement: Every event channel MUST be described by an AsyncAPI document that passes the Spectral AsyncAPI ruleset.
+  category: contracts
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**/asyncapi*.yaml'
+    - '**/asyncapi*.json'
+    blueprints:
+    - '*'
+  check:
+    kind: lint
+    ref: governance/kits/contracts/checks/spectral-asyncapi.yaml
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.5
+  - AsyncAPI specification, https://www.asyncapi.com/docs/reference/specification/latest, accessed 2026-11-04
+- id: FG-EVT-002
+  title: Schema registry enforces a compatibility mode
+  statement: Every event subject MUST be registered with an explicit compatibility mode (BACKWARD or stricter), and a schema change MUST be checked against it before merge.
+  category: contracts
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**/asyncapi*.yaml'
+    - '**/*.avsc'
+    - '**/schemas/**'
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: governance/kits/contracts/checks/schema-registry-compat.yml
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.5
+  - Confluent Schema Registry compatibility, https://docs.confluent.io/platform/current/schema-registry/fundamentals/schema-evolution.html, accessed 2026-11-04
+- id: FG-DATA-001
+  title: Shared datasets have an ODCS data contract
+  statement: Every dataset shared across a team boundary MUST have a data contract in the Open Data Contract Standard format that validates against the ODCS JSON schema.
+  category: contracts
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**/data-contracts/**'
+    - '**/*.odcs.yaml'
+    - '**/*.odcs.yml'
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: governance/kits/contracts/checks/odcs-validate.yml
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.5
+  - Open Data Contract Standard, https://github.com/bitol-io/open-data-contract-standard, accessed 2026-11-04
+- id: FG-CDC-001
+  title: Consumer-driven contracts gate deploys where declared
+  statement: Where a blueprint declares service-to-service calls, the consumer's pacts MUST be published and can-i-deploy MUST pass for the version being deployed before a deploy.
+  category: contracts
+  level: 2
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**/pacts/**'
+    blueprints:
+    - '*'
+  check:
+    kind: ci
+    ref: governance/kits/contracts/checks/pact-can-i-deploy.yml
+  exception:
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.5
+  - Pact can-i-deploy, https://docs.pact.io/pact_broker/can_i_deploy, accessed 2026-11-04

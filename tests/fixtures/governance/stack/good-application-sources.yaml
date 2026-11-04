@@ -1,0 +1,7 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata: {name: chart}
+spec:
+  sources:
+    - {chart: demo, repoURL: "https://charts.example", targetRevision: "2.0.1"}
+    - {repoURL: "https://git.example/values.git", targetRevision: main}

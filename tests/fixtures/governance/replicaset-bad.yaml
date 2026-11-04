@@ -1,0 +1,9 @@
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata: {name: demo}
+spec:
+  template:
+    spec:
+      containers:
+        - name: web
+          image: registry.example/web:1

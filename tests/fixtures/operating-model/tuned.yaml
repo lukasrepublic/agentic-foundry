@@ -1,0 +1,7 @@
+deck:
+  max_builders: 2
+report:
+  max_lines: 12
+  include_ids: true
+communication:
+  style: off

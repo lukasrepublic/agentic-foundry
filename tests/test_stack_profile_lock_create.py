@@ -63,6 +63,9 @@ def _write_profile(root, pid, *, requires_core=">=0.1", extra=None):
     doc = {
         "id": pid, "version": "1.0.0", "requires_core": requires_core,
         "matches": {"languages": ["x"], "frameworks": ["x"], "package_managers": ["x"]},
+        "governance": {"kits": {"quality": {"level": 1}}, "design_required_paths": []},
+        "surfaces": ["api"],
+        "detect": {"signals": [{"kind": "manifest", "pattern": "x.toml", "weight": 1}], "confidence_threshold": 0.5},
         "architecture": {"layers": ["a"], "allowed_dependencies": [], "conventions_doc": "conventions.md"},
         "implementation_skills": ["conventions.md"],
         "static_validation": {"format": "true", "lint": "true", "typecheck": "true", "build": "true"},

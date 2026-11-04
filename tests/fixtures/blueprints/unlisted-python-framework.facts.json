@@ -1,0 +1,11 @@
+{
+  "paths": [
+    "pyproject.toml",
+    "uv.lock",
+    "src/app/main.py"
+  ],
+  "dependencies": [
+    "litestar-ish-unlisted-framework",
+    "pydantic"
+  ]
+}
