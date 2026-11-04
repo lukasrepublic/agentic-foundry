@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+from pathlib import Path
 import os
 import stat
 import subprocess
@@ -527,9 +528,13 @@ def _hook_ws(tmp_path, mode_doc):
         d.mkdir(exist_ok=True)
         subprocess.run(["git", "init", "-q", str(d)], check=True)
         subprocess.run(git + ["-C", str(d), "commit", "-q", "--allow-empty", "-m", "init"], check=True)
-    _write(ws, {"schema_version": 1, "repos": {"app": {"path": "app"}}, **mode_doc})
+    _write(ws, {"schema_version": 1, "repos": {"app": {"path": "app", "repo": "o/r"}}, **mode_doc})
     (ws / ".claude" / "foundry-operators.json").write_text(
         json.dumps({"schema_version": 1, "operators": {"op_demo": {"name": "D"}}}))
+    # the lead's own claim record for the issue the assignment names (the hook verifies against it)
+    gp = subprocess.check_output(["git", "-C", str(ws), "rev-parse", "--git-path", "foundry-claims.json"], text=True).strip()
+    cp = Path(gp) if os.path.isabs(gp) else ws / gp
+    cp.write_text(json.dumps({"o/r#7": {"issue": "o/r#7", "number": 7, "repo": "o/r", "body_sha256": "ab" * 32}}))
     return ws
 
 

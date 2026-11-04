@@ -33,10 +33,19 @@ def ws(tmp_path):
     _init(str(root))
     _init(str(root / "app"))
     (root / ".claude" / "foundry-project.json").write_text(
-        json.dumps({"schema_version": 1, "operating_mode": "team", "github_scope": {"owner": "example-org", "planning_repo": "planning"}, "repos": {"app": {"path": "app"}}}))
+        json.dumps({"schema_version": 1, "operating_mode": "team", "github_scope": {"owner": "example-org", "planning_repo": "planning"}, "repos": {"app": {"path": "app", "repo": "o/r"}}}))
     (root / ".claude" / "foundry-operators.json").write_text(
         json.dumps({"schema_version": 1, "operators": {"op_lukas": {"name": "L"}}}))
+    _claim(root, "ab" * 32)
     return root
+
+
+def _claim(ws, sha, key="o/r#7"):
+    """The lead's own git-dir claim record (what `foundry-ticket.py claim` wrote) the hook verifies against."""
+    gp = subprocess.check_output(["git", "-C", str(ws), "rev-parse", "--git-path", "foundry-claims.json"], text=True).strip()
+    cp = ws / gp if not os.path.isabs(gp) else type(ws)(gp)
+    cp.write_text(json.dumps({key: {"issue": key, "number": int(key.split("#")[1]), "repo": key.split("#")[0],
+                                    "body_sha256": sha}}))
 
 
 def _assignment(**over):
@@ -298,3 +307,38 @@ def test_skill_states_factory_lane_requires_contract_ref_and_binding_reuse():
     assert "lane" in manifest and "charter|factory" in manifest
     assert "REQUIRES `contract_ref`" in manifest and "gn-07" in manifest and "gn-16" in manifest
     assert "same `issue_url`" in " ".join(steps["4"].split()) and "reconcile" in steps["4"]
+
+
+# ---- security review of #286: the self-declared assignment is verified against the lead's claim -----------
+
+def test_issue_lane_without_a_claim_record_is_refused(ws):
+    gp = subprocess.check_output(["git", "-C", str(ws), "rev-parse", "--git-path", "foundry-claims.json"], text=True).strip()
+    (ws / gp).unlink()
+    _manifest(ws, assignment=_assignment())
+    r = _run(ws)
+    assert r.returncode != 0 and r.stdout == ""
+    assert "DROPPED-ASSIGNMENT-UNVERIFIED assignment-no-claim" in _log(ws)
+    assert not (ws / ".worktrees").exists()
+
+
+def test_issue_lane_with_a_stale_acceptance_revision_is_refused(ws):
+    _claim(ws, "cd" * 32)               # the lead vetted a different body than the manifest names
+    _manifest(ws, assignment=_assignment())
+    r = _run(ws)
+    assert r.returncode != 0 and r.stdout == ""
+    assert "DROPPED-ASSIGNMENT-UNVERIFIED assignment-stale" in _log(ws)
+    assert not (ws / ".worktrees").exists()
+
+
+def test_issue_lane_naming_an_unconfigured_repo_is_refused(ws):
+    _claim(ws, "ab" * 32, key="evil/repo#7")
+    _manifest(ws, assignment=_assignment(issue_url="https://github.com/evil/repo/issues/7"))
+    r = _run(ws)
+    assert r.returncode != 0 and r.stdout == ""
+    assert "assignment-repo-unconfigured" in _log(ws)
+
+
+def test_matching_claim_and_configured_repo_proceed(ws):
+    _manifest(ws, assignment=_assignment())
+    r = _run(ws)
+    assert r.returncode == 0, r.stderr

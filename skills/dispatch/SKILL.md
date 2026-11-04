@@ -186,7 +186,7 @@ no shared "current ticket" file names it. Procedure:
    would refuse (`skipped: done-means-untrusted`), and `reconcile` reports `acceptance_changed` when the
    live Done-means digest differs from the claim's `done_digest`. The lead computes each linked document's
    `{url, revision}` itself - the hook stays offline.
-2. **Write the manifest** to `<workspace>/.foundry/dispatch-queue/<task>.json` (atomic temp+rename):
+2. **Write the manifest** (`acceptance_revision.body_sha256` is copied from the claim record in step 1 - the hook verifies the assignment against `<git-dir>/foundry-claims.json`: no claim record is refused `assignment-no-claim`, a body hash that differs from the claim's baseline `assignment-stale`, and an `issue_url` repo outside the configured `repos` `assignment-repo-unconfigured`; `lane` is only a declaration) to `<workspace>/.foundry/dispatch-queue/<task>.json` (atomic temp+rename):
    `{target_repo, task, agent, dispatcher_session_id, assignment: {issue_url, issue_number, repo_key,
    operator, lane: charter|factory, acceptance_revision: {body_sha256, documents: [{url, revision}]}}}`.
    `contract_ref` is OPTIONAL: name it only for a factory-lane atom (the hook then stages and preflights

@@ -210,9 +210,14 @@ PY
 # names issue_url (https://host/owner/repo/issues/<issue_number>), issue_number, a registered operator, a
 # lane (charter|factory), repo_key (== target_repo) and an acceptance_revision with a 64-hex body_sha256 +
 # documents[] (https urls).
+# Issue lane only (3rd arg `issue`): the self-declared assignment is NOT trusted on its own — the issue's repo
+# must be one of the workspace's configured repos (or its planning repo), the lead's git-dir claim record for
+# that issue_url must EXIST (`assignment-no-claim`), and the assignment's acceptance_revision.body_sha256 must
+# equal the claim's baseline (`assignment-stale`). The hook stays offline: the claim is the lead's own
+# local record of the body it vetted (`foundry-ticket.py claim`).
 _assignment_check() {
-  python3 - "$1" "$2" <<'PY' 2>/dev/null || echo "unreadable"
-import json, re, sys
+  SCRIPTS_DIR="$HERE/../scripts" python3 - "$1" "$2" "${3:-}" <<'PY' 2>/dev/null || echo "unreadable"
+import json, os, re, sys
 try:
     d = json.load(open(sys.argv[1]))
     a = d.get("assignment")
@@ -251,6 +256,32 @@ for x in r["documents"]:
     if not isinstance(x, dict) or not s(x.get("url")) or not re.fullmatch(r"https://[^\s]+", x["url"]) \
             or not s(x.get("revision")):
         print("acceptance_revision.documents"); sys.exit(0)
+if sys.argv[3] == "issue":
+    try:
+        sys.path.insert(0, os.environ["SCRIPTS_DIR"])
+        import importlib.util
+        from pathlib import Path
+        import foundry_ticket_store as store
+        spec = importlib.util.spec_from_file_location("foundry_ticket_hook", os.path.join(os.environ["SCRIPTS_DIR"], "foundry-ticket.py"))
+        ft = importlib.util.module_from_spec(spec); spec.loader.exec_module(ft)
+        ws = Path(sys.argv[2])
+        cfg = ft.load_config(ws)
+        m = re.fullmatch(r"https://[^/]+/([^/]+/[^/]+)/issues/([0-9]+)", u)
+        repo, num = m.group(1), m.group(2)
+        allowed = set(cfg["repos"].values())
+        if cfg.get("planning_repo") and "/" in str(cfg["planning_repo"]):
+            allowed.add(cfg["planning_repo"])
+        elif cfg.get("owner") and cfg.get("planning_repo"):
+            allowed.add(cfg["owner"] + "/" + cfg["planning_repo"])
+        if repo not in allowed:
+            print("assignment-repo-unconfigured"); sys.exit(0)
+        claim = ft.load_claims(ws).get(repo + "#" + num)
+    except Exception:
+        print("assignment-no-claim"); sys.exit(0)
+    if not isinstance(claim, dict) or not claim.get("body_sha256"):
+        print("assignment-no-claim"); sys.exit(0)
+    if str(claim["body_sha256"]).lower() != r["body_sha256"].lower():
+        print("assignment-stale"); sys.exit(0)
 print("OK")
 PY
 }
@@ -418,10 +449,12 @@ PY
   # gn-11: an assignment (issue lane, or a contract-lane manifest that also carries one) must be
   # COMPLETE, and the repo key must resolve, BEFORE anything is claimed.
   if [ "$hasa" = "1" ]; then
-    local aerr; aerr="$(_assignment_check "$m" "$WS")"
+    local aerr; aerr="$(_assignment_check "$m" "$WS" "$mstate")"
     if [ "$aerr" != "OK" ]; then
       if [ "$aerr" = "operator-unknown" ]; then
         _log "$WS" "DROPPED-OPERATOR-UNKNOWN $(basename "$m")"
+      elif [ "$aerr" = "assignment-stale" ] || [ "$aerr" = "assignment-no-claim" ] || [ "$aerr" = "assignment-repo-unconfigured" ]; then
+        _log "$WS" "DROPPED-ASSIGNMENT-UNVERIFIED $aerr $(basename "$m")"
       else
         _log "$WS" "DROPPED-ASSIGNMENT-INCOMPLETE $aerr $(basename "$m")"
       fi
@@ -669,6 +702,28 @@ PY
     # teardown of a committed-but-unpushed branch is refused by -d (never force) — worktree dir may remain; that's the no-force guarantee
   else r9=0; fi
   if [ "$r9" -eq 1 ]; then echo "AC-MRDISPATCH-9 e2e-extraction: PASS"; else echo "AC-MRDISPATCH-9 e2e-extraction: FAIL"; ok=0; fi
+
+  # ---- security (#286 review): the issue lane trusts neither the self-declared lane nor revision --------
+  # A team-mode workspace; the lead's claim record is the only source of the vetted acceptance baseline.
+  local rcl=1 cgp; cgp="$(git -C "$ws" rev-parse --git-path foundry-claims.json)"; case "$cgp" in /*) : ;; *) cgp="$ws/$cgp" ;; esac
+  printf '{ "schema_version":1, "operating_mode":"team", "github_scope":{"owner":"o","planning_repo":"p"}, "repos": { "app": { "path": "app", "repo": "o/r" } } }\n' > "$ws/.claude/foundry-project.json"
+  printf '{ "schema_version":1, "operators": { "op_test": { "name":"T" } } }\n' > "$ws/.claude/foundry-operators.json"
+  local sha_a sha_b; sha_a="$(printf 'a%.0s' $(seq 1 64))"; sha_b="$(printf 'b%.0s' $(seq 1 64))"
+  _issue_manifest() { printf '{"target_repo":"app","task":"t-iss","agent":"app-engineer","assignment":{"issue_url":"https://github.com/o/r/issues/7","issue_number":7,"repo_key":"app","operator":"op_test","lane":"charter","acceptance_revision":{"body_sha256":"%s","documents":[]}}}\n' "$1" > "$ws/.foundry/dispatch-queue/t-iss.json"; }
+  local oc rc_c
+  rm -f "$cgp"; _issue_manifest "$sha_a"
+  oc="$(CLAUDE_PROJECT_DIR="$ws" bash "$0" </dev/null 2>/dev/null)"; rc_c=$?
+  { [ "$rc_c" -ne 0 ] && [ -z "$oc" ]; } || { echo "  claim: no claim record produced rc=$rc_c out='$oc' (want refused)" >&2; rcl=0; }
+  rm -f "$ws/.foundry/dispatch-queue/"*.json
+  printf '{"o/r#7":{"issue":"o/r#7","number":7,"repo":"o/r","body_sha256":"%s"}}\n' "$sha_b" > "$cgp"; _issue_manifest "$sha_a"
+  oc="$(CLAUDE_PROJECT_DIR="$ws" bash "$0" </dev/null 2>/dev/null)"; rc_c=$?
+  { [ "$rc_c" -ne 0 ] && [ -z "$oc" ]; } || { echo "  claim: stale acceptance_revision produced rc=$rc_c out='$oc' (want refused)" >&2; rcl=0; }
+  grep -q "assignment-stale" "$ws/.foundry/dispatch.log" || { echo "  claim: no typed assignment-stale line" >&2; rcl=0; }
+  rm -f "$ws/.foundry/dispatch-queue/"*.json
+  printf '{"o/r#7":{"issue":"o/r#7","number":7,"repo":"o/r","body_sha256":"%s"}}\n' "$sha_a" > "$cgp"; _issue_manifest "$sha_a"
+  oc="$(CLAUDE_PROJECT_DIR="$ws" bash "$0" </dev/null 2>/dev/null)"; rc_c=$?
+  { [ "$rc_c" -eq 0 ] && [ -d "$oc" ]; } || { echo "  claim: a matching claim was refused rc=$rc_c" >&2; rcl=0; }
+  if [ "$rcl" -eq 1 ]; then echo "SEC-286 issue-lane-claim-verified: PASS"; else echo "SEC-286 issue-lane-claim-verified: FAIL"; ok=0; fi
 
   [ "$ok" -eq 1 ] && echo "FOUNDRY-WORKTREE-CREATE-SELFTEST-GREEN" || { echo "FOUNDRY-WORKTREE-CREATE-SELFTEST-RED"; return 1; }
 }
