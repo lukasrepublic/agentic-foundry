@@ -91,7 +91,8 @@ class FakeGh:
         if args[:2] == ["issue", "comment"]:
             key = f"{args[args.index('-R') + 1]}#{args[2]}"
             self.comments.append({"_issue": key, "id": f"c{len(self.comments)}", "body": stdin,
-                                  "createdAt": "2026-11-03T00:00:00Z", "author": {"login": self.login}})
+                                  "createdAt": "2026-11-03T00:00:00Z", "author": {"login": self.login},
+                                  "authorAssociation": "MEMBER"})
             return ""
         raise AssertionError(f"unexpected gh call: {args}")
 
@@ -653,3 +654,116 @@ def test_lead_session_id_falls_back_to_the_env_var(ws, monkeypatch):
     rc = run_cli(["lead", "acquire", "--op-id", "op_example"], None, now=NOW)[0]
     assert rc == 0
     assert json.loads((ws / ".foundry" / "runtime" / "lead.json").read_text())["session_id"] == "sess-env"
+
+
+# ---- security: the auto-dispatch path never runs an unvetted Done-means ----------------------------------
+
+DONE_BODY = ACC + "\n## Done means\n```\npython3 -m pytest -q\n```\n"
+
+
+def with_perm(gh, level):
+    """gh stub that answers the collaborator-permission probe with `level`."""
+    def call(args, stdin=None):
+        if args[:1] == ["api"] and "collaborators" in args[1]:
+            gh.calls.append(list(args))
+            return json.dumps({"permission": level})
+        return gh(args, stdin)
+    return call
+
+
+def test_read_issue_verb_returns_the_trust_checked_view(ws):
+    gh = FakeGh(issues=[mk_issue(2, body=DONE_BODY)])
+    gh.node(2)["editor"] = {"login": "mallory"}
+    gh.node(2)["lastEditedAt"] = "2026-11-02T00:00:00Z"
+    rc, out, err = run_cli(["read-issue", "2", "--json"], with_perm(gh, "write"))
+    assert rc == 0, err
+    rec = json.loads(out)
+    assert rec["last_edited_by"] == "mallory" and rec["done_trusted"] is True
+    assert rec["done_digest"] == ft.store.command_digest("python3 -m pytest -q")
+    assert not any(k.startswith("_") for k in rec)
+    # an untrusted author: the command is withheld and flagged
+    rc, out, _ = run_cli(["read-issue", "2", "--json"], with_perm(gh, "read"))
+    rec = json.loads(out)
+    assert rc == 0 and rec["done_trusted"] is False and rec["done"] == ""
+    # never writes anything
+    assert gh.comments == [] and ft.load_claims(ws) == {}
+
+
+def test_read_issue_distrusts_an_untrusted_last_editor(ws):
+    gh = FakeGh(issues=[mk_issue(2, body=DONE_BODY)])
+    gh.node(2)["editor"] = {"login": "mallory"}
+
+    def call(args, stdin=None):
+        if args[:1] == ["api"] and "collaborators" in args[1]:
+            return json.dumps({"permission": "read" if args[1].endswith("/mallory/permission") else "write"})
+        return gh(args, stdin)
+    rc, out, _ = run_cli(["read-issue", "2", "--json"], call)
+    rec = json.loads(out)
+    assert rec["done_trusted"] is False and "mallory" in rec["done_reason"]
+
+
+def test_claim_refuses_an_untrusted_done_means_unless_trust_author(ws):
+    gh = FakeGh(issues=[mk_issue(2, body=DONE_BODY)])
+    rc, _, err = run_cli(["claim", "2"], with_perm(gh, "read"))
+    assert rc == 2 and "done-means-untrusted" in err
+    assert gh.comments == [] and ft.load_claims(ws) == {}          # nothing recorded
+    rc, _, err = run_cli(["claim", "2", "--trust-author"], with_perm(gh, "read"))
+    assert rc == 0, err
+    rec = ft.load_claims(ws)["example-org/app#2"]
+    assert rec["done_trusted"] is True and rec["done_trusted_by"] == "operator-flag"
+
+
+def test_claim_stores_the_vetted_done_means_digest_and_text(ws):
+    gh = FakeGh(issues=[mk_issue(2, body=DONE_BODY)])
+    rc, _, err = run_cli(["claim", "2"], with_perm(gh, "write"))
+    assert rc == 0, err
+    rec = ft.load_claims(ws)["example-org/app#2"]
+    assert rec["done_trusted"] is True and rec["done_trusted_by"] == "author"
+    assert rec["done_digest"] == ft.store.command_digest("python3 -m pytest -q")
+    assert rec["done_means"] == "python3 -m pytest -q"
+    assert rec["body_sha256"] == ft.store.command_digest(DONE_BODY)
+
+
+def test_next_never_selects_an_untrusted_done_means(ws):
+    gh = FakeGh(issues=[mk_issue(2, body=DONE_BODY), mk_issue(3, body=ACC)])
+    rc, out, _ = run_cli(["next", "--json"], with_perm(gh, "read"))
+    res = json.loads(out)
+    assert res["selected"]["number"] == 3
+    assert {"number": 2, "reason": "done-means-untrusted"}.items() <= next(s for s in res["skipped"] if s["number"] == 2).items()
+    only = FakeGh(issues=[mk_issue(2, body=DONE_BODY)])
+    res = json.loads(run_cli(["next", "--json"], with_perm(only, "read"))[1])
+    assert res["selected"] is None and res["mode"] == "none"
+    res = json.loads(run_cli(["next", "--json"], with_perm(only, "write"))[1])
+    assert res["selected"]["number"] == 2                                  # trusted: selectable
+
+
+def test_next_skips_an_untrusted_started_issue_too(ws):
+    gh = FakeGh(issues=[mk_issue(2, body=DONE_BODY, labels=("status:in progress", "repo:app"))])
+    res = json.loads(run_cli(["next", "--json"], with_perm(gh, "read"))[1])
+    assert res["selected"] is None
+    assert next(s for s in res["skipped"] if s["number"] == 2)["reason"] == "done-means-untrusted"
+
+
+def test_reconcile_reports_acceptance_changed_when_only_the_done_digest_differs(ws):
+    gh = FakeGh(issues=[mk_issue(2, body=DONE_BODY, labels=("status:in progress", "repo:app"))])
+    key = "example-org/app#2"
+    ft.save_claim(ws, key, {"issue": key, "number": 2, "repo": "example-org/app",
+                            "body_sha256": ft.store.command_digest(DONE_BODY),         # body unchanged...
+                            "done_digest": ft.store.command_digest("echo vetted")})  # ...vetted command differs
+    rc, out, _ = run_cli(["reconcile", "2", "--json"], with_perm(gh, "write"))
+    r = json.loads(out)["results"][0]
+    assert r["stop_dispatch"] is True and r["reason"] == "acceptance_changed"
+    ft.save_claim(ws, key, {"issue": key, "number": 2, "repo": "example-org/app",
+                            "body_sha256": ft.store.command_digest(DONE_BODY),
+                            "done_digest": ft.store.command_digest("python3 -m pytest -q")})
+    r = json.loads(run_cli(["reconcile", "2", "--json"], with_perm(gh, "write"))[1])["results"][0]
+    assert r["stop_dispatch"] is False
+
+
+def test_dispatch_skill_and_tick_template_carry_the_vetted_command_and_digest():
+    sk = (ROOT / "skills" / "dispatch" / "SKILL.md").read_text()
+    tick = (ROOT / "skills" / "command-deck" / "tick-prompt.template.md").read_text()
+    assert "foundry-ticket.py read_issue" not in sk and "read-issue" in sk
+    for doc in (sk, tick):
+        assert "done_digest" in doc and "done-means-untrusted" in doc
+    assert "refuse" in sk.lower()

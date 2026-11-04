@@ -7,7 +7,8 @@
     foundry-ticket.py status                          print the active ticket
     foundry-ticket.py clear                           forget the active ticket
     foundry-ticket.py next [--json]                   the operator's next item, read from GitHub (gn-08)
-    foundry-ticket.py claim <issue> [--repo R] [--allow-exception "<reason>"]   record `start` (never self-assigns)
+    foundry-ticket.py read-issue <issue> [--repo R] [--json]   the trust-checked view of one issue (read-only)
+    foundry-ticket.py claim <issue> [--repo R] [--allow-exception "<reason>"] [--trust-author]   record `start` (never self-assigns)
     foundry-ticket.py reconcile [<issue>] [--json]    stop_dispatch per started issue, from current GitHub state
     foundry-ticket.py lead acquire|renew|release|check [--stale-after 10m]      local duplicate-lead lease
 
@@ -168,6 +169,17 @@ def author_trusted(repo: str | None, login: str, gh_json=_gh_json) -> tuple[bool
     return False, f"issue author {login} has {level or 'no'} access on {repo}"
 
 
+def done_trust(repo: str | None, author: str, editor: str | None, gh_json=_gh_json) -> tuple[bool, str]:
+    """Trust for a Done-means command: the issue AUTHOR must be trusted and, when a different login last
+    edited the body, that editor too (a triage-level editor can rewrite a trusted author's command)."""
+    ok, why = author_trusted(repo, author, gh_json)
+    if ok and editor and editor != author:
+        ok2, why2 = author_trusted(repo, editor, gh_json)
+        if not ok2:
+            return False, f"the issue body was last edited by {editor}: {why2}"
+    return ok, why
+
+
 def cmd_start(args: list[str]) -> int:
     if not args:
         sys.exit("usage: foundry-ticket.py start <issue|url> [--repo OWNER/NAME] [--trust-author]")
@@ -316,7 +328,8 @@ def cmd_clear(_args: list[str]) -> int:
 DEFAULT_WIP_LIMIT = 2
 DEFAULT_STALE_AFTER = 600          # seconds; >= 3x the deck cadence
 STARTED_STATUSES = ("in progress", "review")
-SKIP_REASONS = ("unassigned", "other-owner", "backlog", "blocked", "no-acceptance", "no-repo-key")
+SKIP_REASONS = ("unassigned", "other-owner", "backlog", "blocked", "no-acceptance", "no-repo-key",
+                "done-means-untrusted")
 # Every `reason` a stop_dispatch verdict can carry (reconcile output + the `stop-dispatch:<reason>` skip in `next`).
 STOP_REASONS = ("reassigned", "cancelled", "duplicate", "withdrawn", "acceptance_changed",
                 "closed", "not_started", "unverified")
@@ -335,7 +348,7 @@ _REF_RE = re.compile(r"^(?:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#)?(\d+)$")
 # `totalCount`; `_nodes` raises GhError when totalCount > the nodes returned, so an issue with more than
 # 30 assignees / 60 labels / 50 blockers / 20 linked PRs / 20 project items is UNREADABLE (-> QueueUnavailable,
 # `unverified`), never silently truncated. closedByPullRequestsReferences is covered the same way via its totalCount.
-_ISSUE_FIELDS = """number title body url state stateReason author{login}
+_ISSUE_FIELDS = """number title body url state stateReason author{login} editor{login} lastEditedAt
 assignees(first:30){totalCount nodes{login}} labels(first:60){totalCount nodes{name}}
 blockedBy(first:50){totalCount nodes{number state repository{nameWithOwner}}}
 blocking(first:50){totalCount nodes{number state repository{nameWithOwner}}}
@@ -525,7 +538,9 @@ def normalize(node: dict, repo: str, project_number: int | None) -> dict:
     return {
         "number": node.get("number"), "title": node.get("title") or "", "body": store.redact(body),
         "body_sha256": store.command_digest(body), "url": node.get("url") or "",
-        "author": (node.get("author") or {}).get("login") or "", "state": (node.get("state") or "").upper(),
+        "author": (node.get("author") or {}).get("login") or "",
+        "last_edited_by": (node.get("editor") or {}).get("login") or None,
+        "last_edited_at": node.get("lastEditedAt") or None, "state": (node.get("state") or "").upper(),
         "state_reason": (node.get("stateReason") or "").upper() or None, "repo": repo,
         "assignees": [a["login"] for a in _nodes(node, "assignees") if a.get("login")],
         "labels": labels, "status": status, "status_source": source, "priority": prio,
@@ -535,6 +550,8 @@ def normalize(node: dict, repo: str, project_number: int | None) -> dict:
         "linked_prs": [{"number": x.get("number"), "state": (x.get("state") or "").upper(), "url": x.get("url")}
                        for x in _nodes(node, "closedByPullRequestsReferences")],
         "_has_acceptance": has_acceptance(body),
+        # digest of the raw Done-means command (same value `read_issue` reports as done_digest), "" digest when none
+        "done_digest": store.command_digest(parse_body(body)[0]), "_has_done": bool(parse_body(body)[0]),
     }
 
 
@@ -579,11 +596,13 @@ def read_issue(run, repo: str, number: int, project_number: int | None = None, t
                 return json.loads(run(a))
             except (GhError, ValueError):
                 return None
-        ok, why = (True, "operator passed --trust-author") if trust_author else author_trusted(repo, rec["author"], gh_json)
+        ok, why = (True, "operator passed --trust-author") if trust_author else done_trust(
+            repo, rec["author"], rec.get("last_edited_by"), gh_json)
         rec["done_trusted"], rec["done_reason"] = ok, why
         if ok:
             rec["done"] = store.redact(done)
     rec["done_sha256"] = store.command_digest(done)
+    rec["done_digest"] = rec["done_sha256"]
     rec["paper_allowed"] = paper
     return rec
 
@@ -687,6 +706,8 @@ def judge(issue: dict, login: str, claim: dict | None, withdrawn_by: tuple | Non
         return {**base, "stop_dispatch": True, "reason": "not_started"}
     if claim and claim.get("body_sha256") and claim["body_sha256"] != issue["body_sha256"]:
         return {**base, "stop_dispatch": True, "reason": "acceptance_changed"}
+    if claim and claim.get("done_digest") and claim["done_digest"] != issue.get("done_digest"):
+        return {**base, "stop_dispatch": True, "reason": "acceptance_changed"}
     return {**base, "stop_dispatch": False, "reason": "authorized"}
 
 
@@ -720,6 +741,21 @@ def select_next(run, root: Path, now: float) -> dict:
     order = priority_order(run, cfg)
     claims = load_claims(root)
     skipped, resume, ready = [], [], []
+    trust_cache: dict = {}
+
+    def untrusted_done(i) -> bool:
+        """True when the issue declares a Done-means command whose author/editor is not trusted (never auto-run)."""
+        if not i.get("_has_done"):
+            return False
+        k = (i["repo"], i["author"], i.get("last_edited_by"))
+        if k not in trust_cache:
+            def gh_json(a):
+                try:
+                    return json.loads(run(a))
+                except (GhError, ValueError):
+                    return None
+            trust_cache[k] = done_trust(i["repo"], i["author"], i.get("last_edited_by"), gh_json)[0]
+        return not trust_cache[k]
 
     def skip(i, reason):
         skipped.append({"issue": f"{i['repo']}#{i['number']}", "number": i["number"], "repo": i["repo"], "reason": reason})
@@ -735,6 +771,8 @@ def select_next(run, root: Path, now: float) -> dict:
             v = judge(i, login, claims.get(f"{i['repo']}#{i['number']}"))
             if v["stop_dispatch"]:
                 skip(i, "stop-dispatch:" + v["reason"])
+            elif untrusted_done(i):
+                skip(i, "done-means-untrusted")
             else:
                 resume.append(i)
             continue
@@ -746,6 +784,8 @@ def select_next(run, root: Path, now: float) -> dict:
             skip(i, "no-acceptance"); continue
         if _repo_key(i, cfg) is None:
             skip(i, "no-repo-key"); continue
+        if untrusted_done(i):
+            skip(i, "done-means-untrusted"); continue
         ready.append(i)
 
     def sortkey(i):
@@ -766,11 +806,13 @@ def select_next(run, root: Path, now: float) -> dict:
         mode, pick = "ready", ranked[0]
     for i in issues:
         i.pop("_has_acceptance", None)
+        i.pop("_has_done", None)
     sel = None
     if pick is not None:
         pick = dict(pick)
         pick["repo_key"] = _repo_key(pick, cfg)
         pick.pop("_has_acceptance", None)
+        pick.pop("_has_done", None)
         sel = pick
     return {"queue": "available", "operator": login, "mode": mode, "selected": sel, "skipped": skipped,
             "wip": wip_count(issues, login, claims), "dropped_repos": cfg.get("dropped", [])}
@@ -826,6 +868,8 @@ def cmd_claim(args: list[str], run, now: float) -> int:
                     help="a visible exception for the WIP limit, a Backlog issue or a blocked issue")
     ap.add_argument("--rebase-acceptance", action="store_true",
                     help="on a re-claim, adopt the issue's CURRENT body as the acceptance baseline")
+    ap.add_argument("--trust-author", action="store_true",
+                    help="the OPERATOR has read the issue's Done-means and vouches for it (never auto-run)")
     a = ap.parse_args(args)
     root = project_root()
     try:
@@ -847,6 +891,17 @@ def cmd_claim(args: list[str], run, now: float) -> int:
         print(f"claim refused: {repo}#{number} is assigned to {', '.join(target['assignees'])}, not {login}", file=sys.stderr)
         return 2
     key = f"{repo}#{number}"
+    try:
+        vetted = read_issue(run, repo, number, cfg["project_number"], trust_author=a.trust_author)
+    except (GhError, ValueError) as e:
+        print(f"claim refused: the issue could not be read completely: {store.redact(str(e))}", file=sys.stderr)
+        return 2
+    has_done = bool(vetted["_has_done"])
+    if has_done and not vetted["done_trusted"]:
+        print(f"done-means-untrusted: claim refused: the Done-means command in {key} is not author-trusted — "
+              f"{store.redact(vetted['done_reason'])}. The worker would run it, so the OPERATOR must read it and re-run "
+              f"`claim --trust-author`. Nothing was recorded.", file=sys.stderr)
+        return 2
     claims = load_claims(root)
     wip = wip_count(issues, login, claims, exclude=key)
     reason = store.redact((a.allow_exception or "").strip()) or None
@@ -884,14 +939,49 @@ def cmd_claim(args: list[str], run, now: float) -> int:
         return 2
     prior = claims.get(key) or {}
     keep = bool(prior.get("body_sha256")) and not a.rebase_acceptance
+    keep_done = keep and "done_digest" in prior
     rec = {"issue": key, "number": number, "repo": repo, "operator": login,
-           "body_sha256": prior["body_sha256"] if keep else target["body_sha256"],
+           "body_sha256": prior["body_sha256"] if keep else vetted["body_sha256"],
+           # the vetted Done-means: reconcile stops dispatch when the live digest differs from this one
+           "done_digest": prior["done_digest"] if keep_done else vetted["done_digest"],
+           "done_trusted": prior.get("done_trusted", False) if keep_done else (not has_done or vetted["done_trusted"]),
+           "done_means": prior.get("done_means", "") if keep_done else vetted["done"],
+           "done_trusted_by": "operator-flag" if (a.trust_author and has_done) else ("author" if has_done else None),
            "claimed_at": prior.get("claimed_at") or _iso(now) if keep else _iso(now),
            "start_idempotency_key": ev.idempotency_key, "exception": exc_text}
     path = save_claim(root, key, rec)
     note = " [acceptance baseline kept: pass --rebase-acceptance to adopt the current body]" \
-        if keep and prior["body_sha256"] != target["body_sha256"] else ""
+        if keep and prior["body_sha256"] != vetted["body_sha256"] else ""
     print(f"claimed {key} for {login} (wip {wip + 1}/{a.limit}{', EXCEPTION: ' + exc_text if exc_text else ''}); recorded {path}{note}")
+    return 0
+
+
+def cmd_read_issue(args: list[str], run) -> int:
+    ap = argparse.ArgumentParser(prog="foundry-ticket.py read-issue",
+                                 description="The trust-checked, read-only view of one issue: body, done_trusted, "
+                                             "done_digest, last_edited_by. Never executes anything.")
+    ap.add_argument("issue")
+    ap.add_argument("--repo")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args(args)
+    root = project_root()
+    try:
+        cfg = load_config(root)
+        repo, number = parse_ref(a.issue, a.repo, cfg["repos"])
+        rec = read_issue(run, repo, number, cfg["project_number"])
+    except (QueueUnavailable, ValueError, GhError) as e:
+        print(f"read-issue: {store.redact(str(e))}", file=sys.stderr)
+        return 2
+    rec = {k: v for k, v in rec.items() if not k.startswith("_")}
+    if a.json:
+        print(json.dumps(rec, indent=2))
+    else:
+        print(f"{repo}#{number} — {rec['title']}  [{rec['state']}, status: {rec['status'] or 'none'}]")
+        print(f"  author            : {rec['author']}  (last edited by: {rec['last_edited_by'] or 'n/a'})")
+        print(f"  done_trusted      : {str(rec['done_trusted']).lower()}"
+              + (f" — {rec['done_reason']}" if rec["done_reason"] else ""))
+        print(f"  done_digest       : {rec['done_digest']}")
+        print(f"  done means        : {rec['done'] or '(none, or withheld: not author-trusted)'}")
     return 0
 
 
@@ -1136,7 +1226,8 @@ def main(argv: list[str], run=None, now: float | None = None) -> int:
     clock = time.time() if now is None else now
     table = {"start": cmd_start, "allow": cmd_allow, "done": cmd_done,
              "status": cmd_status, "clear": cmd_clear}
-    owned = {"next": lambda r: cmd_next(r, gh, clock), "claim": lambda r: cmd_claim(r, gh, clock),
+    owned = {"next": lambda r: cmd_next(r, gh, clock), "read-issue": lambda r: cmd_read_issue(r, gh),
+             "claim": lambda r: cmd_claim(r, gh, clock),
              "reconcile": lambda r: cmd_reconcile(r, gh, clock), "lead": lambda r: cmd_lead(r, clock)}
     if verb in owned:
         import foundry_operating_mode as _om  # gn-17: next|claim|reconcile|lead are team-mode verbs
