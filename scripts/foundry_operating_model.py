@@ -1,0 +1,535 @@
+#!/usr/bin/env python3
+"""foundry_operating_model.py -- the one reader of `.foundry/operating-model.yaml` (gv-03).
+
+The operating-model policy file holds the tunables and the floors of the ported operating rules.
+Every other primitive reads policy ONLY through `load`.
+
+  * Absent file            -> every default, each key `source: default`.
+  * Present but broken     -> refuse, naming the key. A present-but-broken file is NEVER silently
+                              replaced by defaults.
+  * A FLOOR key (a `const` in schema/operating-model.schema.json) written with any other value
+                              -> `floor-rule-disabled:<key>`.
+
+Importable: `load(project_dir) -> Policy`, `validate_text(text) -> [error]`,
+            `resolve_workflow_size(policy, session_size, prompt_size) -> int`,
+            `render_tick_section(policy, name, project_dir) -> str`.
+
+CLI:  foundry_operating_model.py [--project-dir DIR] status [--json]
+      foundry_operating_model.py [--project-dir DIR] validate
+      foundry_operating_model.py [--project-dir DIR] explain <key>
+      foundry_operating_model.py [--project-dir DIR] render-tick-section <A1|A5|A6|B1|B8|B9|C1|D2|E1|E2>
+                                 [--session-size N] [--prompt-size N]
+Exit 0 ok / 2 refused (named error on stdout) / 1 internal error. Read-only: this script writes nothing.
+Stdlib + PyYAML only. No network.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import yaml
+
+HERE = Path(__file__).resolve().parent
+SCHEMA_PATH = HERE.parent / "schema" / "operating-model.schema.json"
+POLICY_REL = Path(".foundry") / "operating-model.yaml"
+SECTIONS = ("A1", "A5", "A6", "B1", "B8", "B9", "C1", "D2", "E1", "E2")
+
+E2_TEXT = """\
+Use Simplified Technical English (ASD-STE100-inspired) for agent responses, tick reports, briefs and the documentation you write.
+- Use short, direct sentences and active voice.
+- Give one instruction per sentence.
+- Use consistent terms for the same concepts.
+- State conditions and required actions explicitly.
+- Avoid idioms, vague wording and unnecessary jargon.
+- Keep necessary technical terms. Explain unfamiliar terms.
+- Keep articles and other words that make complete, natural sentences.
+- Keep technical accuracy and necessary detail.
+- Follow a different style when the operator explicitly asks for it.
+Apply these principles. Do not claim strict ASD-STE100 compliance."""
+
+
+class PolicyError(Exception):
+    """The policy file is unusable. `errors` is the list of named errors; `str()` is the first."""
+
+    def __init__(self, errors):
+        self.errors = list(errors)
+        super().__init__(self.errors[0] if self.errors else "policy-error")
+
+
+# ---------------------------------------------------------------------------------------------
+# schema walk (a deliberately small JSON-Schema subset: exactly what the policy schema uses)
+# ---------------------------------------------------------------------------------------------
+def _schema():
+    return json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+
+
+def _is_leaf(node):
+    return "properties" not in node
+
+
+def _leaves(node, prefix=""):
+    """Yield (dotted_key, leaf_schema) for every leaf under `node`, in declared order."""
+    for name, sub in node.get("properties", {}).items():
+        key = f"{prefix}{name}"
+        if _is_leaf(sub):
+            yield key, sub
+        else:
+            yield from _leaves(sub, key + ".")
+
+
+def _default_of(leaf):
+    if "const" in leaf:
+        return leaf["const"]
+    return json.loads(json.dumps(leaf.get("default")))
+
+
+def _same(a, b):
+    """Strict equality: True is not 1."""
+    return type(a) is type(b) and a == b
+
+
+_TYPES = {
+    "object": lambda v: isinstance(v, dict),
+    "array": lambda v: isinstance(v, list),
+    "string": lambda v: isinstance(v, str),
+    "boolean": lambda v: isinstance(v, bool),
+    "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
+}
+
+
+def _check_leaf(node, value, key):
+    """Return a list of named errors for `value` against a leaf schema (empty = valid)."""
+    if "anyOf" in node:
+        for branch in node["anyOf"]:
+            if not _check_leaf(branch, value, key):
+                return []
+        return [f"invalid-value:{key}: matches none of the allowed forms"]
+    if "const" in node:
+        return [] if _same(value, node["const"]) else [f"floor-rule-disabled:{key}"]
+    errs = []
+    t = node.get("type")
+    if t and not _TYPES[t](value):
+        return [f"invalid-value:{key}: expected {t}"]
+    if "enum" in node and not any(_same(value, e) for e in node["enum"]):
+        return [f"invalid-value:{key}: must be one of {node['enum']}"]
+    if t == "integer":
+        if "minimum" in node and value < node["minimum"]:
+            errs.append(f"invalid-value:{key}: below minimum {node['minimum']}")
+        if "maximum" in node and value > node["maximum"]:
+            errs.append(f"invalid-value:{key}: above maximum {node['maximum']}")
+    if t == "string":
+        if "minLength" in node and len(value) < node["minLength"]:
+            errs.append(f"invalid-value:{key}: empty")
+        if "pattern" in node and not re.search(node["pattern"], value):
+            errs.append(f"invalid-value:{key}: does not match {node['pattern']}")
+    if t == "array":
+        items = node.get("items", {})
+        for i, item in enumerate(value):
+            errs.extend(_check_leaf(items, item, f"{key}[{i}]"))
+        if node.get("uniqueItems") and len({json.dumps(v, sort_keys=True) for v in value}) != len(value):
+            errs.append(f"invalid-value:{key}: duplicate items")
+    return errs
+
+
+def _check_object(node, value, prefix, errors):
+    if not isinstance(value, dict):
+        errors.append(f"invalid-value:{prefix.rstrip('.') or '<root>'}: expected a mapping")
+        return
+    props = node.get("properties", {})
+    for name, v in value.items():
+        key = f"{prefix}{name}"
+        if not isinstance(name, str) or name not in props:
+            errors.append(f"unknown-key:{key}")
+            continue
+        sub = props[name]
+        if _is_leaf(sub):
+            errors.extend(_check_leaf(sub, v, key))
+        else:
+            _check_object(sub, v, key + ".", errors)
+
+
+def _normalize(node, data):
+    """YAML 1.1 reads an unquoted `off`/`on` as a boolean. Where a leaf's enum names "off"/"on", map the
+    boolean back to that word so `style: off` means what the adopter wrote. Floors are `const` and are
+    never touched. Returns a normalized copy."""
+    if not isinstance(data, dict):
+        return data
+    out = {}
+    props = node.get("properties", {})
+    for k, v in data.items():
+        sub = props.get(k) if isinstance(k, str) else None
+        if sub is None:
+            out[k] = v
+        elif _is_leaf(sub):
+            enum = sub.get("enum", [])
+            if isinstance(v, bool) and "const" not in sub and ("off" in enum or "on" in enum):
+                word = "on" if v else "off"
+                out[k] = word if word in enum else v
+            else:
+                out[k] = v
+        else:
+            out[k] = _normalize(sub, v)
+    return out
+
+
+def validate_data(data):
+    """Return the list of named errors for a parsed policy document (empty = valid)."""
+    errors = []
+    if data is None:
+        return errors
+    _check_object(_schema(), _normalize(_schema(), data), "", errors)
+    return errors
+
+
+def validate_text(text):
+    """Parse + validate policy text. A YAML syntax error is `malformed:<reason>`."""
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        reason = " ".join(str(e).split())[:160]
+        return [f"malformed:{reason}"]
+    if data is not None and not isinstance(data, dict):
+        return ["malformed:top level must be a mapping"]
+    return validate_data(data)
+
+
+# ---------------------------------------------------------------------------------------------
+# Policy
+# ---------------------------------------------------------------------------------------------
+@dataclass
+class Policy:
+    values: dict = field(default_factory=dict)    # dotted key -> effective value
+    sources: dict = field(default_factory=dict)   # dotted key -> "default" | "file"
+    floors: frozenset = frozenset()               # dotted keys that are FLOOR
+    path: str = ""                                 # the file path ("" when absent)
+    file_present: bool = False
+
+    def get(self, key):
+        return self.values[key]
+
+    def source(self, key):
+        return self.sources[key]
+
+    def kind(self, key):
+        return "floor" if key in self.floors else "tunable"
+
+
+def _flat_leaves(data, leaf_keys, prefix=""):
+    for name, v in data.items():
+        key = f"{prefix}{name}"
+        if key in leaf_keys:
+            yield key, v
+        elif isinstance(v, dict):
+            yield from _flat_leaves(v, leaf_keys, key + ".")
+
+
+def load(project_dir=None):
+    """Load the effective policy. Absent file -> defaults. Present-but-broken -> PolicyError."""
+    pdir = Path(project_dir or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    leaves = list(_leaves(_schema()))
+    values = {k: _default_of(leaf) for k, leaf in leaves}
+    sources = {k: "default" for k, _ in leaves}
+    floors = frozenset(k for k, leaf in leaves if "const" in leaf)
+    path = pdir / POLICY_REL
+    if not path.exists() and not path.is_symlink():
+        return Policy(values, sources, floors, "", False)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        raise PolicyError([f"malformed:{POLICY_REL}: unreadable ({type(e).__name__})"])
+    errors = validate_text(text)
+    if errors:
+        raise PolicyError(errors)
+    data = _normalize(_schema(), yaml.safe_load(text) or {})
+    for key, v in _flat_leaves(data, {k for k, _ in leaves}):
+        values[key] = v
+        sources[key] = "file"
+    return Policy(values, sources, floors, str(path), True)
+
+
+def resolve_workflow_size(policy, session_size=None, prompt_size=None):
+    """B8: the smallest of the policy's max_builders, the session setting and the tick prompt."""
+    sizes = [policy.get("deck.max_builders")]
+    for extra in (session_size, prompt_size):
+        if extra is not None:
+            sizes.append(int(extra))
+    return max(1, min(sizes))
+
+
+# ---------------------------------------------------------------------------------------------
+# explain: rule, why, enforcing primitive (port plan section 2)
+# ---------------------------------------------------------------------------------------------
+_EXPLAIN = {
+    "pr_strategy.granularity": (
+        "A1: map every ready item to the files it changes and merge overlapping items into one cluster.",
+        "Many small PRs on shared files conflict in the queue; each conflict costs a re-test and a re-queue.",
+        "merge-plan script, called by the command-deck tick template (team mode) and by dispatch."),
+    "pr_strategy.one_pr_per_hot_file_per_round": (
+        "A1: a shared file or catalogue changes in one PR per round.",
+        "Two PRs on one hot file conflict in the queue.",
+        "merge-plan script."),
+    "merge.queue": (
+        "A2: read the live ruleset before relying on it; a queue waits only for the checks the ruleset names.",
+        "A queue with no required check once merged red PRs.",
+        "queue-land script and the foundry-git-discipline hook."),
+    "merge.requeue_budget_outside_diff": (
+        "A2 (floor): re-queue once for a failure outside the PR's diff, after posting the evidence. A second failure goes to the test's owner. There is never a third roll.",
+        "Unchanged re-queues wasted runner capacity.",
+        "queue-land script (rejection classifier)."),
+    "merge.full_suite_on_branch": (
+        "A3: run the full suite on a branch only for these triggers; otherwise the queue's own run is the gate.",
+        "Duplicate full suites exhaust shared runners and cost money.",
+        "queue-land script and the merge policy keys."),
+    "merge.record_line_before_enqueue": (
+        "A2 (floor): post one record line before each enqueue (PR, head, base merged at, catalogue tests, branch full suite, queued). A column that cannot be filled honestly means do not queue.",
+        "A change that merged over a red check had no record of what was verified.",
+        "queue-land script."),
+    "merge.human_review_required": (
+        "A4: the floor is green CI plus a separate-context agent review. Human code-owner review is optional.",
+        "A mandatory human review gate stalled a two-person team.",
+        "the merge policy key and the dispatch review stage (security lens for auth, secrets, payments, external APIs, supply chain)."),
+    "deck.max_builders": (
+        "B1: each tick dispatches every ready cluster, up to this number, through one Workflow with one worktree per cluster.",
+        "Fewer running builders than ready clusters is a stall.",
+        "command-deck tick template (B1, B8) and dispatch."),
+    "deck.heavy_slots": (
+        "B2: heavy local commands run through a slot lock sized to the host; auto sizes it from measured CPU and memory.",
+        "Unbounded parallel heavy commands exhaust the machine.",
+        "deck-resources script and deck-heavy lock wrapper."),
+    "deck.resource_check": (
+        "B2 (floor): each tick first measures CPU, memory, swap and the root disk and sizes the fan-out from the GREEN, AMBER or RED verdict.",
+        "Parallelism is bounded by the machine, never by the agent count.",
+        "deck-resources script."),
+    "deck.workflow_size_source": (
+        "B8 (floor): when the session setting and the tick prompt disagree on fan-out size, the smaller one wins, and every agent counts toward it.",
+        "A larger prompt size overrode a smaller session limit once.",
+        "command-deck tick template and `render-tick-section B8`."),
+    "decisions.research_first": (
+        "B3 (floor): run a prior-art sweep before asking the operator. Adopt the converged recommendation and record a dated ruling. Escalate only on no consensus.",
+        "Questions that research could answer cost the operator's attention.",
+        "research-first skill and the blocker lint."),
+    "decisions.escalation_set": (
+        "B3/B4: the operator is asked only for these reasons, and only after an attempt that could have failed.",
+        "Four items reported as operator-gated in one review were the agent's own work.",
+        "blocker schema (attempted[], control) and its lint."),
+    "claims.enabled": (
+        "B5: machines check in on a shared lease record before, during and after a chunk of work.",
+        "Two machines took the same work.",
+        "claims script and the claim-required push/PR guard (team mode)."),
+    "claims.expires_after": (
+        "B5: a lease expires without a heartbeat; only an expired lease can be taken over, and the takeover is recorded.",
+        "A crashed machine held work forever.",
+        "claims script."),
+    "cost.weigh_in_every_decision": (
+        "C1 (floor): every deck decision weighs cost. Use the smallest fan-out that keeps the time to market.",
+        "Cost is an input to every decision.",
+        "cost section of the tick template."),
+    "cost.priced_ask_for_always_on": (
+        "C1 (floor): a new always-on resource needs a priced ask (purpose plus a cost breakdown). A capacity raise is a priced option for the operator, never a PR.",
+        "An always-on resource was added without a cost review.",
+        "priced-ask blocker kind."),
+    "report.format": (
+        "E1: the report has a first line (local date and time, progress count) and four blocks: Your decisions, Building now, Needs you, Ledger.",
+        "ID-heavy status text could not be followed.",
+        "deck-report renderer."),
+    "report.timezone": ("E1: the first line uses this zone; auto means the operator's local zone.", "The operator reads local time.", "deck-report renderer."),
+    "report.plain_language": ("E1: name fixes by what they do, not by IDs.", "ID-heavy status text could not be followed.", "deck-report renderer."),
+    "report.max_lines": ("E1: the renderer refuses output longer than this.", "The operator reads short, plain reports.", "deck-report renderer."),
+    "report.include_ids": ("E1: when false, the report names work by what it does, not by ID.", "ID-heavy status text could not be followed.", "deck-report renderer."),
+    "report.handoff_dir": (
+        "E3: step-by-step operator documents go to this directory; generated PDFs go next to them.",
+        "Hand-off files in the repo are noise.",
+        "this policy key."),
+    "communication.style": (
+        "E2: use Simplified Technical English in agent responses, tick reports, briefs and documentation; off or operator-defined are allowed.",
+        "Operators could not follow dense, ID-heavy status text.",
+        "brief preamble, tick template and author personas via `render-tick-section E2`."),
+    "communication.operator_style_file": (
+        "E2: the project-relative text file used when style is operator-defined.", "An operator may need a different style.", "`render-tick-section E2`."),
+    "hygiene.disk_sweep_each_tick": (
+        "F2: measure the mount where the work writes, not the default one.", "The wrong disk filled while the default looked fine.", "deck-resources script."),
+    "hygiene.teardown_required": (
+        "F1 (floor): pair every start with a teardown of containers, clusters, port-forwards, worktrees and scratch output, scoped by your own project label.",
+        "Orphaned resources accumulate and cost money.",
+        "brief preamble hygiene section and the env-hygiene reaper."),
+    "secrets.value_reads_forbidden": (
+        "D1 (floor): verify by metadata only; never read or print a secret value.",
+        "A command-text hook is not a boundary; only an IAM-level boundary prevents the read.",
+        "secret-read hook (configurable verbs and no-print roots) and the docs page."),
+    "messaging.machine_channel": (
+        "Cross-session machine messages are an append-only JSONL log on a protected git branch.", "A git log is the established shape for a machine ledger.", "message-log script."),
+    "messaging.people_channel": (
+        "One issue per production change, request or decision.", "People read issues; machines read the log.", "the inbox and the message-log refs."),
+    "messaging.chat_mirror": (
+        "Opt-in mirror of PROD-BEFORE and PROD-AFTER lines to chat; off by default.", "Chat is a convenience, not a record.", "message-log script."),
+    "messaging.open_change_minutes": (
+        "A PROD-BEFORE with no terminal PROD-AFTER after this many minutes is reported open.", "A missed after-line is a process miss.", "message-log audit."),
+    "governance.design_required_paths": (
+        "Changes touching these path globs need a design before build.", "Large changes without a design rework late.", "the governance brief renderer."),
+    "governance.size_tag_required": (
+        "A design is required at or above this size tag.", "Large changes without a design rework late.", "the governance brief renderer."),
+    "schema_version": ("The policy file format version; only 1 exists.", "A future format change needs a named migration.", "this validator."),
+}
+
+
+def explain(key):
+    """Return (rule, why, primitive) for a dotted key, or None."""
+    return _EXPLAIN.get(key)
+
+
+# ---------------------------------------------------------------------------------------------
+# render-tick-section: plain strings a template includes
+# ---------------------------------------------------------------------------------------------
+def render_tick_section(policy, name, project_dir=None, session_size=None, prompt_size=None):
+    """Return the policy-driven text for section `name`. E2 is empty when style is off."""
+    g = policy.get
+    if name == "A1":
+        if g("pr_strategy.granularity") == "coarse":
+            text = ("Before you dispatch, map each ready item to the files and components it changes. "
+                    "Merge overlapping items into one cluster, across specs. "
+                    "Add new work for an area to that area's open PR that is not yet queued. Do not open a sibling PR. ")
+        else:
+            text = ("Before you dispatch, map each ready item to the files and components it changes. "
+                    "Fine-grained PRs are allowed by policy: one PR for each item. ")
+        if g("pr_strategy.one_pr_per_hot_file_per_round"):
+            text += "Change a shared file or catalogue in one PR for each round. "
+        return text + "State the plan in one report line."
+    if name == "A5":
+        return ("The output of the deck is merged fixes. Paperwork follows the code. "
+                "Dispatch the largest and most complex cluster first. "
+                "Give every open item an owner or a dated recheck hold. "
+                "When the board is empty, rebuild it from the whole backlog before you say that the deck is idle. "
+                "Report progress over the whole backlog, never over a subset.")
+    if name == "A6":
+        return ("A fix is done only when you re-measure it. After a merge, run again the check that the fix targets, on the merged code. "
+                "Batch all re-checks of a tick into one record PR. "
+                "Re-audit items that are marked fixed before any formal run.")
+    if name == "B1":
+        size = resolve_workflow_size(policy, session_size, prompt_size)
+        return (f"Each tick, dispatch every ready cluster, up to {size} builders, through one Workflow: "
+                "build, then a separate-context review, then at most 2 fix rounds, with one worktree for each cluster. "
+                "Never wait idle on remote CI or queues. "
+                "If fewer builders run than there are ready clusters, that is a stall. Say so in the report.")
+    if name == "B8":
+        size = resolve_workflow_size(policy, session_size, prompt_size)
+        return ("If the session setting and the tick prompt give different fan-out sizes, the smaller size wins. "
+                "Every agent counts toward the size. "
+                f"The policy limit is {g('deck.max_builders')}. The size for this tick is {size}.")
+    if name == "B9":
+        return ("Check the pause flag first. If a pause is armed (\"pause once X lands\"), start no new fan-out, "
+                "even when you cannot observe X. Finish or park what is running.")
+    if name == "C1":
+        return ("Weigh cost in every decision. Avoid unchanged re-queues and surplus full suites. "
+                "Use the smallest fan-out that keeps the time to market. "
+                "A new always-on resource needs a priced ask: the purpose and a cost breakdown. "
+                "A capacity raise is a priced option for the operator, never a PR.")
+    if name == "D2":
+        return ("Before each irreversible or production write, post one line that says what will happen. "
+                "After the write, post the outcome. If you miss the before line, report a process miss. "
+                "Subagents follow the same rule. On a failure, stop, clean up what you created and report.")
+    if name == "E1":
+        if g("report.format") == "detailed":
+            shape = "Use the detailed report format."
+        else:
+            shape = ("The first line is the local date and time plus the progress count (\"X of N done, +moved\"). "
+                     "Then write four blocks: Your decisions, Building now, Needs you, Ledger.")
+        plain = " Use plain words." if g("report.plain_language") else ""
+        ids = " IDs are allowed." if g("report.include_ids") else " Do not use IDs; name fixes by what they do."
+        return (f"{shape}{plain}{ids} Use at most {g('report.max_lines')} lines. "
+                f"Use time zone: {g('report.timezone')}. "
+                "Name every stuck item in full with its reason, every time. Never write \"nothing new\". "
+                "If a tick merged nothing and verified nothing, write STALL and say why.")
+    if name == "E2":
+        style = g("communication.style")
+        if style == "off":
+            return ""
+        if style == "simplified-technical-english":
+            return E2_TEXT
+        rel = g("communication.operator_style_file")
+        if not rel:
+            raise PolicyError(["invalid-value:communication.operator_style_file: required when style is operator-defined"])
+        root = Path(project_dir or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve()
+        target = (root / rel).resolve()
+        if root not in target.parents:
+            raise PolicyError(["invalid-value:communication.operator_style_file: path leaves the project"])
+        try:
+            return target.read_text(encoding="utf-8").rstrip("\n")
+        except (OSError, UnicodeDecodeError):
+            raise PolicyError(["invalid-value:communication.operator_style_file: cannot read the file"])
+    raise ValueError(f"unknown section {name!r}")
+
+
+# ---------------------------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------------------------
+def _cmd_status(pdir, as_json):
+    p = load(pdir)
+    rows = [{"key": k, "value": v, "kind": p.kind(k), "source": p.sources[k]} for k, v in p.values.items()]
+    if as_json:
+        print(json.dumps({"file": p.path or None, "rows": rows}, indent=2, sort_keys=True))
+        return 0
+    print(f"operating-model: {'file ' + p.path if p.file_present else 'defaults (no file)'}")
+    for r in rows:
+        print(f"{r['key']} = {json.dumps(r['value'])}  [{r['kind']}, source: {r['source']}]")
+    if p.get("communication.style") == "off":
+        print("communication.style is off: the E2 block is omitted from rendered briefs and prompts.")
+    return 0
+
+
+def _cmd_validate(pdir):
+    if not (Path(pdir) / POLICY_REL).exists():
+        print("ok: defaults (no file)")
+        return 0
+    load(pdir)
+    print("ok")
+    return 0
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="foundry_operating_model.py", description=__doc__.split("\n")[0])
+    ap.add_argument("--project-dir", default=None)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    st = sub.add_parser("status")
+    st.add_argument("--json", action="store_true")
+    sub.add_parser("validate")
+    ex = sub.add_parser("explain")
+    ex.add_argument("key")
+    rt = sub.add_parser("render-tick-section")
+    rt.add_argument("name", choices=SECTIONS)
+    rt.add_argument("--session-size", type=int, default=None)
+    rt.add_argument("--prompt-size", type=int, default=None)
+    args = ap.parse_args(argv)
+    pdir = args.project_dir or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    try:
+        if args.cmd == "status":
+            return _cmd_status(pdir, args.json)
+        if args.cmd == "validate":
+            return _cmd_validate(pdir)
+        if args.cmd == "explain":
+            hit = explain(args.key)
+            if hit is None:
+                print(f"unknown-key:{args.key}")
+                return 2
+            p = load(pdir)
+            print(f"key: {args.key}\nkind: {p.kind(args.key) if args.key in p.values else 'meta'}\n"
+                  f"value: {json.dumps(p.values.get(args.key))}\n"
+                  f"rule: {hit[0]}\nwhy: {hit[1]}\nenforced by: {hit[2]}")
+            return 0
+        if args.cmd == "render-tick-section":
+            p = load(pdir)
+            print(render_tick_section(p, args.name, pdir, args.session_size, args.prompt_size))
+            return 0
+    except PolicyError as e:
+        for line in e.errors:
+            print(line)
+        return 2
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

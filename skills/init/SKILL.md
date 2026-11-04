@@ -316,6 +316,11 @@ only verifies and reports on all five, and names the real owner for each.
 (step 3), `.foundry/stack-profile.lock` via the scripted `--lock` path (step 9), and the
 `.gitignore` managed block via the shipped applier (step 13).
 
+**Policy seed.** The operating-model policy `.foundry/operating-model.yaml` is written once from
+`cli/templates/operating-model.yaml.tmpl` when absent (the scaffold does this); never overwrite an
+existing one. Then run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_operating_model.py" validate`.
+It must exit 0. See `/foundry:operating-model`.
+
 ## Inputs / Outputs
 
 - In: the adopter repo + its boot command + surface map + operator id(s) + (multi-account machines) the repo-owning gh account.

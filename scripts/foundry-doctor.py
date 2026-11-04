@@ -798,6 +798,24 @@ def check_operating_mode(project_dir=None):
         return ADVISORY, _sanitize_detail(f"probe crashed: {type(e).__name__}: {e}")
 
 
+def check_operating_model(project_dir=None):
+    """gv-03: one advisory line -- `ok` | `defaults (no file)` | `invalid:<key>`. NEVER RED; a crash is an
+    ADVISORY line. Offline (a file read)."""
+    pdir = project_dir or _project_dir()
+    try:
+        if HERE not in sys.path:
+            sys.path.insert(0, HERE)
+        import foundry_operating_model as omp
+        pol = omp.load(pdir)
+        return True, ("ok" if pol.file_present else "defaults (no file)")
+    except Exception as e:  # noqa: BLE001 -- advisory: a crash is a line, not a RED
+        if e.__class__.__name__ == "PolicyError":
+            first = str(e).split(":", 1)
+            key = first[1].split(":", 1)[0] if len(first) > 1 else first[0]
+            return ADVISORY, _sanitize_detail(f"invalid:{key}")
+        return ADVISORY, _sanitize_detail(f"probe crashed: {type(e).__name__}: {e}")
+
+
 def check_retired_artifacts(plugin_root=None, project_dir=None):
     """hotfix-v1.17.4 (ER #236): `retired-artifacts: none present` or `<n> present — run
     `npx update-agentic-workspace@<pinned> --cleanup`` (the first few paths named). Reads the catalogue the CLI
@@ -972,6 +990,8 @@ def main():
     # --session-start.
     om_ok, om_detail = check_operating_mode(project_dir=project_dir)
     _render_row("operating-mode", om_ok, om_detail)
+    omp_ok, omp_detail = check_operating_model(project_dir=project_dir)
+    _render_row("operating-model", omp_ok, omp_detail)
 
     # `github-capabilities` (gn-03): advisory, never RED, full check only (it makes network
     # calls, so it is skipped under --session-start).

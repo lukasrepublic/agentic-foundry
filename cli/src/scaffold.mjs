@@ -18,6 +18,9 @@ export const TEMPLATE_ENTRIES = Object.freeze([
   // drifted, never written again (reconcile.mjs reports it `kept`). The other entries are
   // framework-owned text an adopter is not expected to edit; this one is the opposite.
   { template: 'permissions.yaml.tmpl', target: '.foundry/permissions.yaml', seed: true },
+  // operating-model policy (gv-03): the same SEED contract. Written once when absent; once present
+  // the adopter's tunable edits are theirs and survive every reconcile byte-for-byte (`kept`).
+  { template: 'operating-model.yaml.tmpl', target: '.foundry/operating-model.yaml', seed: true },
 ]);
 
 /** Render a template's raw text with the CLAUDE.md substitutions (the only templated file). */
@@ -77,4 +80,5 @@ export const DECLARED_PATH_SET = Object.freeze([
   'specs/lifecycle/README.md',
   '.foundry/README.md',
   '.foundry/permissions.yaml',
+  '.foundry/operating-model.yaml',
 ]);

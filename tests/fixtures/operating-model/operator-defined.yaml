@@ -1,0 +1,3 @@
+communication:
+  style: operator-defined
+  operator_style_file: style.txt

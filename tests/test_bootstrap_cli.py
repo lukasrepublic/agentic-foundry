@@ -223,6 +223,7 @@ DECLARED_PATH_SET = {
     "specs/lifecycle/README.md",
     ".foundry/README.md",
     ".foundry/permissions.yaml",  # permissions-scaffold (ER #215): a SEED — created once, then `kept`
+    ".foundry/operating-model.yaml",  # gv-03: a SEED, the same contract
 }
 
 # v1.18.3 (AC-BCL-6 amended): a greenfield run also CREATES the status-line wrapper the settings'
@@ -1391,7 +1392,7 @@ def test_a_second_run_writes_nothing(tmp_path):
     assert before == after
     for rel in DECLARED_PATH_SET:
         # the permissions seed is operator-owned once present: `kept`, never compared (ER #215)
-        expected = "[kept]" if rel == ".foundry/permissions.yaml" else "[unchanged]"
+        expected = "[kept]" if rel in (".foundry/permissions.yaml", ".foundry/operating-model.yaml") else "[unchanged]"
         assert f"{expected} {rel}" in proc2.stdout
 
 
