@@ -1,0 +1,1 @@
+{"quarantine": [{"test": "tests/test_a.py::test_x", "owner": "team-a", "issue": "ISSUE-1", "entry": "last tuesday", "expiry": "2027-01-01"}]}
