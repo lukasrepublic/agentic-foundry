@@ -250,12 +250,14 @@ class Lander:
         self.required = required
         # Clause (l), re-applied here because this script's own git calls are not seen by the hook: a PR that is
         # ALREADY in the queue (a re-run after a timeout or an abort) must not be pushed to. Refuse before any push.
-        q0 = self.read_queue()
-        if q0.get("isInMergeQueue"):
-            raise Refused("PR #%s is already in the merge queue: dequeue it first (a push would move the head the "
-                          "queue is testing), then run again" % self.pr, reason_code="dequeue-first")
+        self.assert_not_queued()
         self.diff_files = [f.get("path") for f in v.get("files") or [] if isinstance(f, dict)]
         return v
+
+    def assert_not_queued(self):
+        if self.read_queue().get("isInMergeQueue"):
+            raise Refused("PR #%s is in the merge queue: dequeue it first (a push would move the head the "
+                          "queue is testing), then run again" % self.pr, reason_code="dequeue-first")
 
     def classic_required(self):
         """Required check contexts of classic branch protection ([] on any error: none named)."""
@@ -278,7 +280,7 @@ class Lander:
         rc, _, err = ad.git("fetch", "-q", "--end-of-options", "origin", base)
         if rc != 0:
             raise Refused("origin/%s cannot be fetched (%s)" % (base, err.strip()[:120]), column="base merged at")
-        rc, base_sha, _ = ad.git("rev-parse", "--end-of-options", "origin/%s" % base)
+        rc, base_sha, _ = ad.git("rev-parse", "--verify", "--end-of-options", "origin/%s" % base)
         if rc != 0 or not base_sha.strip():
             raise Refused("origin/%s does not resolve" % base, column="base merged at")
         self.base_sha = base_sha.strip()
@@ -293,6 +295,7 @@ class Lander:
                               % (base, self.head_ref, ("conflicts in " + ", ".join(files.split()[:8])) if files.strip()
                                  else err.strip()[:120] or "see git status"), reason_code="merge-conflict")
             self.local_green()
+            self.assert_not_queued()          # re-read right before THIS push: the queue may have taken the PR meanwhile
             rc, _, err = ad.git("push", "--end-of-options", "origin", "HEAD:%s" % self.head_ref)
             if rc != 0:
                 raise Refused("pushing the base merge failed (%s)" % err.strip()[:160])

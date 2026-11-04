@@ -243,6 +243,25 @@ def cmd_start(args: list[str]) -> int:
                      "write team needs the OPERATOR to read it and start the ticket themselves. Nothing was recorded.")
     elif done and trust:
         trusted_by = "flag"
+    # The issue author's own `## Paper allowed` list may lift the CI-edit guard (issue_paper_allowed) ONLY when the
+    # author, and whoever last edited the body, pass the same trust check as a Done-means command. An untrusted
+    # author's list is recorded as paper_allowed (as before) but never reaches the CI guard.
+    issue_paper = []
+    if paper:
+        if trust:
+            issue_paper = list(paper)
+        else:
+            if not done:                      # the editor has not been read yet
+                try:
+                    live = read_issue(default_run, issue_repo or "", int(issue["number"]), trust_author=True)
+                    editor = live.get("last_edited_by")
+                    issue_repo = live.get("name_with_owner") or issue_repo
+                except (GhError, ValueError, AttributeError):
+                    live = None
+            else:
+                live = True
+            if live:
+                issue_paper = list(paper) if done_trust(issue_repo, login, editor)[0] else []
     doc = {
         "issue": issue["number"],
         "url": issue.get("url", ""),
@@ -254,7 +273,7 @@ def cmd_start(args: list[str]) -> int:
         "done_sha256": store.command_digest(done),
         "trusted_by": trusted_by,
         "paper_allowed": paper,
-        "issue_paper_allowed": list(paper),   # origin: the issue author's list; the CI guard honours this, never CLI-written paper_allowed
+        "issue_paper_allowed": issue_paper,   # origin: a TRUSTED issue author's list; the CI guard honours this, never CLI-written paper_allowed
         "status": "open",
         "stop_blocks": 0,
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

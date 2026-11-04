@@ -222,8 +222,12 @@ _LOCAL_GREEN_REMEDY = ("Run the repository's own tests locally first: "
 _SECRET_ASSIGN = re.compile(
     r"(?i)\b([A-Za-z_][A-Za-z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASSWD|APIKEY|API_KEY|_KEY|_PAT))=(\S+)")
 
+_URL_USERINFO = re.compile(r"(//)[^@/\s]+@")
+
 def _redact(s):
-    return _SECRET_ASSIGN.sub(r"\1=<redacted>", s)
+    # also strip URL userinfo (`https://user:<token>@host/...`): a refusal that quotes a remote or a command
+    # must never carry a credential into the transcript
+    return _URL_USERINFO.sub(r"\1", _SECRET_ASSIGN.sub(r"\1=<redacted>", s))
 
 # AC-GSO-4: exit 2 + one JSON object on stdout (hookSpecificOutput deny + observation) + a
 # stderr reason-then-remediation line. The "run the command yourself" sentence is retired as
@@ -628,6 +632,7 @@ for i, t in enumerate(low):
         # payload cwd as a best guess: if that guess has a GitHub remote the push is refused (fail-closed);
         # if it has none there is nothing this clause can read, and the push is admitted as before.
         unresolvable_ = None
+        cfg_flags_ = []                                  # inline `-c k=v` of THIS command: they change the push URL
         for k in range(i):
             if low[k] in ("cd", "pushd", "popd"):
                 unresolvable_ = "an earlier directory change (%s)" % toks[k]
@@ -638,13 +643,16 @@ for i, t in enumerate(low):
                 unresolvable_ = "the git global option %s" % opt
             elif opt == "-C":
                 repo_q = os.path.join(repo_q, os.path.expanduser(val))
+            elif opt == "-c" and val:
+                cfg_flags_.append(val)
         try:
             gd_ = subprocess.run(["git", "-C", repo_q, "rev-parse", "--git-dir"], capture_output=True,
                                  text=True, timeout=10)
             if gd_.returncode != 0:
                 return                                   # not a repository: nothing to judge
             remote_q = repo_flag_ or (bare_q[0] if bare_q else "origin")
-            url_ = subprocess.run(["git", "-C", repo_q, "remote", "get-url", "--push", remote_q],
+            url_ = subprocess.run(["git", "-C", repo_q] + [x_ for c_ in cfg_flags_ for x_ in ("-c", c_)]
+                                  + ["remote", "get-url", "--push", remote_q],
                                   capture_output=True, text=True, timeout=10)
         except Exception:
             return
@@ -652,8 +660,14 @@ for i, t in enumerate(low):
             remote_q if re.match(r"^(https?|ssh|git|file)://|^([^@/\s]+@)?[^:/\s]+:", remote_q) else "")
         if not target_ or target_.startswith(("/", ".", "~", "file:")):
             return                                       # no such remote / local path or file://: no PR exists
+        rewrites_ = [c_ for c_ in cfg_flags_ if c_.lower().startswith(("url.", "remote."))]
         m_ = re.match(r"^(?:https?|ssh|git)://(?:[^@/]+@)?([^/:]+)(?::\d+)?/(.+?)(?:\.git)?/?$", target_) \
             or re.match(r"^(?:[^@/\s]+@)?([^:/\s]+):(?!//)(.+?)(?:\.git)?/?$", target_)
+        if rewrites_ and (not m_ or m_.group(1).lower() not in _gh_hosts()):
+            block("push refused (remote-host-unresolvable): this command rewrites the push URL inline (%s) to %r, "
+                  "which is not a host `gh` is configured for. Command: %s" % (", ".join(rewrites_), target_, cmd),
+                  remediation="Remove the inline -c url.*/remote.* override, or push to a real GitHub remote.",
+                  retryable=False)
         if not m_ or m_.group(1).lower() not in _gh_hosts():
             # remote-host-unresolvable: a host gh is not configured for (an SSH alias, an unknown host) is NOT
             # a local path. Skipping the query there would let a queued PR be pushed to; fail closed.

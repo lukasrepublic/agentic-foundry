@@ -32,6 +32,7 @@ class Env:
 
     def __init__(self, tmp):
         self.tmp = tmp
+        self.will_push = False        # set once the base has moved: a push is due, so the queue is read once more first
         self.origin = tmp / "origin.git"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.origin)], check=True)
         self.repo = tmp / "repo"
@@ -65,7 +66,7 @@ class Env:
     def arm(self, *, rules=RULES_OK, checks=None, queue=None, poll=None, comments=None, extra=(), classic=None,
             already_queued=False, **pr):
         checks = checks if checks is not None else [{"name": "ci", "bucket": "pass", "workflow": "CI", "link": "u"}]
-        queue = [_q(already_queued)] + (queue or [_q(True), _q(True), _q(False, merged=True)])   # first read: the pre-push check
+        queue = [_q(already_queued)] + ([_q(False)] if self.will_push and not already_queued else []) + (queue or [_q(True), _q(True), _q(False, merged=True)])   # first read: the pre-push check
         poll = poll or [json.dumps({"state": "MERGED", "mergedBy": {"login": "queue-bot"},
                                     "mergeCommit": {"oid": "c" * 40}})]
         r = [
@@ -244,6 +245,7 @@ def test_pr_must_be_a_literal_number(env, pr):
 # ----------------------------------------------------------------------------- base merge, green head, skipped checks
 
 def _advance_main(env):
+    env.will_push = True
     git(env.repo, "checkout", "-q", "main")
     (env.repo / "other.txt").write_text("o\n")
     git(env.repo, "add", ".")
@@ -527,8 +529,9 @@ def test_the_base_merge_is_not_pushed_unless_local_green_passes(env):
     p, lines = env.run("--local-green-cmd", "false")
     assert p.returncode == 2 and terminal(lines)["reason_code"] == "local-green-failed"
     assert git(env.origin, "rev-parse", "feat") == tip, "the merge commit stayed local"
+    git(env.repo, "reset", "-q", "--hard", "origin/feat")               # drop the unpushed merge commit, then the control
     env.arm()
-    p, lines = env.run("--local-green-cmd", "true")                     # control
+    p, lines = env.run("--local-green-cmd", "true")
     assert p.returncode == 0 and git(env.origin, "rev-parse", "feat") == env.head()
 
 
@@ -608,3 +611,23 @@ def test_the_quarantine_request_lists_every_failing_test(env):
 def test_quarantine_requests_are_gitignored():
     ig = (ROOT / ".gitignore").read_text().splitlines()
     assert ".foundry/quarantine-requests/" in ig
+
+
+def test_the_queue_is_re_read_right_before_the_base_merge_push(env):
+    """Not queued at the start, queued by the time the push is due: nothing is pushed."""
+    _advance_main(env)
+    tip = git(env.origin, "rev-parse", "feat")
+    env.will_push = False
+    env.arm(queue=[_q(True)])                       # read 1 (start): not queued; read 2 (pre-push): queued
+    p, lines = env.run()
+    assert p.returncode == 2 and terminal(lines)["reason_code"] == "dequeue-first"
+    assert git(env.origin, "rev-parse", "feat") == tip and env.merges() == []
+
+
+def test_an_up_to_date_branch_is_not_merged_or_pushed_again(env):
+    """Regression: `rev-parse --end-of-options` prints the marker line, which once made every branch look behind."""
+    env.arm()
+    p, lines = env.run()
+    ev = [x for x in lines if x.get("event") == "base-merged"][0]
+    assert ev["merged_now"] is False and not [x for x in lines if x.get("event") == "local-green"]
+    assert len(ev["base_sha"]) == 12 and ev["base_sha"] == git(env.repo, "rev-parse", "origin/main")[:12]

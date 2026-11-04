@@ -172,3 +172,30 @@ def test_the_allow_hook_never_grants_allow_ci_silently():
     assert mod.allowed(f"python3 {ticket_py} allow docs/a.md", root) is True       # control: paper allow stays silent
     assert mod.allowed(f"python3 {ticket_py} ci-allow setup.cfg", root) is False
     assert mod.allowed(f"python3 {SCRIPTS / 'foundry_queue_land.py'} 12", root) is False
+
+
+def _start_with_issue(repo, monkeypatch, author, trusted):
+    spec = importlib.util.spec_from_file_location("ft_under_test", SCRIPTS / "foundry-ticket.py")
+    ft = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(SCRIPTS))
+    spec.loader.exec_module(ft)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(repo))
+    issue = {"number": 7, "title": "t", "body": "## Paper allowed\n.github/workflows/\n", "url": "https://github.com/o/r/issues/7",
+             "author": {"login": author}, "state": "OPEN"}
+    monkeypatch.setattr(ft, "_gh_json", lambda a: issue)
+    monkeypatch.setattr(ft, "read_issue", lambda run, repo_, n, **k: {"last_edited_by": author, "name_with_owner": "o/r"})
+    monkeypatch.setattr(ft, "author_trusted", lambda r, login, gh_json=None: (login in trusted, "w"))
+    assert ft.cmd_start(["7"]) == 0
+    return json.loads((Path(_git(repo, "rev-parse", "--absolute-git-dir")) / "foundry-ticket.json").read_text())
+
+
+def test_an_untrusted_authors_paper_allowed_does_not_lift_the_ci_guard(repo, monkeypatch):
+    doc = _start_with_issue(repo, monkeypatch, "mallory", trusted=("alice",))
+    assert doc["issue_paper_allowed"] == [] and doc["paper_allowed"] == [".github/workflows"]
+    assert guard(repo, ".github/workflows/ci.yml").returncode == 2
+
+
+def test_a_trusted_authors_paper_allowed_does_lift_it_control(repo, monkeypatch):
+    doc = _start_with_issue(repo, monkeypatch, "alice", trusted=("alice",))
+    assert doc["issue_paper_allowed"] == [".github/workflows"]
+    assert guard(repo, ".github/workflows/ci.yml").returncode == 0

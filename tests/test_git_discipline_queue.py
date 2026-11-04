@@ -347,3 +347,43 @@ def test_no_real_gh_is_ever_spawned(stub, repo):
     which = subprocess.run(["bash", "-c", "command -v gh"], env=stub.env, capture_output=True, text=True)
     assert Path(which.stdout.strip()).resolve() == (STUB_DIR / "gh").resolve()
     assert stub.calls(), "the hook's query went through the stub"
+
+
+# ------------------------------------------------------------------ round 2: credentials, inline -c
+
+def test_a_remote_url_with_a_token_never_reaches_the_transcript(stub, repo):
+    _git(repo, "remote", "add", "tok", "https://user:s3cr3t-token@mygh-alias.example/o/r.git")
+    stub.arm(_list([]))
+    p = run_hook("git push tok feat", stub.env, cwd=repo)
+    assert p.returncode == 2 and "remote-host-unresolvable" in p.stdout
+    assert "s3cr3t-token" not in p.stdout + p.stderr
+    p = run_hook("git push https://user:s3cr3t-token@mygh-alias.example/o/r.git feat", stub.env, cwd=repo)
+    assert p.returncode == 2 and "s3cr3t-token" not in p.stdout + p.stderr
+    assert "mygh-alias.example" in p.stdout, "the host is still named: only the userinfo is stripped"
+
+
+def test_inline_url_rewrite_cannot_hide_a_github_push_behind_a_local_remote(stub, repo):
+    """The remote is a local file URL (no query). An inline `-c url.<github>.insteadOf=<file url>` sends the push
+    to GitHub: the probe must see it, and the queued PR must be refused."""
+    _git(repo, "remote", "add", "fileremote", "file:///nonexistent/o/r.git")
+    stub.arm(_list([{"number": 7, "headRefName": "feat", "isInMergeQueue": True}]))
+    cmd = "git -c url.https://github.com/o/r.git.insteadOf=file:///nonexistent/o/r.git push fileremote feat"
+    p = run_hook(cmd, stub.env, cwd=repo)
+    assert p.returncode == 2 and "merge queue" in p.stdout, p.stdout + p.stderr
+    # control: without the override the same push is local and admitted without a query
+    stub.arm(_list([]))
+    assert run_hook("git push fileremote feat", stub.env, cwd=repo).returncode == 0
+
+
+def test_inline_pushurl_override_to_an_unknown_host_is_unresolvable(stub, repo):
+    _git(repo, "remote", "add", "fileremote", "file:///nonexistent/o/r.git")
+    stub.arm(_list([]))
+    p = run_hook("git -c remote.fileremote.pushurl=git@mygh-alias:o/r.git push fileremote feat", stub.env, cwd=repo)
+    assert p.returncode == 2 and "remote-host-unresolvable" in p.stdout and "rewrites the push URL inline" in p.stdout
+
+
+def test_inline_override_resolving_to_a_local_path_is_admitted(stub, repo):
+    stub.arm(_list([]))
+    cmd = "git -c url.file:///nonexistent/.insteadOf=https://github.com/ push origin feat"
+    assert run_hook(cmd, stub.env, cwd=repo).returncode == 0
+    assert stub.calls() == []
