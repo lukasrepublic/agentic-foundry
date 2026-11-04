@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import foundry_governance as gov  # noqa: E402
 
 FIX = ROOT / "tests" / "fixtures" / "governance"
+TOK = "c" + "tx"  # retired token, built from fragments so it never appears literally
 PLANNED_REFS = {"scripts/foundry_blocker_check.py"}  # lands with gv-14
 KITS = {"cost": "COST", "observability": "OBS", "data": "DATA", "compliance": "LIC", "ux": "UX"}
 LOCK_SCHEMA = json.loads((ROOT / "schema" / "governance-lock.schema.json").read_text())
@@ -105,14 +106,14 @@ def scan(files, terms):
         for i, term in enumerate(terms):
             if term in low:
                 hits.append((f.name, i))
-        if re.search(r"\bctx", low):
-            hits.append((f.name, "ctx"))
+        if re.search(r"\b" + TOK, low):
+            hits.append((f.name, TOK))
     return hits
 
 
-def test_no_framework_text_no_ctx_no_denylisted_names():
+def test_no_framework_text_no_retired_token_no_denylisted_names():
     hits = scan(_kit_files(), _denylist())  # computed outside the assert: a failure prints indices only
-    assert hits == [], f"denylist/ctx hits (file, term index): {hits}"
+    assert hits == [], f"denylist/retired-token hits (file, term index): {hits}"
     for f in _kit_files():
         low = f.read_text().lower()
         for banned in ("soc 2", "soc2", "iso 27001", "iso27001", "pci-dss", "hipaa"):
@@ -126,8 +127,8 @@ def test_detector_fires_on_a_planted_name(tmp_path):  # planted-name control
     target = copy / "cost" / "README.md"
     target.write_text(target.read_text() + "\nplanted-secret-name\n")
     assert scan(_kit_files(copy), ["planted-secret-name"]) == [("README.md", 0)]
-    target.write_text("a ctx directory\n")
-    assert scan(_kit_files(copy), []) == [("README.md", "ctx")]
+    target.write_text(f"a {TOK} directory\n")
+    assert scan(_kit_files(copy), []) == [("README.md", TOK)]
 
 
 def test_no_private_design_labels():
