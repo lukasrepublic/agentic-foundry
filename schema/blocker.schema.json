@@ -10,7 +10,8 @@
     "evidence",
     "attempted",
     "control",
-    "why_operator"
+    "why_operator",
+    "questions"
   ],
   "properties": {
     "claim": {
@@ -51,7 +52,7 @@
           },
           "used_running_job_credential": {
             "type": "boolean",
-            "description": "True when this attempt used the credential a running job already holds (required, directly or by an outcome line naming it, before a credential-step blocker)."
+            "description": "True only on the attempt that used the credential a running job already holds. REQUIRED (on at least one attempt) before a credential-step blocker is accepted; free text in command/outcome is never read."
           }
         }
       }
@@ -89,16 +90,16 @@
           "allOf": [
             {
               "not": {
-                "pattern": "(&&|;|\\||\\r|\\n|\\$\\(|`)"
+                "pattern": "[&;|<>\\r\\n`]|\\$\\("
               }
             },
             {
               "not": {
-                "pattern": "(^|\\s)(set\\s+-[a-zA-Z]*e[a-zA-Z]*|trap|exec)(\\s|$)"
+                "pattern": "^\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*(?:(?:command|builtin)\\s+)*(?:trap|exec|exit|set\\s+(?:-[A-Za-z]*e[A-Za-z]*|-[A-Za-z]*o\\s+errexit))(?:\\s|$)"
               }
             }
           ],
-          "description": "ONE bare command, atomic and alone -- no chaining (`&&`, `;`, `|`), no command substitution (`$(`, backtick), no newline, and no top-level `set -e`/`trap`/`exec` (any of which could alter or exit the operator's own shell). Preconditions are verified separately beforehand, never chained into this field."
+          "description": "ONE bare command, atomic and alone: no chaining or background (`&&`, `&`, `;`, `|`), no redirection or process substitution (`<`, `>`, `>>`, `<(`, `>(`), no command substitution (`$(`, backtick), no newline or carriage return, and no top-level `trap`, `exec`, `exit`, `set -e` or `set -o errexit` (after optional NAME=value assignments and `command`/`builtin`). The same two patterns are applied by scripts/foundry_blocker_check.py, so the verdict does not depend on jsonschema being installed."
         },
         "why": {
           "type": "string",
@@ -167,7 +168,7 @@
         "authority",
         "judgement"
       ],
-      "description": "Rule B4: three separate questions, answered separately.",
+      "description": "Rule B4, REQUIRED on every candidate: the three questions answered separately: capability (can the credential do it), authority (is it permitted), judgement (is it the operator's call).",
       "properties": {
         "capability": {
           "type": "string",
@@ -189,17 +190,18 @@
         "type": "string",
         "minLength": 1
       },
-      "description": "For no-consensus-after-research: the unresolved options the sweep found."
+      "description": "Required (at least 2) for no-consensus-after-research: the unresolved options the sweep found.",
+      "minItems": 2
     },
     "recommendation": {
       "type": "string",
       "minLength": 1,
-      "description": "For no-consensus-after-research: the agent's recommendation."
+      "description": "Required for no-consensus-after-research: the agent's recommendation."
     },
     "one_word_ask": {
       "type": "string",
       "minLength": 1,
-      "description": "The one-word answer the operator is asked for."
+      "description": "Required for no-consensus-after-research: the one-word answer the operator is asked for."
     }
   },
   "allOf": [
@@ -238,6 +240,25 @@
       "then": {
         "required": [
           "priced_ask"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "why_operator": {
+            "const": "no-consensus-after-research"
+          }
+        },
+        "required": [
+          "why_operator"
+        ]
+      },
+      "then": {
+        "required": [
+          "options",
+          "recommendation",
+          "one_word_ask"
         ]
       }
     }

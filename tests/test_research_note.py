@@ -64,7 +64,7 @@ def test_rerun_is_idempotent(tmp_path):
     cli(tmp_path, "sweep-converging.json")
     after = sorted(p for p in (tmp_path / ".foundry").rglob("*") if p.is_file())
     assert after == files and [p.read_bytes() for p in after] == before
-    assert len(files) == 2
+    assert len(files) == 3     # note, ruling, raw input
 
 
 def test_run_id_flag_and_bare_sweep_shape(tmp_path):
@@ -123,3 +123,78 @@ def test_no_network_imports():
         elif isinstance(node, ast.ImportFrom):
             mods.add((node.module or "").split(".")[0])
     assert not mods & {"socket", "urllib", "http", "subprocess", "requests", "ssl"}
+
+
+def sweep_with(**kw):
+    sw = {"domain": "d", "consensus": ["Use semver."], "no_consensus": [], "sources": [
+        {"title": "T", "url": "https://example.org/a", "retrieved": "2026-11-04"}]}
+    sw.update(kw)
+    return {"sweeps": [sw]}
+
+
+def test_raw_input_is_kept_beside_the_note(tmp_path):
+    out = rn.write_all(sweep_with(), "raw", str(tmp_path), DATE)
+    raw = Path(out["raw"])
+    assert raw.name == f"{DATE}-raw.json" and raw.parent == Path(out["note"]).parent
+    assert json.loads(raw.read_text()) == sweep_with()
+    assert f"{DATE}-raw.json" in Path(out["note"]).read_text()
+
+
+def test_stale_ruling_is_removed_when_a_rerun_escalates(tmp_path):
+    first = rn.write_all(sweep_with(), "flip", str(tmp_path), DATE)
+    assert first["status"] == "ruled" and Path(first["ruling"]).is_file()
+    second = rn.write_all(sweep_with(no_consensus=["A vs B. Recommend A."]), "flip", str(tmp_path), DATE)
+    assert second["status"] == "escalate" and not Path(first["ruling"]).exists()
+    third = rn.write_all(sweep_with(), "flip", str(tmp_path), DATE)       # and back again: ruling returns
+    assert third["status"] == "ruled" and Path(third["ruling"]).is_file()
+
+
+def test_foreign_file_at_the_ruling_path_is_a_ruling_conflict(tmp_path):
+    d = tmp_path / ".foundry" / "decisions"
+    d.mkdir(parents=True)
+    (d / f"{DATE}-mine.md").write_text("# an operator-written decision\n")
+    with pytest.raises(rn.SweepError, match="ruling-conflict"):
+        rn.write_all(sweep_with(no_consensus=["x vs y"]), "mine", str(tmp_path), DATE)
+    assert (d / f"{DATE}-mine.md").read_text().startswith("# an operator")
+    p = cli(tmp_path, "sweep-split.json", "mine")
+    assert p.returncode == 2 and "ruling-conflict" in p.stderr
+
+
+@pytest.mark.parametrize("line", ["Rotate the signing token monthly.", "Store the secret in a vault.",
+                                  "Keep the permission floor read-only.", "Use OAuth for auth."])
+def test_consensus_touching_auth_secrets_or_the_floor_is_held(tmp_path, line):
+    out = rn.write_all(sweep_with(consensus=[line]), "held", str(tmp_path), DATE)
+    assert out["status"] == "escalate" and out["ruling"] is None
+    assert not (tmp_path / ".foundry" / "decisions").exists()
+    assert bc.partition([out["candidate"]])["blockers"] == [out["candidate"]]
+
+
+def test_ruling_states_the_practice_not_a_control(tmp_path):
+    out = rn.write_all(sweep_with(), "txt", str(tmp_path), DATE)
+    text = Path(out["ruling"]).read_text()
+    assert "practice the operator's test pass covers, not a control" in text
+
+
+def test_sources_render_safely(tmp_path):
+    srcs = [{"title": "Good", "url": "https://example.org/ok", "retrieved": "2026-11-04"},
+            {"title": "Odd", "url": "javascript:alert(1)"},
+            {"title": "Spaced", "url": "https://example.org/a b>x"},
+            {"title": "No link"}]
+    out = rn.write_all(sweep_with(sources=srcs), "src", str(tmp_path), DATE, run_id="wf`bad`")
+    t = Path(out["note"]).read_text()
+    assert "<https://example.org/ok>" in t
+    assert "`javascript:alert(1)`" in t and "<javascript" not in t
+    assert "`https://example.org/a b>x`" in t
+    assert "No link — (no url)" in t
+    assert "wf'bad'" in t and "wf`bad`" not in t
+
+
+@pytest.mark.parametrize("ch", ["\u200b", "\u202e", "\ufeff", "\u2060", "\u061c", "\x00"])
+def test_invisible_characters_are_stripped(tmp_path, ch):
+    out = rn.write_all(sweep_with(consensus=[f"Use{ch} semver."]), "inv", str(tmp_path), DATE)
+    assert ch not in Path(out["note"]).read_text() and "Use semver." in Path(out["note"]).read_text()
+
+
+def test_no_literal_invisible_characters_in_the_script_source():
+    bad = [c for c in SCRIPT.read_text() if c in "\u200b\u200e\u202e\u2060\u2066\ufeff\u061c"]
+    assert bad == []

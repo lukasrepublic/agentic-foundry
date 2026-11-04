@@ -110,6 +110,11 @@ python3 ${CLAUDE_PLUGIN_ROOT}/scripts/foundry_research_note.py --in <sweep.json>
 - `no_consensus` non-empty → **no ruling**; the script prints a blocker **candidate** (`why_operator:
   no-consensus-after-research`, with `options`, `evidence`, `recommendation`, `one_word_ask`). Run it through
   `foundry_blocker_check.py --in` and, if it stays a blocker, ask the operator for **one word**.
+- A converging line that mentions auth, secrets, credentials, tokens or the permission floor is **held**: the
+  script writes the note and a candidate (status `escalate`), not a ruling. Adopting it is a practice the
+  operator's test pass covers, not a control.
+- The raw sweep is kept beside the note as `<date>-<slug>.json`; a stale ruling from an earlier run of the same
+  date and slug is removed when the new run no longer supports it.
 - The two always-escalate exceptions below still override a written ruling.
 
 ## The decision rule — consensus → ADOPT; no-consensus → escalate

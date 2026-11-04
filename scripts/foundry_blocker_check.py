@@ -14,8 +14,8 @@ candidate blockers (schema/blocker.schema.json) and partitions them into `blocke
   `questions` {capability, authority, judgement} (the three separate questions of rule B4).
 
 Demotions to next_tasks (AC-OM-8): no `attempted`, no `control`, a credential-step that never tried the
-credential a running job already holds (an `attempted` entry with used_running_job_credential true, or whose
-command/outcome names it), and any other schema/shape failure (a chained handoff command, a missing field).
+credential a running job already holds (only an `attempted` entry with used_running_job_credential: true counts;
+free text is never read), and any other schema/shape failure (a chained handoff command, a missing field).
 REFUSED (exit 2, nothing on stdout): input that is not a JSON array, and a priced-ask whose cost_breakdown is
 missing or empty (a priced ask with no price is malformed, not merely incomplete).
 
@@ -41,11 +41,9 @@ _SCHEMA_PATH = os.path.join(os.path.dirname(_HERE_DIR), "schema", "blocker.schem
 # The closed set of reasons only the operator can act (rules B3/B4/C1). Mirrors schema/blocker.schema.json.
 _WHY_OPERATOR_SET = {"external-provisioning", "credential-step", "no-consensus-after-research", "priced-ask"}
 
-_REQUIRED_FIELDS = ("claim", "evidence", "attempted", "control", "why_operator")
-_ALLOWED_FIELDS = _REQUIRED_FIELDS + ("handoff", "priced_ask", "questions", "options", "recommendation", "one_word_ask")
+_REQUIRED_FIELDS = ("claim", "evidence", "attempted", "control", "why_operator", "questions")
+_ALLOWED_FIELDS = _REQUIRED_FIELDS + ("handoff", "priced_ask", "options", "recommendation", "one_word_ask")
 _QUESTION_FIELDS = ("capability", "authority", "judgement")
-# Words that name the credential a running job already holds (rule B4) in an attempt's command/outcome.
-_RUNNING_JOB_CRED = re.compile(r"running[ -]job|job[ -](?:credential|token)|ambient (?:credential|token)|GITHUB_TOKEN", re.I)
 
 # AC-OHS-2: these two why_operator members name a step the AGENT structurally cannot take itself
 # -- a credential the agent does not hold, or provisioning outside its reach -- so a candidate
@@ -54,16 +52,17 @@ _RUNNING_JOB_CRED = re.compile(r"running[ -]job|job[ -](?:credential|token)|ambi
 _WHY_OPERATOR_REQUIRES_HANDOFF = {"credential-step", "external-provisioning", "priced-ask"}
 
 _HANDOFF_REQUIRED_FIELDS = ("cwd", "command", "why", "expect")
-# AC-OHS-1: a bare command is refused if it chains -- these are checked as plain substrings so the
-# offending token can be named verbatim in the reason, regardless of where in the command it sits.
-_HANDOFF_CHAIN_TOKENS = (("&&", "&&"), (";", ";"), ("|", "|"), ("\n", "newline"), ("\r", "carriage return"),
-                         # PR #166 review: command substitution forks arbitrary extra work inside "one
-                         # bare command" -- refused in both layers, same as chaining.
-                         ("$(", "$( command substitution"), ("`", "backtick command substitution"))
-# Refused only at the TOP LEVEL (as the command's own leading word or flag), never as a substring
-# of a longer word (e.g. "trap_handler.sh" or "execute.sh" are fine) -- shlex tokenization is what
-# makes that distinction possible.
-_HANDOFF_TOP_LEVEL_REFUSED_WORDS = {"trap", "exec"}
+# AC-OHS-1: ONE bare command. These two regexes are the SINGLE definition: schema/blocker.schema.json carries
+# the same strings as `not.pattern` (a test asserts byte equality), and the floor below applies them directly,
+# so the verdict never depends on whether `jsonschema` is installed.
+#   chain/redirect/substitution: & (also &&) ; | < (also <( ) > (also >( and >>) CR LF $( and backtick
+HANDOFF_CHAIN_PATTERN = r"[&;|<>\r\n`]|\$\("
+#   top-level shell-altering words, after optional NAME=value assignments and command/builtin prefixes:
+#   trap, exec, exit, set -e / -ex / -o errexit
+HANDOFF_WORD_PATTERN = (r"^\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:(?:command|builtin)\s+)*"
+                        r"(?:trap|exec|exit|set\s+(?:-[A-Za-z]*e[A-Za-z]*|-[A-Za-z]*o\s+errexit))(?:\s|$)")
+_HANDOFF_CHAIN_RE = re.compile(HANDOFF_CHAIN_PATTERN)
+_HANDOFF_WORD_RE = re.compile(HANDOFF_WORD_PATTERN)
 
 
 def _handoff_errors(handoff) -> list[str]:
@@ -97,29 +96,15 @@ def _handoff_errors(handoff) -> list[str]:
         if not (isinstance(command, str) and command.strip()):
             errs.append("handoff.command must be a non-empty string")
         else:
-            for token, name in _HANDOFF_CHAIN_TOKENS:
-                if token in command:
-                    errs.append(
-                        f"handoff.command contains {name!r} — one bare command only, no chaining"
-                    )
-            try:
-                words = shlex.split(command)
-            except ValueError as e:
-                errs.append(f"handoff.command is not shell-tokenizable: {e}")
-                words = []
-            if words:
-                if words[0] in _HANDOFF_TOP_LEVEL_REFUSED_WORDS:
-                    errs.append(
-                        f"handoff.command starts with {words[0]!r} — top-level {words[0]!r} is "
-                        "refused (it could alter or exit the operator's own shell)"
-                    )
-                if words[0] == "set":
-                    e_flags = [w for w in words[1:] if w.startswith("-") and "e" in w]
-                    if e_flags:
-                        errs.append(
-                            f"handoff.command starts with 'set {e_flags[0]}' — top-level 'set -e' "
-                            "is refused (it could exit the operator's own shell)"
-                        )
+            m = _HANDOFF_CHAIN_RE.search(command)
+            if m:
+                tok = {"\n": "newline", "\r": "carriage return"}.get(m.group(0), m.group(0))
+                errs.append(f"handoff.command contains {tok!r} — one bare command only: no chaining, "
+                            "background, redirection, process or command substitution")
+            m = _HANDOFF_WORD_RE.search(command)
+            if m:
+                errs.append(f"handoff.command starts with {m.group(0).strip()!r} — top-level trap/exec/exit/"
+                            "set -e/set -o errexit is refused (it could alter or exit the operator's own shell)")
 
     if "why" in handoff and not (isinstance(handoff.get("why"), str) and handoff.get("why")):
         errs.append("handoff.why must be a non-empty string")
@@ -131,14 +116,8 @@ def _handoff_errors(handoff) -> list[str]:
 
 
 def _tried_running_job_credential(attempted) -> bool:
-    for a in attempted:
-        if not isinstance(a, dict):
-            continue
-        if a.get("used_running_job_credential") is True:
-            return True
-        if _RUNNING_JOB_CRED.search(f"{a.get('command', '')} {a.get('outcome', '')}"):
-            return True
-    return False
+    """Only the explicit flag counts. Free text is not read: "never tried the job token" must not pass."""
+    return any(isinstance(a, dict) and a.get("used_running_job_credential") is True for a in attempted)
 
 
 def _cost_breakdown_empty(candidate) -> bool:
@@ -241,7 +220,7 @@ def _structural_errors(candidate) -> list[str]:
                         "failed differently")
 
     if "questions" in candidate:
-        q = candidate.get("questions")
+        q = candidate.get("questions")  # presence is enforced by _REQUIRED_FIELDS
         if not isinstance(q, dict):
             errs.append("questions must be an object")
         else:
@@ -255,20 +234,27 @@ def _structural_errors(candidate) -> list[str]:
     for f in ("recommendation", "one_word_ask"):
         if f in candidate and not (isinstance(candidate[f], str) and candidate[f].strip()):
             errs.append(f"{f} must be a non-empty string")
-    if "options" in candidate and not (isinstance(candidate["options"], list)
+    if "options" in candidate and not (isinstance(candidate["options"], list) and len(candidate["options"]) >= 2
                                        and all(isinstance(o, str) and o for o in candidate["options"])):
-        errs.append("options must be a list of non-empty strings")
+        errs.append("options must be a list of at least 2 non-empty strings")
 
     if "priced_ask" in candidate:
         errs.extend(_priced_ask_errors(candidate.get("priced_ask")))
 
     if "why_operator" in candidate:
         wo = candidate.get("why_operator")
-        if wo not in _WHY_OPERATOR_SET:
+        if not isinstance(wo, str) or wo not in _WHY_OPERATOR_SET:
             errs.append(
                 f"why_operator {wo!r} not in the closed escalate_when set {sorted(_WHY_OPERATOR_SET)}"
             )
         # AC-OHS-2: credential-step / external-provisioning REQUIRE a handoff.
+        elif wo == "no-consensus-after-research":
+            opts = candidate.get("options")
+            if not (isinstance(opts, list) and len(opts) >= 2):
+                errs.append("why_operator 'no-consensus-after-research' requires options (at least 2)")
+            for f in ("recommendation", "one_word_ask"):
+                if f not in candidate:
+                    errs.append(f"why_operator 'no-consensus-after-research' requires {f}")
         elif wo == "priced-ask" and "priced_ask" not in candidate:
             errs.append("why_operator 'priced-ask' requires priced_ask {purpose, cost_breakdown}")
         elif wo in _WHY_OPERATOR_REQUIRES_HANDOFF and "handoff" not in candidate:
@@ -280,7 +266,7 @@ def _structural_errors(candidate) -> list[str]:
     if candidate.get("why_operator") == "credential-step" and isinstance(candidate.get("attempted"), list) \
             and candidate["attempted"] and not _tried_running_job_credential(candidate["attempted"]):
         errs.append("credential-step without an attempt that used the credential a running job already holds "
-                    "(set attempted[].used_running_job_credential true, or name it in the outcome)")
+                    "(set attempted[].used_running_job_credential to true on the attempt that used it)")
 
     if "handoff" in candidate:
         errs.extend(_handoff_errors(candidate.get("handoff")))
@@ -314,16 +300,24 @@ def validate_candidate(candidate) -> list[str]:
 def partition(candidates: list) -> dict:
     """AC-BRE-2/AC-OM-8: partition a list of candidate blockers into `blockers` (schema-valid, reported
     unchanged) and `next_tasks` (invalid, each paired with the reason it was demoted)."""
-    refused = [i for i, c in enumerate(candidates)
-               if isinstance(c, dict) and c.get("why_operator") == "priced-ask" and _cost_breakdown_empty(c)]
+    refused: list[str] = []
+    verdicts: list[list[str]] = []
+    for i, c in enumerate(candidates):
+        if isinstance(c, dict) and c.get("why_operator") == "priced-ask" and _cost_breakdown_empty(c):
+            refused.append(f"index {i}: priced-ask with an empty or missing priced_ask.cost_breakdown "
+                           "(a priced ask needs its price; rule C1)")
+            verdicts.append([])
+            continue
+        try:
+            verdicts.append(validate_candidate(c))
+        except Exception as e:  # noqa: BLE001 — one malformed candidate must not take the batch down unannounced
+            refused.append(f"index {i}: cannot be validated ({type(e).__name__}: {e})")
+            verdicts.append([])
     if refused:
-        raise BlockerCheckError(
-            f"priced-ask candidate(s) at index {refused} have an empty or missing priced_ask.cost_breakdown "
-            "(a priced ask needs its price; rule C1)")
+        raise BlockerCheckError("batch refused, every malformed candidate listed: " + "; ".join(refused))
     blockers = []
     next_tasks = []
-    for candidate in candidates:
-        errors = validate_candidate(candidate)
+    for candidate, errors in zip(candidates, verdicts):
         if errors:
             next_tasks.append({"candidate": candidate, "reason": "; ".join(errors)})
         else:

@@ -409,31 +409,38 @@ def _escalations(pending, emitted=()):
     return out
 
 
-def _candidate(esc, project_dir):
-    """The blocker candidate an escalation stands for: the read-back the inbox just did is the attempt; a
-    request with no blocking relation (queued as `scheduled`, no escalation) is the control."""
+def _candidate(esc, project_dir, live=True, unblocked=0):
+    """The blocker candidate an escalation stands for. `attempted` lists only calls made in THIS invocation: a
+    `check`/`scan` run just read the blocking relation back (live=True); `pending` only reads the persisted file, so
+    it attempts nothing and the item honestly demotes to a next task. `control` is data from this run: how many other
+    pending requests were read back and had no blocking relation."""
     owner, url = esc["affected"]["owner"], esc["affected"]["url"]
+    attempted = [{"command": f"gh issue view {url} (blocking-relation read-back)",
+                  "outcome": f"{esc['request']} blocks {url}, which owner {owner} holds"}] if live else []
     return {
         "claim": esc["action"],
         "evidence": list(esc["evidence"]),
-        "attempted": [{"command": f"gh issue view {url} (blocking-relation read-back)",
-                       "outcome": f"{esc['request']} blocks {url}, which owner {owner} holds"}],
-        "control": "the same read-back on a request with no blocking relation yields no escalation and is queued "
-                   "as `scheduled` instead",
+        "attempted": attempted,
+        "control": f"{unblocked} other pending request(s) in the same run have no blocking relation and "
+                   "were queued as `scheduled`, not escalated",
         "why_operator": "external-provisioning",
+        "questions": {"capability": f"not the agent's: {url} is held by {owner}",
+                      "authority": f"{owner} controls the blocking issue; the agent may not act on it",
+                      "judgement": f"{owner} decides whether to unblock or re-plan"},
         "handoff": {"cwd": os.path.abspath(project_dir or "."), "command": f"gh issue view {url}",
                     "why": f"owner {owner} controls the blocking issue; the agent cannot act on it",
                     "expect": f"{url} is closed or no longer blocked by {esc['request']}"},
     }
 
 
-def _surface(pending, emitted=(), project_dir=None):
+def _surface(pending, emitted=(), project_dir=None, live=True):
     """(escalate, next_tasks): escalations pass the blocker lint before they surface (rule B4); a demoted one
     is a next task carrying the lint's reason, not an operator escalation."""
     esc = _escalations(pending, emitted)
+    unblocked = sum(1 for it in pending.values() if not it.get("blocked"))
     keep, tasks = [], []
     for e in esc:
-        verdict = _bc.partition([_candidate(e, project_dir)])
+        verdict = _bc.partition([_candidate(e, project_dir, live, unblocked)])
         if verdict["blockers"]:
             keep.append(e)
         else:
@@ -740,7 +747,7 @@ def main(argv=None, runner=default_runner, clock=None):
             _, cfg = load_scope(pd)
             now = (clock or (lambda: datetime.now(timezone.utc)))()
             allowed, needed = _staleness(st, (cfg or {}).get("degraded_policy"), now)
-            esc, tasks = _surface(st["pending"], (), pd)
+            esc, tasks = _surface(st["pending"], (), pd, live=False)
             res = {"pending": sorted(st["pending"].values(), key=lambda i: i["url"]),
                    "coverage": st["coverage"], "dispatch_allowed": allowed, "decision_needed": needed,
                    "last_full_check_at": st["last_full_check_at"],

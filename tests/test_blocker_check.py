@@ -13,6 +13,10 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import foundry_blocker_check as bc  # noqa: E402
 
 
+QUESTIONS = {"capability": "the credential cannot create it", "authority": "not permitted for the agent",
+             "judgement": "the operator's call"}
+
+
 def attempt(**kw):
     return dict({"command": "example-cli deploy --dry-run", "outcome": "403 forbidden on example-resource"}, **kw)
 
@@ -22,7 +26,8 @@ def base(**kw):
          "evidence": ["403 forbidden on example-resource"],
          "attempted": [attempt()],
          "control": "example-cli list on a resource the agent owns succeeded with the same credential",
-         "why_operator": "no-consensus-after-research"}
+         "why_operator": "external-provisioning", "handoff": handoff(),
+         "questions": QUESTIONS}
     c.update(kw)
     return c
 
@@ -98,10 +103,15 @@ def test_credential_step_with_flagged_attempt_is_a_blocker():
     assert bc.partition([c])["blockers"] == [c]
 
 
-def test_credential_step_with_outcome_naming_the_job_credential_is_a_blocker():
-    c = base(why_operator="credential-step", handoff=handoff(),
-             attempted=[attempt(outcome="retried with the running job's token: still 403")])
-    assert bc.partition([c])["blockers"] == [c]
+@pytest.mark.parametrize("text", ["never tried the job token", "retried with the running job's token: still 403",
+                                  "GITHUB_TOKEN not attempted"])
+def test_free_text_never_satisfies_the_running_job_credential_rule(text):
+    c = base(why_operator="credential-step", handoff=handoff(), attempted=[attempt(outcome=text)])
+    v = bc.partition([c])
+    assert v["blockers"] == [] and "running job" in v["next_tasks"][0]["reason"]
+    c2 = base(why_operator="credential-step", handoff=handoff(),
+              attempted=[attempt(outcome=text, used_running_job_credential="yes")])
+    assert bc.partition([c2])["blockers"] == []
 
 
 # -- priced-ask ---------------------------------------------------------------------------
@@ -135,21 +145,47 @@ def test_priced_ask_row_shape_is_checked():
 
 # -- handoff command shape ----------------------------------------------------------------
 
-@pytest.mark.parametrize("cmd,token", [
-    ("example-cli a && example-cli b", "&&"),
-    ("example-cli a; example-cli b", ";"),
-    ("example-cli a | tee out", "|"),
-    ("example-cli a\nexample-cli b", "newline"),
-    ("echo $(whoami)", "$("),
-    ("set -e", "set -e"),
-    ("set -eu", "set -eu"),
-    ("trap true EXIT", "trap"),
-    ("exec example-cli", "exec"),
-])
+BAD_COMMANDS = [
+    ("example-cli a && example-cli b", "&&"), ("example-cli a & ", "&"), ("example-cli a; example-cli b", ";"),
+    ("example-cli a | tee out", "|"), ("example-cli a\nexample-cli b", "newline"),
+    ("example-cli a\rexample-cli b", "carriage return"),
+    ("echo $(whoami)", "$("), ("echo `whoami`", "`"),
+    ("diff <(a) <(b)", "<"), ("tee >(cat)", ">"), ("example-cli a > out", ">"), ("example-cli a >> out", ">"),
+    ("example-cli a < in", "<"),
+    ("set -e", "set -e"), ("set -eu", "set -eu"), ("set -ex", "set -ex"), ("set -o errexit", "errexit"),
+    ("trap true EXIT", "trap"), ("exec example-cli", "exec"), ("exit 1", "exit"),
+    ("FOO=1 exec example-cli", "exec"), ("A=1 B=2 set -e", "set -e"),
+    ("command exec example-cli", "exec"), ("builtin exec example-cli", "exec"),
+]
+
+
+@pytest.mark.parametrize("cmd,token", BAD_COMMANDS)
 def test_handoff_command_shape_refusals(cmd, token):
     c = base(why_operator="external-provisioning", handoff=handoff(command=cmd))
     v = bc.partition([c])
     assert v["blockers"] == [] and token in v["next_tasks"][0]["reason"]
+
+
+@pytest.mark.parametrize("cmd", [c for c, _ in BAD_COMMANDS])
+def test_python_floor_and_json_schema_agree_on_commands(cmd):
+    js = pytest.importorskip("jsonschema")
+    c = base(why_operator="external-provisioning", handoff=handoff(command=cmd))
+    with pytest.raises(js.ValidationError):
+        js.validate(c, bc.load_schema())
+
+
+@pytest.mark.parametrize("cmd", ["example-cli grant --role reader", "./trap_handler.sh --flag",
+                                 "FOO=1 example-cli run", "./execute.sh", "settings-tool set --flag", "gh issue view 7"])
+def test_good_commands_pass_both_layers(cmd):
+    c = base(why_operator="external-provisioning", handoff=handoff(command=cmd))
+    assert bc.partition([c])["blockers"] == [c]
+    js = pytest.importorskip("jsonschema")
+    js.validate(c, bc.load_schema())
+
+
+def test_schema_patterns_are_the_floor_patterns():
+    cmd = bc.load_schema()["properties"]["handoff"]["properties"]["command"]["allOf"]
+    assert [x["not"]["pattern"] for x in cmd] == [bc.HANDOFF_CHAIN_PATTERN, bc.HANDOFF_WORD_PATTERN]
 
 
 def test_handoff_bare_command_and_relative_cwd():
@@ -160,16 +196,43 @@ def test_handoff_bare_command_and_relative_cwd():
 
 
 def test_external_provisioning_requires_handoff():
-    assert "handoff" in reasons([base(why_operator="external-provisioning")])[0]
+    assert "handoff" in reasons([{k: v for k, v in base().items() if k != "handoff"}])[0]
 
 
 # -- questions / options --------------------------------------------------------------------
 
-def test_questions_when_present_need_all_three():
-    full = {"capability": "yes", "authority": "yes", "judgement": "the operator's"}
-    assert bc.partition([base(questions=full)])["blockers"] != []
-    part = {"capability": "yes", "authority": "yes"}
-    assert "questions.judgement" in reasons([base(questions=part)])[0]
+def test_questions_are_required_and_the_missing_sub_field_is_named():
+    c = base()
+    del c["questions"]
+    v = bc.partition([c])
+    assert v["blockers"] == [] and "questions" in v["next_tasks"][0]["reason"]
+    for missing in ("capability", "authority", "judgement"):
+        q = {k: x for k, x in QUESTIONS.items() if k != missing}
+        assert f"questions.{missing}" in reasons([base(questions=q)])[0]
+
+
+def test_no_consensus_needs_two_options_a_recommendation_and_a_one_word_ask():
+    ok = base(why_operator="no-consensus-after-research", options=["a", "b"], recommendation="a", one_word_ask="a or b")
+    ok.pop("handoff")
+    assert bc.partition([ok])["blockers"] == [ok]
+    for drop in ("options", "recommendation", "one_word_ask"):
+        c = {k: v for k, v in ok.items() if k != drop}
+        assert drop in reasons([c])[0]
+    assert "at least 2" in reasons([dict(ok, options=["only"])])[0]
+
+
+def test_one_malformed_candidate_refuses_the_batch_and_lists_every_index():
+    bad_a = base(why_operator="priced-ask", handoff=handoff(), priced_ask=priced(rows=[]))
+    bad_b = base(why_operator="priced-ask", handoff=handoff(), priced_ask={"purpose": "x"})
+    p = run([base(), bad_a, base(), bad_b])
+    assert p.returncode == 2 and p.stdout == "" and "index 1" in p.stderr and "index 3" in p.stderr
+
+
+def test_partition_does_not_crash_on_odd_shapes():
+    odd = [base(attempted=[None, 3, {"command": []}]), base(evidence=[1, None]), base(questions="x"),
+           base(handoff=5), base(priced_ask=[]), {"why_operator": {"x": 1}}]
+    v = bc.partition(odd)
+    assert v["blockers"] == [] and len(v["next_tasks"]) == len(odd)
 
 
 # -- CLI --------------------------------------------------------------------------------------
@@ -208,7 +271,9 @@ def test_json_schema_agrees_when_available():
     for bad in (base(attempted=[]), {k: v for k, v in base().items() if k != "control"},
                 base(why_operator="priced-ask", handoff=handoff()),
                 base(why_operator="priced-ask", handoff=handoff(), priced_ask=priced(rows=[])),
-                base(why_operator="credential-step")):
+                {k: v for k, v in base(why_operator="credential-step").items() if k != "handoff"},
+                {k: v for k, v in base().items() if k != "questions"},
+                base(why_operator="no-consensus-after-research")):
         with pytest.raises(js.ValidationError):
             js.validate(bad, schema)
 

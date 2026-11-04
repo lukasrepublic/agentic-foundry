@@ -238,7 +238,7 @@ Honest full comparison: **[docs/comparison.md](docs/comparison.md)**.
 
 ## Built with itself (the numbers)
 
-More than 1500 pytest tests · doctor green in under a second · every third-party GitHub Action
+More than 1600 pytest tests · doctor green in under a second · every third-party GitHub Action
 SHA-pinned · the changelog documents every security-review disposition per release. The 2.0 rebase
 came from measuring this very workflow on two adopter workspaces (paper outweighed shipped
 code by lines, several times over) and deleting the paper.

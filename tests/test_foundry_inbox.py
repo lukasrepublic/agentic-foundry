@@ -573,7 +573,9 @@ def test_escalations_persist_until_resolve_and_pending_shows_them(ws, capsys):
         res = run(ws, gh)
         assert res["events"] == [] and len(res["escalate"]) == 1
     assert inbox.main(["pending", "--json", "--project-dir", str(ws)], runner=gh) == 0
-    assert len(json.loads(capsys.readouterr().out)["escalate"]) == 1
+    # gv-14: `pending` makes no call of its own, so the persisted escalation is a next task there, not an attempt
+    pend = json.loads(capsys.readouterr().out)
+    assert pend["escalate"] == [] and len(pend["next_tasks"]) == 1 and "no attempted" in pend["next_tasks"][0]["reason"]
     inbox.resolve(str(ws), REQ, ["https://github.com/example-org/code/pull/99"], runner=gh, clock=gh.clock)
     assert run(ws, gh)["escalate"] == []
 
@@ -806,12 +808,14 @@ def test_escalations_pass_the_lint_and_next_tasks_is_empty(ws):
     assert len(res["escalate"]) == 1 and res["next_tasks"] == []
     cand = inbox._candidate(res["escalate"][0], str(ws))
     assert inbox._bc.partition([cand])["blockers"] == [cand]
+    assert cand["attempted"] and "0 other pending" in cand["control"]
+    assert inbox._candidate(res["escalate"][0], str(ws), live=False)["attempted"] == []
 
 
 def test_a_demoted_escalation_becomes_a_next_task(ws, monkeypatch):
     real = inbox._candidate
     monkeypatch.setattr(inbox, "_candidate",
-                        lambda esc, pd: {k: v for k, v in real(esc, pd).items() if k != "control"})
+                        lambda *a, **k: {kk: v for kk, v in real(*a, **k).items() if kk != "control"})
     res = run(ws, _blocked_ws(ws))
     assert res["escalate"] == [] and len(res["next_tasks"]) == 1
     nt = res["next_tasks"][0]
