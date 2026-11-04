@@ -1,0 +1,7 @@
+kit: conduct
+version: 1.0.0
+category: conduct
+rules: [FG-CND-001, FG-CND-002, FG-CND-003, FG-CND-004]
+checks: []
+templates: []
+migrations: []

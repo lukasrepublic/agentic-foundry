@@ -25,6 +25,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import foundry_ticket_store as store  # noqa: E402
 
 PAPER_DIRS = ("specs", "intake", ".foundry", "status-reports", "charters", "docs")
+# Rule-mandated paper: written by the governance and research rules themselves, so admitted without a
+# ticket. Exact directory names, not a free pass: every other path under `.foundry/` stays paper.
+PAPER_ADMITTED = (".foundry/research", ".foundry/decisions", "governance/local", "governance/rendered")
 PAPER_FILES = ("acceptance-contract.yaml", "release.yaml", "state.yaml")
 CASEFOLD = sys.platform == "darwin" or os.name == "nt"
 
@@ -43,6 +46,9 @@ def _key(s: str) -> str:
 def _is_paper(rel: Path) -> bool:
     parts = rel.parts
     if not parts:
+        return False
+    rel_s = _key(rel.as_posix())
+    if any(rel_s.startswith(_key(a) + "/") for a in PAPER_ADMITTED):
         return False
     if _key(parts[0]) in {_key(d) for d in PAPER_DIRS}:
         return True

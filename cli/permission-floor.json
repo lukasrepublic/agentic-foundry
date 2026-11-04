@@ -234,6 +234,16 @@
       "rationale": "enable-team / disable-team rewrite operating_mode in .claude/foundry-project.json (atomic, one key); status is read-only (gn-17)"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_governance.py:*)",
+      "tier": "ask",
+      "rationale": "render writes governance/rendered/ and baseline writes governance/local/baselines/; load, validate, applicable, check and exceptions are read-only and run silently through the plugin-scripts-allow hook; no network"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_brief.py:*)",
+      "tier": "allow",
+      "rationale": "renders the brief preamble to stdout from local governance files; writes nothing, no network"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_events.py:*)",
       "tier": "ask",
       "rationale": "`emit` posts a structured comment on a GitHub issue under the operator's identity (a content-creating write); `parse` is read-only. One rule for the script: the write verb decides the tier (gn-04 deck events)."

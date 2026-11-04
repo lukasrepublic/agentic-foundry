@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/lukasrepublic/agentic-foundry/schema/governance-rule.schema.json",
+  "title": "Governance rule",
+  "description": "One governance rule. Upstream kit rules use the FG- namespace; adopter rules (governance/local/) use their own prefix and never FG-.",
+  "type": "object",
+  "required": ["id", "title", "statement", "category", "level", "floor", "status", "applies_to", "check", "exception"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {"type": "string", "pattern": "^(FG|[A-Z][A-Z0-9]{1,15})-[A-Z]{2,5}-[0-9]{3}$"},
+    "title": {"type": "string", "minLength": 1},
+    "statement": {"type": "string", "minLength": 1, "description": "RFC 2119 wording (MUST / SHOULD / MAY)."},
+    "category": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+    "level": {"type": "integer", "minimum": 1, "maximum": 3},
+    "floor": {"type": "boolean", "description": "true = cannot be turned off or overridden by configuration."},
+    "status": {"type": "string", "pattern": "^(active|retired|superseded-by:(FG|[A-Z][A-Z0-9]{1,15})-[A-Z]{2,5}-[0-9]{3})$"},
+    "applies_to": {
+      "type": "object",
+      "required": ["paths", "blueprints"],
+      "additionalProperties": false,
+      "properties": {
+        "paths": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1},
+        "blueprints": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1}
+      }
+    },
+    "check": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {"enum": ["hook", "ci", "lint", "review-lens", "scorecard", "declared", "none"]},
+        "ref": {"type": "string"}
+      }
+    },
+    "exception": {
+      "type": "object",
+      "required": ["allowed"],
+      "additionalProperties": false,
+      "properties": {
+        "allowed": {"type": "boolean"},
+        "requires": {"type": "array", "items": {"enum": ["reason", "owner", "expires"]}}
+      }
+    },
+    "sources": {"type": "array", "items": {"type": "string"}}
+  }
+}
