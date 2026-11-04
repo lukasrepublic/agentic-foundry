@@ -34,6 +34,7 @@ import {
   collectSources, installedVersionOf, readSessionLoad, composeDiagnoses, effectOf,
   evalPreRows, evalPostRefreshRows, evalPostUpdateRows, inputReason, scanInstructionsPending, escapeForPreview,
 } from './upgradeCompat.mjs';
+import { installWriteGuard } from './writeGuard.mjs';
 import { loadPathClasses, classOf, formatRow, parseRow, isProtected, WRITE_EFFECTS } from './pathClasses.mjs';
 import { planRetirements, applyRetirements, askRootKeys } from './floorReconcile.mjs';
 import {
@@ -166,6 +167,7 @@ export async function runUpdate(argv, {
     lines.push(s);
     output.write(`${s}\n`);
   };
+  let releaseWriteGuard = null; // set at Phase 4: every write helper then refuses a protected path itself
 
   let flags;
   try {
@@ -704,6 +706,9 @@ export async function runUpdate(argv, {
       || (legacyRun && (previewAmendments.toAppend.length > 0 || previewTrueUp.rows.length > 0))) {
       st.mutated = true;
     }
+    // The protected set is enforced INSIDE every write helper from here on (not only on the preview rows
+    // above): the re-planned writes below cannot reach a protected path whatever the re-plan produces.
+    releaseWriteGuard = installWriteGuard(physicalRoot, [CUTOVER_RECORD_REL]);
     applyPlan(filePlan);
     for (const f of filePlan) if (f.action === 'create') wrote(f.relPath, f.seed ? 'seed' : 'managed');
     // Recomputed FRESH from disk — never the preview-time `previewFloorPlan` — because Phase 1's
@@ -863,6 +868,8 @@ export async function runUpdate(argv, {
     early = await body();
   } catch (e) {
     st.error = e;
+  } finally {
+    if (releaseWriteGuard) releaseWriteGuard();
   }
   if (early && early.dry) return { exitCode: early.dry.exitCode, output: lines.join('\n') };
   if (flags.dryRun) {

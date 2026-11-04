@@ -146,7 +146,9 @@ function canonicalJson(v) {
 /** AC-NPX-3 "ours": type exactly `github`, the repo shape-gated BEFORE ASCII case-folding (U+212A folds
  * to `k` under toLowerCase, so the gate must come first) and equal to `marketplaceRepo`; or the whole
  * source object equals an entry of the shipped `supported_sources`. */
-const REF_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
+// A plain release tag (v1.2.3 / 1.2.3) or a SLASH-FREE branch name: `refs/pull/N/head`, `pull/N/merge` and any
+// other path-shaped ref (an attacker-controlled PR ref) are never "ours" (security review of #286).
+const REF_RE = /^(?:v?[0-9]+\.[0-9]+\.[0-9]+|[A-Za-z0-9][A-Za-z0-9._-]{0,99})$/;
 export function isOurSource(src, marketplaceRepo, supportedSources = []) {
   // Fail closed (a decision the spec leaves open): a github source is ours only when it carries NOTHING
   // beyond `source` and `repo`, plus at most a plain tag/branch `ref` (the pre-1.7 tag pin the updater

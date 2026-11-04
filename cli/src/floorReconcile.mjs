@@ -33,6 +33,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { confinedJoin, RefusalError } from './util.mjs';
 import { PROJECTED_TIERS, buildSettings, classifyDrift } from './permissionFloor.mjs';
+import { assertProtected } from './writeGuard.mjs';
 
 /** The drift classes whose findings name a rule this module may ADD. Everything else the
  * classifier can emit is report-only: blanket-allow, ask-shadowed, ask-shadowed-ceremony and
@@ -457,6 +458,7 @@ export function readTarget(targetPath) {
  * can leave a truncated file, which closes the interrupted-write loss and the classify-to-write
  * race together — the same argument applyPlan's O_EXCL comment already makes for the create path. */
 export function writeTargetAtomically(targetPath, obj) {
+  assertProtected(targetPath);
   const dir = path.dirname(targetPath);
   const tmp = path.join(dir, `.settings.json.${process.pid}.tmp`);
   const bytes = Buffer.from(`${JSON.stringify(obj, null, 2)}\n`, 'utf-8');

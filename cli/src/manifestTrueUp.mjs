@@ -13,6 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { confinedJoin } from './util.mjs';
+import { assertProtected } from './writeGuard.mjs';
 
 export const STATE_TRUE_UP = Object.freeze({
   in_progress: 'active', 'in-progress': 'active', 'partially-released': 'active', 'partially-merged': 'active',
@@ -66,6 +67,7 @@ export function planManifestTrueUp({ physicalRoot }) {
 export function applyManifestTrueUp(plan) {
   const written = [];
   for (const r of plan.rows) {
+    assertProtected(r.abs);
     let cur;
     try { cur = fs.readFileSync(r.abs, 'utf-8'); } catch { continue; }
     if (cur !== r.before) continue; // changed since the plan: left alone

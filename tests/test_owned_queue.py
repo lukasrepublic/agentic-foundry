@@ -420,7 +420,7 @@ def test_lead_lease_lifecycle(ws):
     assert rc == 0
     doc = json.loads(path.read_text())
     assert set(doc) == {"op_id", "hostname", "pid", "session_id", "acquired_at", "heartbeat_at"} and doc["session_id"] == "s1"
-    assert not [p for p in path.parent.iterdir() if p.name != "lead.json"]      # temp + rename left nothing behind
+    assert not [p for p in path.parent.iterdir() if p.name not in ("lead.json", ".gitignore")]      # temp + rename left nothing behind
     # a second session is refused with the local-only message naming the cross-machine signals
     rc, _, err = lead(ws, "acquire", "s2", now=NOW + 60)
     assert rc != 0 and "local to this machine" in err
@@ -614,7 +614,7 @@ def test_lead_acquire_is_create_exclusive(ws, monkeypatch):
     rc, _, err = lead(ws, "acquire", "s1")
     assert rc != 0 and "race" in err
     assert json.loads(path.read_text())["session_id"] == "rival"
-    assert not [p for p in path.parent.iterdir() if p.name != "lead.json"]
+    assert not [p for p in path.parent.iterdir() if p.name not in ("lead.json", ".gitignore")]
 
 
 def test_lead_future_heartbeat_is_stale(ws):
@@ -767,3 +767,25 @@ def test_dispatch_skill_and_tick_template_carry_the_vetted_command_and_digest():
     for doc in (sk, tick):
         assert "done_digest" in doc and "done-means-untrusted" in doc
     assert "refuse" in sk.lower()
+
+
+def test_lead_lease_creates_the_runtime_gitignore_and_stays_inside_the_workspace(ws, tmp_path):
+    rc, _, err = run_cli(["lead", "acquire", "--session-id", "s1"], FakeGh())
+    assert rc == 0, err
+    assert (ws / ".foundry" / "runtime" / ".gitignore").read_text() == "*\n"
+    # a `.foundry` that is a symlink out of the workspace is refused, nothing lands outside
+    ws2 = tmp_path / "ws2"
+    ws2.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main", str(ws2)], check=True)
+    (ws2 / ".claude").mkdir()
+    (ws2 / ".claude" / "foundry-project.json").write_text(json.dumps(FIX["config"]))
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (ws2 / ".foundry").symlink_to(elsewhere)
+    import os
+    os.environ["CLAUDE_PROJECT_DIR"] = str(ws2)
+    try:
+        rc, _, err = run_cli(["lead", "acquire", "--session-id", "s1"], FakeGh())
+    finally:
+        os.environ["CLAUDE_PROJECT_DIR"] = str(ws)
+    assert rc == 1 and "outside the workspace" in err and list(elsewhere.iterdir()) == []

@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { runUpdate } from '../src/update.mjs';
 import { runCli } from '../src/run.mjs';
 import { diffSettingsFile, REPORT_REL } from '../src/upgradeReport.mjs';
-import { readCutoverState, CUTOVER_RECORD_REL, DIAGNOSIS_TABLE, makeRunId } from '../src/upgradeCompat.mjs';
+import { isOurSource, readCutoverState, CUTOVER_RECORD_REL, DIAGNOSIS_TABLE, makeRunId } from '../src/upgradeCompat.mjs';
 import { loadPathClasses, classOf, parseRow, EFFECTS, WRITE_EFFECTS, PROTECTED_BASE } from '../src/pathClasses.mjs';
 import { loadRetiredCatalogue, planRetiredArtifacts, applyRetiredArtifacts } from '../src/retiredArtifacts.mjs';
 import { planAmendmentsBackfill, applyAmendmentsBackfill } from '../src/amendmentsBackfill.mjs';
@@ -1430,4 +1430,12 @@ test('AC-NPX-13 cleanup quarantines only unreferenced entries and refuses any sy
   assert.equal(ids.length, 1);
   assert.match(ids[0], RUN_ID_RE);
   assert.equal(fs.readFileSync(sub('.foundry', 'retired', ids[0], '.foundry', 'wiring-hash.pin'), 'utf-8'), 'pin');
+});
+
+test('isOurSource: only a release tag or a slash-free branch is a plain ref (no refs/ or pull/ paths)', () => {
+  const src = (ref) => ({ source: 'github', repo: REPO, ref });
+  for (const ok of ['v1.5.0', '1.5.0', 'main', 'release-2.0']) assert.equal(isOurSource(src(ok), REPO), true, ok);
+  for (const bad of ['refs/pull/1/head', 'pull/1/merge', 'refs/heads/main', 'a/b', 'feature/x', '../x', 'a..b', '', '-x']) {
+    assert.equal(isOurSource(src(bad), REPO), false, bad);
+  }
 });

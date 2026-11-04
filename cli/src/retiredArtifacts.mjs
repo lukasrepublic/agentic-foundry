@@ -11,6 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { confinedJoin } from './util.mjs';
+import { assertProtected } from './writeGuard.mjs';
 import { makeRunId, RUN_ID_RE, safeRelPath, escapeForPreview } from './upgradeCompat.mjs';
 
 export const CATALOGUE_REL = 'retired-artifacts.json';
@@ -300,12 +301,24 @@ function prepareDestination(physicalRoot, destRel, created) {
   return null;
 }
 
-/** The per-run record of what was moved (AC-NPX-13): `.foundry/retired/<runId>/manifest.json`. */
+/** The per-run record of what was moved (AC-NPX-13): `.foundry/retired/<runId>/manifest.json`.
+ * The path is confinedJoin'ed and every ancestor is `lstat`ed (a symbolic link or non-directory anywhere
+ * in it is a refusal), then created `wx`. Returns null on success or the failure reason — never throws,
+ * so the caller can record a failed write on the plan instead of losing what was moved. */
 function writeQuarantineManifest(physicalRoot, runId, moved) {
-  if (moved.length === 0) return;
-  const abs = path.join(physicalRoot, RETIRED_ROOT_REL, runId, 'manifest.json');
-  const doc = { schema_version: 1, run_id: runId, entries: moved.map((m) => ({ path: m.path, restore_from: m.restore_from })) };
-  fs.writeFileSync(abs, `${JSON.stringify(doc, null, 2)}\n`, { encoding: 'utf-8', flag: 'wx' });
+  if (moved.length === 0) return null;
+  const rel = `${RETIRED_ROOT_REL}/${runId}/manifest.json`;
+  const abs = confinedJoin(physicalRoot, rel);
+  if (!abs) return 'link-in-path';
+  try {
+    if (ancestorProblem(physicalRoot, rel)) return 'link-in-path';
+    assertProtected(abs, { creating: true });
+    const doc = { schema_version: 1, run_id: runId, entries: moved.map((m) => ({ path: m.path, restore_from: m.restore_from })) };
+    fs.writeFileSync(abs, `${JSON.stringify(doc, null, 2)}\n`, { encoding: 'utf-8', flag: 'wx' });
+    return null;
+  } catch (e) {
+    return (e && (e.code || e.flag)) || 'error';
+  }
 }
 
 /** Quarantine every `stale` row: ONE `rename` of the entry to `.foundry/retired/<runId>/<rel>`.
@@ -328,9 +341,11 @@ export function applyRetiredArtifacts(plan, physicalRoot, opts) {
         if (row.state !== 'stale') continue;
         const abs = confinedJoin(physicalRoot, row.relPath);
         if (!abs) continue;
+        assertProtected(abs);
         const destRel = `${RETIRED_ROOT_REL}/${runId}/${row.relPath}`;
         const absDest = confinedJoin(physicalRoot, destRel);
         if (!absDest) { row.state = 'refused'; row.why = 'link-in-path'; continue; }
+        assertProtected(absDest, { creating: true });
         let st;
         try {
           st = fs.lstatSync(abs);
@@ -369,7 +384,7 @@ export function applyRetiredArtifacts(plan, physicalRoot, opts) {
     }
   } finally {
     // whatever moved is recorded, however the loop ended
-    writeQuarantineManifest(physicalRoot, runId, moved);
+    plan.manifestWriteFailed = writeQuarantineManifest(physicalRoot, runId, moved);
     plan.removed = removed;
     plan.runId = runId;
     plan.present = plan.rows.filter((r) => r.state === 'stale').length;
@@ -387,6 +402,9 @@ export function applyRetiredArtifacts(plan, physicalRoot, opts) {
  * nothing catalogued is present. */
 export function renderRetiredArtifactRows(plan, { cleanup, phase = 'result', runDir = null } = {}) {
   const out = [];
+  if (plan.manifestWriteFailed) {
+    out.push(`  [warning] the quarantine manifest was NOT written (${plan.manifestWriteFailed}); what moved is listed in the [removed] rows — restore from each row's restore_from path`);
+  }
   for (const r0 of plan.rows) {
     const r = { ...r0, relPath: escapeForPreview(r0.relPath), refs: r0.refs ? r0.refs.map(escapeForPreview) : r0.refs };
     const size = r.kind === 'dir' && typeof r.entries === 'number' ? ` [${r.entries} entr${r.entries === 1 ? 'y' : 'ies'}]` : '';

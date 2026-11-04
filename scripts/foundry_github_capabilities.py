@@ -10,6 +10,12 @@ Config (`.claude/foundry-project.json`):
   "github_scope": {"owner": ..., "planning_repo": ..., "project_number": N,
                    "operators": {"<login>": "<op_id>"}}
 
+`github_scope.operators` is also the TRUST LIST for deck-event markers (foundry_deck_events.Trust): a
+`foundry-deck` marker comment is authoritative only when its author is the authenticated login, a login
+listed here, or - ONLY when this object is empty/absent - has authorAssociation OWNER/MEMBER/COLLABORATOR.
+List every operator login here in a team workspace; a marker from anyone else is shown as `foreign_author`.
+`owner` must match ^[A-Za-z0-9-]+$ (it reaches `gh api` arguments).
+
 Every row carries `status` in {ok, uncovered, error}, its `scope` and a `detail`:
   uncovered  the cause is a token scope/type refusal (missing scope, HTTP 401/403/404)
   error      anything else (gh absent, timeout, 5xx, unparseable output)
@@ -164,7 +170,7 @@ _PROJECT_QUERY = ("query($o:String!,$n:Int!){repositoryOwner(login:$o){... on Pr
 
 def probe_project(cfg, timeout, runner):
     scope = f"{cfg['owner']}/project/{cfg.get('project_number')}"
-    argv = ["gh", "api", "graphql", "-f", f"query={_PROJECT_QUERY}", "-F", f"o={cfg['owner']}",
+    argv = ["gh", "api", "graphql", "-f", f"query={_PROJECT_QUERY}", "-f", f"o={cfg['owner']}",
             "-F", f"n={int(cfg.get('project_number') or 0)}"]
     res = runner(argv, timeout)
     blob = (res.stderr or "") + (res.stdout or "")
@@ -355,6 +361,11 @@ def load_scope(project_dir):
         return {}, None
     cfg = manifest.get("github_scope")
     if not isinstance(cfg, dict) or not cfg.get("owner") or not cfg.get("planning_repo"):
+        return manifest, None
+    if not isinstance(cfg["owner"], str) or not re.fullmatch(r"[A-Za-z0-9-]+", cfg["owner"]):
+        return manifest, None       # a config-sourced owner never reaches a gh argument unless it is a plain login
+    ops = cfg.get("operators")
+    if ops is not None and not isinstance(ops, dict):
         return manifest, None
     return manifest, cfg
 

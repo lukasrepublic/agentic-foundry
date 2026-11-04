@@ -1154,6 +1154,12 @@ def cmd_lead(args: list[str], now: float) -> int:
     path = store.lease_file(root)
     host = socket.gethostname()
     sid = _session_id(root, a.session_id, host)
+    if a.action in ("acquire", "renew"):
+        try:
+            store.ensure_runtime_dir(root)     # confined to the workspace + a `*` .gitignore, like the inbox runtime file
+        except OSError as e:
+            print(f"lead {a.action}: {e}", file=sys.stderr)
+            return 1
     exists = path.exists()
     cur = _read_lease(path) if exists else None
     age = (now - _epoch(cur.get("heartbeat_at"))) if cur else None

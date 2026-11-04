@@ -57,6 +57,18 @@ Enabling turns on the team verbs: `foundry-ticket.py next|claim|reconcile|lead`,
 dispatch lane. In single-operator mode each of these refuses before any network call or write with:
 `<verb> is a team-mode verb; this workspace is in single-operator mode (default). Enable it with: ...`
 
+## Who may write deck markers, and which Done-means may run
+
+A `<!-- foundry-deck: ... -->` marker comment (`resolved`, `accepted`, `ack`, `start`, `blocker_ack`, ...) is
+authoritative only when its comment author is trusted: the authenticated `gh` login, a login listed in
+`github_scope.operators` (the keys of that object in `.claude/foundry-project.json` - list every operator
+there), or, only when no operators are listed, a repository OWNER, MEMBER or COLLABORATOR. Anyone else's marker
+is shown as `unparsed` / `foreign_author`: visible, never authoritative, and it cannot suppress the operator's
+own record. Likewise an issue's `## Done means` command is run by the dispatch path only when its author (and
+last editor) has write access: `foundry-ticket.py read-issue <issue> --json` reports `done_trusted`,
+`claim` refuses an untrusted one (`done-means-untrusted`) unless the operator, having read it, passes
+`--trust-author`, and `next` skips such issues.
+
 Disabling is fully reversible. It keeps `github_scope`, every runtime file and all history; it only stops
 the team surfaces. Enable again at any time.
 

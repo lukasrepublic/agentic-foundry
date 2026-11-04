@@ -60,6 +60,42 @@ def lease_file(root: Path | None = None) -> Path:
     return (root or project_root()) / LEASE_RELPATH
 
 
+def _inside(root, path) -> bool:
+    r, p = os.path.realpath(root), os.path.realpath(path)
+    return p == r or p.startswith(r + os.sep)
+
+
+def confined_makedirs(ws, d) -> None:
+    """makedirs whose containment is decided on the nearest EXISTING ancestor BEFORE anything is created, and
+    re-checked after (the same rule as foundry_migrate.ensure_dir, kept stdlib-only here so the always-on
+    runtime writers need no YAML dependency). A symlinked directory that leaves the workspace is a refusal."""
+    cur = str(d)
+    while not os.path.lexists(cur):
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            break
+        cur = parent
+    if not os.path.isdir(cur) or not _inside(ws, cur):
+        raise PermissionError(f"refusing to create a directory outside the workspace: {d}")
+    os.makedirs(d, exist_ok=True)
+    if not _inside(ws, d):
+        raise PermissionError(f"refusing to use a directory outside the workspace: {d}")
+
+
+def ensure_runtime_dir(ws) -> Path:
+    """`<ws>/.foundry/runtime`, confined, with a `*` .gitignore so a runtime file is never committed."""
+    d = Path(ws) / ".foundry" / "runtime"
+    confined_makedirs(ws, d)
+    gi = d / ".gitignore"
+    try:
+        fd = os.open(gi, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    except FileExistsError:
+        return d
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("*\n")
+    return d
+
+
 def atomic_write_json(path: Path, doc: dict) -> None:
     """temp file in the same directory + rename, so a reader never sees a half-written file."""
     path.parent.mkdir(parents=True, exist_ok=True)

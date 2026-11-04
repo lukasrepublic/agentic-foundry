@@ -178,6 +178,12 @@ def _write_key(project_dir, value) -> bool:
     and value is preserved and key order is kept, but the bytes are not guaranteed identical. A symlinked
     foundry-project.json has its TARGET rewritten (the link stays a link). The temp file and then the
     directory are fsynced around the rename so the change survives a crash."""
+    # the `.claude` DIRECTORY must stay inside the workspace (a symlinked .claude that leaves it is refused);
+    # a symlinked manifest FILE is a documented, tested feature (a shared file) and keeps its target rewritten
+    cdir = os.path.dirname(manifest_path(project_dir))
+    rr, rc = os.path.realpath(str(project_dir)), os.path.realpath(cdir)
+    if rc != rr and not rc.startswith(rr + os.sep):
+        raise OSError(f"refusing to write: {cdir} resolves outside the workspace")
     p = os.path.realpath(manifest_path(project_dir))
     with open(p, encoding="utf-8") as f:
         raw = f.read()

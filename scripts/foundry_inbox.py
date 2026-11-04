@@ -72,6 +72,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import foundry_deck_events as de  # noqa: E402
+import foundry_ticket_store as store  # noqa: E402
 import foundry_operating_mode as _om  # noqa: E402
 from foundry_deck_events import GhAdapter, _dt, _iso  # noqa: E402
 from foundry_github_capabilities import (  # noqa: E402
@@ -130,12 +131,7 @@ def load_state(project_dir):
 
 def save_state(project_dir, state):
     path = runtime_path(project_dir)
-    d = os.path.dirname(path)
-    os.makedirs(d, exist_ok=True)
-    gi = os.path.join(d, ".gitignore")
-    if not os.path.exists(gi):
-        with open(gi, "w", encoding="utf-8") as f:
-            f.write("*\n")
+    d = str(store.ensure_runtime_dir(project_dir))   # confined to the workspace; `*` .gitignore (O_EXCL, no-follow)
     fd, tmp = tempfile.mkstemp(prefix=".inbox.", suffix=".tmp", dir=d)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
