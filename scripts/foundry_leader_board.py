@@ -524,7 +524,9 @@ def compute(inputs, as_of, filters=None, sort=None):
     scope = inputs.get("scope") or {}
     mapping = dict(scope.get("operators") or {})
     default_repo = scope.get("default_repo")
-    trust = de.Trust(mapping.keys(), scope.get("me"))   # a marker counts only from a trusted comment author
+    perms = scope.get("permissions") or {}   # pre-resolved by fetch_inputs (compute stays pure): "repo|login" -> level
+    trust = de.Trust(mapping.keys(), scope.get("me"),     # a marker counts only from a trusted comment author
+                     permission=lambda repo, login: perms.get(f"{repo.lower()}|{login.lower()}"))
     facts = [f for f in (_facts(i, cutoff, trust) for i in sorted(inputs.get("issues") or [], key=lambda i: i["ref"]))
              if f is not None]
     obs, wip, queue, notes, unmapped, parents = _observations(facts, cutoff, mapping)
@@ -1202,6 +1204,29 @@ def load_usage(project_dir, dataset, as_of):
     return rows, cov
 
 
+def _resolve_permissions(issues, runner, timeout):
+    """With no operators configured, the marker-trust fallback is repository write permission (the same
+    rule as the inbox and the claim path): look up each MEMBER/COLLABORATOR comment author once per repo."""
+    perms = {}
+    for i in issues:
+        for c in i.get("comments") or []:
+            if not isinstance(c, dict) or str(c.get("authorAssociation") or "").upper() not in ("MEMBER", "COLLABORATOR"):
+                continue
+            repo, login = de.comment_repo(c), (c.get("author") or {}).get("login")
+            fetched = c.get("_fetched_repo")
+            if not repo or not isinstance(login, str) or (fetched and repo.lower() != str(fetched).lower()):
+                continue
+            key = f"{repo.lower()}|{login.lower()}"
+            if key in perms or not de._LOGIN_RE.match(login):
+                continue
+            try:
+                r = runner(["gh", "api", f"repos/{repo}/collaborators/{login}/permission"], timeout)
+                perms[key] = (json.loads(r.stdout) or {}).get("permission") if r.rc == 0 else None
+            except (ValueError, AttributeError, OSError, TypeError):
+                perms[key] = None
+    return perms
+
+
 def fetch_inputs(project_dir, as_of, runner=default_runner, timeout=30, dataset=None, deployments_path=None,
                  clock=None):
     manifest, cfg = load_scope(project_dir)
@@ -1226,7 +1251,9 @@ def fetch_inputs(project_dir, as_of, runner=default_runner, timeout=30, dataset=
         me = (json.loads(r.stdout) or {}).get("login") if r.rc == 0 else None
     except (ValueError, AttributeError, OSError, TypeError):
         me = None
-    return {"scope": {"me": me, "operators": cfg.get("operators") if isinstance(cfg.get("operators"), dict) else {},
+    operators = cfg.get("operators") if isinstance(cfg.get("operators"), dict) else {}
+    perms = {} if operators else _resolve_permissions(issues, runner, timeout)
+    return {"scope": {"me": me, "permissions": perms, "operators": cfg.get("operators") if isinstance(cfg.get("operators"), dict) else {},
                       "timezone": cfg.get("timezone") or lb.get("timezone"),
                       "default_repo": f"{cfg['owner']}/{cfg['planning_repo']}"},
             "issues": issues, "inaccessible": bad, "usage": rows, "usage_coverage": cov,

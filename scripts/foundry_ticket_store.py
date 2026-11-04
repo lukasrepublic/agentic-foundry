@@ -51,22 +51,81 @@ def ticket_file(root: Path | None = None) -> Path | None:
     return _git_path(TICKET_BASENAME, root)
 
 
+class ClaimsUnreadable(ValueError):
+    """The claims file exists but is unreadable or malformed — never treated as "no claim"."""
+
+
+def _git_common_path(basename: str, root: Path | None = None) -> Path | None:
+    root = root or project_root()
+    try:
+        out = subprocess.run(["git", "-C", str(root), "rev-parse", "--git-common-dir"],
+                             capture_output=True, text=True, timeout=10)
+    except Exception:
+        return None
+    if out.returncode != 0 or not out.stdout.strip():
+        return None
+    p = Path(out.stdout.strip())
+    return (p if p.is_absolute() else (root / p)).resolve() / basename
+
+
 def claims_file(root: Path | None = None) -> Path | None:
-    """The git-dir path of the claim records for `root` (None when root is not a git repository)."""
+    """Where claim records are WRITTEN: the repository's common git dir, shared by the main checkout and
+    every linked worktree (None when root is not a git repository)."""
+    return _git_common_path(CLAIMS_BASENAME, root)
+
+
+def legacy_claims_file(root: Path | None = None) -> Path | None:
+    """The pre-fix per-worktree location; read only when the common file does not exist."""
     return _git_path(CLAIMS_BASENAME, root)
 
 
+def norm_repo(repo) -> str:
+    """ASCII-lowercase `owner/name` (GitHub logins and repo names are case-insensitive)."""
+    return "".join(c.lower() if "A" <= c <= "Z" else c for c in str(repo or ""))
+
+
+def claim_key(repo, number) -> str:
+    return f"{norm_repo(repo)}#{number}"
+
+
+def read_claims(root: Path | None = None) -> tuple[dict, bool]:
+    """(claims keyed by lower-cased repo#N, found). found=False when no claims file exists anywhere.
+    Raises ClaimsUnreadable when a file is present but unreadable or not a JSON object."""
+    for p in (claims_file(root), legacy_claims_file(root)):
+        if p is None or not p.is_file():
+            continue
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            raise ClaimsUnreadable(f"{p.name}: {e}")
+        if not isinstance(d, dict):
+            raise ClaimsUnreadable(f"{p.name}: not a JSON object")
+        out = {}
+        for k, v in d.items():
+            repo, sep, num = str(k).rpartition("#")
+            out[f"{norm_repo(repo)}#{num}" if sep else str(k)] = v
+        return out, True
+    return {}, False
+
+
 def claim_done_digest(root: Path | None, repo: str, number) -> str | None:
-    """The vetted Done-means digest a `claim` recorded for repo#number in the git dir, or None when there is
-    no claim record carrying one (the unclaimed path keeps its existing behaviour)."""
-    p = claims_file(root)
-    try:
-        d = json.loads(p.read_text(encoding="utf-8")) if p and p.is_file() else {}
-        rec = d.get(f"{repo}#{number}") if isinstance(d, dict) else None
-    except (OSError, ValueError):
+    """The vetted Done-means digest a `claim` recorded for repo#number, or None when there is no file / no
+    record carrying one (the unclaimed path). Raises ClaimsUnreadable when the file is present but unusable
+    or the record is malformed."""
+    claims, found = read_claims(root)
+    if not found:
         return None
-    dd = rec.get("done_digest") if isinstance(rec, dict) else None
-    return dd if isinstance(dd, str) and dd else None
+    rec = claims.get(claim_key(repo, number))
+    if rec is None:
+        return None
+    if not isinstance(rec, dict):
+        raise ClaimsUnreadable(f"record for {claim_key(repo, number)} is malformed")
+    if "done_digest" not in rec:
+        return None
+    dd = rec["done_digest"]
+    if not isinstance(dd, str) or not dd:
+        raise ClaimsUnreadable(f"record for {claim_key(repo, number)} has a malformed done_digest")
+    return dd
 
 
 def lease_file(root: Path | None = None) -> Path:

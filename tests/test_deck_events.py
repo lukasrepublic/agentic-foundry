@@ -593,3 +593,12 @@ def test_configured_operators_disable_the_write_fallback():
     t = de.Trust(operators=["bob"], permission=lambda r, l: "admin")
     assert not t(_perm_cm("writer", "COLLABORATOR")) and not t(_perm_cm("o", "OWNER"))
     assert t(_perm_cm("bob", "NONE"))
+
+
+def test_comment_repo_rejects_dot_segments_and_requires_the_fetched_repo():
+    for bad in ("https://github.com/../x/issues/1", "https://github.com/o/../issues/1", "https://github.com/./r/pull/1"):
+        assert de.comment_repo({"url": bad}) is None, bad
+    assert de.comment_repo({"url": "https://github.com/o/r/issues/1#c"}) == "o/r"
+    t = de.Trust(permission=lambda r, l: "write")
+    ok = _perm_cm("w", "COLLABORATOR")
+    assert t(dict(ok, _fetched_repo="O/R")) and not t(dict(ok, _fetched_repo="x/y"))

@@ -98,10 +98,16 @@ def main() -> int:
         sys.stderr.write("foundry-ticket-stop: ticket command does not match its recorded digest; not run. "
                          "Re-run `foundry-ticket.py start`.\n")
         return 0
-    vetted = store.claim_done_digest(root, doc.get("repo") or "", doc.get("issue"))
+    try:
+        vetted = store.claim_done_digest(root, doc.get("repo") or "", doc.get("issue"))
+    except store.ClaimsUnreadable as e:
+        sys.stderr.write("foundry-ticket-stop: claims-unreadable — the local claim record cannot be read (%s); "
+                         "ticket #%s's command is not run.\n" % (e, doc.get("issue")))
+        return 0
     if vetted and vetted != store.command_digest(cmd):
         sys.stderr.write("foundry-ticket-stop: done-means-changed — ticket #%s's command differs from the one "
-                         "vetted at `claim` time; not run. Re-claim the issue.\n" % doc.get("issue"))
+                         "vetted at `claim` time; not run. Run `foundry-ticket.py claim <n> --rebase-acceptance` "
+                         "(a plain re-claim keeps the old vetted digest).\n" % doc.get("issue"))
         return 0
     if doc.get("trusted_by") == "flag":
         sys.stderr.write("foundry-ticket-stop: ticket #%s was adopted with --trust-author; its command is not "

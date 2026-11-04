@@ -103,7 +103,14 @@ _SHA_RE = re.compile(r"(?=[0-9a-f]*[0-9])(?=[0-9a-f]*[a-f])[0-9a-f]{7,64}")
 
 
 WRITE_PERMISSIONS = frozenset({"write", "maintain", "admin"})
-_COMMENT_REPO_RE = re.compile(r"^https://[^/\s]+/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/(?:issues|pull)/\d+")
+_SEG = r"(?!\.{1,2}(?:/|$))[A-Za-z0-9_.-]+"
+_COMMENT_REPO_RE = re.compile(r"^https://[^/\s]+/(" + _SEG + "/" + _SEG + r")/(?:issues|pull)/\d+")
+
+
+def comment_repo(comment):
+    """The `owner/name` a comment's url points into ('.'/'..' segments never match), or None."""
+    m = _COMMENT_REPO_RE.match(str((comment or {}).get("url") or ""))
+    return m.group(1) if m else None
 _LOGIN_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\[bot\])?$")
 
 
@@ -144,8 +151,11 @@ class Trust:
             if assoc == "OWNER":
                 return True
             if assoc in ("MEMBER", "COLLABORATOR"):
-                m = _COMMENT_REPO_RE.match(str(comment.get("url") or ""))
-                return self._writes(m.group(1) if m else None, login)
+                repo = comment_repo(comment)
+                fetched = comment.get("_fetched_repo")   # stamped by the adapter that fetched the comments
+                if repo and fetched and repo.lower() != str(fetched).lower():
+                    return False
+                return self._writes(repo, login)
         return False
 
 
@@ -529,7 +539,8 @@ class GhAdapter:
     def comments(self, issue):
         owner_repo, num = issue.split("#")
         out = self._run(["issue", "view", num, "-R", owner_repo, "--json", "comments"])
-        return json.loads(out).get("comments", [])
+        cms = json.loads(out).get("comments", [])
+        return [dict(c, _fetched_repo=owner_repo) if isinstance(c, dict) else c for c in cms]
 
     def post_comment(self, issue, body):
         owner_repo, num = issue.split("#")
