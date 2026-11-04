@@ -1,0 +1,65 @@
+kit: product
+version: 1.0.0
+rules:
+- id: FG-PRD-001
+  title: Product charter is present
+  statement: A product charter stating purpose, users, goals and non-goals MUST exist and be loaded for every session.
+  category: product
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - PRODUCT.md
+    - docs/PRODUCT.md
+    blueprints:
+    - '*'
+  check:
+    kind: declared
+    ref: governance/kits/product/templates/PRODUCT.md
+  exception: &id001
+    allowed: true
+    requires:
+    - reason
+    - owner
+    - expires
+  sources:
+  - Foundry governance design 2026-11-04, section 2.1
+- id: FG-PRD-002
+  title: Each change names goals and non-goals
+  statement: A change design MUST name the goals and non-goals of that change.
+  category: product
+  level: 1
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - '**'
+    blueprints:
+    - '*'
+  check:
+    kind: review-lens
+    ref: agents/pr-reviewer.md
+  exception: *id001
+  sources:
+  - Foundry governance design 2026-11-04, section 2.1
+  - GitHub Spec Kit constitution and plan, https://github.com/github/spec-kit (retrieved 2026-11-04)
+- id: FG-PRD-003
+  title: Surfaces are named
+  statement: The charter SHOULD name each surface the product exposes, such as cli, web or api.
+  category: product
+  level: 2
+  floor: false
+  status: active
+  applies_to:
+    paths:
+    - PRODUCT.md
+    - docs/PRODUCT.md
+    blueprints:
+    - '*'
+  check:
+    kind: declared
+    ref: governance/kits/product/templates/PRODUCT.md
+  exception: *id001
+  sources:
+  - Foundry governance design 2026-11-04, section 2.1

@@ -1,0 +1,10 @@
+decoded or unescaped into a canonical
+sanitizes content before it is sent
+application does not rely on the
+validates or ignores user-submitted filenames, including
+using the Public Switched Telephone Network
+use cross-tenant controls to ensure consumer
+Provider only allows values 'code', 'ciba',
+internally within a system (intra-service communications)
+only contains components which have not
+server is not susceptible to the
