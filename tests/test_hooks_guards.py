@@ -183,8 +183,8 @@ def test_discipline_convicts_compound_and_grouped_shapes(cmd, git_repo_on_main):
     'git commit -m "fix(scope): x"',
     'git commit -m "see (git push --force origin main)"',
 ])
-def test_discipline_admits_benign_compound_and_grouped_shapes(cmd):
-    p = _discipline(cmd)
+def test_discipline_admits_benign_compound_and_grouped_shapes(cmd, tmp_path):
+    p = _discipline(cmd, cwd=tmp_path)      # a non-repository cwd: clause (l) has no GitHub remote to read
     assert p.returncode == 0, p.stdout + p.stderr
 
 
@@ -581,7 +581,7 @@ def _make_repo(path, branch="main", upstream_merge=None, config=None):
     _git(path, "branch", "-M", "main")
     if branch != "main":
         _git(path, "checkout", "-q", "-b", branch)
-    _git(path, "remote", "add", "origin", "https://example.invalid/o/r.git")
+    _git(path, "remote", "add", "origin", "file:///nonexistent/o/r.git")
     if upstream_merge:
         _git(path, "config", f"branch.{branch}.remote", "origin")
         _git(path, "config", f"branch.{branch}.merge", f"refs/heads/{upstream_merge}")
@@ -715,9 +715,15 @@ def test_v118b5_other_refusals_unchanged(cmd, git_repo_on_feat):
 
 
 # ==================================================================== AC-V118B-2 ================
-# `gh pr merge --auto` is admitted WITHOUT the live checks query (the platform's required checks
-# enforce the wait); `--admin` stays refused; a non-auto merge still needs green checks.
+# `gh pr merge --auto` was admitted WITHOUT any query (the platform's required checks enforce the
+# wait). gv-10 clause (k) TIGHTENS that: it is admitted only when the base branch's live ruleset names
+# a required status check AND `gh pr checks` is green at the head (tests/test_git_discipline_queue.py
+# carries the full matrix). `--admin` stays refused; a non-auto merge still needs green checks.
 _PENDING = dict(GH_STUB_CHECKS_EXIT=8, GH_STUB_CHECKS_OUTPUT="check-a\tpending\t1s\turl")
+_AUTO_READY = dict(
+    GH_STUB_VIEW_JSON='{"baseRefName": "main", "url": "https://github.com/o/r/pull/42"}',
+    GH_STUB_PROBE_BODY='[{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "ci"}]}}]',
+    GH_STUB_CHECKS_EXIT=0, GH_STUB_CHECKS_OUTPUT="check-a\tpass\t1s\turl")
 
 
 @pytest.mark.parametrize("cmd", [
@@ -728,11 +734,19 @@ _PENDING = dict(GH_STUB_CHECKS_EXIT=8, GH_STUB_CHECKS_OUTPUT="check-a\tpending\t
     "gh pr merge --auto=true -s 42",
     "gh pr merge https://github.com/o/r/pull/42 --auto -d",
 ])
-def test_v118b2_auto_merge_admitted_without_checks_query(cmd, tmp_path):
+def test_v118b2_auto_merge_admitted_with_required_check_and_green_head(cmd, tmp_path):
     log = tmp_path / "gh.log"
-    p = _discipline(cmd, extra_env=_gh_stub_env(GH_STUB_LOG=log, **_PENDING))
+    p = _discipline(cmd, extra_env=_gh_stub_env(GH_STUB_LOG=log, **_AUTO_READY))
     assert p.returncode == 0, p.stdout + p.stderr
-    assert not log.exists() or "checks" not in log.read_text(), "the live query must not run"
+    logged = log.read_text()
+    assert "api repos/o/r/rules/branches/main" in logged, "the live ruleset must be read first"
+    assert "pr checks" in logged, "and the head must be green"
+
+
+@pytest.mark.parametrize("cmd", ["gh pr merge 42 --auto --squash", "gh pr merge 42 --auto"])
+def test_v118b2_auto_merge_refused_while_the_head_is_pending(cmd):
+    p = _discipline(cmd, extra_env=_gh_stub_env(**{**_AUTO_READY, **_PENDING}))
+    assert p.returncode == 2, p.stdout + p.stderr
 
 
 @pytest.mark.parametrize("cmd", [

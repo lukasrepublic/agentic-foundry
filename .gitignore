@@ -28,3 +28,4 @@ __pycache__/
 # git resolves the LAST matching pattern, so it must win over the block's re-include.
 .foundry/build-provenance.yaml
 .claude/foundry-ticket.json
+.foundry/quarantine-requests/

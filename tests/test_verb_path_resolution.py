@@ -15,6 +15,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 
 import pytest
 
@@ -31,7 +32,7 @@ def run_hook(command, extra_args=()):
         # --local-green=off: this file tests verb-path resolution, not clause (j) (v2.0.0),
         # which is covered by tests/test_ticket_first.py.
         ["bash", HOOK, "--protected", "main", "--local-green=off", *extra_args],
-        input=json.dumps({"tool_input": {"command": command}}),
+        input=json.dumps({"tool_input": {"command": command}}), cwd=tempfile.gettempdir(),   # not a repository: clause (l) has no queue to read
         capture_output=True, text=True, timeout=60,
     )
     return proc.returncode
