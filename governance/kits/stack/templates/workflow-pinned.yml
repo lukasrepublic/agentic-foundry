@@ -19,5 +19,5 @@ jobs:
       - name: Version pinning policy
         # Copy governance/kits/stack/checks/pinning.rego from the plugin into the repository (for example
         # to policy/pinning.rego) so CI can read it.
-        run: ./conftest test --policy policy --namespace governance.pinning .github/workflows/*.yml .github/workflows/*.yaml
+        run: ./conftest test --policy policy --namespace governance.pinning .github/workflows
       - run: echo "replace with the project's test command"

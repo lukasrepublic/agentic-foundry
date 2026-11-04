@@ -330,7 +330,8 @@ def test_shipped_workflows_persist_no_credentials_and_install_conftest_pinned():
     for rel in ("architecture/templates/architecture-fitness.yml", "stack/templates/workflow-pinned.yml"):
         t = (KITS / rel).read_text()
         assert "conftest/releases/download/v0.68.2/" in t and "sha256sum -c" in t
-        assert ".github/workflows/*.yml" in t and ".github/workflows/*.yaml" in t
+        line = next(l for l in t.splitlines() if "./conftest test" in l)
+        assert "*" not in line and line.rstrip().endswith(".github/workflows"), line
 
 
 def adr_dir(tmp_path, files):
@@ -372,3 +373,15 @@ def test_adr_lint_check_id_none_needs_a_reason(tmp_path):
 def test_bindings_dangling_table_flag_prints_usage():
     r = run(sys.executable, BINDINGS_PY, "python", "--table")
     assert r.returncode == 2 and "usage" in r.stderr
+
+
+@pytest.mark.skipif(CONFTEST is None, reason="conftest binary not on PATH; the workflow-directory invocation needs it")
+def test_pinning_step_passes_on_a_dir_with_only_yml_workflows(tmp_path):
+    wf = tmp_path / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    shutil.copy(FIX / "stack" / "good-workflow.yaml", wf / "ci.yml")
+    r = run(CONFTEST, "test", "-p", REGO.parent, "--namespace", "governance.pinning", wf)
+    assert r.returncode == 0, r.stdout + r.stderr
+    shutil.copy(FIX / "stack" / "bad-workflow.yaml", wf / "bad.yml")
+    r = run(CONFTEST, "test", "-p", REGO.parent, "--namespace", "governance.pinning", wf)
+    assert r.returncode == 1 and "not SHA-pinned" in r.stdout
