@@ -1,0 +1,6 @@
+Verify that all input (HTML form fields, REST requests, URL parameters
+is validated using positive validation (allow lists)
+Verify that the application enforces access controls at a trusted service layer
+Verify that user set passwords are at least 12 characters in length
+Verify that
+Verify that the application does not log credentials or payment details

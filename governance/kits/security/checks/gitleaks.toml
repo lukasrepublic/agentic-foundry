@@ -1,0 +1,9 @@
+# Enforces FG-SEC-009, FG-SEC-024 (secret scanning), supports FG-SEC-027.
+# Base config: inherits the scanner's default rules; add project rules below, never replace the defaults.
+# Scanner pin: gitleaks v8.30.1 (retrieved 2026-11-04).
+title = "foundry base secret-scan config"
+
+[extend]
+useDefault = true
+
+# Project additions go in [[rules]] blocks here. Do not allowlist a verified leak: rotate it (FG-SEC-027).

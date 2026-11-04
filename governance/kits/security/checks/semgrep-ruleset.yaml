@@ -1,0 +1,8 @@
+# Semgrep ruleset reference. Enforces: FG-SEC-002, FG-SEC-003, FG-SEC-022.
+# Rules should carry cwe and owasp metadata that maps back to a cited requirement id.
+ruleset:
+  config: p/owasp-top-ten
+  source: https://github.com/semgrep/semgrep-rules
+  # semgrep-rules publishes no release tags (checked 2026-11-04); pin to a commit, and use a tag if one appears.
+  pin: {kind: commit, value: 16b9e6d45f10649f6a531ec4838ed9924372c3bc, retrieved: 2026-11-04}
+  metrics: "off"

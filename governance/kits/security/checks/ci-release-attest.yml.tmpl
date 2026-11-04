@@ -1,0 +1,17 @@
+# Enforces FG-SEC-011 and FG-SEC-013. Verify a released artifact with:
+#   gh attestation verify <artifact> --repo <owner>/<repo>
+name: release-attest
+on:
+  release:
+    types: [published]
+permissions:
+  contents: read
+jobs:
+  attest:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Build the artifact, then attest it with the platform attestation action pinned to a 40-character commit SHA.

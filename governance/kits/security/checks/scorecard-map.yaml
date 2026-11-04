@@ -1,0 +1,16 @@
+# Maps OpenSSF Scorecard checks to the rules they evidence (retrieved 2026-11-04).
+# Scorecard reports a repository-wide score; a rule fails when its mapped check is below the threshold.
+# Enforces: FG-SEC-012, FG-SEC-013, FG-SEC-014, FG-SEC-015, FG-SEC-016, FG-SEC-017, FG-SEC-018, FG-SEC-019, FG-SEC-020, FG-SEC-021
+mapping:
+  - {check: Pinned-Dependencies, rule: FG-SEC-012, risk: Medium}
+  - {check: Signed-Releases, rule: FG-SEC-013, risk: High}
+  - {check: SBOM, rule: FG-SEC-014, risk: Medium}
+  - {check: Vulnerabilities, rule: FG-SEC-015, risk: High}
+  - {check: Dependency-Update-Tool, rule: FG-SEC-016, risk: High}
+  - {check: Branch-Protection, rule: FG-SEC-017, risk: High}
+  - {check: Code-Review, rule: FG-SEC-018, risk: High}
+  - {check: Token-Permissions, rule: FG-SEC-019, risk: High}
+  - {check: Dangerous-Workflow, rule: FG-SEC-020, risk: Critical}
+  - {check: Security-Policy, rule: FG-SEC-021, risk: Medium}
+  - {check: SAST, rule: FG-SEC-022, risk: Medium}
+threshold: 7

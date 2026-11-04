@@ -1,0 +1,11 @@
+# Enforces FG-SEC-022. Pin the CLI version in your environment; ruleset comes from semgrep-ruleset.yaml.
+name: sast
+on: [pull_request]
+permissions:
+  contents: read
+jobs:
+  semgrep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: semgrep scan --metrics=off --error --config governance/kits/security/checks/semgrep-ruleset.yaml

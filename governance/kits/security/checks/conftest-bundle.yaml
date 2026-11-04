@@ -1,0 +1,7 @@
+# Conftest policy bundle reference. Enforces: FG-SEC-031.
+# Pull with: conftest pull <bundle>; the tag MUST be an exact version, never latest.
+bundle:
+  ref: oci://registry.example/policies/infra-security
+  tag: 1.0.0
+  namespace: main
+  exceptions: reported-as-skip
