@@ -1,0 +1,7 @@
+kit: quality
+version: 1.0.0
+category: quality
+rules: [FG-QA-001, FG-QA-002, FG-QA-003, FG-QA-004, FG-QA-005, FG-QA-006]
+checks: [checks/quarantine.schema.json, checks/quarantine_check.py, checks/review-checklist.md, checks/coverage-ci.yml]
+templates: []
+migrations: []

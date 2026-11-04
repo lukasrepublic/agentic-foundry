@@ -1,7 +1,7 @@
 # contracts kit
 
 API style and breaking-change gates, event descriptions with registry compatibility, data contracts, and
-consumer-driven contract gates. Rules: `FG-API-001..003`, `FG-EVT-001..002`, `FG-DATA-001`, `FG-CDC-001`.
+consumer-driven contract gates. Rules: `FG-API-001..003`, `FG-EVT-001..002`, `FG-DCON-001`, `FG-CDC-001`.
 
 - `checks/spectral-openapi.yaml`, `checks/spectral-asyncapi.yaml`: Spectral rulesets; extend them with the
   numbered style guide you adopt by reference.

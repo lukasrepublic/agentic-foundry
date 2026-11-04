@@ -1,0 +1,12 @@
+kit: data
+version: 1.0.0
+category: data
+rules:
+- FG-DATA-001
+- FG-DATA-002
+- FG-DATA-003
+checks:
+- checks/retention-checks.md
+templates:
+- templates/data-classification.yaml
+migrations: []

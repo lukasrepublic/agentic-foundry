@@ -1,0 +1,60 @@
+apiVersion: v1
+kind: Pod
+metadata: {name: bypass-key-exists, namespace: default}
+spec:
+  containers: [{name: c, image: "registry.example/app@sha256:0000000000000000000000000000000000000000000000000000000000000000"}]
+  tolerations: [{key: dedicated, operator: Exists}]
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: bypass-no-key-exists, namespace: default}
+spec:
+  containers: [{name: c, image: "registry.example/app@sha256:0000000000000000000000000000000000000000000000000000000000000000"}]
+  tolerations: [{operator: Exists}]
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: bypass-node-name, namespace: default}
+spec:
+  nodeName: node-privileged-1
+  containers: [{name: c, image: "registry.example/app@sha256:0000000000000000000000000000000000000000000000000000000000000000"}]
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: bypass-node-selector, namespace: default}
+spec:
+  nodeSelector: {node-class: privileged-job}
+  containers: [{name: c, image: "registry.example/app@sha256:0000000000000000000000000000000000000000000000000000000000000000"}]
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: bypass-affinity, namespace: default}
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions: [{key: node-class, operator: In, values: [privileged-job]}]
+  containers: [{name: c, image: "registry.example/app@sha256:0000000000000000000000000000000000000000000000000000000000000000"}]
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: plain-pod-no-tolerations, namespace: default}
+spec:
+  containers: [{name: c, image: "registry.example/app@sha256:0000000000000000000000000000000000000000000000000000000000000000"}]
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: signer-equal-form, namespace: privileged-jobs}
+spec:
+  serviceAccountName: signer
+  containers: [{name: c, image: "registry.example/app@sha256:0000000000000000000000000000000000000000000000000000000000000000"}]
+  tolerations: [{key: dedicated, operator: Equal, value: privileged-job, effect: NoSchedule}]
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: other-sa-in-signer-namespace, namespace: privileged-jobs}
+spec:
+  serviceAccountName: default
+  containers: [{name: c, image: "registry.example/app@sha256:0000000000000000000000000000000000000000000000000000000000000000"}]
+  tolerations: [{key: dedicated, operator: Exists}]

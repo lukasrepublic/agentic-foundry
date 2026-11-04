@@ -26,7 +26,12 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-env-hygiene.py:*)",
       "tier": "allow",
-      "rationale": "status/reap over machine-scoped worker sandbox envs; confined to isolated per-worker state. mark-worktree and reap --label (label-scoped worktree and scratch removal, gv-12) are never silent: the plugin-scripts-allow hook leaves them to ask"
+      "rationale": "status/reap over machine-scoped worker sandbox envs; confined to isolated per-worker state. mark-worktree and every reap (label-scoped worktree and scratch removal, gv-12) are never silent: the plugin-scripts-allow hook leaves them to ask"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_blocker_check.py:*)",
+      "tier": "allow",
+      "rationale": "the blocker lint: reads one candidate-blockers JSON file (or stdin) and prints the blockers / next_tasks partition; writes nothing, no network (gv-14)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_operating_model.py:*)",
@@ -247,6 +252,11 @@
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-deck-heavy:*)",
       "tier": "ask",
       "rationale": "executes the command it is given under a host-sized flock slot, so it is never silent (gv-12)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_research_note.py:*)",
+      "tier": "ask",
+      "rationale": "WRITES .foundry/research/<date>-<slug>.md and, when the sources converge, .foundry/decisions/<date>-<slug>.md inside the project directory; no network, no subprocess (gv-14)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_brief.py:*)",
