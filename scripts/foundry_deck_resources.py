@@ -10,8 +10,13 @@ the heavy-slot count and `max_builders_effective`, the fan-out the tick may use.
 Prints one JSON object: verdict, reasons, readings, thresholds, heavy_slots, max_builders_policy,
 max_builders_effective, oom_recent (true, false or "unknown"), oom_baseline.
 
-Read-only except `--reset-oom-baseline`, which writes one small file under
-<project>/.foundry/. `--from-json` replaces every live reading with a fixture (tests).
+Reads: /proc/loadavg, /proc/meminfo, /proc/uptime, /proc/sys/kernel/random/boot_id, statvfs of / and
+of --path, the cgroup memory.max/memory.current when present, the kernel log (/dev/kmsg or
+`journalctl -k`) when readable, the OOM-baseline file, and the policy file through
+foundry_operating_model.py. Read-only except `--reset-oom-baseline`, which writes one small file
+under <project>/.foundry/. `--from-json` replaces every live reading with a fixture; it is
+confined to <plugin root>/tests/fixtures/resources/ (realpath check) and only the known reading
+keys are ever echoed. Thresholds are the code defaults below (the policy schema has no key for them).
 
 Fan-out rule (B2): cut only on the verdict or on a measured OOM kill.
   GREEN -> the policy max_builders.   AMBER -> policy minus `amber_step` (never below 1).
@@ -44,6 +49,9 @@ DEFAULT_THRESHOLDS = {
     "oom_window_s": 900,
 }
 DEFAULT_MAX_BUILDERS = 4
+FIXTURE_DIR = os.path.join(os.path.dirname(HERE), "tests", "fixtures", "resources")
+READING_KEYS = ("cpus", "load", "mem_total_mb", "mem_available_mb", "swap_total_mb", "swap_used_mb")
+DISK_KEYS = ("disk_root", "disk_path")
 BASELINE_REL = os.path.join(".foundry", "deck-resources-oom-baseline.json")
 _OOM_RE = re.compile(r"out of memory:|oom-kill:|oom_reaper:", re.I)
 _TS_RE = re.compile(r"^\s*\[\s*([0-9]+(?:\.[0-9]+)?)\]")
@@ -52,6 +60,43 @@ _TS_RE = re.compile(r"^\s*\[\s*([0-9]+(?:\.[0-9]+)?)\]")
 # ---------------------------------------------------------------------------------------------
 # measurement (impure, read-only)
 # ---------------------------------------------------------------------------------------------
+class ResetUnavailable(Exception):
+    """--reset-oom-baseline was asked but the uptime clock is unreadable."""
+
+
+class FixtureRefused(Exception):
+    """--from-json named a file outside the shipped fixture directory."""
+
+
+def _boot_id():
+    try:
+        with open("/proc/sys/kernel/random/boot_id", encoding="utf-8") as fh:
+            return fh.read().strip() or None
+    except OSError:
+        return None
+
+
+def _cgroup_memory():
+    """(limit_mb, current_mb) from the cgroup v2 files when a numeric limit is set, else None."""
+    try:
+        with open("/sys/fs/cgroup/memory.max", encoding="utf-8") as fh:
+            raw = fh.read().strip()
+        if not raw.isdigit():
+            return None
+        with open("/sys/fs/cgroup/memory.current", encoding="utf-8") as fh:
+            cur = int(fh.read().strip())
+        return int(raw) // 1048576, cur // 1048576
+    except (OSError, ValueError):
+        return None
+
+
+def _cpu_count():
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except (AttributeError, OSError):
+        return os.cpu_count() or 1
+
+
 def _meminfo():
     out = {}
     with open("/proc/meminfo", encoding="utf-8") as fh:
@@ -73,11 +118,17 @@ def measure(path):
     with open("/proc/loadavg", encoding="utf-8") as fh:
         load = [float(x) for x in fh.read().split()[:3]]
     swap_total = mi.get("SwapTotal", 0) // 1024
+    mem_total = mi.get("MemTotal", 0) // 1024
+    mem_avail = mi.get("MemAvailable", mi.get("MemFree", 0)) // 1024
+    cg = _cgroup_memory()
+    if cg is not None and cg[0] > 0:
+        mem_total = min(mem_total, cg[0]) if mem_total else cg[0]
+        mem_avail = min(mem_avail, max(0, cg[0] - cg[1]))
     return {
-        "cpus": os.cpu_count() or 1,
+        "cpus": _cpu_count(),
         "load": load,
-        "mem_total_mb": mi.get("MemTotal", 0) // 1024,
-        "mem_available_mb": mi.get("MemAvailable", mi.get("MemFree", 0)) // 1024,
+        "mem_total_mb": mem_total,
+        "mem_available_mb": mem_avail,
         "swap_total_mb": swap_total,
         "swap_used_mb": swap_total - mi.get("SwapFree", 0) // 1024,
         "disk_root": _disk("/"),
@@ -135,6 +186,24 @@ def auto_heavy_slots(cpus, mem_total_mb):
     return max(1, min(int(cpus) // 2, (int(mem_total_mb) // 1024) // 4))
 
 
+def readings_incomplete(r):
+    """True when a figure the verdict needs is missing or not usable (zero cpus, memory or disk)."""
+    try:
+        if not r or int(r.get("cpus") or 0) < 1 or len(r.get("load") or []) < 2:
+            return True
+        if not r.get("mem_total_mb") or r.get("mem_available_mb") is None:
+            return True
+        if r.get("swap_total_mb") is None or r.get("swap_used_mb") is None:
+            return True
+        for k in DISK_KEYS:
+            d = r.get(k) or {}
+            if not d.get("total_mb") or d.get("free_mb") is None:
+                return True
+    except (TypeError, ValueError):
+        return True
+    return False
+
+
 def decide_verdict(readings, th):
     reasons, level = [], 0   # 0 GREEN, 1 AMBER, 2 RED
 
@@ -143,6 +212,8 @@ def decide_verdict(readings, th):
         level = max(level, lv)
         reasons.append(text)
 
+    if readings_incomplete(readings):
+        hit(1, "readings-incomplete")
     cpus = max(1, int(readings.get("cpus") or 1))
     load = readings.get("load") or []
     if len(load) >= 2:
@@ -201,69 +272,119 @@ def effective_builders(max_builders, verdict, oom_recent, amber_step):
 # policy + state
 # ---------------------------------------------------------------------------------------------
 def _load_policy(project_dir):
+    """(policy, error). A broken or unloadable policy gives the defaults AND a named error."""
     try:
         spec = importlib.util.spec_from_file_location("foundry_operating_model", os.path.join(HERE, "foundry_operating_model.py"))
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         p = mod.load(project_dir)
-        pol = {"max_builders": int(p.get("deck.max_builders")), "heavy_slots": p.get("deck.heavy_slots")}
-        try:
-            pol["thresholds"] = dict(p.get("deck.resource_thresholds"))
-        except (KeyError, TypeError, ValueError):
-            pass
-        return pol
-    except Exception:  # noqa: BLE001 - a broken policy must not stop the measurement
-        return {"max_builders": DEFAULT_MAX_BUILDERS, "heavy_slots": "auto"}
+        return {"max_builders": int(p.get("deck.max_builders")), "heavy_slots": p.get("deck.heavy_slots")}, None
+    except Exception as e:  # noqa: BLE001 - a broken policy must not stop the measurement
+        return {"max_builders": DEFAULT_MAX_BUILDERS, "heavy_slots": "auto"}, ("%s: %s" % (type(e).__name__, str(e)))[:200]
+
+
+def _confined_fixture(path):
+    real = os.path.realpath(path)
+    base = os.path.realpath(FIXTURE_DIR)
+    if not (real == base or real.startswith(base + os.sep)):
+        raise FixtureRefused("--from-json is confined to %s" % FIXTURE_DIR)
+    return real
+
+
+def _clean_fixture(fixture):
+    """Only the known reading keys, coerced to numbers; nothing else is ever echoed."""
+    if not isinstance(fixture, dict):
+        raise FixtureRefused("fixture must be a JSON object")
+    out = {}
+    for k in READING_KEYS:
+        v = fixture.get(k)
+        if k == "load":
+            out[k] = [float(x) for x in v] if isinstance(v, list) else None
+        else:
+            out[k] = float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+        if out[k] is not None and k != "load":
+            out[k] = int(out[k]) if float(out[k]).is_integer() else out[k]
+    for k in DISK_KEYS:
+        d = fixture.get(k)
+        out[k] = {"total_mb": d.get("total_mb"), "free_mb": d.get("free_mb")} if isinstance(d, dict) else None
+        if out[k] is not None:
+            for kk, vv in list(out[k].items()):
+                if not isinstance(vv, (int, float)) or isinstance(vv, bool):
+                    out[k][kk] = None
+    return {k: v for k, v in out.items() if v is not None}
 
 
 def _baseline_path(project_dir):
     return os.path.join(project_dir, BASELINE_REL)
 
 
-def _read_baseline(project_dir):
+def _read_baseline(project_dir, boot_id):
+    """Baseline uptime for THIS boot; a baseline from another boot is ignored (0)."""
     try:
         with open(_baseline_path(project_dir), encoding="utf-8") as fh:
-            return float(json.load(fh).get("uptime_s", 0))
+            d = json.load(fh)
+        if d.get("boot_id") != boot_id:
+            return 0.0
+        return float(d.get("uptime_s", 0))
     except (OSError, ValueError, AttributeError, TypeError):
         return 0.0
 
 
-def _write_baseline(project_dir, uptime_s):
+def _write_baseline(project_dir, uptime_s, boot_id):
     p = _baseline_path(project_dir)
     os.makedirs(os.path.dirname(p), exist_ok=True)
     with open(p, "w", encoding="utf-8") as fh:
-        json.dump({"uptime_s": uptime_s}, fh)
+        json.dump({"uptime_s": uptime_s, "boot_id": boot_id}, fh)
 
 
 def evaluate(path=None, project_dir=None, from_json=None, policy=None, thresholds=None, reset_oom_baseline=False):
     project_dir = project_dir or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
     path = path or project_dir
-    policy = dict(policy) if policy is not None else _load_policy(project_dir)
-    th = dict(DEFAULT_THRESHOLDS)
-    th.update(policy.get("thresholds") or {})
-    th.update(thresholds or {})
-    log, uptime = None, None
-    if from_json:
-        with open(from_json, encoding="utf-8") as fh:
-            fixture = json.load(fh)
-        readings = {k: v for k, v in fixture.items() if k not in ("oom_log", "uptime_s")}
-        log, uptime = fixture.get("oom_log"), fixture.get("uptime_s")
+    policy_error = None
+    if policy is None:
+        policy, policy_error = _load_policy(project_dir)
     else:
-        readings = measure(path)
-        log, uptime = read_kernel_log(), _uptime_s()
+        policy = dict(policy)
+    th = dict(DEFAULT_THRESHOLDS)
+    th.update(thresholds or {})
+    log, uptime, boot_id, measured_ok = None, None, None, True
+    if from_json:
+        with open(_confined_fixture(from_json), encoding="utf-8") as fh:
+            fixture = json.load(fh)
+        readings = _clean_fixture(fixture)
+        log, uptime, boot_id = fixture.get("oom_log"), fixture.get("uptime_s"), fixture.get("boot_id")
+        if log is not None and not (isinstance(log, list) and all(isinstance(l, str) for l in log)):
+            log = None
+        if not isinstance(uptime, (int, float)) or isinstance(uptime, bool):
+            uptime = None
+        if not isinstance(boot_id, str):
+            boot_id = None
+    else:
+        try:
+            readings = measure(path)
+        except (OSError, ValueError, KeyError):
+            readings, measured_ok = {}, False
+        log, uptime, boot_id = read_kernel_log(), _uptime_s(), _boot_id()
     verdict, reasons = decide_verdict(readings, th)
-    baseline_info = {"action": "none", "uptime_s": _read_baseline(project_dir)}
-    if reset_oom_baseline and uptime is not None:
-        _write_baseline(project_dir, uptime)
+    baseline_info = {"action": "none", "uptime_s": _read_baseline(project_dir, boot_id)}
+    if reset_oom_baseline:
+        if uptime is None:
+            raise ResetUnavailable("uptime unreadable")
+        _write_baseline(project_dir, uptime, boot_id)
         baseline_info = {"action": "reset", "uptime_s": uptime,
                          "meaning": "reset: kernel-log kills up to this uptime no longer count; only later kills do"}
     oom = decide_oom(log, uptime, baseline_info["uptime_s"], th["oom_window_s"])
     if oom is True:
         reasons.append("oom kill in the last %ds" % th["oom_window_s"])
     hs = policy.get("heavy_slots", "auto")
-    slots = auto_heavy_slots(readings.get("cpus", 1), readings.get("mem_total_mb", 0)) if hs == "auto" else int(hs)
+    if not measured_ok:
+        slots = 1
+    elif hs == "auto":
+        slots = auto_heavy_slots(readings.get("cpus", 1), readings.get("mem_total_mb", 0))
+    else:
+        slots = int(hs)
     mb = int(policy.get("max_builders", DEFAULT_MAX_BUILDERS))
-    return {
+    out = {
         "verdict": verdict,
         "reasons": reasons,
         "readings": readings,
@@ -274,6 +395,24 @@ def evaluate(path=None, project_dir=None, from_json=None, policy=None, threshold
         "oom_recent": oom,
         "oom_baseline": baseline_info,
     }
+    if policy_error:
+        out["policy_error"] = policy_error
+    return out
+
+
+def heavy_slots_now(project_dir=None):
+    """The slot count for foundry-deck-heavy: policy + a live measurement only (no kernel log).
+    Any failure gives 1."""
+    project_dir = project_dir or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+    policy, _err = _load_policy(project_dir)
+    hs = policy.get("heavy_slots", "auto")
+    if hs != "auto":
+        return max(1, int(hs))
+    try:
+        r = measure(project_dir)
+        return auto_heavy_slots(r.get("cpus", 1), r.get("mem_total_mb", 0))
+    except (OSError, ValueError, KeyError):
+        return 1
 
 
 def main(argv=None):
@@ -286,7 +425,13 @@ def main(argv=None):
     try:
         out = evaluate(path=a.path, project_dir=a.project_dir, from_json=a.from_json,
                        reset_oom_baseline=a.reset_oom_baseline)
-    except (OSError, ValueError) as e:
+    except ResetUnavailable:
+        print(json.dumps({"error": "oom-baseline-reset-unavailable", "detail": "uptime unreadable"}))
+        return 2
+    except FixtureRefused as e:
+        print(json.dumps({"error": "from-json-refused", "detail": str(e)[:200]}))
+        return 2
+    except (OSError, ValueError, TypeError) as e:
         print(json.dumps({"error": "deck-resources-failed", "detail": str(e)[:200]}))
         return 2
     print(json.dumps(out, indent=2))

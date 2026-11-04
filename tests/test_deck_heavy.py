@@ -57,25 +57,47 @@ def test_timeout_reports_and_exits_nonzero_without_running(tmp_path):
     holder.communicate(timeout=20)
 
 
-def test_slot_is_released_after_command_and_after_kill(tmp_path):
-    p = heavy(["--slots", "1", "--", "sleep", "3"], tmp_path)
+def test_killed_wrapper_keeps_the_slot_while_the_heavy_child_runs_then_frees_it(tmp_path):
+    p = heavy(["--slots", "1", "--", "sleep", "2"], tmp_path)
     time.sleep(0.5)
-    p.kill()                               # SIGKILL: the kernel drops the flock with the process
-    p.wait(timeout=10)                     # (the orphaned sleep ends by itself in 3 s)
-    nxt = heavy(["--slots", "1", "--timeout", "5", "--", "true"], tmp_path)
-    nxt.communicate(timeout=20)
-    assert nxt.returncode == 0
+    p.kill()                               # SIGKILL the wrapper; its child keeps running
+    p.wait(timeout=10)
+    held = heavy(["--slots", "1", "--timeout", "0.4", "--", "true"], tmp_path)
+    held.communicate(timeout=20)
+    assert held.returncode == 75           # the child still holds the slot
+    nxt = heavy(["--slots", "1", "--timeout", "10", "--", "true"], tmp_path)
+    nxt.communicate(timeout=30)
+    assert nxt.returncode == 0             # the child ended: the slot is free again
 
 
-def test_sigterm_releases_the_slot_and_child_does_not_inherit_the_lock(tmp_path):
+def test_sigterm_is_forwarded_and_the_wrapper_exits_143(tmp_path):
     p = heavy(["--slots", "1", "--", "sleep", "30"], tmp_path)
     time.sleep(0.5)
     p.terminate()
     p.communicate(timeout=10)
-    assert p.returncode != 0
+    assert p.returncode == 143
     nxt = heavy(["--slots", "1", "--timeout", "5", "--", "true"], tmp_path)
     nxt.communicate(timeout=20)
     assert nxt.returncode == 0
+
+
+def test_not_executable_is_126_and_missing_is_127(tmp_path):
+    f = tmp_path / "noexec"
+    f.write_text("x")
+    f.chmod(0o644)
+    p = heavy(["--slots", "1", "--", str(f)], tmp_path)
+    p.communicate(timeout=10)
+    assert p.returncode == 126
+    q = heavy(["--slots", "1", "--", str(tmp_path / "missing")], tmp_path)
+    q.communicate(timeout=10)
+    assert q.returncode == 127
+
+
+def test_no_lock_dir_and_no_git_or_xdg_is_refused(tmp_path):
+    env = {k: v for k, v in os.environ.items() if k != "XDG_RUNTIME_DIR"}
+    p = subprocess.run([sys.executable, HEAVY, "--slots", "1", "--", "true"], cwd=str(tmp_path),
+                       capture_output=True, text=True, env={**env, "GIT_CEILING_DIRECTORIES": str(tmp_path.parent)})
+    assert p.returncode == 2 and "--lock-dir" in p.stderr
 
 
 def test_slots_come_from_policy_when_not_given(tmp_path):
@@ -110,7 +132,13 @@ def make_repo(tmp_path):
     return repo
 
 
-def add_wt(repo, name, label, pushed=True, commit=False):
+def dead_pid():
+    p = subprocess.Popen(["true"])
+    p.wait()
+    return p.pid
+
+
+def add_wt(repo, name, label, pushed=True, commit=False, pid=None, start="Thu Jan  1 00:00:00 1970"):
     wt = repo.parent / "wts" / name
     git("worktree", "add", "-q", "-b", name, str(wt), "main", cwd=repo)
     if pushed:
@@ -119,7 +147,7 @@ def add_wt(repo, name, label, pushed=True, commit=False):
         (wt / "g").write_text("y")
         git("add", "g", cwd=wt)
         git("commit", "-q", "-m", "wip", cwd=wt)
-    hy.mark_worktree(str(wt), label)
+    assert hy.mark_worktree(str(wt), label, pid=dead_pid() if pid is None else pid, start=start)
     return wt
 
 
@@ -148,6 +176,60 @@ def test_locked_and_dirty_worktrees_survive(tmp_path):
     (dirty / "scratch.txt").write_text("unsaved")
     reap = hy.decide_reap(hy.sample_worktrees(str(repo)), "proj-a")
     assert reap == []
+
+
+def test_live_owner_keeps_the_worktree_but_a_recycled_pid_does_not(tmp_path):
+    repo = make_repo(tmp_path)
+    alive, _c, start = hy._probe_pid(os.getpid())
+    assert alive
+    live = add_wt(repo, "live", "proj-a", pid=os.getpid(), start=start)
+    recycled = add_wt(repo, "recycled", "proj-a", pid=os.getpid(), start="Thu Jan  1 00:00:00 1970")
+    reap = hy.decide_reap(hy.sample_worktrees(str(repo)), "proj-a")
+    assert [os.path.basename(c["id"]) for c in reap] == ["recycled"]
+    assert live.exists()
+
+
+def test_legacy_marker_without_a_pid_survives(tmp_path):
+    repo = make_repo(tmp_path)
+    wt = add_wt(repo, "legacy", "proj-a")
+    gd = git("rev-parse", "--absolute-git-dir", cwd=wt).strip()
+    open(os.path.join(gd, "foundry-owner"), "w").write("proj-a\n")
+    assert hy.decide_reap(hy.sample_worktrees(str(repo)), "proj-a") == []
+
+
+def test_mark_refuses_a_different_label_and_has_no_session_fallback(tmp_path):
+    repo = make_repo(tmp_path)
+    wt = add_wt(repo, "w", "proj-a")
+    assert hy.mark_worktree(str(wt), "proj-b") is False                       # not overwritten
+    assert hy.mark_worktree(str(wt), "proj-a", pid=dead_pid(), start="x") is True   # same label: refresh ok
+    assert hy.mark_worktree(str(wt), "bad label\n") is False
+    env = {**os.environ, "CLAUDE_SESSION_ID": "proj-z"}
+    p = subprocess.run([sys.executable, os.path.join(REPO_ROOT, "scripts", "foundry-env-hygiene.py"),
+                        "mark-worktree", "--path", str(wt)], capture_output=True, text=True, env=env)
+    assert p.returncode == 2          # no --label: the session id is not used
+
+
+def test_worktree_with_ignored_files_survives_unless_included(tmp_path):
+    repo = make_repo(tmp_path)
+    wt = add_wt(repo, "ign", "proj-a")
+    (repo / ".gitignore").write_text("*.cache\n")
+    git("add", ".gitignore", cwd=repo)
+    git("commit", "-q", "-m", "ign", cwd=repo)
+    git("push", "-q", cwd=repo)
+    wt2 = add_wt(repo, "ign2", "proj-a")
+    (wt2 / "data.cache").write_text("precious")
+    assert [os.path.basename(c["id"]) for c in hy.decide_reap(hy.sample_worktrees(str(repo)), "proj-a")] == ["ign"]
+    inc = hy.decide_reap(hy.sample_worktrees(str(repo), include_ignored=True), "proj-a")
+    assert {os.path.basename(c["id"]) for c in inc} == {"ign", "ign2"}
+
+
+def test_the_project_dir_and_the_cwd_are_never_reaped(tmp_path, monkeypatch):
+    repo = make_repo(tmp_path)
+    wt = add_wt(repo, "here", "proj-a")
+    monkeypatch.chdir(wt)
+    assert hy.decide_reap(hy.sample_worktrees(str(repo)), "proj-a") == []
+    monkeypatch.chdir(tmp_path)
+    assert hy.decide_reap(hy.sample_worktrees(str(wt)), "proj-a") == []          # project_dir is the worktree
 
 
 def test_no_upstream_means_unknown_and_survives(tmp_path):
@@ -237,3 +319,14 @@ def test_floor_tiers_both_scripts_and_mirrors_agree():
     tier = {e["rule"].split("/scripts/")[1].split(":")[0]: e["tier"] for e in docs["entries"] if "/scripts/" in e["rule"]}
     assert tier["foundry_deck_resources.py"] == "allow"
     assert tier["foundry-deck-heavy"] == "ask"
+
+
+def test_hygiene_mark_and_labelled_reap_are_never_silent(tmp_path):
+    for args in ("mark-worktree --path /w --label a", "reap --label a", "reap --lab=a"):
+        assert _allow_decision(tmp_path, "foundry-env-hygiene.py", args) is None
+    assert _allow_decision(tmp_path, "foundry-env-hygiene.py", "status") == "allow"
+
+
+def test_from_json_is_never_silent_including_abbreviations(tmp_path):
+    for args in ("--from-json /x.json", "--from=/x.json", "--from /x.json"):
+        assert _allow_decision(tmp_path, "foundry_deck_resources.py", args) is None

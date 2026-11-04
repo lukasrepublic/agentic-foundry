@@ -5,17 +5,20 @@
 
 Heavy commands (test suites, type checks, builds, dependency installs, container stacks, infra
 plans) go through this wrapper so only `heavy_slots` of them run at once on the host. The slot is
-an flock on a lock file, so the kernel drops it when the wrapper exits by ANY path, SIGKILL
-included. The lock descriptor is close-on-exec: the wrapped command never inherits it.
+an flock on a lock file. The wrapped command INHERITS the lock descriptor (pass_fds), so the slot
+stays held while the heavy command runs even if the wrapper is SIGKILLed; the kernel frees it when
+the last holder (wrapper and command) is gone. The wrapper only closes its own copy; it never
+calls LOCK_UN, which would free the slot for the child too.
 
 Slots: --slots, else the policy `deck.heavy_slots` (`auto` is sized from measured CPU and memory
-by foundry_deck_resources.py). Lock files live under <git common dir>/foundry-deck-heavy, else
-$XDG_RUNTIME_DIR/foundry-deck-heavy, else the system temp dir.
+by a live measurement only; the kernel log is never read). Lock files live under
+<git common dir>/foundry-deck-heavy, else $XDG_RUNTIME_DIR/foundry-deck-heavy; with neither, pass
+--lock-dir (there is deliberately no shared /tmp fallback).
 
 Waiting is bounded by --timeout (default 600 s). The wait is reported on stderr as
 `deck-heavy: slot N/M acquired, waited S.SSs`. A timeout reports `timed out` and exits 75
 without running the command. Otherwise the exit status is the wrapped command's (a command
-ended by signal N exits 128+N).
+ended by signal N exits 128+N; not executable 126; not found 127).
 """
 import argparse
 import fcntl
@@ -24,7 +27,6 @@ import os
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -40,15 +42,15 @@ def lock_dir_default():
             return os.path.join(os.path.abspath(common), "foundry-deck-heavy")
     except (OSError, subprocess.SubprocessError):
         pass
-    base = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
-    return os.path.join(base, "foundry-deck-heavy")
+    base = os.environ.get("XDG_RUNTIME_DIR")
+    return os.path.join(base, "foundry-deck-heavy") if base else None
 
 
 def slots_from_policy():
     spec = importlib.util.spec_from_file_location("foundry_deck_resources", os.path.join(HERE, "foundry_deck_resources.py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return int(mod.evaluate()["heavy_slots"])
+    return int(mod.heavy_slots_now())
 
 
 def try_acquire(lock_dir, slots):
@@ -82,12 +84,19 @@ def main(argv=None):
         print("deck-heavy: --slots must be at least 1", file=sys.stderr)
         return 2
     lock_dir = a.lock_dir or lock_dir_default()
+    if not lock_dir:
+        print("deck-heavy: no git common dir and no XDG_RUNTIME_DIR; pass --lock-dir", file=sys.stderr)
+        return 2
     os.makedirs(lock_dir, exist_ok=True)
 
     child = {"p": None}
+    forwarded = set()
 
     def on_signal(signum, _frame):
         if child["p"] is not None and child["p"].poll() is None:
+            if signum in forwarded and signum == signal.SIGINT:
+                return   # a terminal Ctrl-C reaches the whole process group: the child already has it
+            forwarded.add(signum)
             child["p"].send_signal(signum)
         else:
             raise SystemExit(128 + signum)
@@ -109,18 +118,15 @@ def main(argv=None):
             time.sleep(POLL_S)
         print("deck-heavy: slot %d/%d acquired, waited %.2fs" % (n, slots, time.monotonic() - start), file=sys.stderr, flush=True)
         try:
-            child["p"] = subprocess.Popen(cmd)
+            child["p"] = subprocess.Popen(cmd, pass_fds=(fd,))
         except OSError as e:
             print("deck-heavy: cannot run %r: %s" % (cmd[0], e), file=sys.stderr)
-            return 127
+            return 127 if isinstance(e, FileNotFoundError) else 126
         rc = child["p"].wait()
         return 128 - rc if rc < 0 else rc
     finally:
         if fd is not None:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_UN)
-            finally:
-                os.close(fd)
+            os.close(fd)   # our copy only; the child's inherited copy keeps the slot held
 
 
 if __name__ == "__main__":

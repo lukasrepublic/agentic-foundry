@@ -24,9 +24,12 @@ def run(name, **kw):
     return dr.evaluate(from_json=fx(name), project_dir=kw.pop("project_dir", None), **kw)
 
 
+POL = {"max_builders": 4, "heavy_slots": "auto"}
+
+
 def test_ac_om_6_low_memory_is_red_with_control():
-    red = run("low-memory.json")
-    green = run("healthy.json")
+    red = run("low-memory.json", policy=POL)
+    green = run("healthy.json", policy=POL)
     assert red["verdict"] == "RED"
     assert green["verdict"] == "GREEN"
     assert any("memory" in r for r in red["reasons"])
@@ -116,3 +119,64 @@ def test_live_measurement_reads_only(tmp_path):
     assert d["readings"]["cpus"] >= 1
     assert d["readings"]["disk_path"]["total_mb"] > 0
     assert d["heavy_slots"] >= 1
+
+
+def test_from_json_is_confined_to_the_fixture_dir(tmp_path):
+    outside = tmp_path / "creds.json"
+    outside.write_text(json.dumps({"cpus": 4, "secret": "hunter2"}))
+    with pytest.raises(dr.FixtureRefused):
+        dr.evaluate(from_json=str(outside), policy=POL)
+    link = os.path.join(FIX, "..", "..", "..", "README.md")
+    with pytest.raises(dr.FixtureRefused):
+        dr.evaluate(from_json=link, policy=POL)
+    out = subprocess.run([sys.executable, SCRIPT, "--from-json", str(outside)], capture_output=True, text=True)
+    assert out.returncode == 2 and "hunter2" not in out.stdout + out.stderr
+    assert json.loads(out.stdout)["error"] == "from-json-refused"
+
+
+def test_only_known_reading_keys_are_echoed():
+    r = run("with-extra-keys.json", policy=POL)
+    assert "secret" not in r["readings"] and "token" not in r["readings"]["disk_root"]
+    assert "hunter2" not in json.dumps(r)
+
+
+def test_missing_readings_are_amber_not_green():
+    r = run("incomplete.json", policy=POL)
+    assert r["verdict"] == "AMBER" and "readings-incomplete" in r["reasons"]
+    assert r["max_builders_effective"] == 3
+
+
+def test_live_measurement_failure_falls_back_without_traceback(monkeypatch, tmp_path):
+    def boom(path):
+        raise OSError("no /proc")
+    monkeypatch.setattr(dr, "measure", boom)
+    r = dr.evaluate(path=str(tmp_path), project_dir=str(tmp_path), policy=POL)
+    assert r["verdict"] == "AMBER" and "readings-incomplete" in r["reasons"]
+    assert r["heavy_slots"] == 1
+    assert dr.heavy_slots_now(str(tmp_path)) == 1
+
+
+def test_broken_policy_is_surfaced_not_silent(tmp_path):
+    (tmp_path / ".foundry").mkdir()
+    (tmp_path / ".foundry" / "operating-model.yaml").write_text("deck:\n  resource_thresholds: {}\n")
+    r = dr.evaluate(from_json=fx("healthy.json"), project_dir=str(tmp_path))
+    assert r.get("policy_error")
+    assert r["max_builders_policy"] == 4
+
+
+def test_reset_then_a_newer_kill_counts(tmp_path):
+    run("oom-recent.json", project_dir=str(tmp_path), reset_oom_baseline=True, policy=POL)
+    assert run("oom-recent.json", project_dir=str(tmp_path), policy=POL)["oom_recent"] is False
+    assert run("oom-newer.json", project_dir=str(tmp_path), policy=POL)["oom_recent"] is True
+
+
+def test_baseline_from_another_boot_is_ignored(tmp_path):
+    run("oom-recent.json", project_dir=str(tmp_path), reset_oom_baseline=True, policy=POL)   # boot-a, uptime 5100
+    assert run("oom-reboot.json", project_dir=str(tmp_path), policy=POL)["oom_recent"] is True
+
+
+def test_reset_without_uptime_exits_nonzero_with_a_typed_line(tmp_path):
+    out = subprocess.run([sys.executable, SCRIPT, "--from-json", fx("healthy.json"), "--reset-oom-baseline",
+                          "--project-dir", str(tmp_path)], capture_output=True, text=True)
+    assert out.returncode == 2
+    assert json.loads(out.stdout)["error"] == "oom-baseline-reset-unavailable"

@@ -26,7 +26,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-env-hygiene.py:*)",
       "tier": "allow",
-      "rationale": "status/reap over machine-scoped worker sandbox envs; confined to isolated per-worker state"
+      "rationale": "status/reap over machine-scoped worker sandbox envs; confined to isolated per-worker state. mark-worktree and reap --label (label-scoped worktree and scratch removal, gv-12) are never silent: the plugin-scripts-allow hook leaves them to ask"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_operating_model.py:*)",
@@ -36,7 +36,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_resources.py:*)",
       "tier": "allow",
-      "rationale": "measures CPU, memory, swap and disk through /proc and statvfs and prints a verdict; writes nothing except the small OOM-baseline file that --reset-oom-baseline names, which the plugin-scripts-allow hook leaves to ask (gv-12)"
+      "rationale": "reads /proc/loadavg, /proc/meminfo, /proc/uptime, the boot id, cgroup memory limits, statvfs of / and --path, the kernel log (/dev/kmsg or journalctl -k) when readable, the OOM-baseline file and the policy file; prints a verdict. The two verbs that read a named file or write (--from-json, --reset-oom-baseline) are never silent: the plugin-scripts-allow hook leaves them to ask (gv-12)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-permissions-compile.py --check:*)",
