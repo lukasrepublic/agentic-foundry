@@ -28,7 +28,9 @@ import argparse
 import json
 import os
 import re
+import stat
 import sys
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -40,17 +42,22 @@ POLICY_REL = Path(".foundry") / "operating-model.yaml"
 SECTIONS = ("A1", "A5", "A6", "B1", "B8", "B9", "C1", "D2", "E1", "E2")
 
 E2_TEXT = """\
-Use Simplified Technical English (ASD-STE100-inspired) for agent responses, tick reports, briefs and the documentation you write.
+Use ASD-STE100-inspired Simplified Technical English for agent responses, tick reports, briefs and the documentation that agents write:
 - Use short, direct sentences and active voice.
 - Give one instruction per sentence.
 - Use consistent terms for the same concepts.
 - State conditions and required actions explicitly.
 - Avoid idioms, vague wording and unnecessary jargon.
-- Keep necessary technical terms. Explain unfamiliar terms.
-- Keep articles and other words that make complete, natural sentences.
-- Keep technical accuracy and necessary detail.
-- Follow a different style when the operator explicitly asks for it.
-Apply these principles. Do not claim strict ASD-STE100 compliance."""
+- Preserve necessary technical terms. Explain unfamiliar terms.
+- Keep articles and other words needed for natural, complete sentences.
+- Preserve technical accuracy and necessary detail.
+- Follow a different style when the operator explicitly requests it.
+Apply these principles without claiming strict ASD-STE100 compliance."""
+
+POLICY_MAX_BYTES = 64 * 1024
+STYLE_MAX_BYTES = 4 * 1024
+STYLE_BEGIN = "--- BEGIN OPERATOR STYLE GUIDANCE (operator-defined instruction text) ---"
+STYLE_END = "--- END OPERATOR STYLE GUIDANCE ---"
 
 
 class PolicyError(Exception):
@@ -125,13 +132,18 @@ def _check_leaf(node, value, key):
     if t == "string":
         if "minLength" in node and len(value) < node["minLength"]:
             errs.append(f"invalid-value:{key}: empty")
-        if "pattern" in node and not re.search(node["pattern"], value):
-            errs.append(f"invalid-value:{key}: does not match {node['pattern']}")
+        if "maxLength" in node and len(value) > node["maxLength"]:
+            errs.append(f"invalid-value:{key}: longer than {node['maxLength']} characters")
+        elif "pattern" in node and not re.fullmatch(node["pattern"], value):
+            errs.append(f"invalid-value:{key}: not an allowed form")
     if t == "array":
         items = node.get("items", {})
         for i, item in enumerate(value):
             errs.extend(_check_leaf(items, item, f"{key}[{i}]"))
-        if node.get("uniqueItems") and len({json.dumps(v, sort_keys=True) for v in value}) != len(value):
+        if "maxItems" in node and len(value) > node["maxItems"]:
+            errs.append(f"invalid-value:{key}: more than {node['maxItems']} items")
+        # item types are checked FIRST; the uniqueness pass only runs over already-typed items
+        if not errs and node.get("uniqueItems") and len({json.dumps(v, sort_keys=True) for v in value}) != len(value):
             errs.append(f"invalid-value:{key}: duplicate items")
     return errs
 
@@ -191,8 +203,9 @@ def validate_text(text):
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as e:
-        reason = " ".join(str(e).split())[:160]
-        return [f"malformed:{reason}"]
+        mark = getattr(e, "problem_mark", None)
+        where = f"line {mark.line + 1} column {mark.column + 1}" if mark is not None else "unknown position"
+        return [f"malformed:{where}"]
     if data is not None and not isinstance(data, dict):
         return ["malformed:top level must be a mapping"]
     return validate_data(data)
@@ -228,6 +241,57 @@ def _flat_leaves(data, leaf_keys, prefix=""):
             yield from _flat_leaves(v, leaf_keys, key + ".")
 
 
+def _read_regular(path, cap):
+    """Read a regular file without following a symlink or blocking on a FIFO. Returns bytes
+    (at most cap+1 so the caller can detect an overrun), or None when the file is absent.
+    Raises PolicyError('not-regular') for a symlink / FIFO / device / directory."""
+    try:
+        st = os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+    except OSError:
+        raise PolicyError(["not-regular"])
+    if not stat.S_ISREG(st.st_mode):
+        raise PolicyError(["not-regular"])
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0))
+    except OSError:
+        raise PolicyError(["not-regular"])
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise PolicyError(["not-regular"])
+        return os.read(fd, cap + 1)
+    finally:
+        os.close(fd)
+
+
+def _read_policy_text(pdir):
+    """The policy text, or None when no file. Refuses a symlink/non-regular file, a path that leaves
+    the project, and a file over POLICY_MAX_BYTES. The ONE presence test for load AND validate."""
+    root = Path(pdir).resolve()
+    path = Path(pdir) / POLICY_REL
+    try:
+        parent = path.parent.resolve()
+    except OSError:
+        raise PolicyError(["policy-path-outside-project"])
+    if parent != root and root not in parent.parents:
+        raise PolicyError(["policy-path-outside-project"])
+    if parent != (root / ".foundry").resolve():
+        raise PolicyError(["policy-path-outside-project"])
+    try:
+        raw = _read_regular(str(path), POLICY_MAX_BYTES)
+    except PolicyError:
+        raise PolicyError(["policy-path-not-regular-file"])
+    if raw is None:
+        return None
+    if len(raw) > POLICY_MAX_BYTES:
+        raise PolicyError([f"policy-file-too-large:limit {POLICY_MAX_BYTES} bytes"])
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise PolicyError(["malformed:not valid UTF-8"])
+
+
 def load(project_dir=None):
     """Load the effective policy. Absent file -> defaults. Present-but-broken -> PolicyError."""
     pdir = Path(project_dir or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
@@ -236,12 +300,9 @@ def load(project_dir=None):
     sources = {k: "default" for k, _ in leaves}
     floors = frozenset(k for k, leaf in leaves if "const" in leaf)
     path = pdir / POLICY_REL
-    if not path.exists() and not path.is_symlink():
+    text = _read_policy_text(pdir)
+    if text is None:
         return Policy(values, sources, floors, "", False)
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as e:
-        raise PolicyError([f"malformed:{POLICY_REL}: unreadable ({type(e).__name__})"])
     errors = validate_text(text)
     if errors:
         raise PolicyError(errors)
@@ -258,7 +319,9 @@ def resolve_workflow_size(policy, session_size=None, prompt_size=None):
     for extra in (session_size, prompt_size):
         if extra is not None:
             sizes.append(int(extra))
-    return max(1, min(sizes))
+    if min(sizes) < 1:
+        raise PolicyError(["workflow-size-not-positive"])
+    return min(sizes)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -411,7 +474,8 @@ def render_tick_section(policy, name, project_dir=None, session_size=None, promp
                 "Re-audit items that are marked fixed before any formal run.")
     if name == "B1":
         size = resolve_workflow_size(policy, session_size, prompt_size)
-        return (f"Each tick, dispatch every ready cluster, up to {size} builders, through one Workflow: "
+        noun = "builder" if size == 1 else "builders"
+        return (f"Each tick, dispatch every ready cluster, up to {size} {noun}, through one Workflow: "
                 "build, then a separate-context review, then at most 2 fix rounds, with one worktree for each cluster. "
                 "Never wait idle on remote CI or queues. "
                 "If fewer builders run than there are ready clusters, that is a stall. Say so in the report.")
@@ -450,18 +514,49 @@ def render_tick_section(policy, name, project_dir=None, session_size=None, promp
             return ""
         if style == "simplified-technical-english":
             return E2_TEXT
-        rel = g("communication.operator_style_file")
-        if not rel:
-            raise PolicyError(["invalid-value:communication.operator_style_file: required when style is operator-defined"])
-        root = Path(project_dir or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve()
-        target = (root / rel).resolve()
-        if root not in target.parents:
-            raise PolicyError(["invalid-value:communication.operator_style_file: path leaves the project"])
-        try:
-            return target.read_text(encoding="utf-8").rstrip("\n")
-        except (OSError, UnicodeDecodeError):
-            raise PolicyError(["invalid-value:communication.operator_style_file: cannot read the file"])
+        return _operator_style_block(g("communication.operator_style_file"), project_dir)
     raise ValueError(f"unknown section {name!r}")
+
+
+def _operator_style_block(rel, project_dir):
+    """The operator's own style text, as a delimited block. It IS instruction text by design (the
+    operator wrote it); it is read only from a regular .md/.txt file under .foundry/, at most 4 KiB,
+    control and format characters stripped. Anything else is refused."""
+    key = "communication.operator_style_file"
+    if not rel:
+        raise PolicyError([f"invalid-value:{key}: required when style is operator-defined"])
+    if re.fullmatch(r"\.foundry/([A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\.(md|txt)", rel) is None:
+        raise PolicyError([f"invalid-value:{key}: must be a .md or .txt file under .foundry/"])
+    root = Path(project_dir or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve()
+    target = root / rel
+    try:
+        parent = target.parent.resolve()
+    except OSError:
+        raise PolicyError([f"invalid-value:{key}: path leaves .foundry/"])
+    fdir = (root / ".foundry").resolve()
+    if parent != fdir and fdir not in parent.parents:
+        raise PolicyError([f"invalid-value:{key}: path leaves .foundry/"])
+    try:
+        raw = _read_regular(str(target), STYLE_MAX_BYTES)
+    except PolicyError:
+        raw = False
+    if raw is False:
+        raise PolicyError([f"invalid-value:{key}: not a regular file"])
+    if raw is None:
+        raise PolicyError([f"invalid-value:{key}: cannot read the file"])
+    if len(raw) > STYLE_MAX_BYTES:
+        raise PolicyError([f"style-file-too-large:{key}: limit {STYLE_MAX_BYTES} bytes"])
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise PolicyError([f"invalid-value:{key}: not valid UTF-8"])
+    text = "".join(c for c in text if c in "\n\t" or unicodedata.category(c) not in ("Cc", "Cf", "Cs", "Co", "Cn"))
+    text = text.strip()
+    if not text:
+        raise PolicyError([f"style-file-empty:{key}"])
+    if "OPERATOR STYLE GUIDANCE" in text:
+        raise PolicyError([f"invalid-value:{key}: contains the block delimiter"])
+    return f"{STYLE_BEGIN}\n{text}\n{STYLE_END}"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -482,11 +577,8 @@ def _cmd_status(pdir, as_json):
 
 
 def _cmd_validate(pdir):
-    if not (Path(pdir) / POLICY_REL).exists():
-        print("ok: defaults (no file)")
-        return 0
-    load(pdir)
-    print("ok")
+    p = load(pdir)
+    print("ok" if p.file_present else "ok: defaults (no file)")
     return 0
 
 
