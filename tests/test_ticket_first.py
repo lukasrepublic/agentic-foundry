@@ -377,6 +377,10 @@ def _start_world(tmp_path, monkeypatch, body_cmd, editor, claim_cmd="true", auth
     digest = foundry_ticket.store.command_digest(body_cmd)
     monkeypatch.setattr(foundry_ticket, "read_issue", lambda run, repo, n, **k: {"done_sha256": digest, "last_edited_by": editor})
     monkeypatch.setattr(foundry_ticket, "author_trusted", lambda repo, login, gh_json=None: (login in trusted, "w"))
+
+    def _no_gh(run):    # no test may spawn the real gh (CI has no token): a failed lookup is the default
+        raise foundry_ticket.QueueUnavailable("stubbed: no gh in tests")
+    monkeypatch.setattr(foundry_ticket, "operator_login", _no_gh)
     if claim_cmd is not None:
         cf = Path(_git(root, "rev-parse", "--absolute-git-dir")) / "foundry-claims.json"
         cf.write_text(json.dumps({"o/r#7": {"done_digest": foundry_ticket.store.command_digest(claim_cmd)}}))
@@ -502,3 +506,110 @@ def test_start_warns_when_assigned_to_me_but_unclaimed(tmp_path, monkeypatch, ca
     monkeypatch.setattr(foundry_ticket, "operator_login", lambda run: "me")
     assert foundry_ticket.cmd_start(["7"]) == 0
     assert "no local claim" in capsys.readouterr().err
+
+
+def test_start_unclaimed_warning_path_survives_a_failed_login_lookup_and_compares_case_insensitively(
+        tmp_path, monkeypatch, capsys):
+    root = _start_world(tmp_path, monkeypatch, "true", editor="alice", claim_cmd=None)
+    assert foundry_ticket.cmd_start(["7"]) == 0           # QueueUnavailable from operator_login: no traceback, no warning
+    assert "no local claim" not in capsys.readouterr().err
+    monkeypatch.setattr(foundry_ticket, "read_issue", lambda run, repo, n, **k: {
+        "done_sha256": foundry_ticket.store.command_digest("true"), "last_edited_by": "alice", "assignees": ["Me"]})
+    monkeypatch.setattr(foundry_ticket, "operator_login", lambda run: "ME")
+    assert foundry_ticket.cmd_start(["7"]) == 0
+    assert "no local claim" in capsys.readouterr().err
+
+
+def test_save_claim_never_overwrites_an_unreadable_claims_file(tmp_path):
+    root = _repo(tmp_path)
+    st = foundry_ticket.store
+    p = st.claims_file(root)
+    p.write_text("{corrupt")
+    with pytest.raises(st.ClaimsUnreadable):
+        foundry_ticket.save_claim(root, "o/r#7", {"done_digest": "x"})
+    assert p.read_text() == "{corrupt"
+
+
+def test_read_claims_merges_legacy_and_common(tmp_path):
+    main = _repo(tmp_path)
+    wt = tmp_path / "wa"
+    _git(main, "worktree", "add", "-q", "-b", "wa", str(wt))
+    st = foundry_ticket.store
+    st.legacy_claims_file(wt).parent.mkdir(parents=True, exist_ok=True)
+    st.legacy_claims_file(wt).write_text(json.dumps({"o/r#7": {"done_digest": "legacy7"},
+                                                     "o/r#9": {"done_digest": "legacy9"}}))
+    foundry_ticket.save_claim(main, "o/r#8", {"done_digest": "common8"})
+    foundry_ticket.save_claim(main, "o/r#9", {"done_digest": "common9"})
+    assert st.claim_done_digest(wt, "o/r", 7) == "legacy7"      # legacy-only key survives a common file
+    assert st.claim_done_digest(wt, "o/r", 8) == "common8"
+    assert st.claim_done_digest(wt, "o/r", 9) == "common9"      # common wins on collision
+    st.legacy_claims_file(wt).write_text("{bad")
+    with pytest.raises(st.ClaimsUnreadable):
+        st.claim_done_digest(wt, "o/r", 8)
+
+
+def test_raw_keys_that_normalise_alike_prefer_the_newest_claimed_at(tmp_path):
+    root = _repo(tmp_path)
+    st = foundry_ticket.store
+    st.claims_file(root).write_text(json.dumps({
+        "O/R#7": {"done_digest": "new", "claimed_at": "2026-11-02T00:00:00Z"},
+        "o/r#7": {"done_digest": "old", "claimed_at": "2026-11-01T00:00:00Z"}}))
+    assert st.claim_done_digest(root, "o/R", 7) == "new"
+
+
+def test_concurrent_claim_writers_do_not_lose_updates(tmp_path):
+    import threading
+    root = _repo(tmp_path)
+    st = foundry_ticket.store
+    errs = []
+
+    def writer(i):
+        try:
+            for j in range(10):
+                foundry_ticket.save_claim(root, f"o/r#{i * 100 + j}", {"done_digest": f"d{i}-{j}"})
+        except Exception as e:  # noqa: BLE001
+            errs.append(e)
+    ts = [threading.Thread(target=writer, args=(i,)) for i in range(1, 5)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert not errs
+    claims, _ = st.read_claims(root)
+    assert len(claims) == 40
+
+
+def test_claim_refuses_when_the_claims_file_is_unreadable(tmp_path, monkeypatch, capsys):
+    root = _repo(tmp_path)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    foundry_ticket.store.claims_file(root).write_text("{corrupt")
+    target = {"repo": "o/r", "number": 7, "assignees": ["me"], "status": "ready", "blocked_by": [], "state": "OPEN"}
+    monkeypatch.setattr(foundry_ticket, "load_config", lambda r: {"repos": {"r": "o/r"}, "project_number": None})
+    monkeypatch.setattr(foundry_ticket, "parse_ref", lambda i, r, repos: ("o/r", 7))
+    monkeypatch.setattr(foundry_ticket, "operator_login", lambda run: "me")
+    monkeypatch.setattr(foundry_ticket, "read_queue", lambda run, cfg: [target])
+    monkeypatch.setattr(foundry_ticket, "read_issue", lambda *a, **k: {
+        "_has_done": False, "done_trusted": True, "done": "", "done_digest": "d", "body_sha256": "b",
+        "name_with_owner_raw": "O/R", "name_with_owner": "o/r"})
+    rc = foundry_ticket.cmd_claim(["7"], lambda a, stdin=None: "", 0.0)
+    assert rc == 2 and "claims-unreadable" in capsys.readouterr().err
+
+
+def test_claim_emits_the_start_marker_with_the_canonical_case_target(tmp_path, monkeypatch):
+    root = _repo(tmp_path)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
+    target = {"repo": "o/r", "number": 7, "assignees": ["me"], "status": "ready", "blocked_by": [], "state": "OPEN"}
+    monkeypatch.setattr(foundry_ticket, "load_config", lambda r: {"repos": {"r": "o/r"}, "project_number": None})
+    monkeypatch.setattr(foundry_ticket, "parse_ref", lambda i, r, repos: ("o/r", 7))
+    monkeypatch.setattr(foundry_ticket, "operator_login", lambda run: "me")
+    monkeypatch.setattr(foundry_ticket, "read_queue", lambda run, cfg: [target])
+    monkeypatch.setattr(foundry_ticket, "read_issue", lambda *a, **k: {
+        "_has_done": False, "done_trusted": True, "done": "", "done_digest": "d", "body_sha256": "b",
+        "name_with_owner_raw": "Org/Repo", "name_with_owner": "org/repo"})
+    seen = {}
+
+    class Ev:
+        idempotency_key = "k"
+    monkeypatch.setattr(foundry_ticket.deck, "emit", lambda ref, ev, payload, adapter=None: seen.update(ref=ref, p=payload) or Ev())
+    rc = foundry_ticket.cmd_claim(["7"], lambda a, stdin=None: "", 0.0)
+    assert rc == 0, rc
+    assert seen["ref"] == "Org/Repo#7" and seen["p"]["target"] == "Org/Repo#7"
+    assert foundry_ticket.store.read_claims(root)[0].get("org/repo#7")

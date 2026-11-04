@@ -228,9 +228,9 @@ def cmd_start(args: list[str]) -> int:
         if vetted is None:
             try:
                 me = operator_login(default_run)
-            except (GhError, ValueError):
-                me = None
-            if me and me in (live.get("assignees") or []):
+            except (GhError, QueueUnavailable, ValueError):
+                me = None   # advisory only: a failed login lookup prints nothing and never aborts
+            if me and me.lower() in {str(x).lower() for x in (live.get("assignees") or [])}:
                 print(f"foundry-ticket: warning — {issue_repo}#{issue['number']} is assigned to you but has no local claim "
                       "record; its Done-means command was not vetted at claim time.", file=sys.stderr)
     if done and not trust:
@@ -581,7 +581,7 @@ def normalize(node: dict, repo: str, project_number: int | None) -> dict:
         "last_edited_by": (node.get("editor") or {}).get("login") or None,
         "last_edited_at": node.get("lastEditedAt") or None, "state": (node.get("state") or "").upper(),
         "state_reason": (node.get("stateReason") or "").upper() or None, "repo": repo,
-        "name_with_owner": store.norm_repo(nwo) if nwo else None,
+        "name_with_owner": store.norm_repo(nwo) if nwo else None, "name_with_owner_raw": nwo or None,
         "assignees": [a["login"] for a in _nodes(node, "assignees") if a.get("login")],
         "labels": labels, "status": status, "status_source": source, "priority": prio,
         "blocked_by": refs("blockedBy"), "blocking": refs("blocking"),
@@ -714,14 +714,14 @@ def load_claims(root: Path) -> dict:
 
 
 def save_claim(root: Path, key: str, rec: dict) -> Path:
-    p = store.claims_file(root)
-    if not p:
-        raise GhError("not a git repository — the claim record lives in the git dir")
-    claims = load_claims(root)
     r, sep, n = key.rpartition("#")
-    claims[store.claim_key(r, n) if sep else key] = rec
-    store.atomic_write_json(p, claims)
-    return p
+    nk = store.claim_key(r, n) if sep else key
+    try:
+        return store.update_claims(root, lambda claims: claims.__setitem__(nk, rec))
+    except store.ClaimsUnreadable as e:
+        if "not a git repository" in str(e):
+            raise GhError(str(e))
+        raise
 
 
 def judge(issue: dict, login: str, claim: dict | None, withdrawn_by: tuple | None = None) -> dict:
@@ -945,7 +945,13 @@ def cmd_claim(args: list[str], run, now: float) -> int:
               f"{store.redact(vetted['done_reason'])}. The worker would run it, so the OPERATOR must read it and re-run "
               f"`claim --trust-author`. Nothing was recorded.", file=sys.stderr)
         return 2
-    claims = load_claims(root)
+    try:
+        claims = store.read_claims(root)[0]
+    except store.ClaimsUnreadable as e:
+        print(f"claims-unreadable: claim refused: the local claim record cannot be read ({store.redact(str(e))}); repair or "
+              "remove the claims file in the git common dir (it holds every vetted Done-means digest). Nothing was recorded.",
+              file=sys.stderr)
+        return 2
     wip = wip_count(issues, login, claims, exclude=key)
     reason = store.redact((a.allow_exception or "").strip()) or None
     exceptions = []
@@ -973,10 +979,11 @@ def cmd_claim(args: list[str], run, now: float) -> int:
     exc_text = f"{'+'.join(dict.fromkeys(exceptions))}: {reason}" if exceptions else None
     # The WIP-exception record is the human line of the `start` comment + the local claim record: gn-04's
     # marker fields are closed (and `evidence` must be shared references), so the reason rides in `note`.
-    payload = {"by": login, "target": key,
-               "note": store.redact(f"start recorded by {login} for {key}" + (f" (exception, {exc_text})" if exc_text else ""))}
+    ref = f"{vetted.get('name_with_owner_raw') or repo}#{number}"   # canonical case for GitHub; `key` is only the local map key
+    payload = {"by": login, "target": ref,
+               "note": store.redact(f"start recorded by {login} for {ref}" + (f" (exception, {exc_text})" if exc_text else ""))}
     try:
-        ev = deck.emit(key, "start", payload, adapter=_Adapter(run))
+        ev = deck.emit(ref, "start", payload, adapter=_Adapter(run))
     except (ValueError, RuntimeError) as e:
         print(f"claim refused: recording `start` failed: {store.redact(str(e))}", file=sys.stderr)
         return 2
@@ -1089,9 +1096,11 @@ def cmd_reconcile(args: list[str], run, now: float) -> int:
     nk = lambda k: store.claim_key(*k.rpartition("#")[::2])   # noqa: E731
     pruned = [k for k in closed if nk(k) in claims]
     if pruned:
-        p = store.claims_file(root)
-        if p:
-            store.atomic_write_json(p, {k: v for k, v in claims.items() if k not in {nk(x) for x in pruned}})
+        drop = {nk(x) for x in pruned}
+        try:
+            store.update_claims(root, lambda cl: [cl.pop(k, None) for k in drop])
+        except store.ClaimsUnreadable as e:
+            print(f"reconcile: claims-unreadable — not pruning ({store.redact(str(e))})", file=sys.stderr)
     out = {"results": results, "complete": cause is None, "pruned_claims": sorted(pruned)}
     if cause:
         out["cause"] = store.redact(cause)
