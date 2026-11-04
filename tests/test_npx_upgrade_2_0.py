@@ -15,6 +15,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CLI_DIR = REPO_ROOT / "cli"
 CLI_UPDATE_DIR = REPO_ROOT / "cli-update"
@@ -199,3 +201,19 @@ def test_ac_npx_14_post_upgrade_howto_documents_restore_repair_and_rollback_limi
     judgement = _section(sections, "2. The judgement half")
     steps = _items(judgement["lines"], r"\d+\.")
     assert [_lead(s) for s in steps] == CLOSED_STEPS
+
+
+# ── cut-time guard ──────────────────────────────────────────────────────────────────────────────
+
+
+def test_supported_from_min_placeholder_is_replaced_at_the_release_cut():
+    """`foundry.upgrade.supported_from_min` ships as the no-op placeholder 0.0.0 until the operator enters
+    the oldest installed version the 2.0 updater accepts. From the 2.0.0 cut on, the placeholder fails here."""
+    foundry = json.loads((CLI_DIR / "package.json").read_text())["foundry"]
+    plugin = tuple(int(x) for x in foundry["plugin_version"].split("."))
+    if plugin < (2, 0, 0):
+        pytest.skip("release cut not reached: supported_from_min is still the 0.0.0 placeholder")
+    smin = foundry["upgrade"]["supported_from_min"]
+    assert EXACT_SEMVER.fullmatch(smin), smin
+    assert smin != "0.0.0", "supported_from_min is still the placeholder at the 2.0 cut"
+    assert tuple(int(x) for x in smin.split(".")) <= plugin

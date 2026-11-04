@@ -26,6 +26,22 @@ export const SCOPE_NAMES = Object.freeze(['user', 'project', 'local']);
 export const USER_SETTINGS_TOKEN = '<config-dir>/settings.json';
 export const KNOWN_MARKETPLACES_TOKEN = '<config-dir>/plugins/known_marketplaces.json';
 
+// ── names that reach the report or the preview ─────────────────────────────────────────────────
+
+/** A workspace-relative path that is safe to put in the report and in a `[effect] class target` row: not
+ * absolute, no `..`, and only letters, digits and `._@+/-` (no space, so a row's target tokens stay
+ * unambiguous; no control character or backslash). A name read from a directory listing that fails this
+ * is never echoed — it is reported as refused `unsafe-name`. */
+export function safeRelPath(p) {
+  return typeof p === 'string' && p.length > 0 && p.length <= 300 && !p.startsWith('/')
+    && /^[A-Za-z0-9._@+/-]+$/.test(p) && !p.split('/').includes('..');
+}
+
+/** A string for the preview with every control character shown as `\xNN` (never raw). */
+export function escapeForPreview(s) {
+  return String(s).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`);
+}
+
 // ── versions and run ids ────────────────────────────────────────────────────────────────────────
 
 const STRICT_SEMVER_RE = /^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$/;
@@ -130,8 +146,16 @@ function canonicalJson(v) {
 /** AC-NPX-3 "ours": type exactly `github`, the repo shape-gated BEFORE ASCII case-folding (U+212A folds
  * to `k` under toLowerCase, so the gate must come first) and equal to `marketplaceRepo`; or the whole
  * source object equals an entry of the shipped `supported_sources`. */
+const REF_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
 export function isOurSource(src, marketplaceRepo, supportedSources = []) {
-  if (isPlainObject(src) && src.source === 'github' && typeof src.repo === 'string' && REPO_RE.test(src.repo)
+  // Fail closed (a decision the spec leaves open): a github source is ours only when it carries NOTHING
+  // beyond `source` and `repo`, plus at most a plain tag/branch `ref` (the pre-1.7 tag pin the updater
+  // migrates). Any other key — a `path`, a `sha`, anything a future platform reads — is a different
+  // thing to fetch, so it must equal a shipped `supported_sources` entry exactly.
+  const keys = isPlainObject(src) ? Object.keys(src) : [];
+  const plainKeys = keys.every((k) => k === 'source' || k === 'repo' || k === 'ref');
+  const refOk = !keys.includes('ref') || (typeof src.ref === 'string' && REF_RE.test(src.ref) && !src.ref.includes('..'));
+  if (isPlainObject(src) && plainKeys && refOk && src.source === 'github' && typeof src.repo === 'string' && REPO_RE.test(src.repo)
     && typeof marketplaceRepo === 'string' && marketplaceRepo !== '' && asciiLower(src.repo) === asciiLower(marketplaceRepo)) {
     return true;
   }
@@ -381,15 +405,21 @@ export function inputReason(message) {
 // ── instructions pending (AC-NPX-2 adoption.instructions_pending) ───────────────────────────────
 
 /** Each occurrence of a retired term in CLAUDE.md, AGENTS.md, WORKFLOW.md and `.claude/*.md`:
- * `{ path, line, term }`. Links and non-regular files are skipped; nothing is ever written. */
+ * `{ pending: [{ path, line, term }], unsafe }` — `unsafe` counts `.claude/*.md` files whose name is not a
+ * safe path and which were therefore skipped. Links and non-regular files are skipped; nothing is written. */
 export function scanInstructionsPending(physicalRoot, terms) {
   const files = ['CLAUDE.md', 'AGENTS.md', 'WORKFLOW.md'];
+  let unsafe = 0;
   const claudeDir = path.join(physicalRoot, '.claude');
   const dst = fs.lstatSync(claudeDir, { throwIfNoEntry: false });
   if (dst && dst.isDirectory() && !dst.isSymbolicLink()) {
     let names = [];
     try { names = fs.readdirSync(claudeDir).sort(); } catch { names = []; }
-    for (const n of names) if (n.endsWith('.md')) files.push(`.claude/${n}`);
+    for (const n of names) {
+      if (!n.endsWith('.md')) continue;
+      if (safeRelPath(`.claude/${n}`)) files.push(`.claude/${n}`);
+      else unsafe += 1; // never echoed: counted so the caller can say a file was skipped
+    }
   }
   const lowered = terms.map((t) => [t, t.toLowerCase()]);
   const found = [];
@@ -405,7 +435,7 @@ export function scanInstructionsPending(physicalRoot, terms) {
       for (const [term, lt] of lowered) if (low.includes(lt)) found.push({ path: rel, line: i + 1, term });
     }
   }
-  return found;
+  return { pending: found, unsafe };
 }
 
 /** AC-NPX-9: why the two history writers are off for this run, or null when they run. The flag is

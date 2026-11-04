@@ -203,6 +203,13 @@ accepts every installed version until then).
   deleted. Nothing prunes the quarantine.
 - A managed path that is present but not a regular file is now reported `drifted` (exit 2) instead of
   `kept`; a rerun after any stop converges to the uninterrupted result.
+- **Fail-closed readings the spec left open:** a github marketplace source is ours only with nothing beyond
+  `source` and `repo` (plus a plain tag/branch `ref`) — any other key must equal a shipped
+  `supported_sources` entry; a drifted managed path is named in `next_action` with its remedy; a settled
+  `--cleanup` rerun still lists an entry something wires (`referenced`, with its referrers) rather than
+  `cleanup: []`; the protected set is enforced on the planned write targets, not only by tests; a name that
+  is not a safe path is never echoed (`unsafe-name`); `--dry-run` never writes, even when it refuses.
+- pip installing a Python dependency counts as a mutation; the marketplace refresh does not.
 
 **Changed (skill and docs):** `/foundry:post-upgrade` stops on a report that is not schema 2 and on a
 `refused`/`partial` outcome, carries an `attention-needed` report's diagnoses into the PR, takes its truth

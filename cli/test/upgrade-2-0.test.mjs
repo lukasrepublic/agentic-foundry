@@ -284,6 +284,14 @@ test('AC-NPX-3 every diagnosis row records its code remedy and effect', async ()
   fs.writeFileSync(path.join(fx.cwd, '.claude', 'settings.json'), '[1, 2]');
   await stopPre('input-unreadable', fx, {}, /\.claude\/settings\.json/);
 
+  // 1b the other rows are still evaluated when one input is unreadable: both are recorded, in table order
+  fx = fixture({ user: true, versions: { project: '99.0.0' } });
+  fs.writeFileSync(path.join(fx.configDir, 'settings.json'), '{ not json');
+  let two = await run(fx);
+  assert.deepEqual(two.report.compatibility.diagnoses.map((d) => d.code), ['input-unreadable', 'downgrade']);
+  assert.equal(two.report.next_action, two.report.compatibility.diagnoses[0].remedy);
+  assert.equal(two.res.exitCode, 1);
+
   // 2 foreign-marketplace-source: every fail-open arm fires
   fx = fixture();
   write(path.join(fx.configDir, 'plugins', 'known_marketplaces.json'), '{ not json');
@@ -296,6 +304,9 @@ test('AC-NPX-3 every diagnosis row records its code remedy and effect', async ()
     { source: { source: 'github', repo: 'someone/else' } },
     { source: { source: 'github', repo: kelvin } },
     { source: { repo: REPO } }, // no `source` type
+    { source: { source: 'github', repo: REPO, path: 'elsewhere' } }, // ours by repo, but with a key that fetches something else
+    { source: { source: 'github', repo: REPO, sha: 'a'.repeat(40) } },
+    { source: { source: 'github', repo: REPO, ref: '../../x' } },
   ]) {
     fx = fixture({ projectEntry: entry });
     await stopPre('foreign-marketplace-source', fx, {}, new RegExp(`claude plugin marketplace add ${REPO.replace('/', '\\/')} --scope project`));
@@ -306,6 +317,10 @@ test('AC-NPX-3 every diagnosis row records its code remedy and effect', async ()
   let r = await run(fx, { pkgDir: supported });
   assert.ok(!r.report.compatibility.diagnoses.some((d) => d.code === 'foreign-marketplace-source'), JSON.stringify(r.report.compatibility.diagnoses));
   assert.notEqual(r.res.exitCode, 1, r.text);
+  // a plain tag-pinned github source (the pre-1.7 shape the updater migrates) is still ours
+  fx = fixture({ projectEntry: tagPinned() });
+  r = await run(fx);
+  assert.ok(!r.report.compatibility.diagnoses.some((d) => d.code === 'foreign-marketplace-source'));
   // case-insensitive ASCII match of OUR repo is ours
   fx = fixture({ projectEntry: tagless(REPO.toUpperCase()) });
   r = await run(fx);
@@ -513,6 +528,36 @@ test('AC-NPX-4 every run previews each effect with its class and dry run writes 
   fs.mkdirSync(path.join(drifted.cwd, 'CLAUDE.md'));
   assert.equal((await run(drifted, { argv: ['--dry-run'] })).res.exitCode, 2);
 
+  // a dry run with NO claude on PATH is a refusal that still writes nothing: no report, no .foundry/
+  const nc = fixture();
+  const ncBefore = snap(nc.cwd, []);
+  const ncRun = await run(nc, { argv: ['--dry-run'], env: { PATH: scratch('npx20-nopath-') } });
+  assert.equal(ncRun.res.exitCode, 1, ncRun.text);
+  assert.equal(ncRun.report, null);
+  assert.equal(fs.existsSync(path.join(nc.cwd, '.foundry')), false, 'a dry run created .foundry/');
+  assert.deepEqual(snap(nc.cwd, []), ncBefore, 'the workspace changed under a refused --dry-run');
+  assert.match(ncRun.text, /^refused: claude executable not found on PATH$/m);
+  assert.match(ncRun.text, /^post-update checks not evaluated$/m);
+  assert.match(ncRun.text, /^cutover: pending$/m);
+  assert.deepEqual(ncRun.log, []);
+  // ...and so does a dry run whose plan trips the protected-path guard (a hostile catalogue entry)
+  const hostile = mkPkg((p) => { void p; });
+  const cat = readJson(path.join(hostile, 'retired-artifacts.json'));
+  cat.entries.push({ path: '.mcp.json', kind: 'file', retired_in: '9.9.9', reason: 'x' });
+  writeJson(path.join(hostile, 'retired-artifacts.json'), cat);
+  const pf = fixture();
+  writeJson(path.join(pf.cwd, '.mcp.json'), { mcpServers: {} });
+  const pfBefore = snap(pf.cwd, []);
+  const pfRun = await run(pf, { argv: ['--dry-run', '--cleanup'], pkgDir: hostile });
+  assert.equal(pfRun.res.exitCode, 1);
+  assert.match(pfRun.text, /refused: refusing: a planned write targets the protected path \.mcp\.json/);
+  assert.deepEqual(snap(pf.cwd, []), pfBefore);
+  const pfReal = await run(pf, { argv: ['--cleanup'], pkgDir: hostile });
+  assert.equal(pfReal.res.exitCode, 1);
+  assert.equal(pfReal.report.outcome, 'refused');
+  assert.ok(fs.existsSync(path.join(pf.cwd, '.mcp.json')), 'a protected path was quarantined');
+  assert.deepEqual(pfReal.log, []);
+
   // --help names the 1/2/0 mapping
   const help = await run(fixture(), { argv: ['--help'] });
   assert.equal(help.res.exitCode, 0);
@@ -709,6 +754,10 @@ test('AC-NPX-7 the report and last line carry only closed set values and no plan
   assert.ok(!JSON.stringify(hooks).includes(PLANTED));
   const reg = diffSettingsFile('f', {}, { extraKnownMarketplaces: { m: { source: { source: 'url', url } } } });
   assert.ok(!JSON.stringify(reg).includes(PLANTED), 'a registration value is URL-sanitised');
+  const leaf = diffSettingsFile('f', {}, { extraKnownMarketplaces: { m: { source: { source: 'github', repo: 'a/b', ref: 'v1.0.0' }, note: PLANTED, autoUpdate: false } } });
+  assert.ok(!JSON.stringify(leaf).includes(PLANTED), 'a non-URL string leaf outside source/repo/ref/path is a digest');
+  assert.deepEqual(leaf[0].after.source, { ref: 'v1.0.0', repo: 'a/b', source: 'github' });
+  assert.match(leaf[0].after.note, /^sha256:/);
 
   // every version in next_action and the last line is strict semver
   const strictOnly = (text) => {
@@ -922,6 +971,8 @@ test('AC-NPX-11 each outcome rule has one exit code and the last line names next
   assert.equal(r.last, lastOf('refused', r.report.next_action));
   assert.match(r.report.next_action, /^remove the marketplace registration at \.claude\/settings\.json \(project\)/);
   assert.deepEqual(r.report.failure, { phase: 'preflight', code: 'foreign-marketplace-source' });
+  assert.ok(r.text.indexOf('planned effects') !== -1 && r.text.indexOf('planned effects') < r.text.indexOf('refused: foreign-marketplace-source'),
+    'a refused run still shows the plan before the stop');
 
   // refused: a stale updater with no migration (the marketplace refresh alone is not a mutation)
   fx = fixture({ manifestVersion: '99.0.0' });
@@ -961,7 +1012,7 @@ test('AC-NPX-11 each outcome rule has one exit code and the last line names next
     const rr = await run(fx2, opts);
     assert.equal(rr.res.exitCode, 2, `${name}: ${rr.text}`);
     assert.equal(rr.report.outcome, 'attention-needed', name);
-    assert.equal(rr.last, lastOf('attention-needed', HANDOFF), name);
+    assert.equal(rr.last, lastOf('attention-needed', rr.report.next_action), name);
     assert.ok(rr.report.adoption.mechanical_steps.every((s) => s.verdict !== 'not-run'), name);
     return rr;
   };
@@ -970,6 +1021,14 @@ test('AC-NPX-11 each outcome rule has one exit code and the last line names next
   fs.mkdirSync(path.join(fx.cwd, 'CLAUDE.md'));
   r = await attention('a drifted managed file', fx);
   assert.deepEqual(r.report.drifted, ['CLAUDE.md']);
+  assert.equal(r.report.next_action, `fix CLAUDE.md (not a regular file) and rerun npx update-agentic-workspace; then ${HANDOFF}`);
+  // a symlinked managed file is named the same way (never an unexplained permanent exit 2)
+  fx = fixture();
+  write(path.join(fx.cwd, 'elsewhere.md'), 'x');
+  fs.symlinkSync(path.join(fx.cwd, 'elsewhere.md'), path.join(fx.cwd, 'CLAUDE.md'));
+  r = await attention('a symlinked managed file', fx);
+  assert.match(r.last, /next: fix CLAUDE\.md \(not a regular file\) and rerun/);
+  assert.equal(fs.readFileSync(path.join(fx.cwd, 'elsewhere.md'), 'utf-8'), 'x');
   assert.equal(r.report.compatibility.diagnoses.length, 0, 'no continue row fired: drift alone makes the run attention-needed');
   fx = fixture();
   write(path.join(fx.cwd, '.gitignore'), '# FOUNDRY-RUNTIME-GITIGNORE-BEGIN\nnode_modules\n');
@@ -979,6 +1038,15 @@ test('AC-NPX-11 each outcome rule has one exit code and the last line names next
   r = await attention('python-deps failed', fx, { env: { FOUNDRY_PYTHON: fakePython() } });
   assert.equal(r.report.python_deps.verdict, 'failed');
   assert.equal(r.report.compatibility.diagnoses.length, 0);
+
+  // not a workspace: typed refusal, nothing created, no report
+  const bare = scratch('npx20-bare-');
+  const bareCfg = scratch('npx20-barecfg-');
+  const nw = await run({ cwd: bare, configDir: bareCfg });
+  assert.equal(nw.res.exitCode, 1);
+  assert.equal(nw.report, null);
+  assert.deepEqual(fs.readdirSync(bare), []);
+  assert.match(nw.last, /^outcome: refused · next: run npx update-agentic-workspace from inside an installed workspace · cutover: pending$/);
 
   // complete
   fx = fixture();
@@ -1062,7 +1130,8 @@ test('AC-NPX-12 a rerun after any stop converges to the uninterrupted result', a
     const fx = richFixture();
     const interrupted = await run(fx, { argv: flags, failAfterPhase: { phase, message: 'injected stop' } });
     assert.equal(interrupted.res.exitCode, 1, `${phase}: ${interrupted.text}`);
-    assert.match(interrupted.report.outcome, /^(partial|refused)$/);
+    // the project scope enables the plugin, so the plugin update was spawned (a mutation) by every phase
+    assert.equal(interrupted.report.outcome, 'partial', phase);
     assert.equal(interrupted.report.failure.phase, phase);
     const rerun = await run(fx, { argv: flags });
     assert.notEqual(rerun.res.exitCode, 1, `${phase}: ${rerun.text}`);
@@ -1101,19 +1170,55 @@ test('AC-NPX-12 a rerun after any stop converges to the uninterrupted result', a
   await run(interruptedAfterQuarantine, { argv: flags });
   assert.equal(fs.readdirSync(path.join(interruptedAfterQuarantine.cwd, '.foundry', 'retired')).length, 1);
 
-  // idempotence: a rerun over a COMPLETE result reports nothing written and nothing to clean up
+  // no enabled user/project scope: nothing but the (non-mutating) marketplace refresh ran, so an
+  // injected stop there is `refused`, and the rerun still converges
+  const idle = fixture();
+  writeJson(path.join(idle.cwd, '.claude', 'settings.json'), { ...readJson(path.join(idle.cwd, '.claude', 'settings.json')), enabledPlugins: {} });
+  const idleStop = await run(idle, { failAfterPhase: { phase: 'marketplace-refresh', message: 'x' } });
+  assert.equal(idleStop.res.exitCode, 1);
+  assert.equal(idleStop.report.outcome, 'refused');
+  assert.deepEqual(idleStop.report.failure, { phase: 'marketplace-refresh', code: null });
+  assert.ok(!idleStop.log.some((a) => a[1] === 'update'));
+  // ...but pip installing IS a mutation: the same stop after python-deps is `partial`
+  const pyDir = scratch('npx20-pyinst-');
+  const marker = path.join(pyDir, 'installed');
+  const py = path.join(pyDir, 'python3');
+  fs.writeFileSync(py, `#!/bin/sh
+case "$1" in
+  -c) if [ -f "${marker}" ]; then echo '{"python":"/fake/python3","version":"3.12","venv":true,"missing":[]}'; else echo '{"python":"/fake/python3","version":"3.12","venv":true,"missing":["yaml","jsonschema"]}'; fi; exit 0;;
+  *) touch "${marker}"; exit 0;;
+esac
+`);
+  fs.chmodSync(py, 0o755);
+  const idle2 = fixture();
+  writeJson(path.join(idle2.cwd, '.claude', 'settings.json'), { ...readJson(path.join(idle2.cwd, '.claude', 'settings.json')), enabledPlugins: {} });
+  const pipStop = await run(idle2, { env: { FOUNDRY_PYTHON: py }, failAfterPhase: { phase: 'python-deps', message: 'x' } });
+  assert.equal(pipStop.report.outcome, 'partial');
+  assert.deepEqual(pipStop.report.python_deps.installed.sort(), ['jsonschema', 'yaml']);
+  assert.ok(!pipStop.log.some((a) => a[1] === 'update'));
+  const idleRerun = await run(idle, {});
+  assert.notEqual(idleRerun.res.exitCode, 1, idleRerun.text);
+
+  // a settled rerun: nothing written, nothing moved. A catalogue entry something still wires stays
+  // LISTED (AC-NPX-13 lists every present entry), as `referenced` with its referrers and no restore_from
   const idem = richFixture();
-  fs.rmSync(path.join(idem.cwd, '.foundry', 'hasher-ref'));
-  fs.rmSync(path.join(idem.cwd, '.github'), { recursive: true });
   const one = await run(idem, { argv: flags });
   assert.equal(one.res.exitCode, 0, one.text);
-  assert.ok(one.report.written.length > 0 && one.report.cleanup.length > 0);
+  assert.ok(one.report.written.length > 0 && one.report.cleanup.some((c) => c.state === 'moved'));
   const treeBetween = snap(idem.cwd, skip);
   const two = await run(idem, { argv: flags });
   assert.equal(two.res.exitCode, 0, two.text);
   assert.deepEqual(two.report.written, []);
-  assert.deepEqual(two.report.cleanup, []);
+  assert.deepEqual(two.report.cleanup, [
+    { path: '.foundry/hasher-ref', referrers: ['.github/workflows/ci.yml'], state: 'referenced', restore_from: null },
+  ]);
+  assert.equal(two.report.cleanup.filter((c) => c.state === 'moved').length, 0);
   assert.deepEqual(snap(idem.cwd, skip), treeBetween);
+  // with nothing wired at all the list is empty
+  fs.rmSync(path.join(idem.cwd, '.foundry', 'hasher-ref'));
+  fs.rmSync(path.join(idem.cwd, '.github'), { recursive: true });
+  const three = await run(idem, { argv: flags });
+  assert.deepEqual(three.report.cleanup, []);
 
   // the published bin cannot pass the failure-injection seam: its runUpdate options are exactly seven keys
   const src = fs.readFileSync(BIN_SRC, 'utf-8');
@@ -1240,6 +1345,80 @@ test('AC-NPX-13 cleanup quarantines only unreferenced entries and refuses any sy
     return { entry: '.foundry/session-learnings' };
   }, { expectWhy: 'link-in-path' });
   assert.equal(destAncestor.state, 'refused');
+
+  const isRoot = process.getuid && process.getuid() === 0;
+  if (!isRoot) {
+    // one row failing does not lose the rows already moved: the manifest and restore_from still cover them
+    const q = quarantineRoot();
+    write(q.sub('.claude', 'resume', 'a.md'), 'a');
+    write(q.sub('.foundry', 'session-learnings', 'b.md'), 'b');
+    const rid = makeRunId();
+    fs.mkdirSync(q.sub('.foundry', 'retired', rid, '.foundry'), { recursive: true });
+    fs.chmodSync(q.sub('.foundry', 'retired', rid, '.foundry'), 0o555); // the second rename cannot land
+    const qplan = planRetiredArtifacts({ physicalRoot: q.root, catalogue: catalogue() });
+    const moved = applyRetiredArtifacts(qplan, q.root, { runId: rid });
+    fs.chmodSync(q.sub('.foundry', 'retired', rid, '.foundry'), 0o755);
+    assert.equal(moved, 1);
+    const byRel = Object.fromEntries(qplan.rows.map((x) => [x.relPath, x]));
+    assert.equal(byRel['.claude/resume'].state, 'removed');
+    assert.equal(byRel['.foundry/session-learnings'].state, 'refused');
+    assert.equal(byRel['.foundry/session-learnings'].why, 'remove-failed');
+    assert.ok(fs.existsSync(q.sub('.foundry', 'session-learnings', 'b.md')), 'the refused entry stays');
+    assert.deepEqual(readJson(q.sub('.foundry', 'retired', rid, 'manifest.json')).entries,
+      [{ path: '.claude/resume', restore_from: `.foundry/retired/${rid}/.claude/resume` }]);
+    assert.equal(qplan.present, 0);
+    assert.equal(qplan.refused, 1);
+
+    // the rollback after a failed rename removes only what THIS call created; a pre-existing directory
+    // and everything in it survives
+    const r2 = quarantineRoot();
+    write(r2.sub('.claude', 'resume', 'a.md'), 'a');
+    write(r2.sub('.foundry', 'keep.txt'), 'pre-existing');
+    const rp = planRetiredArtifacts({ physicalRoot: r2.root, catalogue: catalogue() });
+    fs.chmodSync(r2.sub('.claude'), 0o555); // the source cannot be renamed out of its parent
+    const rid2 = makeRunId();
+    const n = applyRetiredArtifacts(rp, r2.root, { runId: rid2 });
+    fs.chmodSync(r2.sub('.claude'), 0o755);
+    assert.equal(n, 0);
+    assert.equal(rp.rows.find((x) => x.relPath === '.claude/resume').state, 'refused');
+    assert.ok(!fs.existsSync(r2.sub('.foundry', 'retired')), 'the directories this call created were taken back');
+    assert.equal(fs.readFileSync(r2.sub('.foundry', 'keep.txt'), 'utf-8'), 'pre-existing');
+    assert.equal(fs.readFileSync(r2.sub('.claude', 'resume', 'a.md'), 'utf-8'), 'a');
+    // ...and a pre-existing .foundry/retired with another run's content is never touched
+    const r3 = quarantineRoot();
+    write(r3.sub('.claude', 'resume', 'a.md'), 'a');
+    write(r3.sub('.foundry', 'retired', '20260101T000000Z-aaaa', 'old.txt'), 'older run');
+    const rp3 = planRetiredArtifacts({ physicalRoot: r3.root, catalogue: catalogue() });
+    fs.chmodSync(r3.sub('.claude'), 0o555);
+    applyRetiredArtifacts(rp3, r3.root, { runId: makeRunId() });
+    fs.chmodSync(r3.sub('.claude'), 0o755);
+    assert.equal(fs.readFileSync(r3.sub('.foundry', 'retired', '20260101T000000Z-aaaa', 'old.txt'), 'utf-8'), 'older run');
+    assert.deepEqual(fs.readdirSync(r3.sub('.foundry', 'retired')), ['20260101T000000Z-aaaa']);
+  }
+
+  // a name from a directory listing that is not a safe path is refused `unsafe-name`, escaped in the
+  // preview and never put in the report
+  const u = quarantineRoot();
+  fs.mkdirSync(u.sub('.claude', 'hooks'), { recursive: true });
+  const weird = 'bad\u001bname-exec-guard.sh';
+  fs.writeFileSync(path.join(u.root, '.claude', 'hooks', weird), '#!/bin/sh\n');
+  const up = planRetiredArtifacts({ physicalRoot: u.root, catalogue: catalogue() });
+  const urow = up.rows.find((x) => x.relPath.includes('bad'));
+  assert.equal(urow.state, 'refused');
+  assert.equal(urow.why, 'unsafe-name');
+  assert.equal(applyRetiredArtifacts(up, u.root, { runId: makeRunId() }), 0);
+  assert.ok(fs.existsSync(path.join(u.root, '.claude', 'hooks', weird)));
+  const ufx = fixture();
+  fs.mkdirSync(path.join(ufx.cwd, '.claude', 'hooks'), { recursive: true });
+  fs.writeFileSync(path.join(ufx.cwd, '.claude', 'hooks', weird), '#!/bin/sh\n');
+  fs.writeFileSync(path.join(ufx.cwd, '.claude', 'bad\u001b.md'), 'live-seam\n');
+  const ur = await run(ufx, { argv: ['--cleanup'] });
+  assert.ok(!ur.text.includes('\u001b'), 'a control character reached the output');
+  assert.ok(ur.text.includes('bad\\x1bname-exec-guard.sh'));
+  assert.ok(!JSON.stringify(ur.report).includes('\u001b') && !JSON.stringify(ur.report).includes('bad\\u001b'));
+  assert.ok(ur.report.cleanup.some((c) => c.path === '<unsafe-name>' && c.state === 'refused'));
+  assert.ok(ur.report.compatibility.diagnoses.some((d) => d.code === 'input-skipped' && d.remedy.includes('.claude/<unsafe-name>')));
+  assert.deepEqual(ur.report.adoption.instructions_pending, []);
 
   // the two-argument form still works: a run id is derived and the catalogued entry is moved
   const { root, sub } = quarantineRoot();

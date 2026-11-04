@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { confinedJoin } from './util.mjs';
-import { makeRunId, RUN_ID_RE } from './upgradeCompat.mjs';
+import { makeRunId, RUN_ID_RE, safeRelPath, escapeForPreview } from './upgradeCompat.mjs';
 
 export const CATALOGUE_REL = 'retired-artifacts.json';
 export const RETIRED_ROOT_REL = '.foundry/retired';
@@ -191,6 +191,11 @@ export function planRetiredArtifacts({ physicalRoot, catalogue }) {
   let refs = null;  // ER #241: the reference scan, read lazily, once, only when a stale candidate exists
   for (const entry of catalogue.entries) {
     for (const relPath of candidates(physicalRoot, entry)) {
+      // a name read from a directory listing that is not a safe path is never echoed or acted on
+      if (!safeRelPath(relPath)) {
+        rows.push({ relPath, kind: entry.kind, retired_in: entry.retired_in, reason: entry.reason, state: 'refused', why: 'unsafe-name', referrers: [] });
+        continue;
+      }
       const abs = confinedJoin(physicalRoot, relPath);
       let st = null;
       if (abs) {
@@ -264,6 +269,17 @@ function ancestorProblem(physicalRoot, relPath) {
   return null;
 }
 
+/** True while `created` (outermost first) is a chain of directories each holding nothing but the next one. */
+function emptyChain(created) {
+  for (let i = 0; i < created.length; i += 1) {
+    let names;
+    try { names = fs.readdirSync(created[i]); } catch { return false; }
+    const next = created[i + 1] ? path.basename(created[i + 1]) : null;
+    if (names.length > (next ? 1 : 0) || (names.length === 1 && names[0] !== next)) return false;
+  }
+  return true;
+}
+
 /** Create `.foundry/retired/<runId>/<dirname(rel)>` one component at a time, each `lstat`ed first:
  * an existing component must be a real directory (a symbolic link or file is a refusal), a missing
  * one is created with a plain `mkdir` and pushed onto `created`. Returns null, or the refusal reason.
@@ -305,48 +321,60 @@ export function applyRetiredArtifacts(plan, physicalRoot, opts) {
   if (!RUN_ID_RE.test(runId)) throw new Error('applyRetiredArtifacts: runId is not a safe single path segment');
   let removed = 0;
   const moved = [];
-  for (const row of plan.rows) {
-    if (row.state !== 'stale') continue;
-    const abs = confinedJoin(physicalRoot, row.relPath);
-    if (!abs) continue;
-    const destRel = `${RETIRED_ROOT_REL}/${runId}/${row.relPath}`;
-    const absDest = confinedJoin(physicalRoot, destRel);
-    if (!absDest) { row.state = 'refused'; row.why = 'link-in-path'; continue; }
-    let st;
-    try {
-      st = fs.lstatSync(abs);
-    } catch {
-      continue;
+  try {
+    for (const row of plan.rows) {
+      // one row failing for ANY reason refuses that row only; the rows already moved stay recorded
+      try {
+        if (row.state !== 'stale') continue;
+        const abs = confinedJoin(physicalRoot, row.relPath);
+        if (!abs) continue;
+        const destRel = `${RETIRED_ROOT_REL}/${runId}/${row.relPath}`;
+        const absDest = confinedJoin(physicalRoot, destRel);
+        if (!absDest) { row.state = 'refused'; row.why = 'link-in-path'; continue; }
+        let st;
+        try {
+          st = fs.lstatSync(abs);
+        } catch {
+          continue;
+        }
+        if (st.isSymbolicLink()) continue;
+        if (row.kind === 'dir' ? !st.isDirectory() : !st.isFile()) continue;
+        if (ancestorProblem(physicalRoot, row.relPath)) { row.state = 'refused'; row.why = 'link-in-path'; continue; }
+        if (fs.lstatSync(absDest, { throwIfNoEntry: false })) { row.state = 'refused'; row.why = 'destination-exists'; continue; }
+        const created = [];
+        let failure = null;
+        try {
+          const why = prepareDestination(physicalRoot, destRel, created);
+          if (why) failure = { why };
+          else fs.renameSync(abs, absDest);
+        } catch (e) {
+          failure = { why: 'remove-failed', error: e && e.code ? e.code : 'error' };
+        }
+        if (failure) {
+          // nothing moved: take back ONLY the directories THIS call created for the destination, and only
+          // while they still form an empty chain (a directory that existed before is never in `created`)
+          if (created.length > 0 && emptyChain(created)) fs.rmSync(created[0], { recursive: true, force: false });
+          row.state = 'refused';
+          row.why = failure.why;
+          if (failure.error) row.error = failure.error;
+          continue;
+        }
+        removed += 1;
+        row.state = 'removed';
+        row.restore_from = destRel;
+        moved.push({ path: row.relPath, restore_from: destRel });
+      } catch (e) {
+        if (row.state !== 'removed') { row.state = 'refused'; row.why = 'remove-failed'; row.error = e && e.code ? e.code : 'error'; }
+      }
     }
-    if (st.isSymbolicLink()) continue;
-    if (row.kind === 'dir' ? !st.isDirectory() : !st.isFile()) continue;
-    if (ancestorProblem(physicalRoot, row.relPath)) { row.state = 'refused'; row.why = 'link-in-path'; continue; }
-    if (fs.lstatSync(absDest, { throwIfNoEntry: false })) { row.state = 'refused'; row.why = 'destination-exists'; continue; }
-    const created = [];
-    let failure = null;
-    try {
-      const why = prepareDestination(physicalRoot, destRel, created);
-      if (why) failure = { why };
-      else fs.renameSync(abs, absDest);
-    } catch (e) {
-      failure = { why: 'remove-failed', error: e && e.code ? e.code : 'error' };
-    }
-    if (failure) {
-      // nothing moved: take back only the (empty) directories THIS call created for the destination
-      if (created.length > 0) fs.rmSync(created[0], { recursive: true, force: false });
-      row.state = 'refused';
-      row.why = failure.why;
-      if (failure.error) row.error = failure.error;
-      continue;
-    }
-    removed += 1;
-    row.state = 'removed';
-    row.restore_from = destRel;
-    moved.push({ path: row.relPath, restore_from: destRel });
+  } finally {
+    // whatever moved is recorded, however the loop ended
+    writeQuarantineManifest(physicalRoot, runId, moved);
+    plan.removed = removed;
+    plan.runId = runId;
+    plan.present = plan.rows.filter((r) => r.state === 'stale').length;
+    plan.refused = plan.rows.filter((r) => r.state === 'refused').length;
   }
-  writeQuarantineManifest(physicalRoot, runId, moved);
-  plan.removed = removed;
-  plan.runId = runId;
   return removed;
 }
 
@@ -359,7 +387,8 @@ export function applyRetiredArtifacts(plan, physicalRoot, opts) {
  * nothing catalogued is present. */
 export function renderRetiredArtifactRows(plan, { cleanup, phase = 'result', runDir = null } = {}) {
   const out = [];
-  for (const r of plan.rows) {
+  for (const r0 of plan.rows) {
+    const r = { ...r0, relPath: escapeForPreview(r0.relPath), refs: r0.refs ? r0.refs.map(escapeForPreview) : r0.refs };
     const size = r.kind === 'dir' && typeof r.entries === 'number' ? ` [${r.entries} entr${r.entries === 1 ? 'y' : 'ies'}]` : '';
     if (r.state === 'stale') {
       const tail = !cleanup ? '; remove with --cleanup'
@@ -376,6 +405,8 @@ export function renderRetiredArtifactRows(plan, { cleanup, phase = 'result', run
       out.push(`  [refused] ${r.relPath} — the reference scan could not finish (${r.detail}) — left alone`);
     } else if (r.why === 'remove-failed') {
       out.push(`  [refused] ${r.relPath} — removal failed (${r.error}) — left in place`);
+    } else if (r.why === 'unsafe-name') {
+      out.push(`  [refused] ${r.relPath} — the file name is not a safe path (unsafe-name) — left alone`);
     } else if (r.why === 'link-in-path') {
       out.push(`  [refused] ${r.relPath} — a component of its path or of its quarantine destination is a symbolic link or not a directory — left in place`);
     } else if (r.why === 'destination-exists') {

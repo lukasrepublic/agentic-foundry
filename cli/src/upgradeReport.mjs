@@ -13,7 +13,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { confinedJoin } from './util.mjs';
 import { scopeRecordsFor } from './pluginRefresh.mjs';
-import { strictVersion, sanitizeUrl, RUN_ID_RE } from './upgradeCompat.mjs';
+import { strictVersion, sanitizeUrl, safeRelPath, RUN_ID_RE } from './upgradeCompat.mjs';
 
 export const REPORT_REL = '.foundry/upgrade-report.json';
 // v2 (feat-foundry-adoption-npx-upgrade-2-0): every v1 field keeps its v1 meaning; run_id, outcome,
@@ -184,13 +184,16 @@ export function digestOf(value) {
 }
 
 const SAFE_LEAF_RE = /^[A-Za-z0-9._@:/+-]{1,200}$/;
-function shownMarketplaceValue(v) {
+const SHOWN_LEAF_KEYS = new Set(['source', 'repo', 'ref', 'path']);
+/** A registration value: URL strings lose userinfo/query/fragment; any other string leaf is shown only
+ * under `source`/`repo`/`ref`/`path` (and only when path-safe) and is a `sha256:` digest otherwise. */
+function shownMarketplaceValue(v, key = '') {
   if (typeof v === 'string') {
     if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(v)) return sanitizeUrl(v);
-    return SAFE_LEAF_RE.test(v) ? v : digestOf(v);
+    return SHOWN_LEAF_KEYS.has(key) && SAFE_LEAF_RE.test(v) ? v : digestOf(v);
   }
-  if (Array.isArray(v)) return v.map(shownMarketplaceValue);
-  if (isPlainObject(v)) return Object.fromEntries(Object.keys(v).sort().map((k) => [k, shownMarketplaceValue(v[k])]));
+  if (Array.isArray(v)) return v.map((x) => shownMarketplaceValue(x, key));
+  if (isPlainObject(v)) return Object.fromEntries(Object.keys(v).sort().map((k) => [k, shownMarketplaceValue(v[k], k)]));
   return v === undefined ? null : v;
 }
 
@@ -264,11 +267,7 @@ export function diffSettingsFile(file, before, after) {
 
 // ── previous_partial: evidence a refused rerun carries forward (AC-NPX-11, AC-NPX-7) ────────────
 
-/** A workspace-relative path: not absolute, no `..`, no backslash or control character. */
-export function safeRelPath(p) {
-  return typeof p === 'string' && p.length > 0 && p.length <= 300 && !p.startsWith('/')
-    && /^[A-Za-z0-9._@+/ -]+$/.test(p) && !p.split('/').includes('..');
-}
+export { safeRelPath };
 
 /** Re-validate a `previous_partial` read from disk against the closed value set; an entry that fails
  * is DROPPED (never repaired). `null` when the run id itself is not a run id. */

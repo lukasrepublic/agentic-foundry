@@ -144,11 +144,11 @@ The last line is always `outcome: <outcome> · next: <next action> · cutover: <
 does not mean the project has moved to 2.0**: installation can be complete while adoption of shared work
 is still pending, and `cutover:` says so.
 
-**`2` is a success, not an error.** Since v1.18.0 a file that already exists is never "drifted" on
-the update path: operator-owned files are `[kept]`, and `.claude/settings.json` / `.gitignore` are
-`[reconciled]` by their own reconcilers. Before v1.18.0 every run exited `2`, because
-`settings.json` was compared whole-file against bytes that could never match. Use the printed phase
-summary and the report's `written` list, not the exit code, to see what the run actually did.
+**`2` is a success, not an error.** The run reached its end and wrote its report; read the printed
+phase summary, the report's `written` list and `compatibility.diagnoses` (and, for a managed path that
+is present but not a regular file, the named path in `next_action`) to see what needs attention. An
+existing regular file is never "drifted" on the update path: operator-owned files are `[kept]`, and
+`.claude/settings.json` / `.gitignore` are `[reconciled]` by their own reconcilers.
 
 Only `1` means something went wrong. A `set -e` script or a CI step that treats any non-zero as
 failure will read a perfectly good update as broken; test for `1` specifically.

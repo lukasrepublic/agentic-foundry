@@ -10,7 +10,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { RefusalError, physicalResolve, confinedJoin } from './util.mjs';
 import { loadMap, buildSettings } from './permissionFloor.mjs';
-import { buildManagedFiles } from './scaffold.mjs';
+import { buildManagedFiles, DECLARED_PATH_SET } from './scaffold.mjs';
 import { planManagedFiles, applyPlan } from './reconcile.mjs';
 import {
   resolveTarget, readTarget, applyAdditions, planReconcile, writeTargetAtomically, renderPlan,
@@ -32,9 +32,9 @@ import {
 import {
   CUTOVER_RECORD_REL, USER_SETTINGS_TOKEN, SCOPE_NAMES, makeRunId, strictVersion, readCutoverState, legacyOffCondition,
   collectSources, installedVersionOf, readSessionLoad, composeDiagnoses, effectOf,
-  evalPreRows, evalPostRefreshRows, evalPostUpdateRows, inputReason, scanInstructionsPending,
+  evalPreRows, evalPostRefreshRows, evalPostUpdateRows, inputReason, scanInstructionsPending, escapeForPreview,
 } from './upgradeCompat.mjs';
-import { loadPathClasses, classOf, formatRow } from './pathClasses.mjs';
+import { loadPathClasses, classOf, formatRow, parseRow, isProtected, WRITE_EFFECTS } from './pathClasses.mjs';
 import { planRetirements, applyRetirements, askRootKeys } from './floorReconcile.mjs';
 import {
   ALLOWED_CLAUDE_SUBCOMMANDS, resolveClaudeOnPath, runClaude,
@@ -144,7 +144,8 @@ function readJsonObjectOrNull(abs) {
 /** The report's `cleanup[]` and the preview's catalogue rows share this reading of a retired plan. */
 function cleanupEntriesOf(plan) {
   return plan.rows.map((r) => ({
-    path: r.relPath,
+    // a name that is not a safe path is never echoed (AC-NPX-7): the entry is listed as refused
+    path: safeRelPath(r.relPath) ? r.relPath : '<unsafe-name>',
     referrers: (r.referrers || []).filter(safeRelPath),
     state: r.state === 'removed' ? 'moved' : r.state === 'stale' ? 'stale' : r.why === 'referenced' ? 'referenced' : 'refused',
     restore_from: r.state === 'removed' && r.restore_from ? r.restore_from : null,
@@ -245,6 +246,15 @@ export async function runUpdate(argv, {
 
     // ── AC-UAW-15(b) / AC-NPX-3: read every scope BEFORE any mutation ───────────────────────────
     const scopes = defaultScopes({ cwd, configDir });
+    // not a workspace: the project settings file is absent. A typed error, not a message match, and
+    // there is nothing to write a report into.
+    for (const scope of scopes) {
+      if (scope.required && !fs.lstatSync(scope.settingsPath, { throwIfNoEntry: false })) {
+        st.reportable = false;
+        st.nextOverride = NEXT_NOT_WORKSPACE;
+        throw Object.assign(new RefusalError(`refusing: ${scope.name} scope settings file is absent (${scope.settingsPath})`, scope.name), { code: 'NOT_A_WORKSPACE' });
+      }
+    }
     const snapshot = [];
     const unreadable = [];
     for (const scope of scopes) {
@@ -253,15 +263,15 @@ export async function runUpdate(argv, {
         if (read.present) snapshot.push(read);
       } catch (e) {
         if (!(e instanceof RefusalError)) throw e;
-        if (scope.required && /is absent/.test(e.message)) {
-          st.reportable = false; // not a workspace: nothing to write a report into
-          st.nextOverride = NEXT_NOT_WORKSPACE;
-          throw e;
+        // why: re-derived from the file itself, never from the error's message
+        let reason = 'unreadable';
+        try {
+          const parsed = JSON.parse(fs.readFileSync(scope.settingsPath, 'utf-8'));
+          if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) reason = 'does not parse as a JSON object';
+        } catch (e2) {
+          reason = e2 instanceof SyntaxError ? 'does not parse as a JSON object' : 'unreadable';
         }
-        unreadable.push({
-          file: scope.name === 'project' ? PROJECT_SETTINGS_REL : USER_SETTINGS_TOKEN,
-          reason: /does not parse/.test(e.message) ? 'does not parse as a JSON object' : 'unreadable',
-        });
+        unreadable.push({ file: scope.name === 'project' ? PROJECT_SETTINGS_REL : USER_SETTINGS_TOKEN, reason });
       }
     }
     // AC-NPX-5: the parsed content of all three settings files before the first mutation
@@ -272,7 +282,27 @@ export async function runUpdate(argv, {
     ].map((f) => ({ ...f, obj: readJsonObjectOrNull(f.abs) }));
 
     if (unreadable.length > 0) {
-      st.firings.push({ code: 'input-unreadable', vars: { files: unreadable } });
+      // A settings file we cannot read means no plan and no preview — but every row whose inputs ARE
+      // readable (registrations in the other files, the registry's versions) is still evaluated, so one
+      // run names everything wrong instead of one problem per rerun.
+      const readableObj = (name) => { const sn = snapshot.find((x) => x.name === name); return sn ? sn.obj : null; };
+      const localObj = st.reviewBefore.find((f) => f.file === LOCAL_SETTINGS_REL).obj;
+      const registryEarly = readInstalledPluginsRegistry(configDir);
+      st.installedBefore = installedVersionBefore(registryEarly, pluginKey, cwd);
+      st.compat.from = installedVersionOf(registryEarly, pluginKey, cwd);
+      const early = collectSources({
+        configDir, marketplaceName, marketplaceRepo, supportedSources: upgradeCfg.supported_sources,
+        settingsFiles: [
+          { location: PROJECT_SETTINGS_REL, scope: 'project', obj: readableObj('project') },
+          { location: USER_SETTINGS_TOKEN, scope: 'user', obj: readableObj('user') },
+          { location: LOCAL_SETTINGS_REL, scope: 'local', obj: localObj },
+        ],
+      });
+      st.compat.sources = early.sources;
+      st.firings.push(...evalPreRows({
+        unreadable, foreign: early.foreign, installedBefore: st.compat.from, builtFor, supportedFromMin: upgradeCfg.supported_from_min,
+        skipped: localObj === null ? [{ file: LOCAL_SETTINGS_REL, reason: 'does not parse' }] : [], marketplaceRepo, pluginKey,
+      }));
       return finishPreStop(flags.dryRun ? 'dry' : 'real', null);
     }
 
@@ -384,11 +414,13 @@ export async function runUpdate(argv, {
       const first = String(r.detail || '').split(' ')[0];
       if (safeRelPath(first) && !skipped.some((x) => x.file === first)) skipped.push({ file: first, reason: inputReason(r.detail) });
     }
+    const scanned = scanInstructionsPending(physicalRoot, retiredTerms(retiredCatalogue));
+    st.instructions = scanned.pending;
+    if (scanned.unsafe > 0) skipped.push({ file: '.claude/<unsafe-name>', reason: 'unsafe file name' });
     st.firings.push(...evalPreRows({
       unreadable: [], foreign, installedBefore: st.compat.from, builtFor, supportedFromMin: upgradeCfg.supported_from_min,
       skipped, marketplaceRepo, pluginKey,
     }));
-    st.instructions = scanInstructionsPending(physicalRoot, retiredTerms(retiredCatalogue));
 
     const legacyOff = legacyOffCondition({ flag: flags.legacyMaintenance, cutover: st.cutover });
     const legacyRun = legacyOff === null;
@@ -457,7 +489,7 @@ export async function runUpdate(argv, {
     // settings.local.json retirement (hotfix-v1.17.4): PREVIEW-ONLY row (PR #237 review Risk 2 —
     // every Phase 4 write is announced before the first write happens); Phase 4 re-plans fresh.
     if (lp.plan && lp.plan.total > 0) previewLines.push(`  [permission-floor] ${lp.rel}: would retire allow=${lp.plan.retirements.allow.length}, ask=${lp.plan.retirements.ask.length}, deny=${(lp.plan.retirements.deny || []).length} (never adds)`);
-    else if (lp.error) previewLines.push(`  [permission-floor] ${lp.rel}: would not be reconciled (${lp.error})`);
+    else if (lp.error) previewLines.push(`  [permission-floor] ${lp.rel}: would not be reconciled (${escapeForPreview(lp.error)})`);
     // v1.18.2: python deps — the preview only probes (nothing installed before the first write).
     const pythonRequirements = loadPythonRequirements(pkgDir);
     previewLines.push(renderPythonDepsRow(ensurePythonDeps(pythonRequirements, { env: spawnEnv, python: spawnEnv.FOUNDRY_PYTHON || 'python3', dryRun: true }), pythonRequirements));
@@ -502,9 +534,10 @@ export async function runUpdate(argv, {
       if (r.state === 'stale' && flags.cleanup) {
         effectRows.push(formatRow('quarantine', cls, `${r.relPath} ${runDir}/${r.relPath}`));
       } else {
+        const refs = (r.referrers || []).filter(safeRelPath);
         const tail = r.state === 'stale' ? ' — stale; remove with --cleanup'
-          : ` — ${r.why === 'referenced' ? 'referenced' : 'refused'}${(r.referrers || []).length ? ` by ${r.referrers.join(', ')}` : ''}`;
-        effectRows.push(formatRow('keep', cls, r.relPath, tail));
+          : ` — ${r.why === 'referenced' ? 'referenced' : 'refused'}${refs.length ? ` by ${refs.join(', ')}` : ''}`;
+        effectRows.push(formatRow('keep', cls, escapeForPreview(r.relPath), tail));
       }
     }
     if (quarantining) effectRows.push(formatRow('create', 'framework-owned', `${runDir}/manifest.json`));
@@ -540,6 +573,19 @@ export async function runUpdate(argv, {
     previewLines.push(...(reviewRows.length > 0 ? reviewRows : ['  (none)']));
     previewLines.push(`history maintenance: ${legacyRun ? 'on (--legacy-maintenance, cutover pending)' : `off — ${legacyOff}`}`);
 
+    // The protected set is enforced here, not only by tests: a planned write target that is a protected
+    // path is refused before anything runs (a declared managed path that is ABSENT may be created).
+    for (const row of effectRows) {
+      const pr = parseRow(row);
+      if (!pr || !WRITE_EFFECTS.includes(pr.effect)) continue;
+      for (const target of pr.target.split(' ')) {
+        const createdDeclared = DECLARED_PATH_SET.includes(target) && filePlan.some((f) => f.relPath === target && f.action === 'create');
+        if (isProtected(target, [CUTOVER_RECORD_REL]) && !createdDeclared) {
+          throw new RefusalError(`refusing: a planned write targets the protected path ${escapeForPreview(target)}`, 'protected');
+        }
+      }
+    }
+
     const diagnosesNow = composeDiagnoses(st.firings);
     const preStop = diagnosesNow.some((d) => effectOf(d.code) === 'stop');
     const gitignoreRefusedPreview = Boolean(previewGitignorePlan && previewGitignorePlan.action === 'refused');
@@ -555,9 +601,9 @@ export async function runUpdate(argv, {
       const code = preStop ? 1 : (anyContinue || filePlan.some((f) => f.action === 'drifted') || gitignoreRefusedPreview ? 2 : 0);
       return { dry: { exitCode: code } };
     }
-    if (preStop) return finishPreStop('real', diagnosesNow);
-
+    // the plan is shown even when a stop row ends the run: the operator sees what would have happened
     print(previewLines.join('\n'));
+    if (preStop) return finishPreStop('real', diagnosesNow);
 
     const env = { ...spawnEnv, CLAUDE_CONFIG_DIR: configDir };
     const phases = st.phases;
@@ -630,6 +676,9 @@ export async function runUpdate(argv, {
     st.phase = 'python-deps';
     const pythonDeps = ensurePythonDeps(pythonRequirements, { env: spawnEnv, python: spawnEnv.FOUNDRY_PYTHON || 'python3' });
     st.pythonDeps = pythonDeps;
+    // pip installing into the user site IS a mutation (of the machine, not the workspace); the marketplace
+    // refresh is not (it touches only the platform's own clone, and the next run refreshes it again)
+    if ((pythonDeps.installed || []).length > 0) st.mutated = true;
     print(renderPythonDepsRow(pythonDeps, pythonRequirements));
     phases.push({ name: 'python-deps', verdict: pythonDeps.verdict, ...(pythonDeps.reason ? { reason: pythonDeps.reason } : {}) });
     afterPhase('python-deps');
@@ -698,7 +747,15 @@ export async function runUpdate(argv, {
     // pending; re-planned FRESH from disk and applied with the modules' own re-classify guards.
     let amendmentsPlan = null;
     let trueUpPlan = { written: [], rows: [], applied: true };
+    // the cutover record is re-read right before the writers: a record that appeared (or became
+    // unreadable) since the preview keeps them off — they only ever run while it is still `pending`
+    let legacyNow = legacyOff;
     if (legacyRun) {
+      const nowState = readCutoverState(physicalRoot);
+      st.cutover = nowState;
+      legacyNow = legacyOffCondition({ flag: flags.legacyMaintenance, cutover: nowState });
+    }
+    if (legacyRun && legacyNow === null) {
       amendmentsPlan = planAmendmentsBackfill({ physicalRoot });
       applyAmendmentsBackfill(amendmentsPlan);
       for (const rel of amendmentsPlan.writtenPaths || []) wrote(rel, 'amendments-backfill');
@@ -708,7 +765,7 @@ export async function runUpdate(argv, {
       for (const rel of trueUpPlan.written || []) wrote(rel, 'manifest-true-up');
       for (const row of renderManifestTrueUpRows(trueUpPlan)) print(row);
     } else {
-      print(`  [legacy-maintenance] off — ${legacyOff}: the Amendments backfill and the release-manifest true-up did not run (cutover record: ${CUTOVER_RECORD_REL})`);
+      print(`  [legacy-maintenance] off — ${legacyNow}: the Amendments backfill and the release-manifest true-up did not run (cutover record: ${CUTOVER_RECORD_REL})`);
     }
     st.amendmentsPlan = amendmentsPlan;
 
@@ -734,9 +791,17 @@ export async function runUpdate(argv, {
     let retiredRemoved = 0;
     if (flags.cleanup && retiredPlan.present > 0) {
       st.mutated = true;
-      retiredRemoved = applyRetiredArtifacts(retiredPlan, physicalRoot, { runId: st.runId });
+      try {
+        retiredRemoved = applyRetiredArtifacts(retiredPlan, physicalRoot, { runId: st.runId });
+      } finally {
+        // however the move loop ended, what moved (and where to restore it from) is recorded
+        for (const r of retiredPlan.rows) if (r.state === 'removed') st.removed.push(r.relPath);
+        st.retiredPlan = retiredPlan;
+        st.retiredRemoved = retiredPlan.removed || 0;
+        st.cleanupEntries = cleanupEntriesOf(retiredPlan);
+      }
     }
-    for (const r of retiredPlan.rows) if (r.state === 'removed') st.removed.push(r.relPath);
+    for (const r of retiredPlan.rows) if (r.state === 'removed' && !st.removed.includes(r.relPath)) st.removed.push(r.relPath);
     st.retiredPlan = retiredPlan;
     st.retiredRemoved = retiredRemoved;
     st.cleanupEntries = cleanupEntriesOf(retiredPlan);
@@ -800,6 +865,16 @@ export async function runUpdate(argv, {
     st.error = e;
   }
   if (early && early.dry) return { exitCode: early.dry.exitCode, output: lines.join('\n') };
+  if (flags.dryRun) {
+    // a dry run that throws while planning (no claude on PATH, an unreadable input, a protected target)
+    // is a refusal: it still writes nothing — no report, no .foundry/ — and says what it did not check
+    if (st.error) print(st.error instanceof RefusalError ? `refused: ${st.error.message}` : `error: ${st.error.stack || st.error.message}`);
+    print('');
+    print('dry run: nothing was written and no claude command was run.');
+    print('post-update checks not evaluated');
+    print(`cutover: ${st.cutover}`);
+    return { exitCode: 1, output: lines.join('\n') };
+  }
 
   // ── the end: outcome (AC-NPX-11), the report (AC-NPX-2), the last line ─────────────────────────
   if (st.error) {
@@ -831,6 +906,12 @@ export async function runUpdate(argv, {
     }
   } else {
     nextAction = NEXT_ACTION_HANDOFF;
+    // a managed path that is present but not a regular file cannot be reconciled and gives no diagnosis
+    // row: name it, with the remedy, so exit 2 is never an unexplained permanent state
+    const driftedPaths = (st.filePlan || []).filter((f) => f.action === 'drifted').map((f) => f.relPath).filter(safeRelPath);
+    if (outcome === 'attention-needed' && driftedPaths.length > 0) {
+      nextAction = `fix ${driftedPaths.join(', ')} (not a regular file) and rerun npx update-agentic-workspace; then ${NEXT_ACTION_HANDOFF}`;
+    }
   }
 
   let reportPath = null;
