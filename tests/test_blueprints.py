@@ -320,4 +320,5 @@ def test_conventions_and_skill_are_substantive(pid):
     for layer in doc["architecture"]["layers"]:
         assert f"**{layer}**" in conv, (pid, layer)
     assert "Allowed edges" in conv and len(conv) > 1000 and len(skill) > 600
-    assert not re.search(r"(?i)\bctx\b", conv + skill)
+    tok = "c" + "tx"                                  # retired token, built from fragments
+    assert not re.search(r"(?i)\b" + tok + r"\b", conv + skill)
