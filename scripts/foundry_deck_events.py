@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import json
 import re
 import subprocess
@@ -534,6 +535,10 @@ def main(argv=None) -> int:
     e.add_argument("event")
     e.add_argument("--payload", default="{}")
     a = ap.parse_args(argv)
+    import foundry_operating_mode as _om  # gn-17: the CLI is a team-mode verb (module imports stay ungated)
+    refused = _om.gate(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd(), f"foundry_deck_events.py {a.cmd}")
+    if refused is not None:
+        return refused
     try:
         if a.cmd == "parse":
             h = fetch_history(a.issue, a.as_of)

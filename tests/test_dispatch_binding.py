@@ -33,7 +33,7 @@ def ws(tmp_path):
     _init(str(root))
     _init(str(root / "app"))
     (root / ".claude" / "foundry-project.json").write_text(
-        json.dumps({"schema_version": 1, "operating_mode": "team", "github_scope": {"owner": "example-org"}, "repos": {"app": {"path": "app"}}}))
+        json.dumps({"schema_version": 1, "operating_mode": "team", "github_scope": {"owner": "example-org", "planning_repo": "planning"}, "repos": {"app": {"path": "app"}}}))
     (root / ".claude" / "foundry-operators.json").write_text(
         json.dumps({"schema_version": 1, "operators": {"op_lukas": {"name": "L"}}}))
     return root

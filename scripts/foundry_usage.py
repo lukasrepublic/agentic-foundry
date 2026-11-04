@@ -663,6 +663,10 @@ def main(argv=None):
     s.add_argument("--cli-version", required=True)
     s.add_argument("--projects-dir")
     args = p.parse_args(argv)
+    import foundry_operating_mode as _om  # gn-17: the CLI is a team-mode verb (module imports stay ungated)
+    refused = _om.gate(project_root(), f"foundry_usage.py {args.verb}")
+    if refused is not None:
+        return refused
     ds = dataset_dir(args.dataset)
     if not ds:
         print(json.dumps({"error": "no usage.dataset configured (.claude/foundry-project.json) and no --dataset"}))

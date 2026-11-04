@@ -274,7 +274,10 @@ def test_naive_as_of_rejected():
         de.parse([], [], "2026-10-01T00:00:00")
 
 
-def test_cli_parse_uses_adapter(monkeypatch, capsys):
+def test_cli_parse_uses_adapter(monkeypatch, capsys, tmp_path):
+    (tmp_path / ".claude").mkdir()   # gn-17: the CLI is a team-mode verb
+    (tmp_path / ".claude" / "foundry-project.json").write_text('{"operating_mode": "team", "github_scope": {"owner": "example-org", "planning_repo": "planning"}}')
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
     tl, cm = fx("close_not_planned")
 
     class A(Stub):

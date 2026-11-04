@@ -169,7 +169,7 @@ native `/loop` if recurring):
 
 ## Issue-assignment launch (GitHub-native dispatch)
 
-**Team mode only.** In the default single-operator mode the worktree-create hook refuses an issue-assignment manifest (typed `single-operator-mode` line in `.foundry/dispatch.log`); the contract lane is unchanged. Enable team mode with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_operating_mode.py" enable-team` (needs plugin 2.0 or later; see `/foundry:team-mode`).
+**Team mode only.** In the default single-operator mode the worktree-create hook refuses an issue-assignment manifest (typed `single-operator-mode` line in `.foundry/dispatch.log`); the contract lane is unchanged in both modes (a contract manifest that also carries an assignment still writes the gn-11 binding in single-operator mode, intended). Enable team mode with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_operating_mode.py" enable-team` (needs plugin 2.0 or later; see `/foundry:team-mode`).
 
 A GitHub-task dispatch is launched against an explicit **assignment**, written into the dispatch
 manifest. The manifest is required for every such dispatch, single-repo included, so the worker's

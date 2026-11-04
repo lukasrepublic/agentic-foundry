@@ -122,6 +122,25 @@ def test_explicit_and_team_and_team_without_scope(tmp_path):
     assert om.resolve(str(ws)).name == "single-operator"
 
 
+def test_team_with_owner_only_scope_is_single_operator_naming_the_missing_field(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    _write(ws, {"operating_mode": "team", "github_scope": {"owner": "o"}})
+    m = om.resolve(str(ws))
+    assert m.name == "single-operator" and m.source == "team-without-scope"
+    assert "planning_repo" in m.reason
+    _write(ws, {"operating_mode": "team", "github_scope": {"planning_repo": "p"}})
+    assert "owner" in om.resolve(str(ws)).reason
+
+
+def test_resolve_uses_the_capabilities_scope_predicate(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    for scope in ({"owner": "o"}, {"owner": "o", "planning_repo": "p"}, {}, "x", {"owner": "", "planning_repo": "p"}):
+        _write(ws, {"operating_mode": "team", "github_scope": scope})
+        assert (om.resolve(str(ws)).name == "team") == (ghc.load_scope(str(ws))[1] is not None)
+
+
 def test_require_team_text(tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()
@@ -261,13 +280,82 @@ def test_enable_replaces_a_malformed_value_in_place(tmp_path):
     assert om.resolve(str(ws)).name == "team"
 
 
-def test_default_plugin_root_is_this_repo_and_refuses_while_below_2_0(tmp_path, monkeypatch):
-    """With no --plugin-root and no CLAUDE_PLUGIN_ROOT the script's own repo is read; the real tree is < 2.0."""
-    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
-    ver, err = om.plugin_version(None)
-    assert err is None and ver == json.load(open(os.path.join(REPO_ROOT, ".claude-plugin", "plugin.json")))["version"]
-    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", _plugin(tmp_path, "2.1.0"))
-    assert om.plugin_version(None)[0] == "2.1.0"
+def test_default_plugin_root_is_this_repo_and_refuses_while_below_2_0(tmp_path):
+    """No --plugin-root and no CLAUDE_PLUGIN_ROOT: the script's own repo is read (the tree is < 2.0)."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    p = _write(ws, {"schema_version": 1, "github_scope": SCOPE})
+    before = p.read_bytes()
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PLUGIN_ROOT"}
+    real = json.load(open(os.path.join(REPO_ROOT, ".claude-plugin", "plugin.json")))["version"]
+    r = subprocess.run([sys.executable, CLI, "--project-dir", str(ws), "enable-team"],
+                       capture_output=True, text=True, env=env)
+    if om.parse_version(real) < om.MIN_TEAM_VERSION:
+        assert r.returncode == 2 and real in r.stderr
+        assert p.read_bytes() == before
+
+
+def test_plugin_root_precedence_flag_over_env_over_script_location(tmp_path, monkeypatch):
+    flag, env = _plugin(tmp_path, "3.0.0"), _plugin(tmp_path, "2.5.0")
+    real = json.load(open(os.path.join(REPO_ROOT, ".claude-plugin", "plugin.json")))["version"]
+    monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", env)
+    assert om.plugin_version(flag)[0] == "3.0.0"          # flag beats env
+    assert om.plugin_version(None)[0] == "2.5.0"          # env beats the script location
+    monkeypatch.delenv("CLAUDE_PLUGIN_ROOT")
+    assert om.plugin_version(None)[0] == real             # fallback: this script's repo root
+
+
+@pytest.mark.parametrize("ver", ["2.0.0-rc.1", "2.0.0.dev", "2.0.0+build", "2.0", "2.0.0-0", "v2.0.0x"])
+def test_prerelease_or_suffixed_version_never_enables(tmp_path, capsys, ver):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    p = _write(ws, {"github_scope": SCOPE})
+    before = p.read_bytes()
+    gh = Gh()
+    assert _enable(ws, _plugin(tmp_path, ver), gh) == 2
+    assert p.read_bytes() == before and gh.calls == []
+    assert om.parse_version(ver) is None
+
+
+def test_plain_and_v_prefixed_release_versions_parse():
+    assert om.parse_version("2.0.0") == (2, 0, 0) and om.parse_version("v10.1.2") == (10, 1, 2)
+
+
+def test_enable_on_a_team_workspace_is_a_noop_with_no_network(tmp_path, capsys):
+    ws = _team_ws(tmp_path)
+    p = ws / ".claude" / "foundry-project.json"
+    before = p.read_bytes()
+    gh = Gh()
+    assert _enable(ws, _plugin(tmp_path, "2.0.0"), gh) == 0
+    assert "already in team mode" in capsys.readouterr().out
+    assert gh.calls == [] and p.read_bytes() == before
+
+
+def test_enable_four_space_input_is_reserialised_with_keys_preserved(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    orig = {"schema_version": 1, "z": {"k": [1, {"a": None}]}, "github_scope": SCOPE, "a": "x"}
+    p = _write(ws, json.dumps(orig, indent=4) + "\n")
+    assert _enable(ws, _plugin(tmp_path, "2.0.0")) == 0
+    new = json.loads(p.read_text())
+    assert list(new) == list(orig) + ["operating_mode"] and {k: new[k] for k in orig} == orig
+    assert p.read_text().startswith('{\n  "schema_version"')              # 2-space, not the input's 4
+
+
+def test_enable_through_a_symlink_rewrites_the_target(tmp_path):
+    ws = tmp_path / "ws"
+    (ws / ".claude").mkdir(parents=True)
+    real = tmp_path / "shared" / "project.json"
+    real.parent.mkdir()
+    real.write_text(json.dumps({"schema_version": 1, "github_scope": SCOPE}))
+    link = ws / ".claude" / "foundry-project.json"
+    link.symlink_to(real)
+    assert _enable(ws, _plugin(tmp_path, "2.0.0")) == 0
+    assert link.is_symlink() and os.path.realpath(link) == str(real.resolve())
+    assert json.loads(real.read_text())["operating_mode"] == "team"
+    assert sorted(os.listdir(real.parent)) == ["project.json"]               # no stray temp file
+    assert om.main(["--project-dir", str(ws), "disable-team"]) == 0
+    assert link.is_symlink() and json.loads(real.read_text())["operating_mode"] == "single-operator"
 
 
 # --------------------------------------------------------------------------------- disable-team
@@ -320,6 +408,10 @@ def _run(script, args, ws, env, **kw):
     ("foundry_inbox.py", ["scan"], "foundry_inbox.py scan"),
     ("foundry_inbox.py", ["pending"], "foundry_inbox.py pending"),
     ("foundry_leader_board.py", [], "foundry_leader_board.py"),
+    ("foundry_deck_events.py", ["parse", "o/r#1", "--as-of", "2026-11-01T00:00:00Z"], "foundry_deck_events.py parse"),
+    ("foundry_deck_events.py", ["emit", "o/r#1", "ready"], "foundry_deck_events.py emit"),
+    ("foundry_usage.py", ["--dataset", "ds", "attribute"], "foundry_usage.py attribute"),
+    ("foundry_usage.py", ["--dataset", "ds", "bind", "--session", "s", "--issue", "1"], "foundry_usage.py bind"),
 ])
 def test_team_verbs_refuse_in_single_operator_mode_before_any_network_or_write(tmp_path, stub_env, script, args, verb):
     env, log = stub_env
@@ -389,15 +481,17 @@ def test_doctor_operating_mode_row(tmp_path, doc, line):
 
 def test_doctor_stays_green_in_both_modes(tmp_path, stub_env):
     env, _ = stub_env
-    for doc in ({}, {"operating_mode": "team", "github_scope": SCOPE}):
-        ws = tmp_path / f"ws{len(doc)}"
+    for n, doc in enumerate(({}, {"operating_mode": "team", "github_scope": SCOPE})):
+        ws = tmp_path / f"ws{n}"
         ws.mkdir()
         _write(ws, doc)
+        (ws / ".claude" / "foundry-operators.json").write_text(
+            json.dumps({"schema_version": 1, "operators": {"op_demo": {"name": "D"}}}))
         r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "foundry-doctor.py")], capture_output=True,
                            text=True, env=dict(env, CLAUDE_PROJECT_DIR=str(ws)), cwd=str(ws))
-        row = [ln for ln in r.stdout.splitlines() if "operating-mode:" in ln]
-        assert len(row) == 1 and "[XX ]" not in row[0], r.stdout
-        assert "[XX ] github-capabilities" not in r.stdout
+        assert r.stdout.strip().splitlines()[-1] == "DOCTOR-GREEN", r.stdout
+        assert r.returncode == 0
+        assert len([ln for ln in r.stdout.splitlines() if "operating-mode:" in ln]) == 1
 
 
 def test_doctor_skill_lists_the_advisory_row():
@@ -472,14 +566,72 @@ def test_hook_issue_lane_proceeds_in_team_mode(tmp_path):
     assert "single-operator-mode" not in log
 
 
-@pytest.mark.parametrize("mode_doc", [{}, {"operating_mode": "team", "github_scope": SCOPE}])
-def test_hook_contract_lane_identical_in_both_modes(tmp_path, mode_doc):
-    ws = _hook_ws(tmp_path, mode_doc)
-    (ws / "spec.md").write_text("# s\n\n<!-- normative -->\nx\n<!-- /normative -->\n")
-    (ws / "contract.yaml").write_text("spec_ref: spec.md\ntarget_repo: app\n")
-    r, log = _hook(ws, contract_ref="contract.yaml", assignment=_assignment())
-    assert r.returncode != 0 and r.stdout == ""
-    assert "PREFLIGHT-FAIL" in log and "single-operator-mode" not in log
+def _frozen_contract(ws):
+    import foundry_contract as fc
+    (ws / "spec.md").write_text("# demo spec\n\n<!-- normative -->\ndemo body\n<!-- /normative -->\n")
+    sh = fc.spec_sha256(str(ws / "spec.md"))
+    proper = ("spec_ref: spec.md\nspec_sha256: %s\ntarget_repo: app\nscope:\n  allowed_paths:\n    - \"demo/**\"\n"
+              "checkpoints:\n  - ac_id: \"AC-DEMO-1\"\n    surface: \"cli:demo\"\n    locator: \"true\"\n"
+              "    expect: {op: \"non-empty\", baseline: \"pre-change\"}\n") % sh
+    pb = proper.encode()
+    trailer = ("authorized:\n  operator_id: op_test\n  authorized_at: \"2026-01-01T00:00:00Z\"\n  auth_seq: 1\n"
+               "  spec_sha256: %s\n  contract_sha256: %s\n  merge_autonomy_mode: lean\n") % (
+                   sh, fc.contract_sha256_bytes(pb))
+    (ws / "contract.yaml").write_bytes(fc.freeze_proper_and_trailer(pb, trailer))
+
+
+def _contract_run(tmp_path, name, mode_doc, with_assignment):
+    ws = _hook_ws(tmp_path / name, mode_doc) if (tmp_path / name).mkdir() is None else None
+    _frozen_contract(ws)
+    extra = {"assignment": _assignment()} if with_assignment else {}
+    r, log = _hook(ws, contract_ref="contract.yaml", **extra)
+    wsp = str(ws.resolve())
+    lines = [ln.split(" ", 1)[1].replace(wsp, "<ws>") for ln in log.splitlines()]
+    files = sorted(str(p.relative_to(ws)) for p in (ws / ".worktrees").rglob("*") if ".git" not in p.parts) \
+        if (ws / ".worktrees").exists() else []
+    binding = None
+    if r.returncode == 0:
+        gd = subprocess.check_output(["git", "-C", r.stdout.strip(), "rev-parse", "--absolute-git-dir"], text=True).strip()
+        binding = os.path.isfile(os.path.join(gd, "foundry-assignment.json"))
+    return r.returncode, lines, files, binding, (r.stdout.strip() != "")
+
+
+@pytest.mark.parametrize("with_assignment", [False, True])
+def test_hook_contract_lane_success_identical_in_both_modes(tmp_path, with_assignment):
+    solo = _contract_run(tmp_path, "solo", {}, with_assignment)
+    team = _contract_run(tmp_path, "team", {"operating_mode": "team", "github_scope": SCOPE}, with_assignment)
+    assert solo[0] == 0, solo                                  # a contract-lane SUCCESS, not a refusal
+    assert solo == team                                        # exit, log lines, files written, binding
+    assert solo[3] is with_assignment                          # contract+assignment still writes the gn-11 binding
+    assert not any("single-operator-mode" in ln for ln in solo[1])
+
+
+def test_hook_contract_lane_failure_identical_in_both_modes(tmp_path):
+    for name, doc in (("solo", {}), ("team", {"operating_mode": "team", "github_scope": SCOPE})):
+        ws = _hook_ws(tmp_path / name, doc) if (tmp_path / name).mkdir() is None else None
+        (ws / "spec.md").write_text("# s\n\n<!-- normative -->\nx\n<!-- /normative -->\n")
+        (ws / "contract.yaml").write_text("spec_ref: spec.md\ntarget_repo: app\n")
+        r, log = _hook(ws, contract_ref="contract.yaml", assignment=_assignment())
+        assert r.returncode != 0 and r.stdout == ""
+        assert "PREFLIGHT-FAIL" in log and "single-operator-mode" not in log
+
+
+def test_hook_logs_the_resolver_failure_cause(tmp_path):
+    ws = _hook_ws(tmp_path, {})
+    # break the resolver import in a COPY of the plugin tree so the real one is untouched
+    m = {"target_repo": "app", "task": "t1", "agent": "app-engineer", "dispatcher_session_id": "s1",
+         "assignment": _assignment()}
+    (ws / ".foundry" / "dispatch-queue" / "q.json").write_text(json.dumps(m))
+    # the hook inserts the real scripts dir at sys.path[0]; use a copy of the hook tree instead
+    import shutil
+    tree = tmp_path / "plugin"
+    shutil.copytree(os.path.join(REPO_ROOT, "hooks"), tree / "hooks")
+    shutil.copytree(SCRIPTS, tree / "scripts")
+    (tree / "scripts" / "foundry_operating_mode.py").write_text("raise RuntimeError('boom-resolver')\n")
+    r = subprocess.run(["bash", str(tree / "hooks" / "foundry-worktree-create.sh")], input="{}", capture_output=True,
+                       text=True, env=dict(os.environ, CLAUDE_PROJECT_DIR=str(ws)))
+    log = (ws / ".foundry" / "dispatch.log").read_text()
+    assert r.returncode != 0 and "resolver failed" in log and "boom-resolver" in log
 
 
 def test_hook_selftest_still_passes():

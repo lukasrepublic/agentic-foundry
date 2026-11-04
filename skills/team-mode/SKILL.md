@@ -43,14 +43,17 @@ Exit codes: 0 ok, 2 refused, 1 error.
   2. `github_scope` is present and well-formed (owner and planning repo);
   3. the GitHub capability check (`foundry_github_capabilities.py`) is at least `partial` - `none` or
      unreachable refuses; `partial` passes and the uncovered sources are printed.
-  Then it writes `operating_mode: team` atomically, preserving every other key, and prints what now
-  changes. Running it again changes nothing.
+  Then it writes `operating_mode: team` atomically and prints what now changes. The file is re-serialised
+  as 2-space JSON: every key and value and the key order are preserved, but the bytes are not guaranteed
+  identical (a 4-space file is reformatted). A symlinked `foundry-project.json` has its target rewritten.
+  Running it again on a team workspace is a no-op that makes no network call. A pre-release plugin
+  version (for example `2.0.0-rc.1`) never enables team mode.
 - **disable-team** writes `operating_mode: single-operator` and prints what stops.
 
 ## What changes, and what is kept
 
 Enabling turns on the team verbs: `foundry-ticket.py next|claim|reconcile|lead`, `foundry_inbox.py`,
-`foundry_leader_board.py`, the capability check, usage binding on subagent start, and the issue-assignment
+`foundry_leader_board.py`, the `foundry_deck_events.py` and `foundry_usage.py` command-line tools, the capability check, usage binding on subagent start, and the issue-assignment
 dispatch lane. In single-operator mode each of these refuses before any network call or write with:
 `<verb> is a team-mode verb; this workspace is in single-operator mode (default). Enable it with: ...`
 

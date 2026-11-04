@@ -52,8 +52,6 @@ class Mode:
             return "single-operator (default)"
         if self.source == "explicit":
             return "single-operator (explicit)"
-        if self.source == "malformed":
-            return f"single-operator ({self.reason})"
         return f"single-operator ({self.reason})"
 
 
@@ -80,23 +78,24 @@ def _read(project_dir):
     return doc, None
 
 
-def scope_problem(scope, strict=True) -> str | None:
-    """None when `github_scope` is well-formed, else the reason it is not.
+def _ghc():
+    if str(HERE) not in sys.path:
+        sys.path.insert(0, str(HERE))
+    import foundry_github_capabilities as ghc  # lazy: that module imports this one
+    return ghc
 
-    strict (enable-team, and what the capability probe needs): owner AND planning_repo.
-    lenient (resolve): an object naming an owner or a planning_repo -- the shape the team verbs
-    already accept -- so a team workspace is never demoted by a field the verbs do not need."""
+
+def scope_problem(scope) -> str | None:
+    """The reason `github_scope` is not well-formed, else None. The validity predicate is the one
+    `foundry_github_capabilities.load_scope` applies (owner AND planning_repo); this only adds the
+    reason text and the optional-field shape checks used by enable-team."""
     if scope is None:
         return "github_scope is absent"
     if not isinstance(scope, dict):
         return "github_scope is not an object"
-    named = [k for k in ("owner", "planning_repo") if isinstance(scope.get(k), str) and scope[k].strip()]
-    if strict:
-        for k in ("owner", "planning_repo"):
-            if k not in named:
-                return f"github_scope.{k} is missing or not a non-empty string"
-    elif not named:
-        return "github_scope names neither an owner nor a planning_repo"
+    for k in ("owner", "planning_repo"):
+        if not scope.get(k):
+            return f"github_scope.{k} is missing or empty"
     pn = scope.get("project_number")
     if pn is not None and (isinstance(pn, bool) or not isinstance(pn, int) or pn < 1):
         return "github_scope.project_number is not a positive integer"
@@ -116,7 +115,7 @@ def resolve(project_dir) -> Mode:
     doc, err = _read(project_dir)
     if doc is None:
         return Mode(SINGLE, "default", f"unreadable manifest ({err}); defaulting", False)
-    scope_ok = scope_problem(doc.get("github_scope"), strict=False) is None
+    scope_ok = _ghc().load_scope(str(project_dir))[1] is not None   # the ONE predicate (gn-03)
     present = "github_scope" in doc
     if KEY not in doc:
         return Mode(SINGLE, "default", f"{KEY} absent", present)
@@ -127,7 +126,7 @@ def resolve(project_dir) -> Mode:
         if scope_ok:
             return Mode(TEAM, "explicit", f"{KEY} is {TEAM}", True)
         return Mode(SINGLE, "team-without-scope",
-                    f"{KEY} is team but {scope_problem(doc.get('github_scope'), strict=False)}", present)
+                    f"{KEY} is team but {scope_problem(doc.get('github_scope'))}", present)
     return Mode(SINGLE, "malformed", f'malformed value "{_short(v)}"', present)
 
 
@@ -152,7 +151,8 @@ def gate(project_dir, verb: str) -> int | None:
 
 # ------------------------------------------------------------------ version
 def parse_version(text) -> tuple | None:
-    m = re.match(r"\s*v?(\d+)\.(\d+)\.(\d+)", str(text))
+    # exactly MAJOR.MINOR.PATCH: a pre-release or suffix (2.0.0-rc.1, 2.0.0.dev) is NOT >= 2.0.0
+    m = re.fullmatch(r"\s*v?(\d+)\.(\d+)\.(\d+)\s*", str(text))
     return tuple(int(x) for x in m.groups()) if m else None
 
 
@@ -166,14 +166,19 @@ def plugin_version(plugin_root=None) -> tuple[str | None, str | None]:
     except (OSError, ValueError, AttributeError) as e:
         return None, f"cannot read plugin version from {p}: {e}"
     if not isinstance(v, str) or parse_version(v) is None:
-        return None, f"plugin version in {p} is not a semantic version"
+        return None, f"plugin version in {p} is not a plain MAJOR.MINOR.PATCH release version (pre-releases cannot enable team mode)"
     return v, None
 
 
 # ------------------------------------------------------------------ write
 def _write_key(project_dir, value) -> bool:
-    """Set operating_mode atomically. Returns True when the file changed."""
-    p = manifest_path(project_dir)
+    """Set operating_mode atomically. Returns True when the file changed.
+
+    The file is RE-SERIALISED as 2-space JSON (so a 4-space or compact input is reformatted); every key
+    and value is preserved and key order is kept, but the bytes are not guaranteed identical. A symlinked
+    foundry-project.json has its TARGET rewritten (the link stays a link). The temp file and then the
+    directory are fsynced around the rename so the change survives a crash."""
+    p = os.path.realpath(manifest_path(project_dir))
     with open(p, encoding="utf-8") as f:
         raw = f.read()
     doc = json.loads(raw)
@@ -193,6 +198,11 @@ def _write_key(project_dir, value) -> bool:
         except OSError:
             pass
         os.replace(tmp, p)
+        dfd = os.open(d, os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
     except BaseException:
         try:
             os.unlink(tmp)
@@ -264,14 +274,18 @@ def cmd_status(project_dir, plugin_root, as_json, out=None):
 
 ENABLE_NOW = """team mode enabled. Now active: capability check, deck events, usage collection, owned queue
 (foundry-ticket next|claim|reconcile|lead), operator inbox, slim command deck, issue-bound dispatch,
-leader-board. Revert any time with: foundry_operating_mode.py disable-team"""
+leader-board, and the deck-events and usage command-line tools. Revert any time with: foundry_operating_mode.py disable-team"""
 
 DISABLE_NOW = """single-operator mode set. Now stopped: owned queue, operator inbox, issue-bound dispatch,
-usage attribution, leader-board and the GitHub capability check. Kept: github_scope, runtime files and
+usage attribution, leader-board, the deck-events and usage CLIs and the GitHub capability check. Kept: github_scope, runtime files and
 history. Re-enable any time with: foundry_operating_mode.py enable-team"""
 
 
 def cmd_enable(project_dir, plugin_root, runner=None, timeout=30):
+    doc, _ = _read(project_dir)
+    if resolve(project_dir).name == TEAM and isinstance(doc, dict) and doc.get(KEY) == TEAM:
+        print("already in team mode; nothing changed")   # no probe, no network, no write
+        return 0
     ok, why = _eligibility(project_dir, plugin_root)
     if not ok:
         print(f"enable-team refused: {why}", file=sys.stderr)
