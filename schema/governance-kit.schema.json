@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/lukasrepublic/agentic-foundry/schema/governance-kit.schema.json",
+  "title": "Governance kit manifest (governance/kits/<category>/kit.yaml)",
+  "type": "object",
+  "required": ["kit", "version", "category", "rules"],
+  "additionalProperties": false,
+  "properties": {
+    "kit": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+    "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$"},
+    "category": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+    "rules": {"type": "array", "items": {"type": "string", "pattern": "^FG-[A-Z]{2,5}-[0-9]{3}$"}, "description": "Rule ids this kit ships; must equal the ids in rules.yaml."},
+    "checks": {"type": "array", "items": {"type": "string"}, "description": "Shipped check snippets, by path relative to the kit directory."},
+    "templates": {"type": "array", "items": {"type": "string"}},
+    "migrations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["from_id", "to_id", "since"],
+        "additionalProperties": false,
+        "properties": {
+          "from_id": {"type": "string"},
+          "to_id": {"type": "string"},
+          "since": {"type": "string"}
+        }
+      }
+    }
+  }
+}

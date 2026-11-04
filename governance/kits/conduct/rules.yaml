@@ -1,0 +1,47 @@
+kit: conduct
+version: 1.0.0
+rules:
+  - id: FG-CND-001
+    title: Instruction layers resolve most-restrictive-wins
+    statement: When instruction layers conflict (organization, project, personal), an agent MUST follow the most restrictive layer.
+    category: conduct
+    level: 1
+    floor: false
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: declared, ref: governance/README.md}
+    exception: {allowed: true, requires: [reason, owner, expires]}
+    sources: ["Foundry governance design 2026-11-04, section 2.16"]
+  - id: FG-CND-002
+    title: Keep the always-on core short
+    statement: Always-on instructions SHOULD stay short; path-specific rules SHOULD be scoped by path and SHOULD reference live files, not copies.
+    category: conduct
+    level: 1
+    floor: false
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: review-lens, ref: skills/pr-reviewer}
+    exception: {allowed: true, requires: [reason, owner, expires]}
+    sources: ["Foundry governance design 2026-11-04, section 2.16"]
+  - id: FG-CND-003
+    title: Instruction files are advisory
+    statement: Enforcement MUST live in hooks, CI and the merge floor. A rule that matters MUST NOT rely on an instruction file alone.
+    category: conduct
+    level: 1
+    floor: false
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: declared, ref: docs/merge-floor.md}
+    exception: {allowed: true, requires: [reason, owner, expires]}
+    sources: ["Foundry governance design 2026-11-04, section 2.16"]
+  - id: FG-CND-004
+    title: Briefs carry the communication style block
+    statement: Every brief MUST carry the communication style block unless the operator turns it off.
+    category: conduct
+    level: 1
+    floor: false
+    status: active
+    applies_to: {paths: ["**"], blueprints: ["*"]}
+    check: {kind: lint, ref: scripts/foundry_brief.py}
+    exception: {allowed: true, requires: [reason, owner, expires]}
+    sources: ["Foundry governance design 2026-11-04, section 2.16"]
