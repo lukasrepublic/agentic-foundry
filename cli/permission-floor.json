@@ -34,6 +34,11 @@
       "rationale": "status|validate|explain|render-tick-section only read .foundry/operating-model.yaml, the shipped schema and the .foundry/ operator style file (a regular .md or .txt file, at most 4 KiB); the script writes nothing (gv-03)"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_resources.py:*)",
+      "tier": "allow",
+      "rationale": "measures CPU, memory, swap and disk through /proc and statvfs and prints a verdict; writes nothing except the small OOM-baseline file that --reset-oom-baseline names, which the plugin-scripts-allow hook leaves to ask (gv-12)"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-permissions-compile.py --check:*)",
       "tier": "allow",
       "rationale": "read-only drift check over .foundry/permissions.yaml vs .claude/settings.json; never writes"
@@ -237,6 +242,11 @@
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_governance.py:*)",
       "tier": "ask",
       "rationale": "render writes governance/rendered/ and baseline writes governance/local/baselines/; load, validate, applicable, check and exceptions are read-only and run silently through the plugin-scripts-allow hook; no network"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-deck-heavy:*)",
+      "tier": "ask",
+      "rationale": "executes the command it is given under a host-sized flock slot, so it is never silent (gv-12)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_brief.py:*)",

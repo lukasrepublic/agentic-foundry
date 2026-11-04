@@ -27,7 +27,7 @@ session's normal permission mode.
 ALSO NEVER ALLOWED SILENTLY (security review of #286) — the verbs the permission floor tiers `ask` because
 they write to GitHub or redirect writes: `foundry_migrate.py cutover`, `foundry_deck_events.py emit`,
 `foundry_inbox.py check|ack|schedule|resolve`, `foundry-ticket.py claim`,
-`foundry_governance.py render|baseline`, `foundry_usage.py bind|fallback-transcripts` and `ingest|attribute` when `--dataset` is named, and any
+`foundry_governance.py render|baseline`, `foundry_deck_resources.py --reset-oom-baseline`, `foundry-deck-heavy` (runs a command), `foundry_usage.py bind|fallback-transcripts` and `ingest|attribute` when `--dataset` is named, and any
 abbreviation of `--trust-author`. The hook is the only silent-allow mechanism, so without this the `ask` rows
 would never be enforced.
 
@@ -48,7 +48,7 @@ SUFFIXES = (".py", ".sh")
 # to equal a real file, `(` `)` subshells, backticks, redirections, separators, newlines.
 METACHARS = set(";&|<>()`$\\\n\r")
 # Scripts that execute commands taken from their input: never allowed silently.
-EXECUTES_INPUT = {"foundry-verify.py", "foundry-test.sh"}
+EXECUTES_INPUT = {"foundry-verify.py", "foundry-test.sh", "foundry-deck-heavy"}
 # foundry-ticket.py executes input only for these shapes (v2.0.0; security review of #270, R1):
 # `done` runs the ticket's command; `--trust-author` adopts a command from outside the write team.
 _TICKET_EXECUTING = ("done", "--trust-author")
@@ -120,6 +120,8 @@ def allowed(command, root):
         return False
     if name in EXECUTES_INPUT:
         return False
+    if name == "foundry_deck_resources.py" and _names_option(argv[1:], "--reset-oom-baseline"):
+        return False   # the one write this script has (gv-12); the floor row is allow, this verb asks
     if name == "foundry-permissions-compile.py" and any(a == "--root" or a.startswith("--root=") for a in argv[1:]):
         return False
     return True
