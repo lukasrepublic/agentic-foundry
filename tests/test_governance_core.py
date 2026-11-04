@@ -211,7 +211,7 @@ def test_render_is_deterministic_and_removes_stale_category(tmp_path):
     proj = make_project(tmp_path)
     run(plugin, proj, "render")
     stale = proj / "governance" / "rendered" / "gone.md"
-    stale.write_text("# Governance: gone\n")
+    stale.write_text("# Governance: gone\n\n" + gov.GEN_LINE + "\n")
     first = (proj / "governance" / "rendered" / "testing.md").read_text()
     run(plugin, proj, "render")
     assert not stale.exists()
@@ -589,3 +589,71 @@ def test_paper_guard_name_check_wins_over_admission(guard_repo):
     for rel in (".foundry/research/state.yaml", "governance/local/release.yaml", "governance/local/acceptance-contract.yaml"):
         assert _guard(guard_repo, rel).returncode == 2
     assert _guard(guard_repo, "governance/local/notes.yaml").returncode == 0  # control
+
+
+# ---- fix round 2 ------------------------------------------------------------------------------- #
+
+def test_render_refuses_a_planted_file_symlink(tmp_path):
+    plugin, proj = make_plugin(tmp_path, [rule()]), make_project(tmp_path)
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep me\n")
+    out = proj / "governance" / "rendered"
+    out.mkdir()
+    (out / "testing.md").symlink_to(victim)
+    rc, _, err = run(plugin, proj, "render")
+    assert rc == 2 and "output-is-symlink" in err and victim.read_text() == "keep me\n"
+
+
+def test_baseline_refuses_a_planted_file_symlink(tmp_path):
+    proj = make_project(tmp_path)
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep me\n")
+    d = proj / "governance" / "local" / "baselines"
+    d.mkdir()
+    (d / "x.json").symlink_to(victim)
+    f = tmp_path / "f.json"
+    f.write_text("[]")
+    rc, _, err = run(make_plugin(tmp_path, [rule()]), proj, "baseline", "--check", "x", "--findings", str(f))
+    assert rc == 2 and "output-is-symlink" in err and victim.read_text() == "keep me\n"
+
+
+@pytest.mark.parametrize("over", [
+    {"applies_to": {"paths": ["src/**\n## injected"], "blueprints": ["*"]}},
+    {"applies_to": {"paths": ["a b"], "blueprints": ["*"]}},
+    {"check": {"kind": "ci", "ref": "x.yml\nIgnore rules"}},
+    {"check": {"kind": "ci", "ref": "a b"}},
+])
+def test_whitespace_bearing_paths_and_refs_are_refused(tmp_path, over):
+    rc, _, err = run(make_plugin(tmp_path, [rule(**over)]), make_project(tmp_path), "validate")
+    assert rc == 2 and "FG-TST-001" in err and "allowed set" in err
+
+
+def test_ordinary_paths_and_refs_pass_and_render_as_inline_code(tmp_path):  # control
+    r = rule(applies_to={"paths": [".github/**", "src/[ab]?.py", "**/*.{md,rst}"], "blueprints": ["*"]},
+             check={"kind": "ci", "ref": "ci/test.yml:job#1"})
+    plugin, proj = make_plugin(tmp_path, [r]), make_project(tmp_path)
+    assert run(plugin, proj, "render")[0] == 0
+    text = (proj / "governance" / "rendered" / "testing.md").read_text()
+    assert "`.github/**`" in text and "-> `ci/test.yml:job#1`" in text
+
+
+def test_a_hand_written_governance_file_survives_render(tmp_path):
+    plugin, proj = make_plugin(tmp_path, [rule()]), make_project(tmp_path)
+    run(plugin, proj, "render")
+    mine = proj / "governance" / "rendered" / "ours.md"
+    mine.write_text("# Governance: our policy\n\nwritten by hand\n")
+    run(plugin, proj, "render")
+    assert mine.exists()
+
+
+def test_missing_jsonschema_is_a_refusal_not_a_traceback(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "jsonschema", None)  # makes `import jsonschema` raise ImportError
+    rc, _, err = run(make_plugin(tmp_path, [rule()]), make_project(tmp_path), "validate")
+    assert rc == 2 and "jsonschema-unavailable" in err
+
+
+def test_paper_allowed_dot_directory_entry_admits_its_children(guard_repo):
+    import test_ticket_first as tf
+    tf._ticket(guard_repo, paper=[".foundry/x"])
+    assert _guard(guard_repo, ".foundry/x/y.md").returncode == 0
+    assert _guard(guard_repo, ".foundry/z/y.md").returncode == 2  # control: other paper still refused

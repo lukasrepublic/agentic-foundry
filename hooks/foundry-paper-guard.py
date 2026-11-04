@@ -62,7 +62,10 @@ def _is_paper(rel: Path) -> bool:
 def _allowed(rel: Path, allowed: list) -> bool:
     rel_s = _key(rel.as_posix())
     for a in allowed:
-        a = _key(str(a).strip().strip("/").lstrip("./"))
+        a = str(a).strip()
+        while a.startswith("./"):
+            a = a[2:]
+        a = _key(a.strip("/"))
         if not a:
             continue
         if rel_s == a or rel_s.startswith(a + "/"):
