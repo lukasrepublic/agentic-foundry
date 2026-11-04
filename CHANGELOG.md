@@ -46,7 +46,7 @@ default path.
 - `scripts/foundry-delivery-metrics.py` — one measured line per repo per week (paper:code,
   PRs merged, lead time; frustration and silent-yield rates from transcripts when given).
   Replaces status reports.
-- One operating mode: every workspace is a team, and a solo developer is a team of one; the GitHub-backed verbs need a well-formed `github_scope` in `.claude/foundry-project.json` (set by `/foundry:init`) and otherwise refuse with `github-scope-missing`.
+- One operating mode: every workspace is a team, and a solo developer is a team of one; the GitHub-backed verbs need a well-formed `github_scope` in `.claude/foundry-project.json` (set by `/foundry:init`) and otherwise refuse with `github-scope-missing`. A workspace that already carries a `github_scope` gets the GitHub-backed surfaces (usage-bind hook, doctor GitHub probes, issue-assignment lane) on upgrade; removing `github_scope` turns them off (no new switch).
 - `context/operating-model.md` — the whole model on one page; `cli/templates/CLAUDE.md.tmpl`
   and `context/branch-discipline.md` rewritten to it.
 - Unreleased (gn-14): `scripts/foundry_migrate.py inventory|preview|cutover` — artifact disposition and

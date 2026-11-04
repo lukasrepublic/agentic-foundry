@@ -361,8 +361,8 @@ def load_scope(project_dir):
     cfg = manifest.get("github_scope")
     if not isinstance(cfg, dict) or not cfg.get("owner") or not cfg.get("planning_repo"):
         return manifest, None
-    if not isinstance(cfg["owner"], str) or not re.fullmatch(r"[A-Za-z0-9-]+", cfg["owner"]):
-        return manifest, None       # a config-sourced owner never reaches a gh argument unless it is a plain login
+    if not isinstance(cfg["owner"], str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", cfg["owner"]):
+        return manifest, None       # a config-sourced owner never reaches a gh argument unless it is a plain login (never starting with a hyphen)
     ops = cfg.get("operators")
     if ops is not None and not isinstance(ops, dict):
         return manifest, None
