@@ -29,9 +29,9 @@
     },
     "claude-plugin": {
       "0.1.0": {
-        "sha256": "5bb372f4458c4dc1fdc1c53dd05c7e26fce4c62b4b63127aeb1f4d7342a0f98a",
-        "blueprints_sha256": "eeecf56323693fc1bc2ccf883eb84e2fa1a6225b5ab0bebf3b103ffbb07064ad",
-        "standing_versions_sha256": "88d794f7f881b6919ce6c7de40d99f6daf548c30c52f623ff69d1b53fb473f9e"
+        "sha256": "eea41c3f41fa06da362f457a8909d05bc82a3588525be65a7e7149013ddd71f3",
+        "blueprints_sha256": "68f837813d84a814d51b55683b079fa9aa2f585c2a1374e8c889f4cd37ee2e43",
+        "standing_versions_sha256": "9674068c1a47687646d98febff8e2ae29d7fc9bd59803189d9d6a636513ea484"
       }
     },
     "cli-tool": {
@@ -69,7 +69,7 @@
         "standing_versions_sha256": "497eb46644389d228e1204dbdd966895a62dedc291e920692205b07f358c0159"
       },
       "0.2.0": {
-        "sha256": "d1c9414aca7e9bb23c0bbe2903c03046db1a64464f1c875a1173efb250c617d4",
+        "sha256": "58788a08fd7c86c7f5194abfaf13202cbf588464e47991626d9a2feb2c6507b6",
         "blueprints_sha256": "2306be19042f51f6ce7ea88347fb3d2d2fb3201ab8b52d705cadeda3d37ee790",
         "standing_versions_sha256": "497eb46644389d228e1204dbdd966895a62dedc291e920692205b07f358c0159"
       }

@@ -1,33 +1,24 @@
-# claude-plugin — standing-versions pin BOM (gv-08).
+# claude-plugin -- standing-versions pin BOM (gv-08).
 #
-# Research timestamp: 2026-11-04. Every pin below is the vendor's CURRENT STABLE release on that date,
-# read from the PyPI JSON API (https://pypi.org/pypi/<package>/json, `info.version`) and, for the
-# interpreter line, the python.org release schedule; exact pins, nothing floating. Pins are
-# point-in-time: re-run this research quarterly and before any infra-upgrade cycle; each delta is a
-# deliberate, reviewed upgrade (docs/standing-versions governance), never drift.
-# Runtime library dependencies are pinned by the committed `uv.lock` (enforced by `uv sync --locked`);
-# only the TOOLCHAIN whose version changes a verdict is catalogued here.
+# Research timestamp: 2026-11-04. Only what THIS kind of repository uses is pinned (python scripts +
+# pytest suite + a node CLI); there is no pyproject/uv/ruff/mypy here. Sources and previous versions:
+# see RESEARCH.md beside this file. Exact pins, nothing floating; point-in-time -- re-run quarterly and
+# before any upgrade cycle, each delta a deliberate reviewed upgrade.
 pins_valid_as_of: "2026-11-04"
 
 pins:
   - kind: python_interpreter
     subject: cpython
     python_version_file: "3.13"
-  - kind: python_requires
-    subject: project-metadata
-    requires_python: ">=3.11"
-  - kind: pypi_package
-    subject: uv
-    version: "0.13.7"
-  - kind: pypi_package
-    subject: ruff
-    version: "0.17.3"
-  - kind: pypi_package
-    subject: mypy
-    version: "2.4.1"
   - kind: pypi_package
     subject: pytest
     version: "9.2.0"
   - kind: pypi_package
-    subject: pytest-cov
-    version: "7.1.0"
+    subject: PyYAML
+    version: "6.0.3"
+  - kind: pypi_package
+    subject: jsonschema
+    version: "4.26.0"
+  - kind: node_runtime
+    subject: nodejs-lts
+    version: "26.13.0"

@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import subprocess
 
 import pytest
@@ -65,7 +66,8 @@ def test_missing_block_fails_naming_it(pid, block):
     del doc[block]
     with pytest.raises(sp.StackProfileError) as e:
         sp.validate_profile(doc, plugin_root=REPO_ROOT)
-    assert repr(block) in str(e.value) or block in str(e.value)
+    msg = str(e.value)
+    assert f"profile {pid}:" in msg and f"'{block}' is a required property" in msg
 
 
 def test_closed_kit_set_and_level_range_enforced():
@@ -224,8 +226,14 @@ def test_new_profiles_carry_timestamped_exact_pins(pid):
     assert man["pins_valid_as_of"] == "2026-11-04" and comp["pins_valid_as_of"] == "2026-11-04"
     for pin in man["pins"]:
         if pin["kind"] == "pypi_package":
-            assert pin["version"].count(".") == 2 and pin["version"][0].isdigit()   # exact, no range
-    assert "pypi.org" in open(os.path.join(d, "manifest.yaml"), encoding="utf-8").read()
+            assert re.fullmatch(r"\d+\.\d+\.\d+", pin["version"]), pin
+        if pin["kind"] == "node_runtime":
+            assert re.fullmatch(r"\d+\.\d+\.\d+", pin["version"]), pin
+    research = open(os.path.join(d, "RESEARCH.md"), encoding="utf-8").read()
+    assert "2026-11-04" in research and "previous version" in research
+    for pin in man["pins"]:
+        if "version" in pin:
+            assert pin["version"] in research, (pid, pin["subject"])
 
 
 def test_relock_behaviour_unchanged_for_new_digest_inputs(tmp_path):
@@ -236,3 +244,80 @@ def test_relock_behaviour_unchanged_for_new_digest_inputs(tmp_path):
     assert set(lock["profiles"][0]) == {"id", "version", "sha256", "blueprints_sha256", "standing_versions_sha256"}
     assert sp.relock_lock(proj, root=REPO_ROOT, plugin_root=REPO_ROOT) == [("cli-tool", "0.1.0", "0.1.0")]
     assert len(sp.resolve_lock(proj, root=REPO_ROOT, plugin_root=REPO_ROOT)) == 1
+
+
+# ── fix round 1 ──────────────────────────────────────────────────────────────────────────────────────
+
+def test_duplicate_top_level_key_is_refused(tmp_path):
+    src = os.path.join(PACKS, "cli-tool", "stack-profile.yaml")
+    text = open(src, encoding="utf-8").read()
+    dup = text + "\nsurfaces:\n  - cli\n"           # second copy of a top-level block
+    path = tmp_path / "stack-profile.yaml"
+    path.write_text(dup, encoding="utf-8")
+    with pytest.raises(sp.StackProfileError, match="duplicate key 'surfaces'"):
+        sp.load_yaml_unique(dup)
+    assert sp.main(["--validate", str(path)]) == 2
+    sp.load_yaml_unique(text)                        # control: the shipped file is clean
+
+
+@pytest.mark.parametrize("pid", IDS)
+def test_no_shipped_profile_has_duplicate_keys(pid):
+    with open(os.path.join(PACKS, pid, "stack-profile.yaml"), encoding="utf-8") as f:
+        sp.load_yaml_unique(f.read())
+
+
+def test_catch_all_python_repo_with_unlisted_framework_lands_on_python_uv_lib(profiles):
+    rows = bp.rank(profiles, _facts("unlisted-python-framework"))
+    assert rows[0]["id"] == "python-uv-lib" and rows[0]["above_threshold"]
+    assert [r["id"] for r in rows if r["above_threshold"]] == ["python-uv-lib"]
+    assert "CATCH-ALL" in open(os.path.join(PACKS, "python-uv-lib", "stack-profile.yaml"), encoding="utf-8").read()
+
+
+def test_detect_without_positive_signal_refused():
+    doc = copy.deepcopy(_load("cli-tool"))
+    for s in doc["detect"]["signals"]:
+        s["weight"] = -abs(s["weight"])
+    with pytest.raises(sp.StackProfileError, match="no positive-weight signal"):
+        sp.validate_profile(doc, plugin_root=REPO_ROOT)
+
+
+def test_detect_duplicate_signal_refused():
+    doc = copy.deepcopy(_load("cli-tool"))
+    doc["detect"]["signals"].append(dict(doc["detect"]["signals"][0]))
+    with pytest.raises(sp.StackProfileError, match="duplicate signal"):
+        sp.validate_profile(doc, plugin_root=REPO_ROOT)
+
+
+@pytest.mark.parametrize("bad", ["src/ **", "a\tb", "x||y", "a\x00b", " "])
+def test_design_required_paths_glob_dialect_enforced(bad):
+    doc = copy.deepcopy(_load("cli-tool"))
+    doc["governance"]["design_required_paths"].append(bad)
+    with pytest.raises(sp.StackProfileError):
+        sp.validate_profile(doc, plugin_root=REPO_ROOT)
+    assert not bp.valid_glob(bad)
+    assert all(bp.valid_glob(g) for g in _load("claude-plugin")["governance"]["design_required_paths"])
+
+
+def test_claude_plugin_recipe_matches_this_repository():
+    doc = _load("claude-plugin")
+    assert doc["test_recipe"]["unit"] == "python3 -m pytest tests/ -q"
+    assert doc["test_recipe"]["e2e"] == "node --test cli/test/"
+    assert "claude plugin validate ." == doc["static_validation"]["build"]
+    strat = open(os.path.join(PACKS, "claude-plugin", doc["test_strategy"]), encoding="utf-8").read()
+    for cmd in (doc["test_recipe"]["unit"], doc["test_recipe"]["integration"], doc["test_recipe"]["e2e"],
+                doc["static_validation"]["build"]):
+        assert cmd in strat, cmd
+    man = yaml.safe_load(open(os.path.join(PACKS, "claude-plugin", "standing-versions", "manifest.yaml")))
+    subjects = {p["subject"] for p in man["pins"]}
+    assert subjects == {"cpython", "pytest", "PyYAML", "jsonschema", "nodejs-lts"}
+
+
+@pytest.mark.parametrize("pid", ("service-event-driven", "cli-tool", "claude-plugin", "data-pipeline"))
+def test_conventions_and_skill_are_substantive(pid):
+    doc = _load(pid)
+    conv = open(os.path.join(PACKS, pid, "conventions.md"), encoding="utf-8").read()
+    skill = open(os.path.join(PACKS, pid, doc["implementation_skills"][0]), encoding="utf-8").read()
+    for layer in doc["architecture"]["layers"]:
+        assert f"**{layer}**" in conv, (pid, layer)
+    assert "Allowed edges" in conv and len(conv) > 1000 and len(skill) > 600
+    assert not re.search(r"(?i)\bctx\b", conv + skill)

@@ -72,45 +72,6 @@ readiness_checklist: blueprints/readiness-checklist.md
 test_strategy: blueprints/test-strategy.md
 
 
-# ── gv-08: blueprint-kit extension — governance selection, detection signatures, surfaces ──
-# `matches` above is the DEPRECATED alias of `detect` (still validates); `detect` is evaluated by
-# foundry_blueprint.rank, `governance` is the authority over the prose security_checklist.
-governance:
-  kits:
-    product: {level: 1}
-    architecture: {level: 2}
-    stack: {level: 2}
-    security: {level: 3}
-    contracts: {level: 1}
-    quality: {level: 2}
-    delivery: {level: 3}
-    operations: {level: 3}
-    observability: {level: 2}
-    cost: {level: 3}
-    compliance: {level: 2}
-    exceptions: {level: 2}
-    conduct: {level: 1}
-  design_required_paths:
-    - "terraform/**"
-    - "gitops/**"
-    - "**/karpenter*"
-
-surfaces:
-  - workflows
-
-detect:
-  confidence_threshold: 0.5
-  signals:
-    - {kind: iac, pattern: "*.tf|*.tofu", weight: 3}
-    - {kind: lockfile, pattern: ".terraform.lock.hcl", weight: 1}
-    - {kind: iac, pattern: "*karpenter*", weight: 3}
-    - {kind: iac, pattern: "Chart.yaml|kustomization.yaml", weight: 1}
-    - {kind: iac, pattern: "argocd/**|gitops/**", weight: 2}
-
-readiness_checklist: blueprints/readiness-checklist.md
-test_strategy: blueprints/test-strategy.md
-
-
 architecture:
   layers:
     - network        # VPC, subnets, security groups, NAT — the foundational network fabric.

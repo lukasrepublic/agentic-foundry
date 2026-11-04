@@ -242,7 +242,7 @@
             "conduct": {"$ref": "#/definitions/kit_selection"}
           }
         },
-        "design_required_paths": {"type": "array", "items": {"type": "string", "minLength": 1}}
+        "design_required_paths": {"type": "array", "items": {"type": "string", "minLength": 1, "pattern": "^[^\\s\\u0000-\\u001f\\u007f]+$"}}
       }
     },
     "surfaces": {

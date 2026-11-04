@@ -60,48 +60,6 @@ readiness_checklist: blueprints/readiness-checklist.md
 test_strategy: blueprints/test-strategy.md
 
 
-# ── gv-08: blueprint-kit extension — governance selection, detection signatures, surfaces ──
-# `matches` above is the DEPRECATED alias of `detect` (still validates); `detect` is evaluated by
-# foundry_blueprint.rank, `governance` is the authority over the prose security_checklist.
-governance:
-  kits:
-    product: {level: 2}
-    architecture: {level: 2}
-    stack: {level: 2}
-    security: {level: 2}
-    contracts: {level: 2}
-    quality: {level: 2}
-    delivery: {level: 2}
-    operations: {level: 2}
-    observability: {level: 2}
-    ux: {level: 2}
-    data: {level: 2}
-    cost: {level: 1}
-    exceptions: {level: 1}
-    conduct: {level: 1}
-  design_required_paths:
-    - "src/api/**"
-    - "src/web/routes/**"
-    - "migrations/**"
-    - "openapi/**"
-
-surfaces:
-  - ui
-  - api
-
-detect:
-  confidence_threshold: 0.5
-  signals:
-    - {kind: manifest, pattern: "package.json", weight: 2}
-    - {kind: lockfile, pattern: "package-lock.json|pnpm-lock.yaml|yarn.lock", weight: 1}
-    - {kind: dependency, pattern: "fastify|next|vite|express|react", weight: 3}
-    - {kind: manifest, pattern: "tsconfig.json", weight: 1}
-    - {kind: dependency, pattern: "commander|yargs|oclif", weight: -4}
-
-readiness_checklist: blueprints/readiness-checklist.md
-test_strategy: blueprints/test-strategy.md
-
-
 architecture:
   layers:
     - domain

@@ -343,6 +343,16 @@ def glob_match(pattern, path):
     return False
 
 
+def valid_glob(pattern):
+    """True iff `pattern` is well-formed in the dialect glob_match evaluates: non-empty, no whitespace or
+    control characters, and no empty `|` alternative."""
+    if not isinstance(pattern, str) or not pattern:
+        return False
+    if any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in pattern):
+        return False
+    return all(alt for alt in pattern.split("|"))
+
+
 def _norm_dep(name):
     return re.sub(r"[-_.]+", "-", str(name).strip().lower())
 

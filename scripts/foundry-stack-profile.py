@@ -365,9 +365,60 @@ def validate_profile(doc, *, plugin_root=None):
         jsonschema.validate(doc, load_schema(plugin_root))
     except jsonschema.ValidationError as e:
         loc = "/".join(str(p) for p in e.absolute_path) or "<root>"
-        raise StackProfileError(f"profile schema violation at {loc}: {e.message}")
+        pid = doc.get("id", "<unknown>") if isinstance(doc, dict) else "<unknown>"
+        raise StackProfileError(f"profile {pid}: schema violation at {loc}: {e.message}")
     validate_infra_binding(doc)
+    validate_gv08_semantics(doc)
     return True
+
+
+def validate_gv08_semantics(doc):
+    """gv-08 checks JSON Schema cannot express: a `detect` block needs >=1 positive-weight signal (else it
+    can never reach its threshold) and no duplicate (kind, pattern) signals; every `design_required_paths`
+    entry must be valid in the glob dialect `foundry_blueprint.glob_match` evaluates."""
+    pid = doc.get("id", "<unknown>")
+    det = doc.get("detect")
+    if isinstance(det, dict):
+        sigs = det.get("signals", [])
+        if not any(s.get("weight", 0) > 0 for s in sigs):
+            raise StackProfileError(f"profile {pid}: `detect` has no positive-weight signal (can never match)")
+        seen = set()
+        for s in sigs:
+            key = (s.get("kind"), s.get("pattern"))
+            if key in seen:
+                raise StackProfileError(f"profile {pid}: `detect` has a duplicate signal {key[0]}:{key[1]!r}")
+            seen.add(key)
+    gov = doc.get("governance")
+    if isinstance(gov, dict):
+        bp = _blueprint_module()
+        for g in gov.get("design_required_paths", []):
+            if not bp.valid_glob(g):
+                raise StackProfileError(
+                    f"profile {pid}: `governance.design_required_paths` entry {g!r} is not a valid glob "
+                    "(no whitespace/control characters, no empty alternatives)")
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """SafeLoader that REFUSES duplicate mapping keys (PyYAML silently keeps the last one, which let a
+    pasted-twice block ship unnoticed)."""
+
+
+def _construct_unique_mapping(loader, node, deep=False):
+    seen = set()
+    for key_node, _ in node.value:
+        key = loader.construct_object(key_node, deep=True)
+        if key in seen:
+            raise StackProfileError(f"duplicate key {key!r} in profile YAML (line {key_node.start_mark.line + 1})")
+        seen.add(key)
+    return yaml.SafeLoader.construct_mapping(loader, node, deep=deep)
+
+
+_UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique_mapping)
+
+
+def load_yaml_unique(stream):
+    """yaml.safe_load that raises StackProfileError on a duplicate mapping key at any depth."""
+    return yaml.load(stream, Loader=_UniqueKeyLoader)
 
 
 # ── content hash + path resolution (D4 — packs/ tree only, never the bundle) ──────────────────────────
@@ -407,7 +458,7 @@ def load_profile(id, *, root=None, plugin_root=None):
         raise StackProfileError(f"profile {id!r}: no profile at {path}")
     try:
         with open(path, encoding="utf-8") as f:
-            doc = yaml.safe_load(f)
+            doc = load_yaml_unique(f)
     except yaml.YAMLError as e:
         raise StackProfileError(f"profile {id!r}: malformed YAML in {path}: {e}")
     validate_profile(doc, plugin_root=plugin_root)
@@ -814,7 +865,7 @@ def main(argv=None):
             tgt = args.validate
             if os.path.isfile(tgt):
                 with open(tgt, encoding="utf-8") as f:
-                    doc = yaml.safe_load(f)
+                    doc = load_yaml_unique(f)
                 validate_profile(doc)
                 print(f"profile valid: {tgt}")
             else:
