@@ -375,3 +375,43 @@ def test_item4_secret_refused(cmd):
 def test_item4_secret_control_admitted(cmd):
     r = secret(cmd)
     assert r.returncode == 0, (cmd, r.stdout, r.stderr)
+
+
+# ------------------------------------------------------------------------------------------ 5 claims: draft-then-ready, pr new, REST
+from test_claims_expiry import gd, refused_claim, set_claim, set_ticket, team  # noqa: E402,F401
+
+CLAIM_ROUTES = [
+    "gh pr ready",
+    "gh pr ready 12",
+    "gh pr ready -R example-org/app 12",
+    "gh pr new --title t --body b",
+    "gh api repos/example-org/app/pulls -X POST -f title=t -f head=b -f base=main",
+    "gh api repos/example-org/app/pulls --method POST -f title=t",
+    "gh api /repos/example-org/app/pulls -f title=t -f head=b -f base=main",       # a field implies POST
+    "gh api repos/example-org/app/pulls -XPOST -F draft=false -f title=t",
+]
+CLAIM_ADMITTED = [
+    "gh pr ready --undo 12",
+    "gh pr new --draft --title t",
+    "gh api repos/example-org/app/pulls",                                          # a GET
+    "gh api repos/example-org/app/pulls -X GET",
+    "gh api repos/example-org/app/pulls -X POST -F draft=true -f title=t",
+    "gh api repos/example-org/app/issues -X POST -f title=t",                      # not the pulls route
+    "gh pr list",
+    "gh pr view 12",
+]
+
+
+@pytest.mark.parametrize("cmd", CLAIM_ROUTES)
+def test_item5_unclaimed_routes_are_refused_and_a_live_claim_admits(team, cmd):
+    set_ticket(team)
+    assert refused_claim(gd(team, cmd)), cmd
+    set_claim(team, age=60)
+    assert gd(team, cmd).returncode == 0, cmd
+
+
+@pytest.mark.parametrize("cmd", CLAIM_ADMITTED)
+def test_item5_control_admitted_without_a_claim(team, cmd):
+    set_ticket(team)
+    r = gd(team, cmd)
+    assert r.returncode == 0, (cmd, r.stdout, r.stderr)
