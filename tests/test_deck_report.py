@@ -35,6 +35,7 @@ def tick(**over):
         "building": ["Faster login check"],
         "needs_you": [],
         "ledger": ["Merged the cache fix"],
+        "cost": {"agents_started": 1, "longest_agent_calls": 20, "items_closed": 2},
     }
     t.update(over)
     return t
@@ -61,7 +62,9 @@ def run(proj, t, *extra):
 
 
 def lines(text):
-    return text.rstrip("\n").split("\n")
+    """The report lines that count toward max_lines: the S5 cost line is a trailer and is left out."""
+    out = text.rstrip("\n").split("\n")
+    return out[:-1] if out and out[-1].startswith("agents started ") else out
 
 
 def is_heading(line, title):
@@ -178,7 +181,7 @@ def test_control_and_format_characters_are_stripped_from_every_field(proj):
     rc, out, _ = run(proj, t)
     assert rc == 0
     assert all(c not in out for c in ("\x1b", "‮", "​"))
-    assert len(lines(out)) == out.count("\n")                      # no embedded line break forged a line
+    assert len(out.rstrip("\n").split("\n")) == out.count("\n")                      # no embedded line break forged a line
 
 
 def test_long_fields_are_cut(proj):
@@ -587,3 +590,11 @@ def test_a_broken_policy_is_a_named_refusal(proj):
 
 def test_the_script_source_has_no_retired_token():
     assert ("c" + "t" + "x") not in SCRIPT.read_text().lower()
+
+
+def test_a_default_size_report_plus_the_cost_line_renders(proj):
+    rc, out, err = run(proj, tick())
+    assert rc == 0, err
+    ls = out.rstrip("\n").split("\n")
+    assert ls[-1] == "agents started 1 | longest agent 20 calls | items closed 2"
+    assert len(ls) - 1 <= DEFAULT_MAX and len(ls) == len(lines(out)) + 1

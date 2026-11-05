@@ -37,6 +37,10 @@
           "anyOf": [{"const": "auto"}, {"type": "integer", "minimum": 1, "maximum": 64}],
           "default": "auto", "description": "B2 tunable size; auto = from measured CPU and memory."
         },
+        "max_agent_calls": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 150, "description": "S5 rule 2: tool calls after which an agent ends and writes a state note."},
+        "max_wait_s": {"type": "integer", "minimum": 1, "maximum": 3600, "default": 60, "description": "S5 rule 3: the longest an agent waits on CI, a queue or a rollout, in seconds."},
+        "note_max_tokens": {"type": "integer", "minimum": 100, "maximum": 20000, "default": 2000, "description": "S5 rule 2: the largest state note, in tokens."},
+        "stall_after_ticks": {"type": "integer", "minimum": 1, "maximum": 20, "default": 3, "description": "S5 rule 8: consecutive counted reports with N > 0 and K = 0 that raise cost-without-progress."},
         "resource_check": {"type": "boolean", "const": true, "description": "FLOOR (B2): measure the machine every tick."},
         "workflow_size_source": {"type": "string", "const": "smallest", "description": "FLOOR (B8): the smaller of the session setting and the tick prompt wins."}
       }

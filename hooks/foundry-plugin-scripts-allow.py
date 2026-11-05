@@ -141,6 +141,10 @@ def allowed(command, root):
         return False
     if name == "foundry_governance.py" and "discover" in argv[1:] and _names_option(argv[1:], "--out"):
         return False   # gv-15: `discover --out` writes a file; the verb is otherwise read-only, so only that shape asks
+    if name == "foundry_deck_report.py" and _names_option(argv[1:], "--append-cost"):
+        return False   # dl-14: --append-cost writes the cost log; the plain `--in` render and `state` stay silent
+    if name == "deck-cost-census.py" and any(_names_option(argv[1:], o) for o in ("--append", "--repo", "--prs")):
+        return False   # dl-14: --append writes a cost log; --repo runs gh; --prs reads a named file. The plain census and --stall-check stay silent
     if name == "foundry_deck_resources.py" and (_names_option(argv[1:], "--reset-oom-baseline")
                                                 or _names_option(argv[1:], "--from-json")):
         return False   # the one write this script has, and the fixture-file read (gv-12): both ask

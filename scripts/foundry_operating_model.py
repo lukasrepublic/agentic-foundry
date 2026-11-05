@@ -43,7 +43,32 @@ import yaml
 HERE = Path(__file__).resolve().parent
 SCHEMA_PATH = HERE.parent / "schema" / "operating-model.schema.json"
 POLICY_REL = Path(".foundry") / "operating-model.yaml"
-SECTIONS = ("A1", "A5", "A6", "B1", "B7", "B8", "B9", "C1", "D2", "E1", "E2")
+SECTIONS = ("A1", "A5", "A6", "B1", "B7", "B8", "B9", "C1", "D2", "E1", "E2", "S5")
+
+S5_TEXT = """\
+§5 TOKEN COST: speed comes from parallel ATOMS, never from more or longer agents.
+1. Every subagent brief carries "Deliverable: <one PR head, one spec draft, or one recorded check>"
+   and "Done when: <condition>". Label each subagent <kind>:<atom-or-PR> (build:, review:, fix:, ...).
+2. Every brief tells the agent to end after {calls} tool calls by writing a state note of at most {tokens}
+   tokens (branch, head sha, done, next step) to <deck job dir>/notes/<atom-or-PR>.md. A continuation
+   agent gets that one note's path and no other note.
+3. No agent waits more than {wait} seconds on CI, the merge queue, a rollout, a drill or an observation
+   window. It ends after recording what to check and when. The next tick, or a wake-up the deck
+   creates and deletes after it fires, does the check.
+4. At most one build: agent per atom at a time, and at most one review: agent per PR at a time
+   (fix rounds per §4). Every ready atom is still dispatched (§4).
+5. The tick reads files and PR states itself, through commands that print a count or a short
+   summary. Start no agent whose only output is a read (review: agents excepted).
+6. Before arming a deck, count this PC's live claims titled "deck:" (scripts/claims.sh). With two or
+   more, do not arm; report deck-slot-full. Every deck claim title starts with "deck:".
+7. Every tick report carries one line:
+   "agents started N | longest agent C calls | items closed K"
+   (K = PRs merged + atoms authorized since the previous tick). Append it to
+   <deck job dir>/cost-reports.log.
+8. {ticks} consecutive reports with N > 0 and K = 0 (ticks with a deck PR in the merge queue or CI
+   pending do not count): start no new agent and report the blocker cost-without-progress. This
+   overrides §4 item 2 until K > 0 or the operator resumes the deck.
+§5 relaxes no floor: review, merge-queue rule, front-authorization and secret discipline bind."""
 
 E2_TEXT = """\
 Use ASD-STE100-inspired Simplified Technical English for agent responses, tick reports, briefs and the documentation that agents write:
@@ -398,6 +423,22 @@ _EXPLAIN = {
         "B1: each tick dispatches every ready cluster, up to this number, through one Workflow with one worktree per cluster.",
         "Fewer running builders than ready clusters is a stall.",
         "command-deck tick template (B1, B8) and dispatch."),
+    "deck.max_agent_calls": (
+        "S5 rule 2: an agent ends after this many tool calls and writes a state note.",
+        "Cost is agent count times agent length; agents of 400 to 1,030 calls drove a doubling of spend.",
+        "command-deck tick template via `render-tick-section S5` and every dispatch brief."),
+    "deck.max_wait_s": (
+        "S5 rule 3: no agent waits longer than this many seconds on CI, a queue, a rollout, a drill or an observation window.",
+        "Agents that waited on staging paid to re-read their context on every poll.",
+        "command-deck tick template via `render-tick-section S5`."),
+    "deck.note_max_tokens": (
+        "S5 rule 2: the state note an ending agent writes holds at most this many tokens.",
+        "The note is the only hand-off between agents; a long note re-creates the context cost.",
+        "command-deck tick template via `render-tick-section S5`."),
+    "deck.stall_after_ticks": (
+        "S5 rule 8: this many consecutive counted reports with agents started and no items closed raise `cost-without-progress`.",
+        "Spend without closed items is a stall that nobody saw.",
+        "deck-cost-census `--stall-check` and the blocker lint."),
     "deck.heavy_slots": (
         "B2: heavy local commands run through a slot lock sized to the host; auto sizes it from measured CPU and memory.",
         "Unbounded parallel heavy commands exhaust the machine.",
@@ -565,6 +606,12 @@ def render_tick_section(policy, name, project_dir=None, session_size=None, promp
         if style == "simplified-technical-english":
             return E2_TEXT
         return _operator_style_block(g("communication.operator_style_file"), project_dir)
+    if name == "S5":
+        n = {k: g(k) for k in ("deck.max_agent_calls", "deck.max_wait_s", "deck.note_max_tokens", "deck.stall_after_ticks")}
+        words = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five"}
+        ticks = words.get(n["deck.stall_after_ticks"], str(n["deck.stall_after_ticks"]))
+        return S5_TEXT.format(calls=n["deck.max_agent_calls"], wait=n["deck.max_wait_s"],
+                              tokens=f"{n['deck.note_max_tokens']:,}", ticks=ticks)
     raise ValueError(f"unknown section {name!r}")
 
 
