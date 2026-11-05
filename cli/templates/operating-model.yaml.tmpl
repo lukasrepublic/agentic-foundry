@@ -21,6 +21,10 @@ merge:
 deck:
   max_builders: 4
   heavy_slots: auto                   # auto | a number
+  max_agent_calls: 150                # S5: an agent ends after this many tool calls and writes a state note
+  max_wait_s: 60                      # S5: no agent waits longer than this on CI, a queue or a rollout
+  note_max_tokens: 2000               # S5: the largest state note
+  stall_after_ticks: 3                # S5: consecutive reports with N > 0 and K = 0 raise cost-without-progress
   resource_check: true                # FLOOR
   workflow_size_source: smallest      # FLOOR: the smaller of session setting and tick prompt wins
 

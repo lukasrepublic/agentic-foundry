@@ -50,6 +50,10 @@ The "Acts through" column says how far the key reaches. Read it before you rely 
 | `merge.record_line_before_enqueue` | floor | `true` | A2 | const floor | `scripts/foundry_queue_land.py` posts the record line |
 | `merge.human_review_required` | tunable | `false` | A4 | script | `scripts/foundry_queue_land.py` |
 | `deck.max_builders` | tunable | `4` | B1 | script | `scripts/foundry_deck_resources.py`; section B1 and B8 of the tick prompt |
+| `deck.max_agent_calls` | tunable | `150` | S5 | script | section S5 of the tick prompt (`render-tick-section S5`); every dispatch brief |
+| `deck.max_wait_s` | tunable | `60` | S5 | script | section S5 of the tick prompt |
+| `deck.note_max_tokens` | tunable | `2000` | S5 | script | section S5 of the tick prompt |
+| `deck.stall_after_ticks` | tunable | `3` | S5 | script | `scripts/deck-cost-census.py --stall-check`; the `cost-without-progress` stall class in `scripts/foundry_blocker_check.py` |
 | `deck.heavy_slots` | tunable | `auto` | B2 | script | `scripts/foundry_deck_resources.py`, `scripts/foundry-deck-heavy` |
 | `deck.resource_check` | floor | `true` | B2 | const floor | `scripts/foundry_deck_resources.py`, run first in every tick |
 | `deck.workflow_size_source` | floor | `"smallest"` | B8 | const floor | section B8 of the tick prompt (`resolve_workflow_size` in `scripts/foundry_operating_model.py`) |

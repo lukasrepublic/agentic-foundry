@@ -35,6 +35,7 @@ def tick(**over):
         "building": ["Faster login check"],
         "needs_you": [],
         "ledger": ["Merged the cache fix"],
+        "cost": {"agents_started": 1, "longest_agent_calls": 20, "items_closed": 2},
     }
     t.update(over)
     return t
@@ -95,17 +96,17 @@ def test_an_empty_block_is_one_line(proj):
 
 
 def test_every_line_counts_toward_max_lines_headings_included(proj):
-    policy(proj, timezone="UTC", max_lines=6)
+    policy(proj, timezone="UTC", max_lines=7)
     rc, out, _ = run(proj, tick(building=[], ledger=[]))
-    assert rc == 0 and len(lines(out)) == 5        # first line + four one-line blocks
+    assert rc == 0 and len(lines(out)) == 6        # first line + cost line + four one-line blocks
     rc, out, _ = run(proj, tick(building=[], ledger=["one"]))
-    assert rc == 0 and len(lines(out)) == 6        # exactly at the limit
+    assert rc == 0 and len(lines(out)) == 7        # exactly at the limit
     rc, out, err = run(proj, tick(building=[], ledger=["one", "two"]))
-    assert rc == 2 and out == "" and "too-many-lines:7>max_lines=6" in err
+    assert rc == 2 and out == "" and "too-many-lines:8>max_lines=7" in err
 
 
 def test_the_output_never_exceeds_max_lines(proj):
-    for n in (6, 8, 12):
+    for n in (7, 8, 12):
         policy(proj, timezone="UTC", max_lines=n)
         rc, out, _ = run(proj, tick(ledger=[]))
         assert rc == 0 and len(lines(out)) <= n
@@ -436,7 +437,7 @@ def needs(out):
 
 
 def test_five_or_more_findings_at_the_default_max_lines_render(proj):
-    rc, out, err = run(proj, tick(ledger=[], message_log={"audit": {"findings": findings(7)}}))
+    rc, out, err = run(proj, tick(building=[], ledger=[], message_log={"audit": {"findings": findings(7)}}))
     ls = lines(out)
     assert rc == 0, err
     assert len(ls) <= DEFAULT_MAX
@@ -461,10 +462,10 @@ def test_findings_fit_whatever_room_is_left_and_never_overflow(proj, max_lines, 
 
 
 def test_with_no_room_the_summary_rides_on_the_needs_you_heading(proj):
-    policy(proj, timezone="UTC", max_lines=6)
+    policy(proj, timezone="UTC", max_lines=7)
     rc, out, _ = run(proj, tick(building=[], ledger=["one"], message_log={"audit": {"findings": findings(4)}}))
     ls = lines(out)
-    assert rc == 0 and len(ls) == 6
+    assert rc == 0 and len(ls) == 7
     assert any(l.startswith("Needs you (4 process findings, 0 malformed records - see audit)") for l in ls)
 
 
@@ -475,7 +476,7 @@ def test_the_lead_s_own_overflow_still_refuses_with_findings_present(proj):
 
 
 def test_one_finding_is_shown_as_itself(proj):
-    rc, out, _ = run(proj, tick(message_log={"audit": {"findings": findings(1)}}))
+    rc, out, _ = run(proj, tick(ledger=[], message_log={"audit": {"findings": findings(1)}}))
     n = needs(out)
     assert rc == 0 and len(n) == 1 and "missing-corr" in n[0] and "reason:" in n[0]
 

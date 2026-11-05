@@ -47,6 +47,8 @@ Model hints (B7). {{SECTION:B7}}
 
 Cost (C1). {{SECTION:C1}}
 
+Token cost (§5). {{SECTION:S5}}
+
 Production steps (D2). {{SECTION:D2}} Wrap each such step: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_prod_step.py" --repo <repo-dir> --remote <remote> --what "<one line>" -- <command>`. Name the repository and the remote of the PR you work on. Never rely on the origin of the current directory. Put this rule in the brief of every subagent that can touch production.
 
 Subagent labels. Do not set a shared `FOUNDRY_PROJECT_LABEL` for the subagents you start. The cleanup that runs when a subagent stops removes the scratch directory of that label without checking whether other agents still use it. A shared label lets one agent's stop delete the working files of the others. Let each subagent keep its own label.

@@ -40,7 +40,7 @@ def paragraph_of(text, needle):
 
 
 # ---- AC-OM-3 -------------------------------------------------------------------------------------------
-SECTION_NAMES = ("A1", "A5", "A6", "B1", "B7", "B8", "B9", "C1", "D2", "E1", "E2")
+SECTION_NAMES = ("A1", "A5", "A6", "B1", "B7", "B8", "B9", "C1", "D2", "E1", "E2", "S5")
 
 
 def test_the_template_carries_each_section_marker_once():

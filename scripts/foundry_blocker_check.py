@@ -297,12 +297,45 @@ def validate_candidate(candidate) -> list[str]:
     return errors
 
 
+# S5 rule 8: a deck stall class. It is not an operator-only claim, so it has its own shape: {stall_class, evidence}
+# with `evidence` = the last `deck.stall_after_ticks` cost-log lines (default 3), all counted (no ci-pending tag),
+# each with N > 0 and K = 0. A valid one is reported as a blocker; an invalid one is demoted with its reason.
+_STALL_CLASSES = ("cost-without-progress",)
+_COST_LOG_LINE = re.compile(
+    r"^\S+ agents started (\d+) \| longest agent (\d+) calls \| items closed (\d+)( ci-pending)?$")
+
+
+def _stall_errors(candidate) -> list[str]:
+    errs: list[str] = []
+    unknown = sorted(set(candidate) - {"stall_class", "evidence", "claim"})
+    if unknown:
+        errs.append(f"unknown field(s) {unknown!r} on a stall candidate")
+    ev = candidate.get("evidence")
+    if not isinstance(ev, list) or len(ev) < 3:
+        return errs + ["stall evidence must be a list of at least 3 cost-log lines"]
+    for i, line in enumerate(ev):
+        m = _COST_LOG_LINE.match(line) if isinstance(line, str) else None
+        if not m:
+            errs.append(f"evidence[{i}] is not a cost-log line")
+        elif m.group(4):
+            errs.append(f"evidence[{i}] is ci-pending and does not count")
+        elif int(m.group(1)) == 0 or int(m.group(3)) != 0:
+            errs.append(f"evidence[{i}] does not have N > 0 and K = 0")
+    return errs
+
+
 def partition(candidates: list) -> dict:
     """AC-BRE-2/AC-OM-8: partition a list of candidate blockers into `blockers` (schema-valid, reported
     unchanged) and `next_tasks` (invalid, each paired with the reason it was demoted)."""
     refused: list[str] = []
     verdicts: list[list[str]] = []
     for i, c in enumerate(candidates):
+        if isinstance(c, dict) and "stall_class" in c:
+            if c.get("stall_class") in _STALL_CLASSES:
+                verdicts.append(_stall_errors(c))
+            else:
+                verdicts.append([f"unknown stall_class {c.get('stall_class')!r}"])
+            continue
         if isinstance(c, dict) and c.get("why_operator") == "priced-ask" and _cost_breakdown_empty(c):
             refused.append(f"index {i}: priced-ask with an empty or missing priced_ask.cost_breakdown "
                            "(a priced ask needs its price; rule C1)")
