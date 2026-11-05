@@ -5,6 +5,7 @@ credential. Assertions are on parsed fields and structures, not substrings of jo
 Part 1 covers the two ticket Risks filed with this atom (claim_unverified on a missing claim, ticket_changed on start).
 """
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -459,9 +460,18 @@ def test_the_token_reaches_gh_only_in_the_child_environment_and_never_in_output(
     def runner(args, input=None, capture_output=None, text=None, timeout=None, env=None):
         seen.update(args=args, env=env, input=input)
         return subprocess.CompletedProcess(args, 0, stdout='HTTP/2.0 201 Created\r\n\r\n{"sha":"x"}', stderr="")
-    tr = ff.GhTransport(ff.SessionTokens(lambda: (secret, T0 + 3600), clock=lambda: T0), "sess1", runner=runner)
-    st, doc = tr.rest("POST", f"repos/{REPO}/git/refs", {"ref": "r"})
+    for k in ("GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GH_CONFIG_DIR"):
+        os.environ[k] = "operator-value"
+    os.environ["GH_HOST"] = "ghe.example.test"
+    try:
+        tr = ff.GhTransport(ff.SessionTokens(lambda: (secret, T0 + 3600), clock=lambda: T0), "sess1", runner=runner)
+        st, doc = tr.rest("POST", f"repos/{REPO}/git/refs", {"ref": "r"})
+    finally:
+        for k in ("GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GH_CONFIG_DIR", "GH_HOST"):
+            os.environ.pop(k, None)
     assert st == 201 and seen["env"]["GH_TOKEN"] == secret and "GITHUB_TOKEN" not in seen["env"]
+    assert seen["env"]["GH_HOST"] == "github.com"
+    assert not {"GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GH_CONFIG_DIR"} & set(seen["env"])
     assert secret not in " ".join(seen["args"]) and secret not in (seen["input"] or "")
     assert secret not in ff.redact(f"boom {secret} and Bearer {'z' * 24}", secret)
     assert "[REDACTED]" in ff.redact(f"x {secret}")
@@ -471,3 +481,105 @@ def test_the_fleet_cli_help_and_the_scripts_stay_free_of_a_credential():
     r = subprocess.run([sys.executable, str(SCRIPTS / "foundry_fleet.py"), "--help"], capture_output=True, text=True)
     assert r.returncode == 0 and "build-next" in r.stdout
     assert not re.search(r"gh[pousr]_[A-Za-z0-9]{16,}|-----BEGIN", (SCRIPTS / "foundry_fleet.py").read_text())
+
+
+# --- fix round: token file, validation, GraphQL failures, review_ready ---------------------------------
+GOOD = "ghs_" + "B" * 30
+
+
+def tokfile(tmp_path, text=GOOD + "\n", mode=0o600):
+    p = tmp_path / "tok"
+    p.write_text(text)
+    p.chmod(mode)
+    return p
+
+
+def mint_from(p):
+    return ff.file_token_mint(env={"FOUNDRY_FLEET_TOKEN_FILE": str(p)}, clock=lambda: 10.0)()
+
+
+def test_token_file_symlink_is_refused(tmp_path):
+    real = tokfile(tmp_path)
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    with pytest.raises(ff.FleetError) as e:
+        mint_from(link)
+    assert e.value.reason == "token-unreadable"
+    assert mint_from(real)[0] == GOOD
+
+
+def test_token_file_owned_by_another_user_is_refused(tmp_path, monkeypatch):
+    p = tokfile(tmp_path)
+    other = os.getuid() + 1
+    monkeypatch.setattr(ff.os, "getuid", lambda: other)
+    with pytest.raises(ff.FleetError) as e:
+        mint_from(p)
+    assert e.value.reason == "token-file-owner"
+
+
+@pytest.mark.parametrize("text", ["github_pat_" + "A" * 30, "ghp_" + "A" * 30, GOOD + "\nsecond", "", "ghs_short"])
+def test_token_file_that_is_not_one_installation_token_is_refused(tmp_path, text):
+    with pytest.raises(ff.FleetError) as e:
+        mint_from(tokfile(tmp_path, text))
+    assert e.value.reason == "token-file-invalid"
+
+
+def test_token_file_with_group_bits_is_refused_on_the_descriptor(tmp_path):
+    with pytest.raises(ff.FleetError) as e:
+        mint_from(tokfile(tmp_path, mode=0o640))
+    assert e.value.reason == "token-file-permissions"
+
+
+@pytest.mark.parametrize("fn", [
+    lambda: ff.check_repo(REPO + "\n"), lambda: ff.check_segment("w1-a\n", "batch"),
+    lambda: ff.check_segment("prog\n", "programme"), lambda: ff.claim_ref("prog", "w1-a\n"),
+])
+def test_a_value_with_a_final_newline_is_refused(fn):
+    with pytest.raises(ff.FleetError):
+        fn()
+
+
+def test_final_newline_handle_and_session_are_refused(tmp_path):
+    with pytest.raises(ff.FleetError) as e:
+        ff.worker_identity(env={**ENV, "CLAUDE_CODE_SESSION_ID": "sess0001\n"}, **identity_files(tmp_path))
+    assert e.value.reason == "session-invalid"
+    with pytest.raises(ff.FleetError) as e:
+        ff.worker_identity(env=ENV, **identity_files(tmp_path, handle="lukas\n"))
+    assert e.value.reason == "operator-handle-missing"
+    with pytest.raises(ff.FleetError) as e:
+        ff.worker_identity(env={**ENV, "FOUNDRY_OPERATOR": "op_lukas\n"}, **identity_files(tmp_path))
+    assert e.value.reason == "operator-invalid"
+
+
+def test_a_graphql_auth_failure_is_a_github_error_not_a_conflict():
+    gh = FakeGitHub()
+    f, _ = mk_fleet(gh)
+    w = worker()
+    f.claim(w, "prog", "w1-x")
+    gh.graphql = lambda q, v: (401, {"message": "Bad credentials"})
+    with pytest.raises(ff.FleetError) as e:
+        f.heartbeat(w, "prog", "w1-x")
+    assert e.value.reason == "github-error" and "401" in str(e.value)
+    gh.graphql = lambda q, v: (200, {"errors": [{"type": "RATE_LIMITED", "message": "slow down"}]})
+    with pytest.raises(ff.FleetError) as e:
+        f.heartbeat(w, "prog", "w1-x")
+    assert e.value.reason == "github-error"
+
+
+def test_a_review_ready_claim_of_this_worker_is_neither_held_nor_counted_against_capacity():
+    gh = FakeGitHub()
+    f, _ = mk_fleet(gh)
+    w1, w2 = worker("sess10001"), worker("sess20001")
+    assert ff.build_next(f, w1, PLAN, 1)["batch"] == "w1-a"
+    assert f.transition(w1, "prog", "w1-a", "review_ready", "https://github.com/example-org/app/pull/9")["result"] == "ok"
+    r = ff.build_next(f, w1, PLAN, 1)                    # cap 1: the review_ready claim must not fill it
+    assert (r["result"], r["batch"]) == ("claimed", "w1-b")
+    r2 = ff.build_next(f, w2, PLAN, 5)                   # nobody re-claims the finished batch
+    assert r2["result"] == "none" or r2["batch"] not in ("w1-a", "w1-b")
+
+
+def test_the_docs_state_attribution_only_and_flags_not_policy_keys():
+    for text in ((SCRIPTS / "foundry_fleet.py").read_text(), (ROOT / "docs/how-to/fleet-builders.md").read_text()):
+        flat = " ".join(text.split())
+        assert "attribution only" in flat.lower() and "never an authorization input" in flat
+        assert "CLI flags, not policy keys" in flat

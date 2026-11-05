@@ -38,10 +38,12 @@ in the cgroup and `CLAUDE_CODE_SESSION_ID`.
 - `trailers` prints the commit trailers `Co-authored-by`, `Session-Id` and `Worker-Host`. `marker` prints the hidden PR-body
   marker `<!-- foundry-worker: <id> -->`. Pass each trailer to `git commit` as its own `--trailer` argument.
 
+The worker id is attribution only. It tells you who built what; it is never an authorization input.
+
 ## The token
 
 Each worker session uses one GitHub App installation token. The script reads it from the file named by
-`FOUNDRY_FLEET_TOKEN_FILE` (owner-only permissions). The token goes only into the environment of the `gh` child process and is
+`FOUNDRY_FLEET_TOKEN_FILE`. The script opens it once without following links and checks the open file: a regular file, owned by you, owner-only permissions, one line, `ghs_` prefix. It refuses a symlink or any other shape. The file gives no expiry, so the script keeps a conservative default of fifty minutes and re-reads the file after that. The token goes only into the environment of the `gh` child process and is
 removed from every message. This script does not create, register or configure the App. If no token is provisioned,
 the script stops with `external-provisioning`. The operator holds the App identity.
 
@@ -49,7 +51,7 @@ the script stops with `external-provisioning`. The operator holds the App identi
 
 - `arm-deck` takes one of two slots of this machine. A deck claim title starts with `deck:`. When both slots hold a
   live claim, it reports `deck-slot-full` and the deck does not arm.
-- `capacity --workers 2,2 --reviewers 3` prints `min(sum of max_concurrent_per_worker, reviewer capacity)`. The open
+- `--workers` and `--reviewers` are CLI flags, not policy keys. `capacity --workers 2,2 --reviewers 3` prints `min(sum of max_concurrent_per_worker, reviewer capacity)`. The open
   group of the plan never runs more batches than this value or the plan's `max_concurrent`.
 
 ## Builder mode

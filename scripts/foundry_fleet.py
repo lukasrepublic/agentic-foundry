@@ -28,6 +28,9 @@ configures no App and no credential. The CLI reads the token from the file named
 0600) and refuses with `external-provisioning` when it is absent. The token travels only in the environment of the
 `gh` child process, never in an argument, and every message is redacted.
 
+The worker id is ATTRIBUTION ONLY (trailers, marker, claim record). It is never an authorization input. `--workers` and
+`--reviewers` are CLI flags, not policy keys.
+
 BUILDER MODE (`build-next`) reads the plan, claims ONE batch of the open wave inside the fleet capacity and prints
 it. It never plans and never edits the plan.
 
@@ -39,6 +42,7 @@ import argparse
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -86,13 +90,13 @@ def redact(text, token: str | None = None) -> str:
 # validation
 # ---------------------------------------------------------------------------------------------
 def check_repo(repo) -> str:
-    if not isinstance(repo, str) or not REPO_RE.match(repo) or ".." in repo:
+    if not isinstance(repo, str) or not REPO_RE.fullmatch(repo) or ".." in repo:
         raise FleetError("bad-repo", f"{repo!r} is not <owner>/<name>")
     return repo
 
 
 def check_segment(value, what: str) -> str:
-    if (not isinstance(value, str) or not SEGMENT_RE.match(value) or ".." in value
+    if (not isinstance(value, str) or not SEGMENT_RE.fullmatch(value) or ".." in value
             or value.endswith((".lock", "."))):
         raise FleetError(f"bad-{what}", f"{value!r} is not a plain ref-safe segment")
     return value
@@ -121,12 +125,12 @@ def worker_identity(env=None, operators_file=None, machine_id_file="/etc/machine
     session = env.get("CLAUDE_CODE_SESSION_ID", "")
     if not session:
         raise FleetError("session-missing", "CLAUDE_CODE_SESSION_ID is unset; there is no per-clone fallback")
-    if not SESSION_RE.match(session) or "--" in session:
+    if not SESSION_RE.fullmatch(session) or "--" in session:
         raise FleetError("session-invalid", "CLAUDE_CODE_SESSION_ID is not a plain session id")
     op = env.get("FOUNDRY_OPERATOR", "")
     if not op:
         raise FleetError("operator-missing", "FOUNDRY_OPERATOR is unset")
-    if not OP_RE.match(op):
+    if not OP_RE.fullmatch(op):
         raise FleetError("operator-invalid", "FOUNDRY_OPERATOR is not a plain operator id")
     if operators_file is None:
         root = env.get("CLAUDE_PROJECT_DIR") or os.getcwd()
@@ -137,7 +141,7 @@ def worker_identity(env=None, operators_file=None, machine_id_file="/etc/machine
     except (ValueError, KeyError, TypeError):
         raise FleetError("operator-unregistered", f"{op!r} is not in the operators file")
     handle = entry.get("github") if isinstance(entry, dict) else None
-    if not isinstance(handle, str) or not HANDLE_RE.match(handle):
+    if not isinstance(handle, str) or not HANDLE_RE.fullmatch(handle):
         raise FleetError("operator-handle-missing", f"operator {op!r} has no valid github handle in the operators file")
     mid = _read(machine_id_file, "machine-id-unreadable").strip().lower()
     if not re.fullmatch(r"[0-9a-f]{32}", mid):
@@ -194,6 +198,37 @@ class SessionTokens:
         return token
 
 
+def _read_token_file(path: str) -> str:
+    """Open once with O_NOFOLLOW, then check the DESCRIPTOR: a regular file owned by this user, no group or other
+    bits, one line, `ghs_` prefix (an installation token)."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError as e:
+        raise FleetError("token-unreadable", f"cannot open the token file ({e.__class__.__name__}; a symlink is refused)")
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise FleetError("token-file-invalid", "the token file is not a regular file")
+        if st.st_uid != os.getuid():
+            raise FleetError("token-file-owner", "the token file is not owned by this user")
+        if st.st_mode & 0o077:
+            raise FleetError("token-file-permissions", "the token file must not be readable by group or others")
+        with os.fdopen(fd, "r", encoding="utf-8") as fh:
+            fd = -1
+            raw = fh.read(4096)
+    except FleetError:
+        raise
+    except (OSError, UnicodeDecodeError) as e:
+        raise FleetError("token-unreadable", f"cannot read the token file: {e.__class__.__name__}")
+    finally:
+        if fd >= 0:
+            os.close(fd)
+    token = raw.strip()
+    if not re.fullmatch(r"ghs_[A-Za-z0-9_]{16,255}", token) or raw.strip("\n") != token:
+        raise FleetError("token-file-invalid", "the token file must hold one single-line installation token (ghs_ prefix)")
+    return token
+
+
 def file_token_mint(path_env: str = "FOUNDRY_FLEET_TOKEN_FILE", env=None, clock=time.time):
     """A mint that reads the token the operator provisioned into a 0600 file. Absent => external-provisioning."""
     env = os.environ if env is None else env
@@ -203,14 +238,8 @@ def file_token_mint(path_env: str = "FOUNDRY_FLEET_TOKEN_FILE", env=None, clock=
         if not path:
             raise FleetError("external-provisioning", "no GitHub App installation token is provisioned "
                              f"({path_env} is unset); the operator holds the App identity")
-        try:
-            st = os.stat(path)
-            if st.st_mode & 0o077:
-                raise FleetError("token-file-permissions", f"{path} must not be readable by group or others (0600)")
-            token = Path(path).read_text(encoding="utf-8").strip()
-        except OSError as e:
-            raise FleetError("token-unreadable", f"cannot read the token file: {e.__class__.__name__}")
-        return token, clock() + 3000
+        token, expires = _read_token_file(path), None
+        return token, (expires if expires is not None else clock() + 3000)
     return mint
 
 
@@ -223,8 +252,10 @@ class GhTransport:
     def _call(self, args: list, body) -> tuple:
         token = self._tokens.token_for(self._session)
         env = dict(os.environ)
+        for k in ("GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "GH_CONFIG_DIR"):
+            env.pop(k, None)             # nothing may let gh fall back to the operator's own identity or host
+        env["GH_HOST"] = "github.com"
         env["GH_TOKEN"] = token
-        env.pop("GITHUB_TOKEN", None)
         try:
             r = self._run(["gh", "api", "-i", *args], input=json.dumps(body) if body is not None else None,
                           capture_output=True, text=True, timeout=120, env=env)
@@ -268,7 +299,7 @@ class Fleet:
         if st == 404:
             return None
         sha = (doc.get("object") or {}).get("sha") if st == 200 and isinstance(doc, dict) else None
-        if not isinstance(sha, str) or not OID_RE.match(sha):
+        if not isinstance(sha, str) or not OID_RE.fullmatch(sha):
             raise FleetError("claim-unreadable", f"ref read answered HTTP {st}")
         return sha
 
@@ -292,7 +323,7 @@ class Fleet:
                 "parents": [parent] if parent else []}
         st, c = self.t.rest("POST", f"repos/{self.repo}/git/commits", body)
         sha = c.get("sha") if st in (200, 201) and isinstance(c, dict) else None
-        if not isinstance(sha, str) or not OID_RE.match(sha):
+        if not isinstance(sha, str) or not OID_RE.fullmatch(sha):
             raise FleetError("github-error", f"commit create answered HTTP {st}")
         return sha
 
@@ -310,7 +341,15 @@ class Fleet:
         after = self._commit(rec, before)
         st, doc = self.t.graphql(UPDATE_REFS, {"in": {"repositoryId": self._repository_id(), "refUpdates": [
             {"name": ref, "beforeOid": before, "afterOid": after}]}})
-        return st == 200 and isinstance(doc, dict) and not doc.get("errors")
+        if st == 200 and isinstance(doc, dict) and not doc.get("errors"):
+            return True
+        if self._tip(ref) != before:          # the tip moved: a beforeOid mismatch, the caller re-reads
+            return False
+        detail = ""
+        if isinstance(doc, dict) and isinstance(doc.get("errors"), list) and doc["errors"]:
+            first = doc["errors"][0]
+            detail = redact(str(first.get("type") or first.get("message") or "") if isinstance(first, dict) else "")[:80]
+        raise FleetError("github-error", f"updateRefs answered HTTP {st}" + (f" ({detail})" if detail else ""))
 
     def _live(self, rec: dict, now: float) -> bool:
         return store.lease_state(rec, now, self.expires)["state"] == "live"
@@ -438,9 +477,11 @@ def build_next(fleet: Fleet, worker: dict, plan: dict, cap: int) -> dict:
     cands = open_wave_batches(plan)
     if not cands:
         return {"result": "none", "why": "no startable batch in the open wave"}
-    live = {}
+    live, done = {}, set()
     for b, rec in fleet.claims_under(programme):
-        if rec.get("state") != "stopped" and fleet._live(rec, fleet.clock()):
+        if rec.get("state") == "review_ready":
+            done.add(b)                  # built and handed to review: neither held nor counted against capacity
+        elif rec.get("state") != "stopped" and fleet._live(rec, fleet.clock()):
             live[b] = rec
     cap_left = _count(cap, "cap") - len(live)
     mine = [b for b in cands if live.get(b["id"], {}).get("worker") == worker["id"]]
@@ -449,7 +490,7 @@ def build_next(fleet: Fleet, worker: dict, plan: dict, cap: int) -> dict:
     if cap_left <= 0:
         return {"result": "at-capacity", "live": len(live), "cap": cap}
     for b in cands:
-        if b["id"] in live:
+        if b["id"] in live or b["id"] in done:
             continue
         r = fleet.claim(worker, programme, b["id"])
         if r["result"] in ("won", "taken_over"):
