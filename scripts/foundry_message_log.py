@@ -26,7 +26,8 @@ VERBS
         foundry-message-cursor`), never the work tree. Without --since the stored cursor is used (none = the
         whole log) and is advanced to the tip afterwards.
   audit [--open-minutes N]
-        Replay query. Flags a PROD-AFTER / STOP whose corr has no earlier PROD-BEFORE, a PROD-BEFORE with no
+        Replay query. Flags a PROD-AFTER / STOP whose corr has no earlier PROD-BEFORE, a PROD-AFTER / STOP whose sender differs from its
+        PROD-BEFORE's (`sender-mismatch`, not for imported comments), a PROD-BEFORE with no
         PROD-AFTER / STOP after N minutes (N defaults to the policy's messaging.open_change_minutes, 120), and a
         PROD-* record with no corr. Exit 3 when anything is flagged.
   import <issue-url>
@@ -92,6 +93,8 @@ class LogError(Exception):
 # the ONE adapter: every git and gh call in this file goes through it
 # ---------------------------------------------------------------------------------------------
 class Adapter:
+    new_session = False   # True: every git child runs in its own session/process group (foundry_prod_step.py)
+
     def git(self, args, cwd, env=None, input_text=None):
         full_env = dict(os.environ)
         full_env.update(env or {})
@@ -101,7 +104,8 @@ class Adapter:
         # neutralise commands an untrusted repo's config could run (hooks, fsmonitor, ssh wrapper, ext transport)
         return subprocess.run(["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
                                "-c", "core.sshCommand=ssh", "-c", "protocol.ext.allow=never", "-C", str(cwd), *args], input=input_text, capture_output=True,
-                              text=True, encoding="utf-8", errors="replace", env=full_env, timeout=300)
+                              text=True, encoding="utf-8", errors="replace", env=full_env, timeout=300,
+                              start_new_session=self.new_session)
 
     def gh(self, args, stdin=None):
         r = subprocess.run(["gh", *args], input=stdin, capture_output=True, text=True, encoding="utf-8",
@@ -464,6 +468,9 @@ def audit_records(records, open_minutes, now):
             if c not in befores:
                 findings.append({"rule": "after-without-before" if k == "PROD-AFTER" else "stop-without-before",
                                  "corr": c, "id": r["id"], "kind": k})
+            elif r.get("from") != befores[c].get("from") and r.get("source") != "issue-import":  # one session closed another's step (imported comments have many authors: exempt)
+                findings.append({"rule": "sender-mismatch", "corr": c, "id": r["id"], "kind": k,
+                                 "from": r.get("from"), "before_from": befores[c].get("from")})
             closed.add(c)
     for c, r in befores.items():
         if c in closed:

@@ -12,13 +12,18 @@ Every other primitive reads policy ONLY through `load`.
 
 Importable: `load(project_dir) -> Policy`, `validate_text(text) -> [error]`,
             `resolve_workflow_size(policy, session_size, prompt_size) -> int`,
-            `render_tick_section(policy, name, project_dir) -> str`.
+            `render_tick_section(policy, name, project_dir) -> str`,
+            `render_tick_template(policy, template_text, workspace, operator, narrowing, ...) -> str`.
 
 CLI:  foundry_operating_model.py [--project-dir DIR] status [--json]
       foundry_operating_model.py [--project-dir DIR] validate
       foundry_operating_model.py [--project-dir DIR] explain <key>
-      foundry_operating_model.py [--project-dir DIR] render-tick-section <A1|A5|A6|B1|B8|B9|C1|D2|E1|E2>
+      foundry_operating_model.py [--project-dir DIR] render-tick-section <A1|A5|A6|B1|B7|B8|B9|C1|D2|E1|E2>
                                  [--session-size N] [--prompt-size N]
+      foundry_operating_model.py [--project-dir DIR] render-tick-section TEMPLATE --workspace W --operator O
+                                 [--narrowing N] [--template FILE] [--session-size N] [--prompt-size N]
+                                 (the whole command-deck tick prompt: every `{{SECTION:<name>}}` marker of the
+                                 template is filled from the policy, then the three placeholders)
 Exit 0 ok / 2 refused (named error on stdout) / 1 internal error. Read-only: this script writes nothing.
 Stdlib + PyYAML only. No network.
 """
@@ -38,7 +43,7 @@ import yaml
 HERE = Path(__file__).resolve().parent
 SCHEMA_PATH = HERE.parent / "schema" / "operating-model.schema.json"
 POLICY_REL = Path(".foundry") / "operating-model.yaml"
-SECTIONS = ("A1", "A5", "A6", "B1", "B8", "B9", "C1", "D2", "E1", "E2")
+SECTIONS = ("A1", "A5", "A6", "B1", "B7", "B8", "B9", "C1", "D2", "E1", "E2")
 
 E2_TEXT = """\
 Use ASD-STE100-inspired Simplified Technical English for agent responses, tick reports, briefs and the documentation that agents write:
@@ -435,7 +440,7 @@ _EXPLAIN = {
         "deck-report renderer."),
     "report.timezone": ("E1: the first line uses this zone; auto means the operator's local zone.", "The operator reads local time.", "deck-report renderer."),
     "report.plain_language": ("E1: name fixes by what they do, not by IDs.", "ID-heavy status text could not be followed.", "deck-report renderer."),
-    "report.max_lines": ("E1: the renderer refuses output longer than this.", "The operator reads short, plain reports.", "deck-report renderer."),
+    "report.max_lines": ("E1: the renderer refuses output longer than this; every line counts, headings included.", "The operator reads short, plain reports.", "deck-report renderer."),
     "report.include_ids": ("E1: when false, the report names work by what it does, not by ID.", "ID-heavy status text could not be followed.", "deck-report renderer."),
     "report.handoff_dir": (
         "E3: step-by-step operator documents go to this directory; generated PDFs go next to them.",
@@ -447,6 +452,15 @@ _EXPLAIN = {
         "brief preamble, tick template and author personas via `render-tick-section E2`."),
     "communication.operator_style_file": (
         "E2: the .foundry/ .md or .txt file used when style is operator-defined.", "An operator may need a different style.", "`render-tick-section E2`."),
+    "models.builder": (
+        "B7: builders use this model; the default is the smaller model.", "Token cost: the strongest model is not needed to build.",
+        "command-deck tick template via `render-tick-section B7`."),
+    "models.reviewer": (
+        "B7: separate-context reviewers use this model and receive a diff file, never shell access.", "Token cost, and a reviewer with a shell can change what it reviews.",
+        "command-deck tick template via `render-tick-section B7`."),
+    "models.security_reviewer": (
+        "B7: security reviews of auth, secrets and crypto use this model; the default is the strongest model.", "Only these reviews need the strongest model.",
+        "command-deck tick template via `render-tick-section B7`."),
     "hygiene.disk_sweep_each_tick": (
         "F2: measure the mount where the work writes, not the default one.", "The wrong disk filled while the default looked fine.", "deck-resources script."),
     "hygiene.teardown_required": (
@@ -520,6 +534,12 @@ def render_tick_section(policy, name, project_dir=None, session_size=None, promp
                 "build, then a separate-context review, then at most 2 fix rounds, with one worktree for each cluster. "
                 "Never wait idle on remote CI or queues. "
                 "If fewer builders run than there are ready clusters, that is a stall. Say so in the report.")
+    if name == "B7":
+        def who(v):
+            return f"the {v} model" if v in ("smaller", "strongest") else f"the model {v}"
+        return (f"Token discipline: use {who(g('models.builder'))} for builders, {who(g('models.reviewer'))} for reviewers "
+                f"and {who(g('models.security_reviewer'))} for security reviews of auth, secrets and crypto. "
+                "Give each reviewer the path of a diff FILE. Never give a reviewer shell access. Keep tick turns short.")
     if name == "B8":
         size = resolve_workflow_size(policy, session_size, prompt_size)
         return ("If the session setting and the tick prompt give different fan-out sizes, the smaller size wins. "
@@ -557,6 +577,54 @@ def render_tick_section(policy, name, project_dir=None, session_size=None, promp
             return E2_TEXT
         return _operator_style_block(g("communication.operator_style_file"), project_dir)
     raise ValueError(f"unknown section {name!r}")
+
+
+TEMPLATE_REL = Path("skills") / "command-deck" / "tick-prompt.template.md"
+_MARKER_RE = re.compile(r"\{\{SECTION:([A-Z][0-9]+)\}\}")
+_PLACEHOLDER_RE = re.compile(r"\{\{(\w+)\}\}")
+_PLACEHOLDER_MAX = {"WORKSPACE": 512, "OPERATOR": 128, "NARROWING": 512}
+
+
+def _one_line(value, limit):
+    """A value that goes into a prompt: one line, no control or format characters, bounded."""
+    text = "".join(" " if c in "\r\n\t\u2028\u2029" else c for c in str(value)
+                   if c in "\r\n\t\u2028\u2029" or unicodedata.category(c) not in ("Cc", "Cf", "Cs", "Co", "Cn"))
+    return " ".join(text.split())[:limit]
+
+
+def render_tick_template(policy, template_text, workspace, operator, narrowing="none", project_dir=None,
+                         session_size=None, prompt_size=None):
+    """Fill the command-deck tick template: every `{{SECTION:<name>}}` marker from the policy (an empty section,
+    E2 with style off, removes its whole line and one blank line), then WORKSPACE, OPERATOR and NARROWING."""
+    def fill(m):
+        name = m.group(1)
+        if name not in SECTIONS:
+            raise PolicyError([f"unknown-template-section:{name}"])
+        return render_tick_section(policy, name, project_dir, session_size, prompt_size)
+
+    out = []
+    blank_pending = False
+    for line in template_text.split("\n"):
+        if _MARKER_RE.search(line):
+            filled = _MARKER_RE.sub(fill, line)
+            if not filled.strip():
+                blank_pending = True     # drop this line and the blank line that follows it
+                continue
+            line = filled
+        elif blank_pending and not line.strip():
+            blank_pending = False
+            continue
+        blank_pending = False
+        out.append(line)
+    text = "\n".join(out)
+    values = {"WORKSPACE": _one_line(workspace, _PLACEHOLDER_MAX["WORKSPACE"]),
+              "OPERATOR": _one_line(operator, _PLACEHOLDER_MAX["OPERATOR"]),
+              "NARROWING": _one_line(narrowing, _PLACEHOLDER_MAX["NARROWING"]) or "none"}
+    text = _PLACEHOLDER_RE.sub(lambda m: values.get(m.group(1), m.group(0)), text)
+    left = _PLACEHOLDER_RE.findall(text) + [f"SECTION:{n}" for n in _MARKER_RE.findall(text)]
+    if left:
+        raise PolicyError([f"unfilled-template-placeholder:{left[0]}"])
+    return text
 
 
 def _operator_style_block(rel, project_dir):
@@ -634,7 +702,11 @@ def main(argv=None):
     ex = sub.add_parser("explain")
     ex.add_argument("key")
     rt = sub.add_parser("render-tick-section")
-    rt.add_argument("name", choices=SECTIONS)
+    rt.add_argument("name", choices=SECTIONS + ("TEMPLATE",))
+    rt.add_argument("--template", default=None)
+    rt.add_argument("--workspace", default=None)
+    rt.add_argument("--operator", default=None)
+    rt.add_argument("--narrowing", default="none")
     rt.add_argument("--session-size", type=int, default=None)
     rt.add_argument("--prompt-size", type=int, default=None)
     args = ap.parse_args(argv)
@@ -656,6 +728,25 @@ def main(argv=None):
             return 0
         if args.cmd == "render-tick-section":
             p = load(pdir)
+            if args.name == "TEMPLATE":
+                if not args.workspace or not args.operator:
+                    print("template-needs: --workspace and --operator")
+                    return 2
+                tpl = Path(args.template) if args.template else HERE.parent / TEMPLATE_REL
+                try:
+                    tpl = tpl.resolve(strict=True)
+                    tpl.relative_to(HERE.parent.resolve())      # confined to the plugin root (symlinks resolved)
+                except (OSError, ValueError):
+                    print(f"template-outside-plugin-root:{str(args.template)[:128]}")
+                    return 2
+                try:
+                    text = tpl.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    print(f"template-unreadable:{str(tpl)[:128]}")
+                    return 2
+                sys.stdout.write(render_tick_template(p, text, args.workspace, args.operator, args.narrowing, pdir,
+                                                      args.session_size, args.prompt_size))
+                return 0
             print(render_tick_section(p, args.name, pdir, args.session_size, args.prompt_size))
             return 0
     except PolicyError as e:

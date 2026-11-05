@@ -72,7 +72,7 @@
         "format": {"enum": ["four-block", "detailed"], "default": "four-block", "description": "E1 tunable."},
         "timezone": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^(auto|UTC|[A-Za-z_]+(/[A-Za-z0-9_+-]+){1,2})$", "default": "auto", "description": "auto = the operator's local zone."},
         "plain_language": {"type": "boolean", "default": true},
-        "max_lines": {"type": "integer", "minimum": 4, "maximum": 200, "default": 8},
+        "max_lines": {"type": "integer", "minimum": 6, "maximum": 200, "default": 8},
         "include_ids": {"type": "boolean", "default": false},
         "handoff_dir": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u200b-\\u200d\\u2028\\u2029\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$", "default": "~/Documents/<workspace-name>", "description": "E3 tunable; the placeholder is filled by the operator."}
       }
@@ -82,6 +82,14 @@
       "properties": {
         "style": {"enum": ["simplified-technical-english", "off", "operator-defined"], "default": "simplified-technical-english", "description": "E2 tunable, default on. Unquoted YAML off, no and false are accepted aliases for the word off."},
         "operator_style_file": {"type": "string", "maxLength": 128, "pattern": "^$|^\\.foundry/([A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\\.(md|txt)$", "default": "", "description": "A regular .md or .txt file under .foundry/ (no dot-file, no symlink, at most 4 KiB), used when style is operator-defined. Its text is operator instruction text by design."}
+      }
+    },
+    "models": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "builder": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$", "default": "smaller", "description": "B7 tunable: the model for builders. smaller = the smaller model."},
+        "reviewer": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$", "default": "smaller", "description": "B7 tunable: the model for separate-context reviewers. Reviewers get a diff file, never shell access."},
+        "security_reviewer": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$", "default": "strongest", "description": "B7 tunable: the model for security reviews of auth, secrets and crypto. strongest = the strongest model."}
       }
     },
     "hygiene": {

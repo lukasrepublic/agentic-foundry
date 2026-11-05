@@ -48,6 +48,11 @@ communication:
   style: simplified-technical-english # simplified-technical-english | off | operator-defined
   operator_style_file: ""             # .foundry/ .md or .txt file, used when style is operator-defined
 
+models:
+  builder: smaller                    # B7: the smaller model
+  reviewer: smaller                   # B7: reviewers get a diff file, never shell access
+  security_reviewer: strongest        # B7: auth, secrets and crypto reviews only
+
 hygiene:
   disk_sweep_each_tick: true
   teardown_required: true             # FLOOR

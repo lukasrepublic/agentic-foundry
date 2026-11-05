@@ -314,6 +314,31 @@
       "rationale": "pure lint of one record JSON read from --in; prints a verdict, writes nothing (gv-09)."
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_report.py --in:*)",
+      "tier": "allow",
+      "rationale": "renders the four-block deck report from one tick JSON file (or stdin) and prints it; reads the policy file and the pause flag, writes nothing, no network (gv-13)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_report.py state:*)",
+      "tier": "allow",
+      "rationale": "prints the pause flag (.foundry/runtime/deck-pause.json) as JSON; read-only (gv-13)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_report.py pause:*)",
+      "tier": "ask",
+      "rationale": "WRITES .foundry/runtime/deck-pause.json: a paused deck starts no new fan-out until resume (gv-13, rule B9)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_report.py resume:*)",
+      "tier": "ask",
+      "rationale": "DELETES .foundry/runtime/deck-pause.json, which lets the deck start new fan-out again (gv-13, rule B9)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_prod_step.py:*)",
+      "tier": "ask",
+      "rationale": "EXECUTES the command given after `--` (and any --on-failure cleanup commands) and posts PROD-BEFORE, PROD-AFTER or STOP to the foundry/messages branch of the named repo and remote; the plugin-scripts-allow hook never grants it a silent allow (gv-13, rule D2). NEVER persist an allow for this row: it runs whatever command it is given; approve each call"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_events.py:*)",
       "tier": "ask",
       "rationale": "`emit` posts a structured comment on a GitHub issue under the operator's identity (a content-creating write); `parse` is read-only. One rule for the script: the write verb decides the tier (gn-04 deck events)."

@@ -27,7 +27,7 @@ session's normal permission mode.
 ALSO NEVER ALLOWED SILENTLY (security review of #286) — the verbs the permission floor tiers `ask` because
 they write to GitHub or redirect writes: `foundry_migrate.py cutover`, `foundry_deck_events.py emit`,
 `foundry_inbox.py check|ack|schedule|resolve`, `foundry-ticket.py claim` and `ci-allow`,
-`foundry_governance.py render|baseline|select|declare|apply|upgrade`, `foundry_message_log.py post|import`, `foundry_research_note.py` (any invocation), `foundry_deck_resources.py --reset-oom-baseline|--from-json`, `foundry-env-hygiene.py mark-worktree|reap`, `foundry-deck-heavy` (runs a command), `foundry_usage.py bind|fallback-transcripts` and `ingest|attribute` when `--dataset` is named, and any
+`foundry_governance.py render|baseline|select|declare|apply|upgrade`, `foundry_message_log.py post|import`, `foundry_research_note.py` (any invocation), `foundry_deck_resources.py --reset-oom-baseline|--from-json`, `foundry-env-hygiene.py mark-worktree|reap`, `foundry-deck-heavy` (runs a command), `foundry_prod_step.py` (runs a command, gv-13), `foundry_deck_report.py pause|resume`, `foundry_usage.py bind|fallback-transcripts` and `ingest|attribute` when `--dataset` is named, and any
 abbreviation of `--trust-author`. The hook is the only silent-allow mechanism, so without this the `ask` rows
 would never be enforced.
 
@@ -48,7 +48,7 @@ SUFFIXES = (".py", ".sh")
 # to equal a real file, `(` `)` subshells, backticks, redirections, separators, newlines.
 METACHARS = set(";&|<>()`$\\\n\r{}*?[]")   # {} * ? [ ] : brace/glob expansion builds a verb the token check never sees
 # Scripts that execute commands taken from their input: never allowed silently.
-EXECUTES_INPUT = {"foundry-verify.py", "foundry-test.sh", "foundry-deck-heavy"}
+EXECUTES_INPUT = {"foundry-verify.py", "foundry-test.sh", "foundry-deck-heavy", "foundry_prod_step.py"}
 # Lifecycle hooks are not tools: they reap sessions/worktrees and run on harness events. Invoking one through Bash
 # never gets a silent allow (the session's normal permission mode decides).
 LIFECYCLE_HOOKS = {"foundry-env-reap.sh", "foundry-worktree-remove.sh"}
@@ -70,6 +70,7 @@ _ASK_VERBS = {
     # and open a pull request (gv-15). discover, check, validate, load, applicable, exceptions and leak-check are read-only.
     "foundry_governance.py": {"render", "baseline", "select", "declare", "apply", "upgrade"},
     "foundry_message_log.py": {"post", "import"},  # push to the remote / read an issue; read|audit|ruleset-template stay silent
+    "foundry_deck_report.py": {"pause", "resume"},  # write/clear .foundry/runtime/deck-pause.json (gv-13); `--in` and `state` stay silent
     "foundry_usage.py": {"bind", "fallback-transcripts"},  # the floor row is ask with or without --dataset
 }
 # Scripts the floor tiers `ask` as a whole because every invocation writes (gv-14: foundry_research_note.py writes
