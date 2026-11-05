@@ -49,6 +49,11 @@
       "rationale": "reads /proc/loadavg, /proc/meminfo, /proc/uptime, the boot id, cgroup memory limits, statvfs of / and --path, the kernel log (/dev/kmsg or journalctl -k) when readable, the OOM-baseline file and the policy file; prints a verdict. The two verbs that read a named file or write (--from-json, --reset-oom-baseline) are never silent: the plugin-scripts-allow hook leaves them to ask (gv-12)"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/deck-cost-census.py:*)",
+      "tier": "ask",
+      "rationale": "reads the session's subagent transcripts and a PR JSON file (or runs gh pr list) and, with --append, appends one line to a cost log; the write and the gh call are not silent (dl-14)"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-permissions-compile.py --check:*)",
       "tier": "allow",
       "rationale": "read-only drift check over .foundry/permissions.yaml vs .claude/settings.json; never writes"
