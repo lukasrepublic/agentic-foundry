@@ -494,3 +494,111 @@ def test_item6_pr_body_lists_the_managed_files(tmp_path, monkeypatch):
     body = call[call.index("--body") + 1]
     assert "Managed files in this pull request" in body and "- governance/local/exceptions.yaml" in body
     assert "- .foundry/governance.lock" in body
+
+
+# ------------------------------------------------------------------------------------------ 7 shared message log
+import test_message_log as tml  # noqa: E402
+from test_message_log import make_clone as ml_clone, make_remote as ml_remote, _post as ml_post, git as mgit  # noqa: E402,F401
+
+
+@pytest.fixture
+def mlenv(monkeypatch):
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for k in ("CLAUDE_PROJECT_DIR", "FOUNDRY_MESSAGE_REMOTE"):
+        monkeypatch.delenv(k, raising=False)
+
+
+def test_item7_a_configured_uploadpack_does_not_run_on_read(tmp_path, mlenv):
+    remote = ml_remote(tmp_path)
+    w = ml_clone(tmp_path, remote, "w")
+    ml_post(w, "all")
+    marker = tmp_path / "ran"
+    evil = tmp_path / "evil.sh"
+    evil.write_text(f"#!/bin/sh\ntouch {marker}\nexec git-upload-pack \"$@\"\n")
+    evil.chmod(0o755)
+    mgit(w, "config", "remote.origin.uploadpack", str(evil))
+    mgit(w, "config", "credential.helper", f"!touch {marker}.cred")
+    r = ml.read(ml.Adapter(), w, "origin", "all", advance=False)
+    assert r["tip"] and not marker.exists()
+    ml_post(w, "all")                                                  # a push goes through the same neutralisation
+    assert not marker.exists()
+
+
+def test_item7_control_git_calls_carry_the_neutralising_flags(tmp_path, mlenv, monkeypatch):
+    remote = ml_remote(tmp_path)
+    w = ml_clone(tmp_path, remote, "w")
+    ml_post(w, "all")
+    seen = []
+    real = ml.subprocess.run
+    monkeypatch.setattr(ml.subprocess, "run", lambda argv, *a, **k: (seen.append(list(argv)), real(argv, *a, **k))[1])
+    first = ml_post(w, "all")["id"]
+    ad = ml.Adapter()
+    tip = ml.fetch_tip(ad, w, "origin")
+    cursor = tmp_path / "c"
+    (w / ".git" / "foundry-message-cursor.me-x").write_text("0" * 7 + "\n")        # not used; the explicit since below is
+    ml_post(w, "all")
+    ml.read(ad, w, "origin", "all", since=tip, advance=False)
+    fetches = [a for a in seen if "fetch" in a]
+    assert fetches and all("remote.origin.uploadpack=git-upload-pack" in a and "credential.helper=" in a for a in fetches)
+    assert any("remote.origin.receivepack=git-receive-pack" in a for a in seen if "push" in a)
+    diffs = [a for a in seen if "diff" in a and "-U0" in a]
+    assert diffs and all("--no-ext-diff" in a and "--no-textconv" in a for a in diffs)
+
+
+def test_item7_the_allow_hook_asks_when_its_own_environment_names_a_remote(monkeypatch):
+    hook, root = tml._hook(), os.path.realpath(ROOT)
+    script = os.path.join(root, "scripts", "foundry_message_log.py")
+    monkeypatch.delenv("FOUNDRY_MESSAGE_REMOTE", raising=False)
+    assert hook.allowed(f"python3 {script} read --to me", root) is True                 # control
+    monkeypatch.setenv("FOUNDRY_MESSAGE_REMOTE", "https://attacker.invalid/x")
+    assert hook.allowed(f"python3 {script} read --to me", root) is False
+
+
+def test_item7_malformed_is_capped_at_source_and_filtered_by_recipient(tmp_path, mlenv):
+    remote = ml_remote(tmp_path)
+    w = ml_clone(tmp_path, remote, "w")
+    ml_post(w, "all")
+    for n in range(ml.MAX_MALFORMED + 30):
+        tml._plant_raw(w, json.dumps({"to": "other", "kind": "NOPE", "n": n}))
+    tml._plant_raw(w, json.dumps({"to": "me", "kind": "NOPE"}))
+    tip = ml.fetch_tip(ml.Adapter(), w, "origin")
+    recs, bad = ml.replay(ml.Adapter(), w, tip)
+    assert len(bad) <= ml.MAX_MALFORMED + 1 and any("malformed-truncated" in b["reason"] for b in bad)
+    res = ml.read(ml.Adapter(), w, "origin", "me", advance=False)
+    assert all(b.get("to") in (None, "me", "all") for b in res["malformed"]) and len(res["malformed"]) <= ml.MAX_MALFORMED
+    # control: a malformed PRODUCTION record is never dropped by the cap (audit turns it into a finding)
+    tml._plant_raw(w, json.dumps({"to": "all", "kind": "PROD-BEFORE"}))
+    tip = ml.fetch_tip(ml.Adapter(), w, "origin")
+    assert any(b["kind"] == "PROD-BEFORE" for b in ml.replay(ml.Adapter(), w, tip)[1])
+
+
+def test_item7_userinfo_redaction_stops_at_the_first_at_after_the_slashes():
+    assert "tok" not in ml.redact("fatal: https://us er:tok en@host.example/x.git")
+    assert "tok" not in ml.redact("https://user:tok@host/x")
+    assert ml.redact("no url here, a@b") == "no url here, a@b"                           # control
+
+
+def test_item7_audit_flags_a_rewrite_of_earlier_lines_and_passes_an_append(tmp_path, mlenv):
+    remote = ml_remote(tmp_path)
+    w = ml_clone(tmp_path, remote, "w")
+    a = ml_post(w, "all", text="first")
+    ml_post(w, "all", text="second")
+    ad = ml.Adapter()
+    assert not [f for f in ml.audit(ad, w, "origin", open_minutes=120)["findings"] if f["rule"] == "history-rewritten"]
+    ml_post(w, "all", text="third")                                                      # control: an append is not a rewrite
+    assert not [f for f in ml.audit(ad, w, "origin", open_minutes=120)["findings"] if f["rule"] == "history-rewritten"]
+    # a fast-forward commit by another writer that deletes the first record
+    x = ml_clone(tmp_path, remote, "x")
+    mgit(x, "fetch", "-q", "origin", "foundry/messages")
+    mgit(x, "checkout", "-q", "-b", "m", "FETCH_HEAD")
+    f = [p for p in (x / "messages").glob("*.jsonl")][0]
+    f.write_text("".join(ln for ln in f.read_text().splitlines(True) if a["id"] not in ln))
+    mgit(x, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qam", "tidy")
+    mgit(x, "push", "-q", "origin", "m:foundry/messages")
+    res = ml.audit(ad, w, "origin", open_minutes=120)
+    hits = [f for f in res["findings"] if f["rule"] == "history-rewritten"]
+    assert hits and hits[0]["removed_lines"] >= 1 and "first" not in json.dumps(hits)
+    res2 = ml.audit(ad, w, "origin", open_minutes=120)                                    # the cursor is not advanced past a rewrite
+    assert [f for f in res2["findings"] if f["rule"] == "history-rewritten"]
