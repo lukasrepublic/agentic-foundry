@@ -15,7 +15,7 @@ Rules A1, A5, A6, B1, B8, B9, B10, C1, D2, E1, E2 of the port prompt onto the gn
 - AC-OM-3 WHEN the template is rendered with the default policy, THE SYSTEM SHALL contain sections A1, A5, A6, B1, B8, B9, C1, D2 and E1 with values from the policy; with `communication.style: off` the E2 block SHALL be absent (AC-OM-11 third).
 - AC-OM-7 WHEN the renderer receives more than `max_lines`, a missing block, or a stuck item without a reason, THE SYSTEM SHALL refuse naming the defect; a valid tick SHALL render four blocks.
 - AC-BUS-6 WHEN the rendered template is grepped, it SHALL call `read` and `audit` and SHALL NOT contain the word "bus".
-- WHEN the pause flag is set, a tick SHALL dispatch nothing new and SHALL say so in Building now.
+- WHEN the pause flag is set, a tick SHALL dispatch nothing new and SHALL say so in Building now. (rule B10)
 - WHEN `prod-step` wraps a failing command, THE SYSTEM SHALL post STOP with the reason after cleanup and exit non-zero.
 
 ## Done when
@@ -59,3 +59,4 @@ agent-merges-on-green
 | date | what changed | why reality required it | auth_seq |
 |---|---|---|---|
 | 2026-11-05 | Scope adds `schema/operating-model.schema.json` (a tunable `models: {builder, reviewer, security_reviewer}` object); goal adds port-prompt rule B7 (token discipline): the rendered template carries a model-hints block from policy with defaults (builder/reviewer = the smaller model, security_reviewer = the strongest), states that reviewers receive a diff file path never shell access, and that tick turns stay short. New AC: WHEN the template is rendered, THE SYSTEM SHALL include the model-hints block; absent `models` the defaults SHALL render. | gv-16's AC-OM-10 traceability run over the real charters found B7 mapped to no AC. | 1 |
+| 2026-11-05 (b) | Scope adds `cli/templates/operating-model.yaml.tmpl` (the `models` block; a base test requires every schema key there) and a minimal `scripts/foundry_message_log.py` change (audit output carries `from`) if needed for sender-mismatch pairing. B2 is static prose in the template (the resource verdict is gv-12's call), not a policy-filled section. Message-log findings are budgeted, never a refusal. | the builder parked the template edit; the reviews of #304. | 1 |

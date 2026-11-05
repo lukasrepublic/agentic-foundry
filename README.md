@@ -202,6 +202,15 @@ for everyone. The GitHub-backed verbs need a `github_scope` (`owner`, `planning_
 `.claude/foundry-project.json`, which `/foundry:init` sets; without it they refuse with `github-scope-missing`,
 and the base ticket loop keeps working. `/foundry:doctor` shows a `github-scope` line.
 
+## Governance: rules the agent reads
+
+Human specs are turned into rules an implementing agent follows, so it does not reinvent your architecture or security
+principles. Rules ship as read-only kits in the plugin, one per category; a blueprint selects the kits for a project type;
+your own private rules live in `governance/local/` and never reach the plugin. Intake detects your stack from file signals,
+asks you to confirm in one word, and writes a lock. Upgrade runs the same step again. The factory's own operating rules have
+one optional policy file, `.foundry/operating-model.yaml`. Start at **[docs/governance.md](docs/governance.md)** and
+**[docs/operating-model-policy.md](docs/operating-model-policy.md)**.
+
 ## The merge floor, honestly
 
 Foundry does not ship a bespoke merge gate. The floor is your platform's own enforcement,

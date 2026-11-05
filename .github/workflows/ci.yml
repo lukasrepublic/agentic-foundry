@@ -152,6 +152,14 @@ jobs:
         with:
           denylist: ${{ secrets.FOUNDRY_LEAK_DENYLIST }}
           is-fork-pr: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true }}
+      # AC-OM-9 -- the name census over the change set (files differing from the merge-base with origin/main; the
+      # full-history checkout above makes that resolvable). It drives the SAME shared module as the leak gate
+      # (.github/actions/leak-gate/leak_scan.py): not a second scanner. The planted-name control runs first inside the
+      # test module; the term layer needs the secret and reports NOT-RUN (never clean) where secrets do not resolve.
+      - name: Name census over the change set (AC-OM-9, planted-name control)
+        env:
+          FOUNDRY_LEAK_DENYLIST: ${{ secrets.FOUNDRY_LEAK_DENYLIST }}
+        run: python3 -m pytest tests/test_name_census.py -q -rs
 
   # Mechanical secret scan over the PR diff (floor-#3 review R5) — restores, as a CI step, the ONE
   # machine-enforced control the retired merge-side status-poster workflow used to run pre-merge.

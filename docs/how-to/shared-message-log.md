@@ -15,8 +15,8 @@ Operator-facing reports call it "the shared message log" and name the channel in
 
 One shared issue as a message board hit GitHub's `2500`-comment limit, had no structure, no addressing and no
 threads, could be edited or deleted after the fact, was hard to query, and made every reader rescan the whole
-stream. A log on a protected branch has no size limit, keeps full history, is tamper-evident, and can be
-queried: "every production write this week" is one `audit` call.
+stream. A log on a protected branch has no size limit, keeps full history, resists casual rewrites (see "How far the
+protection goes" below), and can be queried: "every production write this week" is one `audit` call.
 
 Options considered and rejected: repository-dispatch or workflow events (each message starts a CI job and
 leaves no readable log), Projects (a status board, not a stream), and commit statuses or check runs (built for
@@ -85,7 +85,7 @@ deletion. Apply it once per repository (see below).
 
 ## Protecting the branch
 
-The log is only tamper-evident if the branch is protected. Apply the template as a repository ruleset:
+The protection comes from the branch, so protect it. Apply the template as a repository ruleset:
 
 ```
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_message_log.py" ruleset-template > ruleset.json
@@ -96,6 +96,24 @@ Rulesets on a plan that only creates them without enforcing them protect nothing
 branch name or a sandbox repository, that a force-push is actually refused before relying on it. The test
 suite reports `unverifiable:tier-b` rather than a pass when it cannot observe a real rejection. Signed commits
 on this branch are optional: there is no consensus for bot writers.
+
+## How far the protection goes
+
+The ruleset blocks a force-push and a deletion of the branch. It does not block a fast-forward commit, and a
+fast-forward commit can change or remove earlier lines. `audit` replays the log as it stands at the tip, so it does **not**
+catch such a rewrite: the log is append-only by convention and by the ruleset, not tamper-evident. The git history of the
+branch does show the change, and a reviewer can read it. Treat the log as a coordination record, not as evidence that
+would stand against a writer who wants to hide something. The `from` field is also self-declared, so any writer can close
+another session's production pair.
+
+## The branch that `queue-land` can create
+
+`scripts/foundry_queue_land.py` posts its record lines to the shared message log through `post`, and `post` writes to the
+`origin` of the directory it runs in unless you name a repository. If that repository has no `foundry/messages` branch,
+`post` creates the orphan branch there. So a session that runs `queue-land` in a repository you did not mean to log into
+leaves a stray `foundry/messages` branch behind. Run it from the repository that owns the pull request, check
+`git -C <repo> ls-remote --heads origin foundry/messages` if you are unsure, and delete a stray branch by hand.
+`foundry_prod_step.py` requires `--repo` and `--remote` for this reason.
 
 ## The people channel
 
@@ -109,6 +127,11 @@ stream. The operator inbox already reads request issues; there is no new reader.
 chat webhook every `15` minutes. It is off by default and costs runner minutes. To turn it on: set
 `messaging.chat_mirror: on` in the policy file, set the repository variable `MESSAGE_LOG_CHAT_MIRROR` to `on`,
 and add the secret `MESSAGE_LOG_CHAT_WEBHOOK`.
+
+The mirror forwards the `from` and `body` text of each record to the webhook as written. A record body is data from
+another session, and some chat systems turn markup such as `@channel` into a notification. Send the webhook to a channel
+where that is acceptable, and read the template (`cli/templates/workflows/message-log-chat-mirror.yml`) before you turn
+the mirror on.
 
 ## Permissions
 

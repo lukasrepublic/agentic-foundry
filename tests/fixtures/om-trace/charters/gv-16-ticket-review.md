@@ -12,11 +12,11 @@ Design §5.3–§5.4; port prompt rules D3, G2, G3, C2. Grounding: Spec-Kit plan
 - G3: `foundry-authorize.py` refuses when the spec or contract has uncommitted changes. G2: the merge step (`queue-land` / `merge-when-green`) writes the delivered-by record (PR, merger login, head sha) in the same action as the merge; authorship alone never proves attestation (documented). C2: `scripts/foundry_ci_budget_lint.py` flags a performance or request-count budget wired as a required check.
 
 ## Acceptance criteria
-- WHEN a ticket in the design-required class lacks a Design or cites an unknown id, `start` SHALL refuse with `design-required` naming the missing piece; a cited existing id SHALL admit.
+- WHEN a ticket in the design-required class lacks a Design or cites an unknown id, `start` SHALL refuse with `design-required` naming the missing piece; a cited existing id SHALL admit. (rules A4, D3)
 - WHEN a diff touches a path outside the Design's components, `governance-trace` SHALL fail naming the path (control: inside passes).
-- WHEN the spec tree is dirty, `foundry-authorize.py` SHALL refuse with `commit-before-authorize`.
-- WHEN a merge completes through `queue-land`, the delivered-by record SHALL exist with the merger login and head sha (stubbed gh).
-- WHEN a CI workflow fixture wires a budget check as required, the budget lint SHALL flag it; as a non-required report it SHALL pass.
+- WHEN the spec tree is dirty, `foundry-authorize.py` SHALL refuse with `commit-before-authorize`. (rule G3)
+- WHEN a merge completes through `queue-land`, the delivered-by record SHALL exist with the merger login and head sha (stubbed gh). (rule G2)
+- WHEN a CI workflow fixture wires a budget check as required, the budget lint SHALL flag it; as a non-required report it SHALL pass. (rule C2)
 - AC-OM-10 THE SYSTEM SHALL generate a traceability table mapping every port-prompt rule (A1..G3) to ≥ 1 AC in this programme's charters (`scripts/foundry_om_trace.py`), and the test SHALL fail on an unmapped rule.
 
 ## Done when
