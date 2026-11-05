@@ -462,18 +462,25 @@ def trusted_operator_logins(root: Path | None = None) -> set:
     return out
 
 
-def author_trusted(repo: str | None, login: str, gh_json=_gh_json, operators=None) -> tuple[bool, str]:
+def author_trusted(repo: str | None, login: str, gh_json=_gh_json, operators=None, agent_login=None) -> tuple[bool, str]:
     """True when `login` is a registered operator (`trusted_operator_logins`), or has write/maintain/admin on `repo`.
     The authenticated gh user is never trusted for being the authenticated user (it is the agent itself, gv-16): it
     counts only when it is ALSO a registered operator. The permission route never applies to it."""
     if not login:
         return False, "issue author unknown"
     ops = trusted_operator_logins() if operators is None else {str(x).lower() for x in operators}
-    me = (gh_json(["api", "user"]) or {}).get("login")
-    if not me:
-        # fail CLOSED: without the agent's own login the identity check cannot run, so nobody is trusted on this lookup
-        return False, "identity lookup failed (`gh api user` returned no login), so the issue author cannot be vetted"
-    if me.lower() == login.lower():
+    # Who is "the agent itself"? An explicit `agent_login` (CI passes the workflow's actor: `github.token` is an App installation
+    # token, so `gh api user` answers 403 there). Under GITHUB_ACTIONS=true with no explicit login the self-identity branch is
+    # skipped. Everywhere else the authenticated gh user is the agent, and a failed lookup fails closed.
+    if agent_login:
+        me = str(agent_login)
+    elif os.environ.get("GITHUB_ACTIONS") == "true":
+        me = ""
+    else:
+        me = (gh_json(["api", "user"]) or {}).get("login")
+        if not me:
+            return False, "identity lookup failed (`gh api user` returned no login), so the issue author cannot be vetted"
+    if me and me.lower() == login.lower():
         # Checked FIRST: the authenticated gh login is the agent's own identity. Even when it is also a registered operator
         # its self-authored or self-edited body is not vouched for by that fact (a shared identity makes the guarantee
         # nominal: the agent and the operator are indistinguishable to GitHub). The operator reads such a command and passes

@@ -50,8 +50,16 @@ import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-import foundry_ticket_store as store  # noqa: E402
+# The one import that can fail (the ticket store lives beside the hooks in the plugin). A failure must not be a traceback with
+# exit 1: `main` refuses (exit 2, with the reason) while `store` is None.
+store = None
+STORE_ERROR = ""
+try:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    import foundry_ticket_store as store  # noqa: E402
+except BaseException as _exc:  # noqa: BLE001 - ImportError, SyntaxError in the store, anything: fail closed
+    store = None
+    STORE_ERROR = "%s: %s" % (type(_exc).__name__, str(_exc)[:160])
 
 PAPER_DIRS = ("specs", "intake", ".foundry", "status-reports", "charters", "docs")
 # Rule-mandated paper: written by the governance and research rules themselves, so admitted without a
@@ -375,8 +383,11 @@ def _refuse_ci(rel: Path, doc, sig_ok: bool) -> int:
 
 
 def _main_bash(payload: dict, root: Path) -> int:
-    command = (payload.get("tool_input") or {}).get("command")
-    if not isinstance(command, str) or not command.strip():
+    ti = payload.get("tool_input")
+    if not isinstance(ti, dict) or not isinstance(ti.get("command"), str):
+        return _refuse("a Bash payload whose tool_input is not an object with a string `command` cannot be judged (fail closed)")
+    command = ti["command"]
+    if not command.strip():
         return 0
     cwd = payload.get("cwd")
     base = Path(cwd) if isinstance(cwd, str) and cwd and Path(cwd).is_absolute() else root
@@ -396,13 +407,19 @@ def main() -> int:
         return _refuse("the hook payload is not valid JSON, so it cannot be judged (fail closed)")
     if not isinstance(payload, dict):
         return _refuse("the hook payload is not a JSON object, so it cannot be judged (fail closed)")
+    if store is None:
+        return _refuse("the ticket store could not be imported (%s), so the write cannot be judged (fail closed)" % STORE_ERROR)
     tool = payload.get("tool_name", "")
     if tool == "Bash":
         return _main_bash(payload, _root())
     if tool not in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
         return 0
-    ti = payload.get("tool_input") or {}
+    ti = payload.get("tool_input")
+    if not isinstance(ti, dict):
+        return _refuse("tool_input is not an object, so the write cannot be judged (fail closed)")
     target = ti.get("file_path") or ti.get("notebook_path") or ""
+    if not isinstance(target, str):
+        return _refuse("the file path is not a string, so the write cannot be judged (fail closed)")
     if not target:
         return 0
     root = _root()

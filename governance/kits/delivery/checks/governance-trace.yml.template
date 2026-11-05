@@ -60,7 +60,8 @@ jobs:
           CLAUDE_PLUGIN_ROOT: ${{ github.workspace }}/plugin
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
         run: >-
           python3 plugin/governance/kits/delivery/checks/governance-trace.py check
-          --pr-json pr.json --files-json files.json --ticket-json ticket.json --repo "$REPO"
+          --pr-json pr.json --files-json files.json --ticket-json ticket.json --repo "$REPO" --agent-login "$ACTOR"
           --project-dir pr --base-dir base

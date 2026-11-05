@@ -135,7 +135,7 @@ def _within(path: str, components: list, gv: dict, ft) -> bool:
 
 
 def run_checks(pr: dict, ticket: dict, project: Path, plugin: Path, today: str | None, base: Path | None = None,
-               gh_json=None, repo: str | None = None, files: list | None = None) -> list:
+               gh_json=None, repo: str | None = None, files: list | None = None, agent_login: str | None = None) -> list:
     ft = _load_ticket_module(plugin)
     base = base or project
     gh_json = gh_json or _default_gh_json
@@ -160,7 +160,8 @@ def run_checks(pr: dict, ticket: dict, project: Path, plugin: Path, today: str |
     # the ticket author must be trusted: a Design from an untrusted account is not a Design
     login = ((ticket or {}).get("author") or {}).get("login") or ""
     # the author is vetted against the PR's own repository, never against the repo a ref names (that repo is the PR author's choice)
-    ok_a, why_a = ft.author_trusted(repo, login, gh_json, operators=ft.trusted_operator_logins(base))
+    ok_a, why_a = ft.author_trusted(repo, login, gh_json, operators=ft.trusted_operator_logins(base),
+                                    agent_login=agent_login)
     add("ticket-author", ok_a, why_a)
     body = (ticket or {}).get("body") or ""
     gv = ft.governance_context(base)               # policy, lock, boundaries and rules from the BASE ref
@@ -232,6 +233,8 @@ def main(argv=None) -> int:
     p.add_argument("--base-dir", help="a checkout of the PR's BASE ref (policy, lock, boundaries, operators); default: --project-dir")
     p.add_argument("--files-json", help="the paged changed-file list: a JSON list of {\"path\": ...}")
     p.add_argument("--repo", help="OWNER/NAME of the repository the PR is in (the default repo of a bare #N ticket ref)")
+    p.add_argument("--agent-login", help="the account the agent acts as (CI: the workflow actor). `github.token` cannot call "
+                   "`gh api user`, so in CI the self-identity rule uses this login instead of a lookup")
     p.add_argument("--plugin-root")
     p.add_argument("--today")
     p.add_argument("--json", action="store_true")
@@ -249,7 +252,8 @@ def main(argv=None) -> int:
         project = Path(a.project_dir or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve()
         files = json.loads(Path(a.files_json).read_text(encoding="utf-8")) if a.files_json else None
         base = Path(a.base_dir).resolve() if a.base_dir else None
-        findings = run_checks(pr, ticket, project, _plugin_root(a.plugin_root), a.today, base=base, repo=a.repo, files=files)
+        findings = run_checks(pr, ticket, project, _plugin_root(a.plugin_root), a.today, base=base, repo=a.repo, files=files,
+                              agent_login=a.agent_login)
     except (OSError, ValueError) as e:
         print(f"refused: {e}", file=sys.stderr)
         return 2
