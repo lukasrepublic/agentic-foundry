@@ -1,0 +1,33 @@
+{
+  "check": "semgrep",
+  "findings": [
+    {
+      "expires": "2027-02-05",
+      "line": 178,
+      "path": "scripts/foundry_queue_land.py",
+      "reason": "sha1 builds a 12-hex-char de-duplication signature over finding ids, not a security control; the value is compared only with signatures this script wrote earlier.",
+      "rule": "python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1"
+    },
+    {
+      "expires": "2027-02-05",
+      "line": 439,
+      "path": "scripts/foundry_message_log.py",
+      "reason": "sha1 builds a 6-hex-char cursor file-name disambiguator, not a security control; switching the digest renames every existing per-clone cursor and replays unread messages. Change only with a cursor migration.",
+      "rule": "python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1"
+    },
+    {
+      "expires": "2027-02-05",
+      "line": 76,
+      "path": "scripts/foundry-verify.py",
+      "reason": "_dispatch runs ONE command string a stack profile declares, by design (the profile is the reviewed, operator-owned source; output is captured as data, never instructions). Argv form cannot express a profile's shell pipelines. Revisit when profiles declare argv lists.",
+      "rule": "security-checks.fg-sec-022-python-shell-true"
+    },
+    {
+      "expires": "2027-02-05",
+      "line": 77,
+      "path": "scripts/foundry-verify.py",
+      "reason": "Same call as the FG-SEC-022 finding above (the profile-declared command dispatch); one decision, two rules.",
+      "rule": "python.lang.security.audit.subprocess-shell-true.subprocess-shell-true"
+    }
+  ]
+}

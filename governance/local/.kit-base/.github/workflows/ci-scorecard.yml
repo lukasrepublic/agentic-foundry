@@ -1,0 +1,32 @@
+# Enforces the gated rows of scorecard-map.yaml (FG-SEC-012, 015, 017, 019, 020, 021); other rows are reported only.
+# Branch-Protection cannot be scored with the default token: create a token that can read repository settings,
+# store it as the SCORECARD_TOKEN secret and pass it as repo_token below. Without it that check scores -1 and the gate fails (absent/inconclusive).
+name: scorecard
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1"
+permissions:
+  contents: read
+jobs:
+  analysis:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e # v2.5.0
+        with:
+          results_file: results.json
+          results_format: json
+          publish_results: false
+          repo_token: ${{ secrets.SCORECARD_TOKEN }}
+      - name: gate
+        # Fails when a gated check is absent from the results, inconclusive (-1), or scores below the threshold.
+        # Gated names and threshold come from scorecard-map.yaml (gate: true).
+        run: |
+          jq -e --argjson t 7 '. as $r | ["Pinned-Dependencies","Vulnerabilities","Branch-Protection","Token-Permissions","Dangerous-Workflow","Security-Policy"] | all(. as $n | [$r.checks[] | select(.name == $n)] | length == 1 and .[0].score >= $t)' results.json

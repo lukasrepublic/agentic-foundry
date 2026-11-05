@@ -1,0 +1,70 @@
+# Machine-owned by `foundry_governance.py apply|upgrade`. Do not edit; adopter rules live in governance/local/.
+blueprint:
+  id: claude-plugin
+  version: 0.1.0
+  sha256: a60ef61302b13bbdf5089b75e29b6bfc06a57a4c4c2516b99f60cbd41fc0a69f
+kits:
+- id: architecture
+  version: 1.0.0
+  sha256: 5d756e2d176eff673fd65e6c6d99b853950a9427e6a1d29f1a152be863dab281
+  level: 2
+- id: conduct
+  version: 1.0.0
+  sha256: 8ef68ac99d6722629d436ff30d840c1e2ea5f8815fe065087b869e314700506f
+  level: 2
+- id: contracts
+  version: 1.0.0
+  sha256: 663b7f3dacc1a5c759bb8be0f4762775ffd6584b5d8457ce2b3b95dc4cebca2e
+  level: 2
+- id: delivery
+  version: 1.0.0
+  sha256: 25ed7a1e29aa7798a44f8a4f2b8e57ec51fda10039d3dba6fbc3a1335496b8b1
+  level: 2
+- id: exceptions
+  version: 1.0.0
+  sha256: 2ad4feeb4b33baa008bbe0d86f9bdff1cffd03af8d7f5cbd26f9a7946a3fa4f2
+  level: 2
+- id: observability
+  version: 1.0.0
+  sha256: 0f27d3ec3ac0b1f6ec7630360f1cfb3b7de98aaa88bc0b3ba5904429b4efdcba
+  level: 1
+- id: operations
+  version: 1.0.0
+  sha256: a6b08eceed6898401dbf3d852fe5fd91f2b366e555d3f774194d336ec98b999a
+  level: 1
+- id: product
+  version: 1.0.0
+  sha256: 391a4ca775991dbd96e043f12d44c6c0e41b9dba6a7aa74b7510ce7211811698
+  level: 2
+- id: quality
+  version: 1.0.0
+  sha256: 8c5afe9e0f81554ee22d1fa831d06062bd9f85ac78485eaf6ab30dbc4b2e4a78
+  level: 2
+- id: security
+  version: 1.0.0
+  sha256: b4021ce2c03df383c1a20ddba149ca643ebee4fd50636ddf99cc9c7017e23671
+  level: 3
+- id: stack
+  version: 1.0.0
+  sha256: 810ddb12537dec55ae6616c2227ccc49b111f1fd2bab82cadf0509b55a8d8064
+  level: 2
+declarations:
+  asvs_level: 2
+  data_classification:
+  - public
+  surfaces:
+  - cli
+  - workflows
+  trust_boundaries:
+  - hooks/**
+  - scripts/foundry-ticket.py
+  - scripts/foundry_message_log.py
+  - scripts/foundry_prod_step.py
+facts_sha256: ebaa8dd408818eae5ae1d53d2db4ac0cf61c5d63fe1a1247ba926fe8562a5037
+intake_at: '2026-11-04'
+plugin_version: 1.18.5
+snippets:
+  .github/workflows/ci-gitleaks.yml: 42aa5cee3dc3cca28e137003cc879125fdad30c1853a5366e634412887bbdfec
+  .github/workflows/ci-semgrep.yml: 1288d0a192d393b959d823bd5419e92f9b4b152e3013b83d64f030d49569cd31
+  .github/workflows/ci-release-attest.yml: 18a6a02f13427bb3d1a0d3f63f8ec0147682992c9fb953befa93709d193dca9f
+  .github/workflows/ci-scorecard.yml: af631742a298f9d5c2fd0990450217b484558ede755102714eb04549e87e8233

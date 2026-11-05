@@ -1,0 +1,43 @@
+# Enforces FG-SEC-011 (provenance), FG-SEC-013 (signed releases) and FG-SEC-014 (SBOM).
+# Replace the build step with your own; ARTIFACT is the path of the built file.
+# Consumers verify with: gh attestation verify <artifact> --repo <owner>/<repo>
+name: release-attest
+on:
+  release:
+    types: [published]
+permissions:
+  contents: read
+jobs:
+  attest:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    env:
+      ARTIFACT: dist/release.tar.gz
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: build
+        run: |
+          mkdir -p dist
+          git archive --format=tar.gz -o "$ARTIFACT" HEAD
+      - uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          path: .
+          format: spdx-json
+          output-file: dist/sbom.spdx.json
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ env.ARTIFACT }}
+      - uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: ${{ env.ARTIFACT }}
+          sbom-path: dist/sbom.spdx.json
+      - name: upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" "$ARTIFACT" dist/sbom.spdx.json --clobber
