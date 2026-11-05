@@ -12,7 +12,9 @@ sits downstream of a cycle is not named. Never a partial plan.
 
 Path overlap is conservative (it never under-splits). Each path is normalised, then cut to a literal directory
 prefix: a trailing `/**` or `/*` is dropped; any other glob character cuts the path at its first segment. Two
-paths overlap when the prefixes are equal or one is a directory prefix of the other.
+paths overlap when the prefixes are equal or one is a directory prefix of the other. A path whose prefix is empty
+(`""`, `/`, `.`, a leading glob such as `*.py` or `**`) or that holds a `..` segment can reach anywhere, so it
+overlaps EVERY path.
 
     foundry_wave_plan.py <atoms.json>     # atoms JSON (a list, or {"atoms": [...]}) -> waves JSON on stdout
 """
@@ -55,8 +57,14 @@ def _literal_overlap_prefix(p):
     return norm
 
 
+def _reaches_everything(prefix):
+    return prefix in ("", ".") or ".." in prefix.split("/")
+
+
 def paths_overlap(a, b):
     na, nb = _literal_overlap_prefix(a), _literal_overlap_prefix(b)
+    if _reaches_everything(na) or _reaches_everything(nb):
+        return True
     if na == nb:
         return True
     return na.startswith(nb + "/") or nb.startswith(na + "/")

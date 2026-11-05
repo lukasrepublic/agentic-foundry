@@ -23,6 +23,13 @@ def atom(i, blocked_by=(), paths=(), **kw):
     return d
 
 
+def cycle_members(msg):
+    """The atom list after the marker, parsed (never a substring probe)."""
+    marker = "dependency cycle among atoms: "
+    assert marker in msg
+    return msg.split(marker, 1)[1].splitlines()[0].split(", ")
+
+
 def corpus(*atoms, **kw):
     c = {"atoms": list(atoms)}
     c.update(kw)
@@ -52,9 +59,7 @@ def test_cycle_refuses_and_names_every_atom_in_it_but_not_bystanders():
              {"id": "Z", "blocked_by": [], "paths": []}]
     with pytest.raises(wp.WavePlanError) as e:
         wp.plan_waves(atoms)
-    msg = str(e.value)
-    assert all(x in msg for x in ("A", "B", "C"))
-    assert "D" not in msg.replace("dependency", "").replace("cycle", "")  # D is downstream, not in the cycle
+    assert cycle_members(str(e.value)) == ["A", "B", "C"]      # exact: D is downstream, Z is a bystander
 
 
 def test_self_loop_is_a_cycle():
@@ -147,25 +152,39 @@ def test_design_components_line_gives_paths():
 
 
 # ---- GitHub: one function, stubbed ------------------------------------------------------------
+OVERRIDE = {}
+
+
+@pytest.fixture(autouse=True)
+def _reset_override():
+    OVERRIDE.clear()
+    yield
+    OVERRIDE.clear()
+
+
 def _fake_graphql(calls):
     def fake(query, variables=None):
         calls.append((query, variables))
         if "createProjectV2Field" in query:
             n = variables["name"]
             return {"createProjectV2Field": {"projectV2Field": {"id": f"F_{n}", "name": n}}}
+        if "clearProjectV2ItemFieldValue" in query:
+            return {"clearProjectV2ItemFieldValue": {"projectV2Item": {"id": variables["item"]}}}
         if "updateProjectV2ItemFieldValue" in query:
             return {"updateProjectV2ItemFieldValue": {"projectV2Item": {"id": variables["item"]}}}
+        conn = lambda nodes: {"totalCount": len(nodes), "pageInfo": {"hasNextPage": False}, "nodes": nodes}  # noqa: E731
         node = lambda num, body, blocked=(), labels=(), sub=(): {  # noqa: E731
             "id": f"N{num}", "number": num, "state": "OPEN", "body": body, "repository": {"nameWithOwner": "o/r"},
-            "labels": {"nodes": [{"name": x} for x in labels]},
-            "blockedBy": {"nodes": [{"id": b} for b in blocked]},
-            "subIssues": {"nodes": [{"id": s} for s in sub]}}
-        items = [{"id": "PI1", "content": node(1, "## Design\nComponents: a/x.py\n")},
+            "labels": conn([{"name": x} for x in labels]),
+            "blockedBy": conn([{"id": b} for b in blocked]),
+            "subIssues": conn([{"id": s} for s in sub])}
+        extra = OVERRIDE.get("items", [])
+        items = extra + [{"id": "PI1", "content": node(1, "## Design\nComponents: a/x.py\n")},
                  {"id": "PI2", "content": node(2, "## Design\nComponents: b/y.py\n", blocked=["N1"], labels=["hold"])},
                  {"id": "PI3", "content": {}}]
         return {"repositoryOwner": {"projectV2": {
             "id": "PVT1",
-            "fields": {"nodes": [{"id": "F_title", "name": "Title", "dataType": "TEXT"}]},
+            "fields": conn(OVERRIDE.get("fields", [{"id": "F_title", "name": "Title", "dataType": "TEXT"}])),
             "items": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": items}}}}
     return fake
 
@@ -228,15 +247,18 @@ def test_bad_programme_name_refused(repos):
 
 
 # ---- CLI --------------------------------------------------------------------------------------
-def cli(*args, cwd=None):
+def cli(*args, cwd=None, root=None):
+    env = dict(__import__("os").environ)
+    if root:
+        env["CLAUDE_PROJECT_DIR"] = str(root)
     return subprocess.run([sys.executable, str(ROOT / "scripts" / "foundry_execution_plan.py"), *args],
-                          capture_output=True, text=True, timeout=60, cwd=cwd)
+                          capture_output=True, text=True, timeout=60, cwd=cwd, env=env)
 
 
 def test_cli_plan_from_json_prints_valid_yaml(tmp_path):
     f = tmp_path / "c.json"
     f.write_text(json.dumps(DIAMOND))
-    r = cli("plan", "prog", "--from-json", str(f))
+    r = cli("plan", "prog", "--from-json", str(f), root=tmp_path)
     assert r.returncode == 0, r.stderr
     jsonschema.validate(yaml.safe_load(r.stdout), SCHEMA)
 
@@ -244,15 +266,16 @@ def test_cli_plan_from_json_prints_valid_yaml(tmp_path):
 def test_cli_cycle_exits_2_naming_atoms(tmp_path):
     f = tmp_path / "c.json"
     f.write_text(json.dumps(corpus(atom("A", ["B"]), atom("B", ["A"]))))
-    r = cli("plan", "prog", "--from-json", str(f))
-    assert r.returncode == 2 and "A" in r.stderr and "B" in r.stderr
+    r = cli("plan", "prog", "--from-json", str(f), root=tmp_path)
+    assert r.returncode == 2 and r.stderr.count("refused:") == 1
+    assert cycle_members(r.stderr) == ["A", "B"]
 
 
 def test_cli_publish_dry_run_writes_nothing(repos, tmp_path):
     work, bare = repos
     f = tmp_path / "c.json"
     f.write_text(json.dumps(DIAMOND))
-    r = cli("publish", "prog", "--from-json", str(f), "--dry-run", cwd=work)
+    r = cli("publish", "prog", "--from-json", str(f), "--dry-run", cwd=work, root=tmp_path)
     assert r.returncode == 0 and "programme: prog" in r.stdout
     assert subprocess.run(["git", "-C", str(bare), "rev-parse", "--verify", "-q", "refs/heads/plan/prog"],
                           capture_output=True).returncode != 0
@@ -260,3 +283,231 @@ def test_cli_publish_dry_run_writes_nothing(repos, tmp_path):
 
 def test_schema_is_valid_json_schema():
     jsonschema.Draft202012Validator.check_schema(SCHEMA)
+
+
+# ---- fix round: review findings ---------------------------------------------------------------
+def test_hold_propagates_to_dependents_counter_example():
+    # A held alone in wave 1; C blocked_by A in wave 2 -> nothing is startable, C in particular.
+    plan = ep.build_plan("p", corpus(atom("A", labels=["hold"]), atom("C", ["A"])))
+    assert plan["max_concurrent"] == 0 and plan["open_wave"] is None and plan["held"] == ["A"]
+
+
+def test_dependents_of_an_unmerged_batch_are_not_counted_in_max_concurrent():
+    plan = ep.build_plan("p", corpus(atom("A"), atom("B", ["A"]), atom("X")))
+    assert plan["max_concurrent"] == 2          # A and X; B waits for A
+
+
+def test_overlap_forced_order_is_a_cpm_edge_so_float_is_not_optimistic():
+    plan = ep.build_plan("prog", DIAMOND)
+    by_atom = {b["atoms"][0]: b for w in plan["waves"] for b in w["batches"]}
+    assert by_atom["E"]["total_float"] == 5      # E follows A (overlap): ES=1, LS=6; without the edge it read 6
+    assert by_atom["F"]["total_float"] == 6
+
+
+def test_batch_id_names_the_sorted_first_member():
+    c = corpus(atom("B", paths=["y/b.py"], component="k"), atom("A", paths=["x/a.py"], component="k"))
+    ids = [b["id"] for w in ep.build_plan("p", c)["waves"] for b in w["batches"]]
+    assert ids == ["w1-A"]
+
+
+@pytest.mark.parametrize("weird", ["", "/", ".", "*.py", "**", "../x", "a/../../x", "*/foo"])
+def test_a_path_that_reaches_anywhere_overlaps_everything(weird):
+    assert wp.paths_overlap(weird, "src/deep/file.py") and wp.paths_overlap("src/deep/file.py", weird)
+    waves = wp.plan_waves([{"id": "A", "blocked_by": [], "paths": [weird]},
+                           {"id": "B", "blocked_by": [], "paths": ["src/x.py"]}])
+    assert waves == [["A"], ["B"]]
+
+
+def test_ordinary_disjoint_paths_still_do_not_overlap():
+    assert not wp.paths_overlap("src/a/**", "src/b/**") and not wp.paths_overlap("a/x.py", "a/y.py")
+
+
+def test_gh_graphql_sends_a_real_json_body_with_typed_field_values(monkeypatch):
+    seen = {}
+
+    def fake_run(argv, **kw):
+        seen["argv"], seen["input"] = argv, kw.get("input")
+        return subprocess.CompletedProcess(argv, 0, '{"data": {"ok": {}}}', "")
+    monkeypatch.setattr(ep.subprocess, "run", fake_run)
+    ep.gh_graphql(ep._SET_Q, {"project": "P", "item": "I", "field": "F", "value": {"number": 3}})
+    assert seen["argv"] == ["gh", "api", "graphql", "--input", "-"]
+    body = json.loads(seen["input"])
+    assert body["variables"] == {"project": "P", "item": "I", "field": "F", "value": {"number": 3}}
+    assert body["query"] == ep._SET_Q
+    ep.gh_graphql(ep._SET_Q, {"value": {"text": "w1-A"}})
+    assert json.loads(seen["input"])["variables"]["value"] == {"text": "w1-A"}
+
+
+@pytest.mark.parametrize("stdout,exc", [("not json", None), ('{"errors":[{"message":"x"}]}', None), ("[]", None)])
+def test_gh_graphql_refuses_bad_replies(monkeypatch, stdout, exc):
+    monkeypatch.setattr(ep.subprocess, "run", lambda argv, **kw: subprocess.CompletedProcess(argv, 0, stdout, ""))
+    with pytest.raises(ep.PlanError):
+        ep.gh_graphql("q")
+
+
+def test_gh_graphql_timeout_is_a_plan_error(monkeypatch):
+    def boom(argv, **kw):
+        raise subprocess.TimeoutExpired(argv, 1)
+    monkeypatch.setattr(ep.subprocess, "run", boom)
+    with pytest.raises(ep.PlanError):
+        ep.gh_graphql("q")
+
+
+def test_main_turns_malformed_graphql_shapes_into_one_refused_line(monkeypatch, capsys):
+    monkeypatch.setattr(ep, "gh_graphql", lambda q, v=None: {"repositoryOwner": {"projectV2": {"id": "P"}}})  # no fields
+    assert ep.main(["plan", "prog", "--project", "o/1"]) == 2
+    err = capsys.readouterr().err
+    assert err.count("refused:") == 1 and err.count("\n") == 1
+
+
+def test_truncated_connections_refuse(monkeypatch):
+    for what in ("labels", "blockedBy", "subIssues"):
+        calls = []
+        fake = _fake_graphql(calls)
+
+        def patched(q, v=None, fake=fake, what=what):
+            d = fake(q, v)
+            if "repositoryOwner" in d:
+                d["repositoryOwner"]["projectV2"]["items"]["nodes"][0]["content"][what]["pageInfo"]["hasNextPage"] = True
+            return d
+        monkeypatch.setattr(ep, "gh_graphql", patched)
+        with pytest.raises(ep.PlanError, match="truncated"):
+            ep.fetch_corpus("o", 7)
+
+
+def test_total_count_above_nodes_refuses(monkeypatch):
+    fake = _fake_graphql([])
+
+    def patched(q, v=None):
+        d = fake(q, v)
+        if "repositoryOwner" in d:
+            d["repositoryOwner"]["projectV2"]["fields"]["totalCount"] = 99
+        return d
+    monkeypatch.setattr(ep, "gh_graphql", patched)
+    with pytest.raises(ep.PlanError, match="truncated"):
+        ep.fetch_corpus("o", 7)
+
+
+def test_page_cap_and_repeated_cursor_refuse(monkeypatch):
+    fake = _fake_graphql([])
+    n = {"i": 0}
+
+    def endless(q, v=None):
+        d = fake(q, v)
+        n["i"] += 1
+        info = d["repositoryOwner"]["projectV2"]["items"]["pageInfo"]
+        info.update(hasNextPage=True, endCursor=f"c{n['i']}")
+        return d
+    monkeypatch.setattr(ep, "gh_graphql", endless)
+    monkeypatch.setattr(ep, "MAX_PAGES", 3)
+    with pytest.raises(ep.PlanError, match="more than 3 pages"):
+        ep.fetch_corpus("o", 7)
+    assert n["i"] == 3
+
+    def same(q, v=None):
+        d = fake(q, v)
+        d["repositoryOwner"]["projectV2"]["items"]["pageInfo"].update(hasNextPage=True, endCursor="same")
+        return d
+    monkeypatch.setattr(ep, "gh_graphql", same)
+    with pytest.raises(ep.PlanError, match="repeated a cursor"):
+        ep.fetch_corpus("o", 7)
+
+
+def test_components_cap_refuses():
+    body = "## Design\nComponents: " + ", ".join(f"p{i}.py" for i in range(ep.MAX_PATHS_PER_ATOM + 1)) + "\n"
+    with pytest.raises(ep.PlanError):
+        ep.components_from_body(body)
+    ok = "## Design\nComponents: " + ", ".join(f"p{i}.py" for i in range(ep.MAX_PATHS_PER_ATOM)) + "\n"
+    assert len(ep.components_from_body(ok)) == ep.MAX_PATHS_PER_ATOM
+
+
+def test_wrong_typed_wave_or_batch_field_is_refused_not_used(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ep, "gh_graphql", _fake_graphql(calls))
+    OVERRIDE["fields"] = [{"id": "F_w", "name": "wave", "dataType": "TEXT"}]
+    c = ep.fetch_corpus("o", 7)
+    with pytest.raises(ep.PlanError, match="wave"):
+        ep.project(ep.build_plan("p", c), c)
+    assert not any("updateProjectV2ItemFieldValue" in q for q, _ in calls)
+
+
+def test_publish_clears_stale_wave_and_batch_on_closed_atoms(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ep, "gh_graphql", _fake_graphql(calls))
+    OVERRIDE["fields"] = [{"id": "F_wave", "name": "wave", "dataType": "NUMBER"},
+                          {"id": "F_batch", "name": "batch", "dataType": "TEXT"}]
+    c = ep.fetch_corpus("o", 7)
+    c["atoms"].append({"id": "o/r#9", "node_id": "N9", "item_id": "PI9", "blocked_by": [], "paths": [],
+                       "labels": [], "state": "closed"})
+    ep.project(ep.build_plan("p", c), c)
+    cleared = [(v["item"], v["field"]) for q, v in calls if "clearProjectV2ItemFieldValue" in q]
+    assert sorted(cleared) == [("PI9", "F_batch"), ("PI9", "F_wave")]
+    assert not any("createProjectV2Field" in q for q, _ in calls)
+
+
+def test_field_values_reach_the_mutation_as_objects(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ep, "gh_graphql", _fake_graphql(calls))
+    c = ep.fetch_corpus("o", 7)
+    ep.project(ep.build_plan("p", c), c)
+    vals = [v["value"] for q, v in calls if "updateProjectV2ItemFieldValue" in q]
+    assert all(isinstance(x, dict) and len(x) == 1 for x in vals)
+
+
+def test_a_field_failure_leaves_the_planner_ref_unpublished(repos, tmp_path, monkeypatch):
+    work, bare = repos
+    calls = []
+    ok = _fake_graphql(calls)
+
+    def flaky(q, v=None):
+        if "updateProjectV2ItemFieldValue" in q:
+            raise ep.PlanError("boom")
+        return ok(q, v)
+    monkeypatch.setattr(ep, "gh_graphql", flaky)
+    monkeypatch.chdir(work)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    c = ep.fetch_corpus("o", 7)
+    f = tmp_path / "c.json"
+    f.write_text(json.dumps(c))
+    assert ep.main(["publish", "prog", "--from-json", str(f)]) == 2
+    assert subprocess.run(["git", "-C", str(bare), "rev-parse", "--verify", "-q", "refs/heads/plan/prog"],
+                          capture_output=True).returncode != 0
+    assert _git(work, "for-each-ref", "refs/foundry") == ""          # no leftover private ref
+
+
+def test_failed_publish_removes_the_private_fetched_ref(repos):
+    work, bare = repos
+    ep.publish_ref(work, "origin", "prog", "a: 1\n")
+    with pytest.raises(RuntimeError):
+        ep.publish_ref(work, "origin", "prog", "a: 2\n", before_push=lambda: (_ for _ in ()).throw(RuntimeError("x")))
+    assert _git(work, "for-each-ref", "refs/foundry") == ""
+
+
+def test_publish_refuses_a_ref_holding_foreign_paths(repos):
+    work, bare = repos
+    (work / "other.txt").write_text("x")
+    _git(work, "add", "other.txt")
+    _git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "x")
+    _git(work, "push", "-q", "origin", "HEAD:refs/heads/plan/prog")
+    before = _git(bare, "rev-parse", "refs/heads/plan/prog")
+    with pytest.raises(ep.PlanError, match="other than"):
+        ep.publish_ref(work, "origin", "prog", "a: 1\n")
+    assert _git(bare, "rev-parse", "refs/heads/plan/prog") == before
+
+
+def test_from_json_outside_the_project_root_is_refused(tmp_path):
+    inside, outside = tmp_path / "proj", tmp_path / "out"
+    inside.mkdir()
+    outside.mkdir()
+    f = outside / "c.json"
+    f.write_text(json.dumps(DIAMOND))
+    r = cli("plan", "prog", "--from-json", str(f), root=inside)
+    assert r.returncode == 2 and "outside the project root" in r.stderr
+
+
+def test_publish_from_json_without_a_project_says_fields_were_skipped(repos, tmp_path):
+    work, bare = repos
+    f = tmp_path / "c.json"
+    f.write_text(json.dumps(DIAMOND))
+    r = cli("publish", "prog", "--from-json", str(f), cwd=work, root=tmp_path)
+    assert r.returncode == 0 and "Project fields skipped (no --project)" in r.stdout

@@ -162,6 +162,8 @@ _WRITERS = [
     ("foundry_usage.py", "--dataset /d fallback-transcripts --cli-version 1"),
     ("foundry_usage.py", "--dat=/d fallback-transcripts --cli-version 1"),
     ("foundry_usage.py", "--dataset /d ingest /c"), ("foundry_usage.py", "--dat=/d attribute"),
+    ("foundry_execution_plan.py", "plan prog --from-json c.json"),   # dl-04: the whole script asks
+    ("foundry_execution_plan.py", "publish prog --project o/1"),
     ("foundry_research_note.py", "--in s.json --slug x"),   # gv-14: every invocation writes under .foundry/
 ]
 _READERS = [
@@ -220,3 +222,57 @@ def test_r2_lifecycle_hooks_are_not_tools(env, hook, lead):
     assert decide(env, cmd) is None
     # control: another hook script is still allowed
     assert decide(env, f"bash {env['root']}/hooks/foundry-git-discipline.sh --protected main") == "allow"
+
+
+# Rows that were already `ask` in the floor but not enforced by the hook when this ratchet was added (dl-04). Frozen:
+# the test fails for any NEW ask row the hook would silently allow. Shrink this set, never grow it.
+_PRE_EXISTING_UNENFORCED = {
+    "foundry-permissions-compile.py --write",
+    "foundry_usage.py --dataset",
+    "foundry-authorize.py",
+    "foundry-bootstrap.sh",
+    "foundry-cut-release.py",
+    "foundry-doctor.py --heal",
+    "foundry-merge-when-green.py",
+    "foundry-stack-profile.py --relock",
+    "foundry-worktree-gc.py --apply",
+    "foundry_repo_fleet.py foreach",
+    "foundry_repo_fleet.py sync",
+    "foundry_repo_attach.py attach",
+    "foundry_repo_attach.py create",
+    "foundry_tier_preflight.py",
+    "foundry_migrate.py",
+    "foundry_governance.py",
+    "foundry_deck_events.py",
+    "foundry-ticket.py done",
+}
+
+
+def test_every_ask_floor_row_naming_a_script_is_enforced_by_the_hook():
+    """Structural (third recurrence of this class): each floor row tiered `ask` that names scripts/<x> must be
+    matched by _ASK_SCRIPTS (whole script), _ASK_VERBS (the row's verb) or EXECUTES_INPUT, else it is silently allowed."""
+    import importlib.util
+    import re
+    spec = importlib.util.spec_from_file_location("psa_hook", HOOK)
+    hook = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hook)
+    with open(os.path.join(REPO_ROOT, "docs", "permission-floor.json"), encoding="utf-8") as f:
+        entries = json.load(f)["entries"]
+    rows = [e["rule"] for e in entries if e.get("tier") == "ask"]
+    checked, missing = 0, []
+    for rule in rows:
+        m = re.search(r"/scripts/([^/\s):]+?)(?:\s+([^):]*?))?:\*\)$", rule)
+        if not m:
+            continue
+        script, rest = m.group(1), (m.group(2) or "").strip()
+        checked += 1
+        if (script + (" " + rest if rest else "")) in _PRE_EXISTING_UNENFORCED:
+            continue
+        if script in hook._ASK_SCRIPTS or script in hook.EXECUTES_INPUT:
+            continue
+        verb = rest.split()[0] if rest else None
+        if verb and verb in hook._ASK_VERBS.get(script, set()):
+            continue
+        missing.append(rule)
+    assert checked >= 5, "the structural scan matched too few floor rows to prove anything"
+    assert not missing, f"ask floor rows the hook would silently allow: {missing}"

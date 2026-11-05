@@ -42,12 +42,13 @@ For a test, use `--from-json corpus.json`. The corpus lists atoms with `id`, `bl
 5. Inside each wave, the merge-plan batching groups atoms that share a file or a component into a batch.
 6. It finds the critical path. A batch weighs the sum of its atoms: one per atom, or the `size:` label weight
    (see `SIZE_WEIGHT` in the script). Total float is the slack of a batch.
-7. `max_concurrent` is the number of batches in the open wave that hold no atom with a `hold` label.
+7. `max_concurrent` is the number of startable batches: batches with no held atom and no unfinished batch before them
+   (an edge, or an earlier batch with overlapping paths). A hold therefore holds back every dependent.
 
 ## Hold
 
 Add the `hold` label to an atom to keep it out of the open wave. The planner reads the label and never
-changes it. The atom still blocks its dependents.
+changes it. The atom still blocks its dependents, and none of them counts as startable.
 
 ## Output
 
