@@ -166,6 +166,11 @@ def parse_body(body: str) -> tuple[str, list[str]]:
 _DESIGN_H = re.compile(r"^##[ \t]+design[ \t]*:?[ \t]*$", re.I | re.M)
 _SECURITY_H = re.compile(r"^##[ \t]+security[ \t]*:?[ \t]*$", re.I | re.M)
 _SURFACES_H = re.compile(r"^##[ \t]+surfaces?[ \t]*:?[ \t]*$", re.I | re.M)
+_ACCEPTANCE_H = re.compile(r"^##[ \t]+acceptance[ \t]*:?[ \t]*$", re.I | re.M)      # exact: not "Acceptance criteria"
+_AC_ID_RE = re.compile(r"^AC-(\d+)$")
+_AC_BULLET_RE = re.compile(r"^[-*+][ \t]+(.*)$")
+_AC_LEAD_RE = re.compile(r"^(?:\[(AC-\d+)\]|\**(AC-\d+)\**[ \t]*[:.)\-]?\**)[ \t]*(.*)$", re.I)
+_GROUNDING_RE = re.compile(r"^[ \t]*(?:[-*+][ \t]+)?\**grounding\**[ \t]*:\**[ \t]*(.*)$", re.I)
 _SCOPE_H = re.compile(r"^##[ \t]+(?:scope|paths)[ \t]*:?[ \t]*$", re.I | re.M)
 _H2_RE = re.compile(r"^##(?!#)[ \t]", re.M)          # the end of a section: the next level-2 heading (### stays inside)
 _RULE_ID_RE = re.compile(r"\b[A-Z][A-Z0-9]*-[A-Z]{2,8}-\d{3}\b")
@@ -273,6 +278,63 @@ def _parse_surfaces(sec: str | None) -> dict:
     return out
 
 
+def parse_acceptance(body: str) -> dict:
+    """`## Acceptance` (dl-01): EARS bullets, each `AC-<n>: WHEN ... THE SYSTEM SHALL ...` or
+    `THE SYSTEM SHALL ...`, plus one `Grounding:` line. {present, bullets:[{id,text}], grounding, errors}.
+    A bullet without an id, a repeated id, or a bullet that is not EARS (no `SHALL`) is an error that names it."""
+    sec = _section(body, _ACCEPTANCE_H)
+    out = {"present": sec is not None, "bullets": [], "grounding": None, "errors": []}
+    if sec is None:
+        return out
+    raw, cur = [], None
+    for line in sec.split("\n"):
+        g = _GROUNDING_RE.match(line)
+        if g:
+            out["grounding"] = out["grounding"] or g.group(1).strip() or None
+            cur = None
+            continue
+        m = _AC_BULLET_RE.match(line)
+        if m:
+            cur = [m.group(1).strip()]
+            raw.append(cur)
+        elif line.strip() and cur is not None and line[:1] in " \t":
+            cur.append(line.strip())
+        elif line.strip():
+            cur = None
+    used = {int(x.group(1)) for r in raw for x in [_AC_ID_RE.match((_AC_LEAD_RE.match(r[0]) or [0, "", ""])[1] or
+            (_AC_LEAD_RE.match(r[0]) or [0, "", ""])[2] or "")] if x}
+    nxt, seen = max(used or {0}) + 1, set()
+    for r in raw:
+        lead = _AC_LEAD_RE.match(r[0])
+        aid = ((lead.group(1) or lead.group(2)) if lead else None)
+        text = " ".join([lead.group(3) if lead else r[0]] + r[1:]).strip()
+        aid = aid.upper() if aid else None
+        if aid is None:
+            out["errors"].append(f"bullet has no AC id: \"{text}\" (start it with `AC-{nxt}:`)")
+            nxt += 1
+            continue
+        if aid in seen:
+            out["errors"].append(f"duplicate id {aid}: \"{text}\"")
+            continue
+        seen.add(aid)
+        if not re.search(r"\bSHALL\b", text):
+            out["errors"].append(f"{aid} is not an EARS bullet (needs `THE SYSTEM SHALL ...`): \"{text}\"")
+        out["bullets"].append({"id": aid, "text": text})
+    return out
+
+
+def acceptance_defects(acc: dict) -> list:
+    """The pieces a design-required ticket's `## Acceptance` is missing (each names the piece)."""
+    if not acc["present"]:
+        return ["no `## Acceptance` section (EARS bullets with AC ids and a `Grounding:` line)"]
+    out = []
+    if not acc["bullets"] and not acc["errors"]:
+        out.append("`## Acceptance` has no EARS bullet (`- AC-1: WHEN ..., THE SYSTEM SHALL ...`)")
+    if not acc["grounding"]:
+        out.append("`## Acceptance` has no `Grounding:` line (the research-gate source)")
+    return out
+
+
 def parse_sections(body: str) -> dict:
     """{design, security, surfaces, scope} parsed from an issue body (pure; nothing is executed or fetched)."""
     scope_sec = _section(body, _SCOPE_H)
@@ -280,6 +342,7 @@ def parse_sections(body: str) -> dict:
     return {"design": _parse_design(_section(body, _DESIGN_H)),
             "security": _parse_security(_section(body, _SECURITY_H)),
             "surfaces": _parse_surfaces(_section(body, _SURFACES_H)),
+            "acceptance": parse_acceptance(body),
             "scope": scope}
 
 
@@ -398,6 +461,13 @@ def checklist(sections: dict, gv: dict) -> list:
         out.append("## Security missing (rule ids, or `none: <why>`)")
     elif not s["ids"] and not s["none_reason"]:
         out.append("## Security names no rule id and no `none: <why>`")
+    a = sections.get("acceptance") or {"present": False}
+    if not a["present"]:
+        out.append("## Acceptance missing (EARS bullets with AC ids, and a `Grounding:` line)")
+    elif not a["bullets"]:
+        out.append("## Acceptance has no EARS bullet")
+    elif not a["grounding"]:
+        out.append("## Acceptance has no `Grounding:` line")
     if not f["present"]:
         out.append("## Surfaces missing (one line per surface, or `n/a: <why>`)")
     elif not f["na_reason"]:
@@ -421,6 +491,8 @@ def design_view(body: str, labels, gv: dict | None = None, root: Path | None = N
         probe = [x for c in sec["design"]["components"] for x in (c, c.rstrip("/") + "/_")]
         app |= set(g.applicable(gv["rule_list"], probe))
     return {"design": sec["design"], "security": sec["security"], "surfaces": sec["surfaces"], "scope": sec["scope"],
+            "acceptance": sec["acceptance"],
+            "acceptance_defects": (acceptance_defects(sec["acceptance"]) if reasons else []) + sec["acceptance"]["errors"],
             "design_required": bool(reasons), "design_required_reasons": reasons,
             "design_defects": design_defects(sec, gv) if reasons else [],
             "applicable_ids": sorted(app), "surfaces_expected": gv.get("surfaces") or [],
@@ -574,6 +646,12 @@ def cmd_start(args: list[str]) -> int:
                      + "; ".join(view["design_required_reasons"]) + "), and it has a defect in its Design: "
                      + "; ".join(view["design_defects"]) + ". Add a `## Design` section citing at least one existing "
                      "rule id (see `governance/rendered/`), then start again. Nothing was recorded.")
+    if view["acceptance_defects"]:
+        sys.exit("foundry-ticket: acceptance-required: " + ("this ticket is in the design-required class ("
+                 + "; ".join(view["design_required_reasons"]) + "), and " if view["design_required"] else "")
+                 + "its `## Acceptance` has a defect: " + "; ".join(view["acceptance_defects"])
+                 + ". Add EARS bullets with ids (`- AC-1: WHEN ..., THE SYSTEM SHALL ...`) and a `Grounding:` line, "
+                 "then start again. Nothing was recorded.")
     login = ((issue.get("author") or {}).get("login")) or ""
     issue_repo = repo_of_issue(issue, repo)
     trusted_by = "author"

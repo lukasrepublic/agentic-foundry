@@ -9,6 +9,8 @@ level-1 rules, the ticket's cited rule ids with statements inlined, path-scoped 
 style block (unless `communication.style` is off), hygiene and shell-shape rules, and the one production-step line (D2).
 
 Ticket JSON: `{"title": str, "cites": ["FG-SEC-006", ...]}` (`cited_ids` is accepted as an alias).
+Optional `"acceptance": [{"id": "AC-1", "text": "..."}]` (and `"grounding"`), as `read-issue --json` prints them:
+each bullet is inlined under its id, unchanged, in an `Acceptance (grade each id):` section.
 The style setting comes from the operating-model policy loader (`foundry_operating_model.py`, a sibling
 file in this directory, loaded by path only) when that file exists, else the default (on). `--style` overrides both.
 
@@ -146,6 +148,15 @@ def build_brief(proj: Path, root: Path, ticket: dict, paths: list, blueprint=Non
     scoped = [by_id[i] for i in _gov.applicable(rules, paths) if i not in used]
     if scoped:
         sections.append(("Rules for the paths in this change:", items_of(scoped)))
+
+    acc = ticket.get("acceptance") or []
+    if acc:
+        if not isinstance(acc, list) or not all(isinstance(b, dict) and b.get("id") and b.get("text") for b in acc):
+            raise _gov.Refused("ticket-acceptance-must-be-a-list-of-id-and-text")
+        items = [f"- {b['id']}: {b['text']}" for b in acc]
+        if ticket.get("grounding"):
+            items.append(f"Grounding: {ticket['grounding']}")
+        sections.append(("Acceptance (grade each id):", items))
 
     blocks = []
     for header, items in sections:
