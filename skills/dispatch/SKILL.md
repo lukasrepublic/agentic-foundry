@@ -73,8 +73,19 @@ The unit of work is a **ticket** (a GitHub issue with a `## Done means` command;
      > `context/branch-discipline.md`: build on a branch cut from the integration branch, run
      > `scripts/foundry-test.sh` until green, push once, and open the PR via `gh pr create`; the
      > merge floor (branch protection / required CI checks, plus
-     > `hooks/foundry-git-discipline.sh` within sessions) decides the merge. Return the structured
+     > `hooks/foundry-git-discipline.sh` within sessions) decides the merge. On a multi-repo ticket
+     > put the trailer `Built-from: <workspace sha>` in the PR body or the head commit, using the
+     > workspace main sha this brief supplies (the sha the ticket was planned against). When you
+     > close the atom, post one `## Learned` comment on the ticket: friction, successes and distill
+     > candidates, one line each, at most ten lines. Return the structured
      > result per the worker return contract below (pointers only).
+   - **Multi-repo ticket** (its `target_repo` is a product repo): the brief also carries the provenance rule - the PR body or
+     the head commit MUST carry the trailer `Built-from: <workspace sha>` (the 40-character workspace commit the atom was
+     authorized against; the deck's brief supplies the workspace main sha the ticket was planned against). `governance-trace` fails the PR when it is missing or does not resolve in the workspace repo.
+     A single-repo ticket needs no trailer.
+   - **Completion step - the `## Learned` comment.** When the builder closes its atom, it posts one comment on the ticket
+     headed `## Learned`: friction met, what worked, and distill candidates - one line each, at most ten lines in all
+     (`gh issue comment <n> --body-file -`). Lines are facts, not narrative. The distill pass over these comments is dl-10.
 3. **Consume the structured return** (native) - `{branch, pr_url, ci_run_urls, files_touched, seam_verdict, summary, status}`. No `result.json` polling; the `Agent` tool returns it directly.
 4. **Security lane.** Run the `security-reviewer` agent when the ticket is `security: true` or touches auth/secrets/custody paths; the `security-reviewed` label on the PR is the CI-enforced lane (`.github/workflows/btb-gates-base.yml`, `security-path-base`).
 5. **The merge floor.** The PR is admitted by the native merge floor - branch protection / required

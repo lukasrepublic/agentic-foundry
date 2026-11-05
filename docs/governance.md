@@ -102,11 +102,27 @@ the three sections are a checklist.
 `scripts/foundry_brief.py` builds the brief for a builder or a reviewer. It inlines the statement of every cited rule, so
 the agent reads the rule, not a pointer to it.
 
-The CI job `governance-trace` (template: `governance/kits/delivery/checks/governance-trace.yml.template`) checks the
+The CI job `governance-trace` (template: `governance/kits/delivery/templates/governance-trace.yml.tmpl`) checks the
 pull request against its ticket: the ticket is named, its author is trusted, a Design is present where required, the
 cited ids exist, every changed path is inside the Design's components, the rendered rules are fresh and no exception has
 expired. It reads policy, boundaries and the operator list from the base commit, so a pull request cannot loosen the
 class that grades it.
+
+In a product repo that a workspace governs, the job also runs `built-from`. The repository (or organisation) variable
+`FOUNDRY_WORKSPACE_REPO` (`OWNER/NAME` of the workspace) arms it; the base ref's `.claude/foundry-project.json` binding is a
+second source. A variable that is set but empty or malformed, or a binding that cannot be read, fails the rule; it never skips.
+With neither source the rule skips and names the reason (single-repo). When armed, the pull request body or its head commit
+(read from the head sha, not from the body) must carry `Built-from: <40-character workspace sha>`. Every trailer must agree, and
+a trailer inside a code fence or a `>` quote is ignored. The sha must exist in the workspace repo and be an ancestor of (or equal
+to) the workspace default branch.
+
+What the rule proves: the pull request names a real commit that is on the workspace's default branch. It does not prove that
+the atom was built from that commit, or that the commit is the one the ticket was planned against; the author states that, and
+the operator's own test pass is the practice that judges it. The lookup uses the secret `FOUNDRY_WORKSPACE_READ_TOKEN` (a
+fine-grained or App token with `contents: read` on the workspace only, ideally in a protected environment; the operator provisions
+it, and its value is never written to a file). If the secret is unset and the default job token cannot read the workspace repo, the
+lookup fails and the rule fails closed. The workflow file itself is editable by a same-repo pull request, so protect
+`.github/workflows/**` with CODEOWNERS plus required review, or a ruleset-required workflow.
 
 Two honest notes on that job:
 

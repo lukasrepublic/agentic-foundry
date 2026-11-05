@@ -83,7 +83,7 @@ def test_author_trusted_unit_under_github_actions(monkeypatch):
 
 
 def test_the_template_passes_the_actor():
-    text = (ROOT / "governance" / "kits" / "delivery" / "checks" / "governance-trace.yml.template").read_text()
+    text = (ROOT / "governance" / "kits" / "delivery" / "templates" / "governance-trace.yml.tmpl").read_text()
     step = text.split("- name: governance-trace\n")[1]
     assert "ACTOR: ${{ github.actor }}" in step and '--agent-login "$ACTOR"' in step
 

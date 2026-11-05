@@ -24,6 +24,12 @@ It checks, and reports EVERY failing check (exit 1; exit 0 when all pass; exit 2
                       class, the check passes with a note (the sections are a checklist there).
   rendered-fresh      `governance/rendered/` matches what `foundry_governance.py render` would write
   exceptions-live     no exception in `governance/local/exceptions.yaml` has expired
+  built-from          (dl-07) a PR in a product repo that a workspace governs carries `Built-from: <40-hex workspace sha>` in
+                      its body or head commit (the commit read from --head-sha), all trailers agreeing, outside code fences and `>` quotes; the sha
+                      must exist in the workspace repo AND be an ancestor of its default branch. Armed by the FOUNDRY_WORKSPACE_REPO
+                      variable (OWNER/NAME; `unset` or absent means not set), else by the base ref's binding file. On the CLI a
+                      set-but-empty or malformed variable, or an unreadable binding, fails (the CI template maps an empty one to `unset`). With neither source the rule skips with a named reason.
+                      Workspace calls all go through `_workspace_gh`.
 
 The Design parser and the design-required class are the ticket verb's own (`scripts/foundry-ticket.py`), loaded from the
 plugin root; the freshness and exception checks are `foundry_governance.py check`'s. Nothing is re-implemented here.
@@ -45,6 +51,8 @@ from pathlib import Path
 PR_REF_RE = re.compile(
     r"(?im)^[ \t>*-]*(?:ticket|closes|fixes|resolves|refs?)[ \t]*:?[ \t]*(?:([\w.-]+/[\w.-]+))?#(\d+)\b")
 RENDERED_PREFIX = "governance/rendered/"
+BUILT_FROM_RE = re.compile(r"(?im)^[ \t*-]*built-from[ \t]*:[ \t]*(\S*)[ \t]*$")
+SHA40_RE = re.compile(r"[0-9a-f]{40}")
 
 
 def _plugin_root(arg) -> Path:
@@ -111,10 +119,126 @@ def _scope_repos(base: Path) -> set:
     return out
 
 
-def _default_gh_json(args):
-    import subprocess
+SLUG_RE = re.compile(r"[\w.-]+/[\w.-]+")
+WS_TOKEN_ENV = "FOUNDRY_WORKSPACE_READ_TOKEN"
+WS_UNSET = "unset"      # what the job template passes when the repository variable is not defined (an Actions expression yields "" otherwise)
+
+
+def _binding(base: Path):
+    """The second source of the workspace: the BASE ref's `.claude/foundry-project.json`. Returns (state, workspace, scope):
+    state is `absent` (no file), `unreadable` (a file that does not parse), or `ok`."""
+    f = base / ".claude" / "foundry-project.json"
+    if not f.is_file():
+        return "absent", None, set()
     try:
-        r = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=60)
+        doc = json.loads(f.read_text(encoding="utf-8"))
+        scope = doc.get("github_scope") or {}
+        x = str(scope.get("planning_repo") or "").strip()
+        owner = str(scope.get("owner") or "")
+    except (OSError, ValueError, AttributeError):
+        return "unreadable", None, set()
+    ws = x.lower() if SLUG_RE.fullmatch(x) else (f"{owner}/{x}".lower() if x and owner and re.fullmatch(r"[\w.-]+", x) else None)
+    return "ok", ws, _scope_repos(base)
+
+
+def _strip_quoted(text: str) -> str:
+    """Drop what is an example, not a claim: HTML comments, fenced code blocks (closed only by a run of the same character at
+    least as long as the opener), 4-space or tab indented code, and `>` quote lines."""
+    text = re.sub(r"<!--.*?(?:-->|\Z)", "", text or "", flags=re.S)
+    out, fence = [], None
+    for ln in text.splitlines():
+        if fence:
+            m = re.fullmatch(r" {0,3}(" + re.escape(fence[0]) + r"{" + str(len(fence)) + r",})[ \t]*", ln)
+            if m:
+                fence = None
+            continue
+        m = re.match(r" {0,3}(`{3,}|~{3,})", ln)
+        if m:
+            fence = m.group(1)
+            continue
+        if ln.startswith(("    ", "\t")) or ln.lstrip().startswith(">"):
+            continue
+        out.append(ln)
+    return "\n".join(out)
+
+
+def _built_from_values(*texts) -> list:
+    """Every `Built-from:` value in the given texts (PR body, head commit message), outside fenced blocks and quotes."""
+    return [m.group(1) for t in texts for m in BUILT_FROM_RE.finditer(_strip_quoted(t))]
+
+
+def _workspace_gh(gh_json, args):
+    """The ONE function that reaches the workspace repo over the network. Fails closed: any error is None. The workspace read token
+    (FOUNDRY_WORKSPACE_READ_TOKEN) replaces GH_TOKEN for this call only; it is never printed."""
+    try:
+        return _default_gh_json(args, WS_TOKEN_ENV) if gh_json is _default_gh_json else gh_json(args)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _verify_in_workspace(gh_json, ws: str, sha: str):
+    """(ok, why). The sha must exist in the workspace AND be an ancestor of (or equal to) its default branch."""
+    doc = _workspace_gh(gh_json, ["api", f"repos/{ws}/commits/{sha}"])
+    if not (isinstance(doc, dict) and str(doc.get("sha") or "").lower() == sha):
+        return False, f"Built-from {sha} does not resolve to a commit in the workspace repo {ws}"
+    repo_doc = _workspace_gh(gh_json, ["api", f"repos/{ws}"])
+    branch = str((repo_doc or {}).get("default_branch") or "") if isinstance(repo_doc, dict) else ""
+    if not re.fullmatch(r"[\w./-]+", branch):
+        return False, f"the default branch of the workspace repo {ws} could not be read, so Built-from {sha} cannot be verified"
+    cmp_doc = _workspace_gh(gh_json, ["api", f"repos/{ws}/compare/{sha}...{branch}"])
+    # compare/{sha}...{default}: `ahead` = the default branch is ahead of the sha (the sha is an ancestor); `behind`/`diverged` = it is not
+    if not (isinstance(cmp_doc, dict) and cmp_doc.get("status") in ("ahead", "identical")
+            and cmp_doc.get("behind_by", 0) == 0):
+        return False, f"Built-from {sha} is not an ancestor of {ws}@{branch}"
+    return True, f"Built-from {sha} is on {ws}@{branch}"
+
+
+def _built_from_finding(pr: dict, base: Path, repo, gh_json, workspace_repo=None, head_sha=None):
+    """(ok, detail) for the built-from check. Armed by the FOUNDRY_WORKSPACE_REPO variable (passed as `workspace_repo`), else by the
+    base ref's binding file. On the CLI a variable that is set but empty or malformed, or a binding that cannot be read, FAILS: never a skip.
+    (In CI the template maps an undefined or empty variable to `unset`, the skip path, before this function sees it.)"""
+    if workspace_repo is not None and workspace_repo.strip() != WS_UNSET:
+        ws = workspace_repo.strip().lower()
+        if not SLUG_RE.fullmatch(ws):
+            return False, "FOUNDRY_WORKSPACE_REPO is set but empty or malformed: it must be OWNER/NAME of the workspace repo"
+        if repo and repo.lower() == ws:
+            return True, "skipped: this repository is the workspace itself, so no Built-from trailer is required"
+    else:
+        state, ws, scope = _binding(base)
+        if state == "unreadable":
+            return False, "the base ref's .claude/foundry-project.json cannot be read, so it cannot be shown that no workspace governs this repo"
+        if state == "absent" or not ws or not repo or repo.lower() == ws or repo.lower() not in scope:
+            return True, ("skipped: single-repo (FOUNDRY_WORKSPACE_REPO is not set and the base ref's binding does not name a workspace "
+                          "that governs this repository), so no Built-from trailer is required")
+    texts = [pr.get("body") or ""]
+    if not head_sha:
+        print("built-from: note: no --head-sha was given, so the head commit message is not read (the PR body only)", file=sys.stderr)
+    if head_sha:
+        if not SHA40_RE.fullmatch(head_sha):
+            return False, "--head-sha is not a 40-character hex sha"
+        doc = gh_json(["api", f"repos/{repo}/commits/{head_sha}"]) if repo else None
+        msg = (doc.get("commit") or {}).get("message") if isinstance(doc, dict) and isinstance(doc.get("commit"), dict) else None
+        if not isinstance(msg, str):
+            return False, f"the head commit {head_sha} could not be read, so its message cannot be checked for a Built-from trailer"
+        texts.append(msg)
+    vals = _built_from_values(*texts)
+    if not vals:
+        return False, f"the PR carries no `Built-from: <workspace sha>` trailer (body or head commit); {repo} is governed from {ws}"
+    if any(not SHA40_RE.fullmatch(v) for v in vals):
+        return False, "malformed Built-from trailer: the value must be a 40-character lower-case hex sha"
+    if len(set(vals)) > 1:
+        return False, "the Built-from trailers disagree: " + ", ".join(sorted(set(vals)))
+    return _verify_in_workspace(gh_json, ws, vals[0])
+
+
+def _default_gh_json(args, token_env: str | None = None):
+    """The one place `gh` is run. `token_env` names an env var whose value replaces GH_TOKEN for this call (never printed)."""
+    import subprocess
+    env = dict(os.environ)
+    if token_env and env.get(token_env):
+        env["GH_TOKEN"] = env[token_env]
+    try:
+        r = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=60, env=env)
         return json.loads(r.stdout) if r.returncode == 0 else None
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
@@ -178,7 +302,8 @@ def _snippet_findings(base: Path, project: Path):
 
 
 def run_checks(pr: dict, ticket: dict, project: Path, plugin: Path, today: str | None, base: Path | None = None,
-               gh_json=None, repo: str | None = None, files: list | None = None, agent_login: str | None = None) -> list:
+               gh_json=None, repo: str | None = None, files: list | None = None, agent_login: str | None = None,
+               workspace_repo: str | None = None, head_sha: str | None = None) -> list:
     ft = _load_ticket_module(plugin)
     base = base or project
     gh_json = gh_json or _default_gh_json
@@ -245,6 +370,8 @@ def run_checks(pr: dict, ticket: dict, project: Path, plugin: Path, today: str |
         add("paths-in-design", False, "the Design names no components, so no changed path can be shown to be inside it")
     else:
         add("paths-in-design", True, "no Design components declared; below the design-required class")
+    ok_b, why_b = _built_from_finding(pr, base, repo, gh_json, workspace_repo, head_sha)
+    add("built-from", ok_b, why_b)
     # rendered-fresh, exceptions-live: what the PR itself produces, judged on the PR head (foundry_governance.py check)
     gp = ft.governance_context(project)
     gm = gp.get("_gov")
@@ -286,6 +413,7 @@ def main(argv=None) -> int:
     p.add_argument("--repo", help="OWNER/NAME of the repository the PR is in (the default repo of a bare #N ticket ref)")
     p.add_argument("--agent-login", help="the account the agent acts as (CI: the workflow actor). `github.token` cannot call "
                    "`gh api user`, so in CI the self-identity rule uses this login instead of a lookup")
+    p.add_argument("--head-sha", help="the PR head commit sha (CI: github.event.pull_request.head.sha); its message is read for a Built-from trailer")
     p.add_argument("--plugin-root")
     p.add_argument("--today")
     p.add_argument("--json", action="store_true")
@@ -308,7 +436,8 @@ def main(argv=None) -> int:
             return 2
         base = Path(a.base_dir).resolve()
         findings = run_checks(pr, ticket, project, _plugin_root(a.plugin_root), a.today, base=base, repo=a.repo, files=files,
-                              agent_login=a.agent_login)
+                              agent_login=a.agent_login, workspace_repo=os.environ.get("FOUNDRY_WORKSPACE_REPO"),
+                              head_sha=a.head_sha)
     except (OSError, ValueError) as e:
         print(f"refused: {e}", file=sys.stderr)
         return 2
