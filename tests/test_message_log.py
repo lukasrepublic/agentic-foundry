@@ -20,6 +20,7 @@ sys.path.insert(0, SCRIPTS)
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 import foundry_message_kind as mk  # noqa: E402
 import foundry_message_log as ml  # noqa: E402
+import message_log_helpers as H  # noqa: E402
 from test_operating_model_policy import PRIVATE, PRODUCT  # noqa: E402  (the one name census, reused)
 
 LOG_CLI = os.path.join(SCRIPTS, "foundry_message_log.py")
@@ -202,8 +203,9 @@ def test_ac_bus_2_cursor_lives_in_the_git_dir_and_advances(tmp_path):
     a = _post(w, "x", text="one")
     first = ml.read(ml.Adapter(), r, "origin", "x")
     assert [x["id"] for x in first["records"]] == [a["id"]]
-    cur = git(r, "rev-parse", "--git-path", ml.CURSOR_BASENAME).stdout.strip()
-    cur = cur if os.path.isabs(cur) else os.path.join(str(r), cur)
+    cur = str(ml._cursor_path(ml.Adapter(), r, None, "x"))
+    assert os.path.dirname(cur) == os.path.realpath(git(r, "rev-parse", "--absolute-git-dir").stdout.strip()) or \
+        os.path.dirname(cur).endswith(".git"), "the cursor must live in the git dir"
     assert open(cur).read().strip() == first["tip"]
     assert git(r, "status", "--porcelain", "--ignored").stdout == "", "cursor leaked into the work tree"
     assert ml.read(ml.Adapter(), r, "origin", "x")["records"] == []
@@ -392,11 +394,11 @@ def test_ruleset_template_prints_force_push_and_deletion_blocks_for_the_branch(c
 def _observe(tmp_path, cfg, name):
     remote = make_remote(tmp_path, name + ".git", cfg)
     scratch = make_clone(tmp_path, remote, name)
-    return ml.observe_ruleset_enforcement(ml.Adapter(), scratch, "origin", "scratch-branch"), remote
+    return H.observe_ruleset_enforcement(ml.Adapter(), scratch, "origin", "scratch-branch"), remote
 
 
 def test_ac_bus_5_force_push_is_rejected_where_the_template_rules_are_enforced(tmp_path):
-    cfg = ml.git_equivalent_of(ml.ruleset_template())
+    cfg = H.git_equivalent_of(ml.ruleset_template())
     assert cfg == {"receive.denyNonFastForwards": "true", "receive.denyDeletes": "true"}
     verdict, remote = _observe(tmp_path, cfg, "enforced")
     assert verdict == "enforced"
@@ -420,7 +422,7 @@ def test_ac_bus_5_a_refused_control_push_concludes_nothing(tmp_path):
     hook.write_text("#!/bin/sh\nexit 1\n")
     hook.chmod(0o755)
     scratch = make_clone(tmp_path, remote, "s")
-    assert ml.observe_ruleset_enforcement(ml.Adapter(), scratch, "origin", "b") == "unverifiable:control-failed"
+    assert H.observe_ruleset_enforcement(ml.Adapter(), scratch, "origin", "b") == "unverifiable:control-failed"
 
 
 # ============================================================================================ AC-BUS-7
@@ -594,3 +596,357 @@ def test_policy_keys_exist_with_the_documented_defaults(tmp_path):
     p = om.load(tmp_path)
     assert (p.get("messaging.machine_channel"), p.get("messaging.people_channel"), p.get("messaging.chat_mirror"),
             p.get("messaging.open_change_minutes")) == ("git-log", "issue-per-topic", "off", 120)
+
+
+# ============================================================================================ round 1 (review)
+# ---- Block 1: argument injection through the silent-allow verbs -------------------------------
+@pytest.mark.parametrize("bad", ["--upload-pack=touch /tmp/x;", "-oProxyCommand=x", "ext::sh -c id", "a b", "x;y", "", "a\nb"])
+def test_remote_values_that_could_be_options_or_commands_are_refused(bad, tmp_path):
+    assert ml.valid_remote(bad) is False
+    w = make_clone(tmp_path, make_remote(tmp_path), "w")
+    marker = tmp_path / "ran"
+    rc = ml.main(["--repo", str(w), f"--remote={bad}", "read", "--to", "me"])
+    assert rc == 1 and not marker.exists()
+
+
+def test_remote_control_plain_names_urls_and_paths_are_accepted(tmp_path):
+    for ok in ("origin", "upstream-2", "https://example.invalid/o/r.git", "git@example.invalid:o/r.git", str(tmp_path / "r.git")):
+        assert ml.valid_remote(ok), ok
+
+
+def test_upload_pack_injection_is_not_executed(tmp_path, capsys):
+    """The exact reported shape: the value must neither run nor reach git as an option."""
+    w = make_clone(tmp_path, make_remote(tmp_path), "w")
+    marker = tmp_path / "pwned"
+    arg = f"--remote=--upload-pack=touch {marker};"
+    rc = subprocess.run([sys.executable, LOG_CLI, "--repo", str(w), arg, "read", "--to", "me"],
+                        capture_output=True, text=True).returncode
+    assert rc == 1 and not marker.exists()
+    # defence in depth: even a value that slipped past validation is placed after --end-of-options
+    seen = []
+
+    class Spy(ml.Adapter):
+        def git(self, args, cwd, env=None, input_text=None):
+            seen.append(list(args))
+            return super().git(args, cwd, env, input_text)
+
+    ml.fetch_tip(Spy(), w, "origin")
+    fetch = next(a for a in seen if a[0] == "fetch")
+    assert fetch.index(ml.EOO) < fetch.index("origin")
+    ml.post(Spy(), w, "origin", "s", "all", "NEEDS-INTERFACE", "x", None, [], NOSLEEP)
+    push = next(a for a in seen if a[0] == "push")
+    assert push.index(ml.EOO) < push.index("origin")
+
+
+def test_since_must_be_a_hash_and_is_passed_after_end_of_options(tmp_path):
+    w = make_clone(tmp_path, make_remote(tmp_path), "w")
+    _post(w, "x")
+    for bad in ("--output=/tmp/steal", "HEAD", "-p"):
+        with pytest.raises(ml.LogError, match="not a commit hash"):
+            ml.read(ml.Adapter(), w, "origin", "x", since=bad)
+    seen = []
+
+    class Spy(ml.Adapter):
+        def git(self, args, cwd, env=None, input_text=None):
+            seen.append(list(args))
+            return super().git(args, cwd, env, input_text)
+
+    tip, _ = tip_records(w)
+    _post(w, "x")
+    ml.read(Spy(), w, "origin", "x", since=tip)
+    for verb in ("merge-base", "diff"):
+        a = next(x for x in seen if x[0] == verb)
+        assert a.index(ml.EOO) < a.index(tip)
+
+
+def test_repo_must_exist_and_not_start_with_a_dash(tmp_path):
+    assert ml.main(["--repo=-x", "read", "--to", "me"]) == 1
+    assert ml.main(["--repo", str(tmp_path / "missing"), "read", "--to", "me"]) == 1
+    with pytest.raises(ml.LogError):
+        ml._project_dir("-x")
+    assert ml._project_dir(str(tmp_path)) == tmp_path
+
+
+# ---- Block 2: line splitting ---------------------------------------------------------------
+UNICODE_BODY = "line\u0085next\u2028and\u2029more\x0b\x0c\x1c and a normal \u00e9"
+
+
+def test_body_with_unicode_line_separators_is_one_record_end_to_end(tmp_path):
+    remote = make_remote(tmp_path)
+    w = make_clone(tmp_path, remote, "w")
+    r = make_clone(tmp_path, remote, "r")
+    rec = _post(w, "x", text=UNICODE_BODY)  # would raise a read-back failure if split
+    raw = remote_lines(remote)
+    assert len(raw) == 1 and raw[0].isascii(), "ensure_ascii keeps one record on one physical line"
+    got = ml.read(ml.Adapter(), r, "origin", "x")
+    assert [x["id"] for x in got["records"]] == [rec["id"]] and got["records"][0]["body"] == UNICODE_BODY
+    assert got["malformed"] == []
+    # the cursor/diff path too
+    c, _ = tip_records(r)
+    rec2 = _post(w, "x", text=UNICODE_BODY + "2")
+    d = ml.read(ml.Adapter(), r, "origin", "x", since=c)
+    assert [x["id"] for x in d["records"]] == [rec2["id"]] and d["malformed"] == []
+
+
+def test_split_on_newline_only_control_a_hand_written_raw_separator_is_malformed_not_two_records():
+    rec = ml.make_record("a", "all", "NEEDS-INTERFACE", "x\u2028y")
+    raw = json.dumps(rec, ensure_ascii=False)  # a foreign writer that did NOT escape
+    recs, bad = ml.parse_lines(raw + "\n")
+    assert len(recs) == 1 and bad == [] and recs[0]["body"] == "x\u2028y"
+    assert ml._line(rec).isascii() and "\u2028" not in ml._line(rec)
+
+
+# ---- Risks ---------------------------------------------------------------------------------
+def test_cursor_is_per_recipient_and_a_kind_filter_never_advances_it(tmp_path):
+    remote = make_remote(tmp_path)
+    w = make_clone(tmp_path, remote, "w")
+    r = make_clone(tmp_path, remote, "r")
+    a = _post(w, "A", text="for A")
+    b = _post(w, "B", text="for B")
+    assert [x["id"] for x in ml.read(ml.Adapter(), r, "origin", "A")["records"]] == [a["id"]]
+    assert [x["id"] for x in ml.read(ml.Adapter(), r, "origin", "B")["records"]] == [b["id"]], "A's read hid B's record"
+    s1 = _post(w, "C", kind="STOP", text="stopped", corr="k1")
+    s2 = _post(w, "C", text="a finding-less note")
+    only_stop = ml.read(ml.Adapter(), r, "origin", "C", kinds={"STOP"})
+    assert [x["id"] for x in only_stop["records"]] == [s1["id"]]
+    rest = ml.read(ml.Adapter(), r, "origin", "C")  # control: the filtered read did not swallow s2
+    assert [x["id"] for x in rest["records"]] == [s1["id"], s2["id"]]
+
+
+def test_private_fetch_ref_is_removed_and_siblings_do_not_share_it(tmp_path):
+    w = make_clone(tmp_path, make_remote(tmp_path), "w")
+    _post(w, "x")
+    refs = git(w, "for-each-ref", "refs/foundry", "--format=%(refname)").stdout.split()
+    assert refs == [ml.FETCHED_REF], refs
+    seen = []
+
+    class Spy(ml.Adapter):
+        def git(self, args, cwd, env=None, input_text=None):
+            seen.append(list(args))
+            return super().git(args, cwd, env, input_text)
+
+    ml.fetch_tip(Spy(), w, "origin")
+    spec = next(a for a in seen if a[0] == "fetch")[-1]
+    assert str(os.getpid()) in spec and not spec.endswith(ml.FETCHED_REF)
+
+
+def test_adapter_forces_a_stable_locale_and_blocks_the_ext_transport(monkeypatch):
+    got = {}
+
+    def fake(cmd, **kw):
+        got.update(kw)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(subprocess, "run", fake)
+    ml.Adapter().git(["status"], ".")
+    assert got["env"]["LC_ALL"] == "C" and got["encoding"] == "utf-8" and "ext" not in got["env"]["GIT_ALLOW_PROTOCOL"].split(":")
+
+
+def test_audit_counts_a_malformed_production_record_as_a_finding(tmp_path):
+    remote = make_remote(tmp_path)
+    w = make_clone(tmp_path, remote, "w")
+    _post(w, "all", "PROD-BEFORE", "a", corr="c1")
+    bad = ml.make_record("s", "all", "PROD-AFTER", "no corr at all")  # fails lint: corr-required
+    _plant_raw(w, ml._line(bad))
+    res = ml.audit(ml.Adapter(), w, "origin", open_minutes=120)
+    assert [f["rule"] for f in res["findings"]] == ["malformed-prod-record"]
+    assert ml.main(["--repo", str(w), "audit", "--open-minutes", "120"]) == 3
+    # control: malformed NON-production noise is reported but is not a violation
+    clean = make_remote(tmp_path, "clean.git")
+    w2 = make_clone(tmp_path, clean, "w2")
+    _post(w2, "x")
+    _plant_raw(w2, "not json")
+    res = ml.audit(ml.Adapter(), w2, "origin", open_minutes=120)
+    assert res["findings"] == [] and len(res["malformed"]) == 1
+
+
+def test_errors_never_carry_url_credentials(tmp_path):
+    assert ml.redact("fatal: https://user:tok3n@example.invalid/o/r.git failed") == "fatal: https://example.invalid/o/r.git failed"
+    w = make_clone(tmp_path, make_remote(tmp_path), "w")
+    with pytest.raises(ml.LogError) as e:
+        ml.fetch_tip(ml.Adapter(), w, "https://user:tok3n@127.0.0.1:9/none.git")
+    assert "tok3n" not in str(e.value)
+    with pytest.raises(ml.LogError) as e:
+        ml.post(ml.Adapter(), w, "https://user:tok3n@127.0.0.1:9/none.git", "s", "all", "NEEDS-INTERFACE", "x", None, [], NOSLEEP)
+    assert "tok3n" not in str(e.value)
+
+
+def test_post_body_over_the_cap_is_refused_and_a_body_at_the_cap_is_written(tmp_path):
+    remote = make_remote(tmp_path)
+    w = make_clone(tmp_path, remote, "w")
+    rc = ml.main(["--repo", str(w), "post", "--to", "all", "--kind", "NEEDS-INTERFACE", "--body-file",
+                  body(tmp_path, "x" * (ml.MAX_BODY_BYTES + 1))], sleep=NOSLEEP)
+    assert rc == 3 and remote_lines(remote) == []
+    assert ml.main(["--repo", str(w), "post", "--to", "all", "--kind", "NEEDS-INTERFACE", "--body-file",
+                    body(tmp_path, "x" * ml.MAX_BODY_BYTES)], sleep=NOSLEEP) == 0
+
+
+def test_first_read_of_a_long_log_is_capped_with_a_truncated_note_and_carries_the_data_banner(tmp_path, monkeypatch):
+    remote = make_remote(tmp_path)
+    w = make_clone(tmp_path, remote, "w")
+    r = make_clone(tmp_path, remote, "r")
+    monkeypatch.setattr(ml, "MAX_READ_RECORDS", 3)
+    ids = [_post(w, "x", text=f"n{i}")["id"] for i in range(5)]
+    res = ml.read(ml.Adapter(), r, "origin", "x")
+    assert [x["id"] for x in res["records"]] == ids[-3:] and "2 older" in res["truncated"]
+    assert "not instructions" in res["notice"]
+    again = ml.read(ml.Adapter(), r, "origin", "x", since=None)  # control: with a cursor nothing is dropped
+    assert again["records"] == [] and "truncated" not in again
+
+
+def test_imported_records_are_marked_as_untrusted_issue_text(tmp_path):
+    remote = make_remote(tmp_path)
+    w = make_clone(tmp_path, remote, "w")
+    ml.import_issue(StubGh(_comments(2)), w, "origin", ISSUE, NOSLEEP)
+    assert {json.loads(l)["source"] for l in remote_lines(remote)} == {"issue-import"}
+    native = _post(w, "x")
+    assert "source" not in native
+    big = _comments(1)
+    big[0]["body"] = "y" * (ml.MAX_BODY_BYTES * 2)
+    ml.import_issue(StubGh(big), make_clone(tmp_path, remote, "w2"), "origin", "https://github.com/o/r/issues/9", NOSLEEP)
+    last = [r for r in map(json.loads, remote_lines(remote)) if any("/issues/9#" in x for x in r["refs"])][0]
+    assert len(last["body"].encode()) <= ml.MAX_BODY_BYTES and last["body"].endswith("[truncated]")
+
+
+def test_observation_requires_a_rejection_message_not_any_failure(tmp_path):
+    remote = make_remote(tmp_path, "m.git", H.git_equivalent_of(ml.ruleset_template()))
+    scratch = make_clone(tmp_path, remote, "m")
+
+    class Opaque(ml.Adapter):  # the force-push fails, but not with a rejection (e.g. a dropped connection)
+        def git(self, args, cwd, env=None, input_text=None):
+            if "--force" in args:
+                return subprocess.CompletedProcess(args, 128, "", "fatal: unable to access the remote")
+            return super().git(args, cwd, env, input_text)
+
+    assert H.observe_ruleset_enforcement(Opaque(), scratch, "origin", "b") == "unverifiable:no-rejection-message"
+    scratch2 = make_clone(tmp_path, make_remote(tmp_path, "m2.git", H.git_equivalent_of(ml.ruleset_template())), "m2")
+    assert H.observe_ruleset_enforcement(ml.Adapter(), scratch2, "origin", "b") == "enforced"
+    assert not hasattr(ml, "observe_ruleset_enforcement") and not hasattr(ml, "git_equivalent_of")
+
+
+def test_chat_mirror_pins_the_runner_and_documents_both_hazards():
+    text = open(_p("cli", "templates", "workflows", "message-log-chat-mirror.yml"), encoding="utf-8").read()
+    assert "runs-on: ubuntu-24.04" in text and "latest" not in text.replace("MESSAGE_LOG", "")
+    assert re.search(r"Research timestamp: \d{4}-\d{2}-\d{2}", text)
+    assert "REPEAT" in text and "DROPPED WINDOW" in text
+
+
+def _mirror_filter():
+    text = open(_p("cli", "templates", "workflows", "message-log-chat-mirror.yml"), encoding="utf-8").read()
+    m = re.search(r"jq -rR --argjson since \"\$\{since\}\" '(.*?)' \|", text, re.S)
+    assert m, "the jq filter moved; update this extraction"
+    return m.group(1)
+
+
+@pytest.mark.skipif(__import__("shutil").which("jq") is None, reason="jq not installed")
+def test_chat_mirror_jq_filter_runs_over_sample_jsonl_and_tolerates_a_malformed_line(tmp_path):
+    now = datetime.datetime.now(datetime.timezone.utc)
+    mk_ = lambda kind, mins, body="b\nline2": ml._line(ml.make_record("s", "all", kind, body, "c1", [], now - datetime.timedelta(minutes=mins)))  # noqa: E731
+    lines = [mk_("PROD-BEFORE", 1), "this is { not json", mk_("FINDING", 1), mk_("PROD-AFTER", 1), mk_("PROD-AFTER", 60),
+             '{"kind":"PROD-AFTER","time":5}', '"just a string"']
+    f = tmp_path / "log.jsonl"
+    f.write_text("\n".join(lines) + "\n")
+    since = int(now.timestamp()) - 960
+
+    def run(since_):
+        r = subprocess.run(["jq", "-rR", "--argjson", "since", str(since_), _mirror_filter(), str(f)], capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        return r.stdout.splitlines()
+
+    out = run(since)
+    assert [l.split()[0] for l in out] == ["PROD-BEFORE", "PROD-AFTER"], out
+    assert all("\n" not in l for l in out) and "line2" in out[0]
+    assert run(since + 10**6) == [], "control: nothing is inside a future window"
+
+
+# ---- lint coverage ------------------------------------------------------------------------
+def _mrec(kind, body, corr=None):
+    return ml.make_record("a", "all", kind, body, corr)
+
+
+@pytest.mark.parametrize("cmd", ["ls && rm x", "ls; id", "ls | cat", "echo $(id)", "echo `id`", "cat x > y", "cat < y", "sleep 1 &",
+                                 "exec ls", "trap x EXIT", "set -e"])
+def test_handoff_command_refusals(cmd):
+    block = json.dumps({"cwd": "/tmp", "command": cmd, "why": "w", "expect": "e"})
+    errs = mk.lint(_mrec("HANDOFF", f"x\n```json\n{block}\n```\n"))
+    assert errs and errs[0].startswith("handoff-shape"), cmd
+
+
+@pytest.mark.parametrize("blk,rule", [
+    ('{"cwd":"rel","command":"ls","why":"w","expect":"e"}', "handoff-shape"),
+    ('{"cwd":"/t","command":"ls","why":"w"}', "handoff-shape"),
+    ('{"cwd":"/t","command":"ls","why":"w","expect":"e","x":1}', "handoff-shape"),
+    ("{nope", "handoff-json-not-parseable")])
+def test_handoff_shape_refusals(blk, rule):
+    assert mk.lint(_mrec("HANDOFF", f"x\n```json\n{blk}\n```\n"))[0].startswith(rule)
+    assert mk.lint(_mrec("HANDOFF", "no block"))[0].startswith("handoff-json-block-missing")
+
+
+def test_handoff_control_a_correct_handoff_is_valid():
+    ok = '{"cwd":"~/work","command":"ls -l","why":"w","expect":"e"}'
+    assert mk.lint(_mrec("HANDOFF", f"x\n```json\n{ok}\n```\n")) == []
+
+
+def test_challenge_needs_evidence_and_tick_has_a_strict_shape():
+    assert mk.lint(_mrec("CHALLENGE", "I disagree"))[0].startswith("evidence-required")
+    assert mk.lint(_mrec("CHALLENGE", "I disagree\nevidence: the log shows it")) == []
+    assert mk.lint(_mrec("FINDING", "versions 1.2/3.4 are odd"))[0].startswith("evidence-required"), "1.2/3.4 is not a path"
+    for bad in ("prog 2026-01-01", "Prog 2026-01-01T00:00:00Z", "prog 2026-01-01T00:00:00Z extra", ""):
+        assert mk.lint(_mrec("TICK", bad)), bad
+    assert mk.lint(_mrec("TICK", "prog-1 2026-01-01T00:00:00Z")) == []
+
+
+# ---- union merge -------------------------------------------------------------------------
+def test_union_merge_keeps_both_lines_of_two_diverged_branches(tmp_path):
+    remote = make_remote(tmp_path)
+    w = make_clone(tmp_path, remote, "w")
+    a = _post(w, "all", text="base line")
+    tip, _ = tip_records(w)
+    git(w, "checkout", "-q", "-b", "left", tip)
+    git(w, "config", "user.name", "t")
+    git(w, "config", "user.email", "t@invalid")
+    path = git(w, "ls-files").stdout.split()
+    month = [p for p in path if p.startswith("messages/")][0]
+    l1 = ml.make_record("l", "all", "NEEDS-INTERFACE", "left")
+    l2 = ml.make_record("r", "all", "NEEDS-INTERFACE", "right")
+    for name, rec in (("left", l1), ("right", l2)):
+        if name == "right":
+            git(w, "checkout", "-q", "-b", "right", tip)
+        with open(w / month, "a", encoding="utf-8") as fh:
+            fh.write(ml._line(rec) + "\n")
+        git(w, "add", month)
+        git(w, "commit", "-q", "-m", name)
+    right_before = git(w, "rev-parse", "right").stdout.strip()
+    git(w, "merge", "-q", "--no-edit", "left")
+    merged = git(w, "show", f"HEAD:{month}").stdout.split("\n")
+    ids = [json.loads(x)["id"] for x in merged if x.strip()]
+    assert {a["id"], l1["id"], l2["id"]} <= set(ids) and len(ids) == 3
+    # control: without the attribute the same merge conflicts
+    git(w, "reset", "-q", "--hard", right_before)
+    (w / ".gitattributes").unlink()
+    git(w, "commit", "-qam", "drop attrs")
+    assert git(w, "merge", "--no-edit", "left", check=False).returncode != 0
+
+
+def test_exhaustion_reason_reaches_stderr_through_main(tmp_path, capsys):
+    remote = make_remote(tmp_path)
+    w = make_clone(tmp_path, remote, "w")
+    rival = make_clone(tmp_path, remote, "rival")
+    rc = ml.main(["--repo", str(w), "post", "--to", "all", "--kind", "NEEDS-INTERFACE", "--body-file", body(tmp_path, "x")],
+                 adapter=RaceOnce(rival, 99), sleep=NOSLEEP)
+    err = capsys.readouterr().err
+    assert rc == 1 and "FAILED" in err and "retries exhausted" in err and "fetch first" in err.lower().replace("non-fast-forward", "fetch first")
+
+
+# ---- ULID ---------------------------------------------------------------------------------
+def test_ulid_timestamp_bits_equal_when_and_ids_are_monotonic_within_a_process():
+    when = datetime.datetime(2026, 5, 6, 7, 8, 9, 123000, tzinfo=datetime.timezone.utc)
+    uid = ml.new_ulid(when)
+    value = 0
+    for ch in uid:
+        value = (value << 5) | ml._B32.index(ch)
+    assert value >> 80 == int(when.timestamp() * 1000)
+    same = [ml.new_ulid(when) for _ in range(500)]
+    assert same == sorted(same) and len(set(same)) == 500, "the same millisecond must still sort in creation order"
+    now_ids = [ml.new_ulid() for _ in range(2000)]
+    assert now_ids == sorted(now_ids)

@@ -9,8 +9,15 @@
 #   3. add the repository secret MESSAGE_LOG_CHAT_WEBHOOK (an incoming-webhook URL that accepts {"text": "..."}).
 # With the variable unset, every tick ends at the job-level `if` and starts no runner.
 #
-# Lines are picked by their `time` field over the last window (16 minutes for a 15 minute schedule), so a
-# line can repeat after a delayed schedule; that is the price of a stateless mirror.
+# Lines are picked by their `time` field over the last window (16 minutes for a 15 minute schedule). The mirror is
+# stateless, which has two hazards, both accepted for a convenience channel:
+#   * REPEAT: a line inside the window of two consecutive runs (the 1 minute overlap, or a re-run) is posted twice.
+#   * DROPPED WINDOW: if a scheduled run is skipped or delayed past the overlap (GitHub may drop or delay schedule
+#     events under load), the lines of that gap are never mirrored. The record on the branch is unaffected.
+# A malformed line in the log is skipped here (the log's own `audit` is where it is reported).
+#
+# Research timestamp: 2026-11-04 (runner image `ubuntu-24.04`; actions/checkout v5.1.0 SHA verified with
+# `git ls-remote`). Re-verify both when the pins are next reviewed.
 name: message-log-chat-mirror
 
 on:
@@ -24,7 +31,7 @@ permissions:
 jobs:
   mirror:
     if: ${{ vars.MESSAGE_LOG_CHAT_MIRROR == 'on' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -40,10 +47,11 @@ jobs:
           if [ -z "${CHAT_WEBHOOK_URL}" ]; then echo "MESSAGE_LOG_CHAT_WEBHOOK is not set" >&2; exit 1; fi
           [ -d messages ] || exit 0
           since=$(( $(date -u +%s) - 960 ))
-          cat messages/*.jsonl | jq -r --argjson since "${since}" '
-            select(.kind == "PROD-BEFORE" or .kind == "PROD-AFTER")
-            | select((.time[0:19] + "Z" | fromdateiso8601) >= $since)
-            | "\(.kind) \(.corr // "-") from \(.from): \(.body[0:300] | gsub("\n"; " "))"' |
+          cat messages/*.jsonl | jq -rR --argjson since "${since}" '
+            (fromjson? // empty)
+            | select(type == "object" and (.kind == "PROD-BEFORE" or .kind == "PROD-AFTER"))
+            | select(try ((.time[0:19] + "Z" | fromdateiso8601) >= $since) catch false)
+            | "\(.kind) \(.corr // "-") from \(.from): \((.body | tostring)[0:300] | gsub("\n"; " "))"' |
           while IFS= read -r line; do
             jq -n --arg text "${line}" '{text: $text}' |
               curl --fail --silent --show-error --max-time 20 -H 'Content-Type: application/json' -d @- "${CHAT_WEBHOOK_URL}"

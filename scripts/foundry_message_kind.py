@@ -33,6 +33,7 @@ KINDS = ("FINDING", "NEEDS-INTERFACE", "CHALLENGE", "HANDOFF", "TICK", "PROD-BEF
 _EVIDENCE_KINDS = ("FINDING", "CHALLENGE")
 _CORR_KINDS = ("PROD-BEFORE", "PROD-AFTER", "STOP")
 VERSION = 1
+MAX_BODY_BYTES = 16 * 1024
 
 _ULID_RE = re.compile(r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 _RFC3339_UTC_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$")
@@ -40,12 +41,13 @@ _JSON_FENCE_RE = re.compile(r"```json\s*\n(.*?)```", re.DOTALL)
 _TICK_LINE_RE = re.compile(r"^([a-z0-9-]+) (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)$")
 _EVIDENCE_PREFIX_RE = re.compile(r"(?i)\bevidence:\s*\S")
 _URL_RE = re.compile(r"https?://\S+")
-_PATH_RE = re.compile(r"\b[\w.-]+(?:/[\w.-]+)+\.[A-Za-z0-9]{1,10}(?::\d+)?\b")
+_PATH_RE = re.compile(r"\b[\w.-]+(?:/[\w.-]+)+\.(?=[0-9]*[A-Za-z])[A-Za-z0-9]{1,10}(?::\d+)?\b")
 _CMD_OUTPUT_RE = re.compile(r"^\s*[$>]\s+\S")
 
 _HANDOFF_FIELDS = ("cwd", "command", "why", "expect")
 _CHAIN_TOKENS = (("&&", "&&"), (";", ";"), ("|", "|"), ("\n", "newline"), ("\r", "carriage return"),
-                 ("$(", "$( command substitution"), ("`", "backtick command substitution"))
+                 ("$(", "$( command substitution"), ("`", "backtick command substitution"),
+                 (">", "redirection"), ("<", "redirection"), ("&", "background/chaining &"))
 _REFUSED_TOP_WORDS = {"trap", "exec"}
 
 
@@ -140,6 +142,8 @@ def lint(record, strict_body: bool = True) -> list:
     if not isinstance(body, str):
         errs.append("body: must be a string")
         return errs
+    if strict_body and len(body.encode("utf-8")) > MAX_BODY_BYTES:
+        errs.append(f"body-too-large: a body is capped at {MAX_BODY_BYTES} bytes")
     if kind in _CORR_KINDS:
         if not corr:
             errs.append(f"corr-required: {kind} needs a corr id joining its before/after/stop")

@@ -256,12 +256,12 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_message_log.py read:*)",
       "tier": "allow",
-      "rationale": "single-branch fetch of foundry/messages, then a local query; the only write is the per-session cursor file inside the git dir (gv-09)."
+      "rationale": "single-branch fetch of foundry/messages, then a local query; writes only the per-recipient cursor file inside the git dir and the private fetched refs under refs/foundry (gv-09)."
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_message_log.py audit:*)",
       "tier": "allow",
-      "rationale": "single-branch fetch, then a read-only replay query over the log; reports pairing violations and writes nothing (gv-09)."
+      "rationale": "single-branch fetch, then a read-only replay query over the log; reports pairing violations; its only writes are the private fetched refs under refs/foundry (gv-09)."
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_message_log.py ruleset-template:*)",
