@@ -27,7 +27,7 @@ session's normal permission mode.
 ALSO NEVER ALLOWED SILENTLY (security review of #286) — the verbs the permission floor tiers `ask` because
 they write to GitHub or redirect writes: `foundry_migrate.py cutover`, `foundry_deck_events.py emit`,
 `foundry_inbox.py check|ack|schedule|resolve`, `foundry-ticket.py claim` and `ci-allow`,
-`foundry_governance.py render|baseline|select|declare|apply|upgrade`, `foundry_message_log.py post|import`, `foundry_research_note.py` (any invocation), `foundry_execution_plan.py` (any invocation, dl-04), `foundry_learned_distill.py` (any invocation, dl-10), `foundry_deck_resources.py --reset-oom-baseline|--from-json`, `foundry-env-hygiene.py mark-worktree|reap`, `foundry-deck-heavy` (runs a command), `foundry_prod_step.py` (runs a command, gv-13), `foundry_deck_report.py pause|resume`, `foundry_usage.py bind|fallback-transcripts` and `ingest|attribute` when `--dataset` is named, and any
+`foundry_governance.py render|baseline|select|declare|apply|upgrade`, `foundry_message_log.py post|import`, `foundry_research_note.py` (any invocation), `foundry_execution_plan.py` (any invocation, dl-04), `foundry_learned_distill.py` (any invocation, dl-10), `foundry_programme_issue.py` (any invocation, dl-06), `foundry_deck_resources.py --reset-oom-baseline|--from-json`, `foundry-env-hygiene.py mark-worktree|reap`, `foundry-deck-heavy` (runs a command), `foundry_prod_step.py` (runs a command, gv-13), `foundry_deck_report.py pause|resume`, `foundry_usage.py bind|fallback-transcripts` and `ingest|attribute` when `--dataset` is named, and any
 abbreviation of `--trust-author`. The hook is the only silent-allow mechanism, so without this the `ask` rows
 would never be enforced.
 
@@ -76,9 +76,11 @@ _ASK_VERBS = {
 # Scripts the floor tiers `ask` as a whole because every invocation writes (gv-14: foundry_research_note.py writes
 # .foundry/research/ and .foundry/decisions/). foundry_blocker_check.py is read-only and stays silently allowed.
 # gv-10: foundry_queue_land.py enqueues a PR (writes to GitHub, pushes the base merge), so it asks as a whole too.
+# dl-06: foundry_programme_issue.py edits the programme issue and posts a Project status update, so the whole script asks.
 # dl-04: foundry_execution_plan.py publish pushes the planner ref and mutates the Project, so the whole script asks.
 # dl-10: foundry_learned_distill.py writes proposal files and, on --open-prs/--open-tickets, pushes and opens PRs/issues, so the whole script asks.
-_ASK_SCRIPTS = {"foundry_research_note.py", "foundry_queue_land.py", "foundry_execution_plan.py", "foundry_learned_distill.py"}
+_ASK_SCRIPTS = {"foundry_research_note.py", "foundry_queue_land.py", "foundry_execution_plan.py", "foundry_learned_distill.py",
+                "foundry_programme_issue.py"}
 _USAGE_DATASET_VERBS = {"ingest", "attribute"}   # ask only when a dataset is NAMED (`--dataset`, any argparse abbreviation)
 
 
@@ -143,8 +145,9 @@ def allowed(command, root):
         return False
     if name == "foundry_governance.py" and "discover" in argv[1:] and _names_option(argv[1:], "--out"):
         return False   # gv-15: `discover --out` writes a file; the verb is otherwise read-only, so only that shape asks
-    if name == "foundry_deck_report.py" and _names_option(argv[1:], "--append-cost"):
-        return False   # dl-14: --append-cost writes the cost log; the plain `--in` render and `state` stay silent
+    if name == "foundry_deck_report.py" and (_names_option(argv[1:], "--append-cost")
+                                                 or _names_option(argv[1:], "--programme-issue")):
+        return False   # dl-06: --programme-issue writes the body file. dl-14: --append-cost writes the cost log; the plain `--in` render and `state` stay silent
     if name == "deck-cost-census.py" and any(_names_option(argv[1:], o) for o in ("--append", "--repo", "--prs")):
         return False   # dl-14: --append writes a cost log; --repo runs gh; --prs reads a named file. The plain census and --stall-check stay silent
     if name == "foundry_deck_resources.py" and (_names_option(argv[1:], "--reset-oom-baseline")

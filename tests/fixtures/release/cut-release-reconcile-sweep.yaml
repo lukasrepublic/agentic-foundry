@@ -216,12 +216,13 @@ hook_comment_expectation:
 #      value-aware operand parse to python; paper guard restores the pre-pipeline base at `|`/`&` and treats `cd -`/`popd`/`cd $VAR`
 #      as unknown (previous base kept); secret-read guard reads a bundled `-zC<dir>` value.
 #   4. dl-04 (2026-11-05): plugin-scripts-allow adds foundry_execution_plan.py to _ASK_SCRIPTS (the whole script asks).
+#   6. dl-06 (2026-11-05): plugin-scripts-allow adds foundry_programme_issue.py to _ASK_SCRIPTS and asks on `foundry_deck_report.py --programme-issue`.
 #   5. dl-14 (2026-11-05): plugin-scripts-allow asks on `deck-cost-census.py --append`, `--repo` and `--prs` (the floor row is ask).
 gv20_hook_pins:
   foundry-paper-guard.py: 'e8d53c711e40e9869f3b2076c04e8474f7e4dff240b1e5b0f653596961aae88d'
   foundry-shell-shape.py: 'de6722ba044b0029040a28b075227317bb0cd988da803c794de426ad414acc60'
   foundry-secret-read-guard.py: 'dbaac7eb5fe017c3088afdc6ca138886ad68211dd369dfe16a113472715a48be'
-  foundry-plugin-scripts-allow.py: '15bc6e0a0ad6fea37a463232d286561bead7ef6a27faa2c307e397725efc1288'
+  foundry-plugin-scripts-allow.py: 'bacb283bf8946a966d9a7e46b0027a05a34543cdb2bea419e3e4c59992b78afa'
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
 operator_registry_shape:
