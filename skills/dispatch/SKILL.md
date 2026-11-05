@@ -58,6 +58,16 @@ The unit of work is a **ticket** (a GitHub issue with a `## Done means` command;
    Fix a Block by editing the Design and review once more; ask the operator for one word only on a Block you cannot fix
    (a rule the Design must deviate from, a boundary decision). Below the class this step is skipped: the sections are a
    checklist `start` prints. Hand the same rule block to `pr-reviewer` and `security-reviewer` at review time.
+0b. **Ticket review (design-required class only).** Run it right after step 0 and before any build agent starts, when
+   `design_required` (from `foundry-ticket.py read-issue <n> --json`) is `true`. Spawn the **`ticket-reviewer`** agent in a
+   fresh context (`subagent_type: foundry:ticket-reviewer`, read-only). Its brief carries `Deliverable: <the findings>`,
+   `Done when: <verdict returned>` and the label `review:<atom>`, plus pointers to the ticket JSON path and to the brief
+   renderer's rule block (`python3 scripts/foundry_brief.py render --ticket <json> --paths <components>`). It runs ONE
+   consolidated steel-man and adversarial pass over `## Acceptance` and `## Design` and returns Block, Risk and Nit findings,
+   each with an AC id or component locator (a Block without a locator is a Risk). Blocks only change the ticket: allow one fix
+   round of the ticket body, then re-run the reviewer once, scoped to those Blocks. If the re-check still returns a Block,
+   park the atom with that Block as its reason; do not start a build agent. Risks are filed, not fixed. Below the class
+   this step is skipped: nothing runs before build.
 1. **Resolve** the ticket (`gh issue view <n>`): its `## Done means` command and `## Paper allowed` list.
 2. **Invoke the native `Agent` tool** - no queue, no manifest:
    - `subagent_type`: the engineer agent (`foundry:app-engineer` / `foundry:infra-engineer` / `foundry:framework-engineer` per the ticket's surface).

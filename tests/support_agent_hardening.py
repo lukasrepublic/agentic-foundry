@@ -65,6 +65,7 @@ CLAUSE_LABELS = (
 WRITE_PATHS_MAP = {
     "pr-reviewer": frozenset({"none"}),
     "design-reviewer": frozenset({"none"}),
+    "ticket-reviewer": frozenset({"none"}),
     "security-reviewer": frozenset({"none"}),
     "app-engineer": frozenset({"contract:allowed_paths"}),
     "infra-engineer": frozenset({"contract:allowed_paths"}),
@@ -77,7 +78,7 @@ READ_ONLY_SENTENCE = (
     "which bounds the blast radius by construction."
 )
 
-READ_ONLY_COHORT = frozenset({"pr-reviewer", "security-reviewer", "design-reviewer"})
+READ_ONLY_COHORT = frozenset({"pr-reviewer", "security-reviewer", "design-reviewer", "ticket-reviewer"})
 
 WRITE_PATHS_LINE_RE = re.compile(r"^write-paths: (\S.*)$")
 TOOLS_LINE_RE = re.compile(r"(?m)^tools:\s*(.+)$")
