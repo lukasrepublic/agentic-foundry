@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """foundry_om_trace — the operating-model traceability table (AC-OM-10, gv-16).
 
-    foundry_om_trace.py --charters DIR [--prompt FILE] [--json]
+    foundry_om_trace.py --charters DIR [--prompt FILE] [--json | --markdown]
 
 Maps every rule of the operating-model port prompt (A1 .. G3) to the acceptance criteria of the programme's charters
 and exits 1, naming each rule that maps to none. READ-ONLY: it reads the charter files (and, with --prompt, the
@@ -17,6 +17,9 @@ plugin; `tests/fixtures/om-trace/charters/` is a copy of the current charters fo
 
 `--prompt FILE` checks the embedded rule list against the prompt's own `A1. Title ...` headings and exits 2 on
 a difference (the list in this file is then out of date).
+
+`--markdown` prints the table alone (no summary line; ids as code spans), byte-stable for the same charters: docs/operating-model-policy.md embeds it
+between two marker comments and a test regenerates it from the repository's charter copy and compares.
 
 Exit: 0 every rule mapped, 1 at least one rule unmapped, 2 bad input (no charters, unreadable file, prompt drift).
 Stdlib only.
@@ -148,6 +151,18 @@ def render_table(result: dict) -> str:
     return "\n".join(lines)
 
 
+def render_markdown(result: dict) -> str:
+    """The table for a Markdown page: charter and criterion ids are code spans, so a doc-claims scan reads them as ids and not as counts."""
+    lines = ["| Rule | Title | Charter | Acceptance criterion |", "|---|---|---|---|"]
+    for r in result["rules"]:
+        if not r["maps"]:
+            lines.append(f"| {r['rule']} | {r['title']} | UNMAPPED | - |")
+            continue
+        for m in r["maps"]:
+            lines.append(f"| {r['rule']} | {r['title']} | `{m['charter']}` | `{m['ac']}` |")
+    return "\n".join(lines)
+
+
 def prompt_rule_ids(path: Path) -> list:
     return re.findall(r"^([A-G]\d{1,2})\.[ \t]", path.read_text(encoding="utf-8"), re.M)
 
@@ -156,7 +171,9 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="foundry_om_trace.py", description=__doc__.split("\n")[0])
     ap.add_argument("--charters", required=True, help="directory holding the programme's charter files")
     ap.add_argument("--prompt", help="the port prompt; its rule headings must equal the embedded list")
-    ap.add_argument("--json", action="store_true")
+    fmt = ap.add_mutually_exclusive_group()
+    fmt.add_argument("--json", action="store_true")
+    fmt.add_argument("--markdown", action="store_true", help="print the traceability table alone")
     a = ap.parse_args(argv)
     try:
         if a.prompt:
@@ -171,6 +188,8 @@ def main(argv=None) -> int:
         return 2
     if a.json:
         print(json.dumps(result, indent=2))
+    elif a.markdown:
+        print(render_markdown(result))
     else:
         print(render_table(result))
         if result["unmapped"]:

@@ -38,12 +38,18 @@ Four kinds of page, four kinds of question. Start where your question lives:
 - [Enable agent teams](how-to/agent-teams.md)
 - [Never read a secret value](how-to/secrets-never-read.md) — rule D1: verify by metadata only; the secret-read guard, its add-only policy lists, and why only an IAM-level boundary prevents the read
 - [Run the plugin's native evals](how-to/plugin-evals.md)
+- [Scale to zero for occasional privileged jobs](how-to/scale-to-zero-privileged-jobs.md) — rule C3: a tainted node class that scales to zero, with the kit's pattern and template
+- [CI budgets are tools, not gates](how-to/ci-budgets-are-tools.md) — rule C2: budgets report and never gate; the budget lint
+- [The evidence and baseline rule](how-to/evidence-baseline-rule.md) — rule G1: no baseline before the first fully green run
+- [Operator hand-off files](how-to/operator-handoff-files.md) — rule E3: `report.handoff_dir`, durable instructions in the repo, PDFs beside the hand-off files
 - [Governance hardening notes](how-to/governance-hardening-notes.md) — what the hardening pass closed, and which controls are boundaries and which are visibility controls
 
 ## Reference — look it up
 
 - **[Verb quick reference](VERBS-QUICK-REF.md)** — every `/foundry:*` verb, one line each,
   grouped by stage.
+- **[Foundry Governance](governance.md)** — the sixteen categories and their kits, floor against tunable, the per-ticket sections, the review lenses, exceptions and baselines, and upgrade.
+- **[The operating-model policy](operating-model-policy.md)** — every key of `.foundry/operating-model.yaml`, floor or tunable, the primitive that acts on it, and the rule-to-criterion traceability table.
 - **[Glossary](glossary.md)** — the vocabulary: ticket, contract, floor…
 - **[Troubleshooting](troubleshooting.md)** — symptom-first runbooks. · **[FAQ](faq.md)**
 - **[Terminology standard](TERMINOLOGY.md)** — the maintainer-facing naming standard every

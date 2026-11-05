@@ -11,9 +11,9 @@ Rules B5, B6, D1 of the port prompt; port plan §1.3 rulings 2–4. Grounding: C
 - `hooks/hooks.json`: wires the two new hooks and gv-12's SubagentStop reap script (this atom is the only editor of hooks.json in wave 2). Doctor `check_hooks` passes.
 
 ## Acceptance criteria
-- AC-OM-5 WHEN `rm` outside scratch, a packed `bash -c` script, or a code heredoc is attempted, the shape hook SHALL refuse; a script run by name and an `rm` inside scratch SHALL be admitted (controls).
-- WHEN a forbidden secret-read verb is attempted, the secret guard SHALL refuse naming the verb; WHEN the policy file tries to remove a default verb, `validate` SHALL refuse (`floor-rule-disabled:secrets.value_reads_forbidden` or `secrets.forbidden_verbs.removal`).
-- WHEN a claim's heartbeat is older than `expires_after`, another session's takeover SHALL succeed and be recorded; before expiry it SHALL be refused.
+- AC-OM-5 WHEN `rm` outside scratch, a packed `bash -c` script, or a code heredoc is attempted, the shape hook SHALL refuse; a script run by name and an `rm` inside scratch SHALL be admitted (controls). (rule B6)
+- WHEN a forbidden secret-read verb is attempted, the secret guard SHALL refuse naming the verb; WHEN the policy file tries to remove a default verb, `validate` SHALL refuse (`floor-rule-disabled:secrets.value_reads_forbidden` or `secrets.forbidden_verbs.removal`). (rule D1)
+- WHEN a claim's heartbeat is older than `expires_after`, another session's takeover SHALL succeed and be recorded; before expiry it SHALL be refused. (rule B5)
 - WHEN a work-branch push has no live claim, the push SHALL be refused with `claim-required`; with a live claim it SHALL be admitted.
 - THE SYSTEM SHALL keep doctor GREEN with the new wiring and the plugin-scripts allow hook consistent.
 

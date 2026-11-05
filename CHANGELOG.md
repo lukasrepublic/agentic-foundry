@@ -10,7 +10,78 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 
 ## v2.0.0 — unreleased (the delivery rebase)
 
-- **gv-11 guard hooks.** New PreToolUse Bash hooks `foundry-shell-shape.py` (B6) and `foundry-secret-read-guard.py` (D1); claims are leases with heartbeat, recorded takeover and `--successor-of`; git-discipline clause (m) refuses a work-branch push or non-draft `gh pr create` without a live claim. `hooks/foundry-worktree-create.sh` now runs its inline python with `-I`, so it ignores `PYTHONPATH` and the user site-packages directory: a dependency installed only with `pip install --user` is no longer visible to it. `foundry-env-reap.sh --subagent-stop` is a no-op until the label-scoped sweep lands.
+### Foundry Governance, one operating mode, the operating-model policy, the shared message log and the guard hooks
+
+Programme `governance-2-0`. Read the map in [docs/governance.md](docs/governance.md) and the keys in
+[docs/operating-model-policy.md](docs/operating-model-policy.md). Each change below that removes or alters behavior names
+what replaces it.
+
+**Added: governance.**
+- Rules ship as read-only kits under `governance/kits/<category>/` (`rules.yaml`, `checks/`, `templates/`), one kit for each of
+  fifteen categories; the sixteenth category, `factory`, is the operating-model policy file. Rule ids are `FG-<CATEGORY>-<NNN>`
+  upstream and `<ORG>-<CATEGORY>-<NNN>` in the adopter layer `governance/local/`, which the plugin never reads for upstream
+  purposes. Schemas: `schema/governance-rule.schema.json`, `schema/governance-kit.schema.json`,
+  `schema/governance-lock.schema.json`.
+- `scripts/foundry_governance.py` with the verbs `load`, `validate`, `render`, `applicable`, `check`, `exceptions`,
+  `baseline`, `discover`, `select`, `declare`, `apply`, `upgrade` and `leak-check`. `scripts/foundry_brief.py` builds a
+  builder or reviewer brief with the text of every cited rule.
+- Eight blueprints under `packs/stack-profiles/`: the existing Python service, Python library, Node web and AWS EKS Karpenter
+  profiles, and new `service-event-driven`, `cli-tool`, `claude-plugin` and `data-pipeline`. Detection is a signature table
+  plus a one-word confirmation, never an inference.
+- Intake and upgrade are one step: `/foundry:init` and `/foundry:intake existing` run discover, select, declare, apply and
+  baseline; the updater runs `upgrade` after every plugin refresh, with a three-way merge and one pull request on request.
+  See [docs/how-to/governance-intake-and-upgrade.md](docs/how-to/governance-intake-and-upgrade.md).
+- Ticket sections `## Design`, `## Security` and `## Surfaces`; `design-required` refuses a ticket in the design-required
+  class until its Design cites an existing rule id. `pr-reviewer` gains the conformance, flag-cleanup and rollout lenses.
+  The `governance-trace` CI job template (`governance/kits/delivery/checks/governance-trace.yml.template`) checks a pull
+  request against its ticket. It fails closed for a ticket author it cannot vet, which includes any run without `GH_TOKEN`.
+- `.foundry/stack-profile.lock` is absorbed into `.foundry/governance.lock` the first time `apply` or `upgrade` runs. The old
+  file stays for `/foundry:verify` and the doctor until they read the governance lock.
+- New pages: [docs/governance.md](docs/governance.md), [docs/operating-model-policy.md](docs/operating-model-policy.md) and the
+  how-tos for [scale to zero](docs/how-to/scale-to-zero-privileged-jobs.md),
+  [CI budgets](docs/how-to/ci-budgets-are-tools.md), [the evidence and baseline rule](docs/how-to/evidence-baseline-rule.md)
+  and [operator hand-off files](docs/how-to/operator-handoff-files.md). `scripts/foundry_om_trace.py --markdown` prints the
+  rule-to-criterion table; a test regenerates it and compares it with the policy page.
+- CI: the `selftests` job runs a name census over the programme's change set (`tests/test_name_census.py`), with a planted
+  name as its control, on top of the existing leak gate.
+
+**Added: the operating-model policy.** `.foundry/operating-model.yaml` (optional; absent means every default), read only
+through `scripts/foundry_operating_model.py` and `/foundry:operating-model status|validate|explain`. A floor key can only be
+written as its enforced value (`floor-rule-disabled:<key>`). The seed file is `cli/templates/operating-model.yaml.tmpl`.
+It drives `scripts/foundry_queue_land.py` (merge queue discipline, record line, delivered-by record),
+`scripts/foundry_merge_plan.py`, `scripts/foundry_deck_resources.py` and `scripts/foundry-deck-heavy` (machine-bound
+fan-out), `scripts/foundry_deck_report.py` (the four-block report), `scripts/foundry_blocker_check.py` and
+`scripts/foundry_research_note.py` (an operator is asked only after an attempt), and `scripts/foundry_prod_step.py`
+(production steps stated before and reported after).
+
+**Added: the shared message log.** `scripts/foundry_message_log.py`: an append-only machine channel on the protected
+`foundry/messages` branch (`post`, `read`, `audit`, `import`, `ruleset-template`), plus an issue-per-topic people channel and
+an opt-in chat mirror. The ruleset blocks force-push and deletion; a fast-forward rewrite is not caught by `audit`, so the log is
+append-only by convention and not tamper-evident (see
+[docs/how-to/shared-message-log.md](docs/how-to/shared-message-log.md)).
+
+**Added: hooks.** PreToolUse Bash hooks `foundry-shell-shape.py` (B6) and `foundry-secret-read-guard.py` (D1); git-discipline
+clauses for queued pull requests and bypass flags, and clause (m), which refuses a work-branch push or a non-draft
+`gh pr create` without a live claim; claims are leases with a heartbeat, a recorded takeover and `--successor-of`. The paper
+guard also covers CI paths named by a Bash write. `hooks/foundry-env-reap.sh --subagent-stop` sweeps the orphans of a stopped
+subagent by project label only (from the event payload or `FOUNDRY_PROJECT_LABEL`, never from the session id); with no label it
+sweeps nothing. This replaces the earlier line that called `--subagent-stop` a no-op. `hooks/foundry-worktree-create.sh` runs its
+inline Python with `-I`, so it ignores `PYTHONPATH` and the user site-packages directory: a dependency installed only with
+`pip install --user` is no longer visible to it.
+
+**Changed: one operating mode.** There is no team/solo switch. The gn-17 mode switch, `scripts/foundry_operating_mode.py`,
+`skills/team-mode`, the `operating_mode` key and every `require_team` gate are removed; every workspace is a team and a solo
+developer is a team of one. Replacement: `github_scope` in `.claude/foundry-project.json` (set by `/foundry:init`) is required
+for the GitHub-backed verbs, which otherwise refuse with `github-scope-missing`. The deck, claims, inbox, leader board and
+message log exist for every workspace. A workspace that already has a `github_scope` gets the GitHub-backed surfaces on
+upgrade; removing `github_scope` turns them off.
+
+**Changed: restored by this programme.** The list of removed skills, scripts and hooks further down names `command-deck`, `upstream-submit`,
+`foundry_message_kind.py` and `foundry_blocker_check.py` as removed. Governance brings each back in a new form: the
+command-deck skill runs the policy-driven tick and report (its tick prompt template,
+`skills/command-deck/tick-prompt.template.md`, is back and is filled from the policy by `render-tick-section`), `upstream-submit` carries the upstream leak guard for the
+adopter layer, and the message-kind lint and the blocker lint serve the shared message log and the operator-ask rules. Read
+the current files, not that list, for what they do.
 
 ### One artifact per change: a ticket with a runnable "Done means". The platform is the gate.
 

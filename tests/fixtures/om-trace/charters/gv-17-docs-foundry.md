@@ -50,3 +50,4 @@ agent-merges-on-green
 ## Amendments
 | date | what changed | why reality required it | auth_seq |
 |---|---|---|---|
+| 2026-11-05 | Scope adds `scripts/foundry_om_trace.py` (a `--markdown` renderer for the traceability table, if absent) and the state.yaml doc notes routed here (prod-step tty note, never-persist-allow for prod-step, message-log tamper-evidence wording, queue-land's orphan branch, governance-trace without a token, declarations-pending scope, tzdata, the `--subagent-stop` CHANGELOG line). | the gv-13/gv-15/gv-16/gv-09 reviews filed these as documentation residuals. | 1 |

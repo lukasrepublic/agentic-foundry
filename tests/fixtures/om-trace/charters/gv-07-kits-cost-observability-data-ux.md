@@ -16,6 +16,7 @@ Author five kits per design §2.9–§2.13 on gv-01's schemas. Grounding: FinOps
 - WHEN a blueprint without a UI surface selects kits, `render` SHALL omit `ux` entirely; with `ui` in surfaces it SHALL include it.
 - WHEN a license fixture lists an unknown license, the shipped policy template SHALL deny it (control: MIT passes).
 - THE SYSTEM SHALL state in the ux README that automated accessibility checks cover a minority of WCAG and the rest is a practice.
+- THE SYSTEM SHALL ship the scale-to-zero pattern doc and NodeClass template in the cost kit, bound by FG-COST rule `check.ref` (rule C3).
 
 ## Done when
 - test:tests/test_kit_cost_obs_data_ux.py
@@ -52,3 +53,4 @@ agent-merges-on-green
 | date | what changed | why reality required it | auth_seq |
 |---|---|---|---|
 | 2026-11-04 | allowed_paths adds `governance/kits/contracts/` (rename of the data-contract rule `FG-DATA-001` → `FG-DCON-001`) and `tests/test_kits_validate_together.py` (every shipped kit validates together; no duplicate ids across kits); the ux surface tag `["ui"]` in `applies_to.blueprints` is a surface tag consumed by gv-15's resolver filter. | design §2.5 and §2.11 both assigned the `FG-DATA-` family; once the contracts kit (gv-05) and the data kit were on one tree the validator refused `FG-DATA-001: id: duplicate` and every brief test failed on the merge ref. Rule: a kit's ids use the kit's own category token; sub-families are a title convention. | 1 |
+| 2026-11-05 | Acceptance criteria add the shipped scale-to-zero pattern doc + template (rule C3); other ACs across gv-10..gv-16 gained `(rule …)` tags. | gv-16's AC-OM-10 traceability run over the real charters found 21 rules named in no AC; the tags bind each rule to the AC that already verified it, and C3 had no AC at all. | 1 |

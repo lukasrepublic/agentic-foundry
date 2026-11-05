@@ -11,9 +11,9 @@ Rules B3, B4, C1 of the port prompt. Re-extract `schema/blocker.schema.json` and
 - `scripts/foundry_inbox.py`: escalations pass through the lint before they reach `decision_needed`.
 
 ## Acceptance criteria
-- AC-OM-8 WHEN a candidate has no `attempted` or no `control`, the lint SHALL place it in `next_tasks` with the reason; a complete candidate SHALL be a blocker.
-- WHEN `why_operator` is `priced-ask` and `priced_ask.cost_breakdown` is empty, the lint SHALL refuse the candidate.
-- WHEN `foundry_research_note.py` is given a sweep with converging sources, THE SYSTEM SHALL write the note and the ruling; with `no_consensus` non-empty it SHALL write the note and a blocker candidate instead of a ruling.
+- AC-OM-8 WHEN a candidate has no `attempted` or no `control`, the lint SHALL place it in `next_tasks` with the reason; a complete candidate SHALL be a blocker. (rule B4)
+- WHEN `why_operator` is `priced-ask` and `priced_ask.cost_breakdown` is empty, the lint SHALL refuse the candidate. (rule E3)
+- WHEN `foundry_research_note.py` is given a sweep with converging sources, THE SYSTEM SHALL write the note and the ruling; with `no_consensus` non-empty it SHALL write the note and a blocker candidate instead of a ruling. (rule B3)
 - THE SYSTEM SHALL make no network call in any verb.
 
 ## Done when
