@@ -29,6 +29,9 @@ gets a `scheduled` event with a target and queue position. Events go through the
 (`foundry_deck_events.emit`); already-recorded markers on the request issue are read back first, so a lost
 runtime file causes no duplicate event.
 
+Escalations pass `foundry_blocker_check` (an attempt and a control) before they surface; a demoted one is
+listed under `next_tasks`, not `escalate`.
+
 Escalations persist: `escalate` is DERIVED on every run from the persisted blocked items (refreshed by the
 live read-back) and stays surfaced - also by `pending` - until `resolve`. "Do not re-emit the event" is
 independent of "still surface the escalation". A `resolved` marker suppresses its request only until new
@@ -71,6 +74,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import foundry_blocker_check as _bc  # noqa: E402
 import foundry_deck_events as de  # noqa: E402
 import foundry_ticket_store as store  # noqa: E402
 import foundry_github_capabilities as _ghc  # noqa: E402
@@ -405,6 +409,46 @@ def _escalations(pending, emitted=()):
     return out
 
 
+def _candidate(esc, project_dir, live=True, unblocked=0):
+    """The blocker candidate an escalation stands for. `attempted` lists only calls made in THIS invocation: a
+    `check`/`scan` run just read the blocking relation back (live=True); `pending` only reads the persisted file, so
+    it attempts nothing and the item honestly demotes to a next task. `control` is data from this run: how many other
+    pending requests were read back and had no blocking relation."""
+    owner, url = esc["affected"]["owner"], esc["affected"]["url"]
+    attempted = [{"command": f"gh issue view {url} (blocking-relation read-back)",
+                  "outcome": f"{esc['request']} blocks {url}, which owner {owner} holds"}] if live else []
+    return {
+        "claim": esc["action"],
+        "evidence": list(esc["evidence"]),
+        "attempted": attempted,
+        "control": f"{unblocked} other pending request(s) in the same run have no blocking relation and "
+                   "were queued as `scheduled`, not escalated",
+        "why_operator": "external-provisioning",
+        "questions": {"capability": f"not the agent's: {url} is held by {owner}",
+                      "authority": f"{owner} controls the blocking issue; the agent may not act on it",
+                      "judgement": f"{owner} decides whether to unblock or re-plan"},
+        "handoff": {"cwd": os.path.abspath(project_dir or "."), "command": f"gh issue view {url}",
+                    "why": f"owner {owner} controls the blocking issue; the agent cannot act on it",
+                    "expect": f"{url} is closed or no longer blocked by {esc['request']}"},
+    }
+
+
+def _surface(pending, emitted=(), project_dir=None, live=True):
+    """(escalate, next_tasks): escalations pass the blocker lint before they surface (rule B4); a demoted one
+    is a next task carrying the lint's reason, not an operator escalation."""
+    esc = _escalations(pending, emitted)
+    unblocked = sum(1 for it in pending.values() if not it.get("blocked"))
+    keep, tasks = [], []
+    for e in esc:
+        verdict = _bc.partition([_candidate(e, project_dir, live, unblocked)])
+        if verdict["blockers"]:
+            keep.append(e)
+        else:
+            tasks.append({"type": "next_task", "request": e["request"], "action": e["action"],
+                          "reason": verdict["next_tasks"][0]["reason"]})
+    return keep, tasks
+
+
 def _pr_closed(runner, timeout, url):
     res = runner(["gh", "pr", "view", url, "--json", "state"], timeout)
     d = _json(res.stdout) if res.rc == 0 else None
@@ -556,10 +600,11 @@ def _run(project_dir, runner, timeout, queue_status, clock, record):
     state.update(checked_at=_iso(now), scope=scope, coverage=coverage, last_full_check_at=last_full,
                  sources=rows, dispatch_allowed=allowed, decision_needed=needed, queue_status=queue_status)
     save_state(project_dir, state)
+    escalate, next_tasks = _surface(pending, emitted, project_dir)
     return {"coverage": coverage, "scope": scope, "sources": rows, "last_full_check_at": last_full,
             "dispatch_allowed": allowed, "decision_needed": needed, "queue_status": queue_status,
             "pending": sorted(pending.values(), key=lambda i: i["url"]),
-            "escalate": _escalations(pending, emitted), "events": events, "planned_events": planned,
+            "escalate": escalate, "next_tasks": next_tasks, "events": events, "planned_events": planned,
             "notifications": state["notifications"]}
 
 
@@ -651,6 +696,7 @@ def _render(cmd, res):
         lines = [f"coverage: {res['coverage']}  dispatch_allowed: {str(res['dispatch_allowed']).lower()}"]
         lines += [f"  {n}: {r['status']} ({r['scope']})" for n, r in res["sources"].items()]
         lines += [f"  escalate: {e['action']} -> {e['affected']['url']}" for e in res["escalate"]]
+        lines += [f"  next task: {t['action']} ({t['reason']})" for t in res.get("next_tasks", [])]
         lines += [f"  planned: {p['event']} on {p['issue']}" for p in res.get("planned_events", [])]
         lines.append(f"  pending: {len(res['pending'])}")
         if res["decision_needed"]:
@@ -701,10 +747,11 @@ def main(argv=None, runner=default_runner, clock=None):
             _, cfg = load_scope(pd)
             now = (clock or (lambda: datetime.now(timezone.utc)))()
             allowed, needed = _staleness(st, (cfg or {}).get("degraded_policy"), now)
+            esc, tasks = _surface(st["pending"], (), pd, live=False)
             res = {"pending": sorted(st["pending"].values(), key=lambda i: i["url"]),
                    "coverage": st["coverage"], "dispatch_allowed": allowed, "decision_needed": needed,
                    "last_full_check_at": st["last_full_check_at"],
-                   "escalate": _escalations(st["pending"])}
+                   "escalate": esc, "next_tasks": tasks}
         elif a.cmd == "ack":
             res = ack(pd, a.url, runner, a.timeout, a.by, a.note, clock)
         elif a.cmd == "schedule":

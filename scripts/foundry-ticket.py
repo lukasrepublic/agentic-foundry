@@ -3,6 +3,8 @@
 
     foundry-ticket.py start <issue|url> [--repo OWNER/NAME] [--trust-author]
     foundry-ticket.py allow <path> [<path>...]        permit writing a paper path for this ticket
+    foundry-ticket.py ci-allow <path> [<path>...]     permit editing a CI path (workflows, CI scripts, test configs,
+                                                      quarantine lists) for this ticket; the operator's call (gv-10)
     foundry-ticket.py done                            run the ticket's Done-means command
     foundry-ticket.py status                          print the active ticket
     foundry-ticket.py clear                           forget the active ticket
@@ -241,6 +243,25 @@ def cmd_start(args: list[str]) -> int:
                      "write team needs the OPERATOR to read it and start the ticket themselves. Nothing was recorded.")
     elif done and trust:
         trusted_by = "flag"
+    # The issue author's own `## Paper allowed` list may lift the CI-edit guard (issue_paper_allowed) ONLY when the
+    # author, and whoever last edited the body, pass the same trust check as a Done-means command. An untrusted
+    # author's list is recorded as paper_allowed (as before) but never reaches the CI guard.
+    issue_paper = []
+    if paper:
+        if trust:
+            issue_paper = list(paper)
+        else:
+            if not done:                      # the editor has not been read yet
+                try:
+                    live = read_issue(default_run, issue_repo or "", int(issue["number"]), trust_author=True)
+                    editor = live.get("last_edited_by")
+                    issue_repo = live.get("name_with_owner") or issue_repo
+                except (GhError, ValueError, AttributeError):
+                    live = None
+            else:
+                live = True
+            if live:
+                issue_paper = list(paper) if done_trust(issue_repo, login, editor)[0] else []
     doc = {
         "issue": issue["number"],
         "url": issue.get("url", ""),
@@ -252,6 +273,7 @@ def cmd_start(args: list[str]) -> int:
         "done_sha256": store.command_digest(done),
         "trusted_by": trusted_by,
         "paper_allowed": paper,
+        "issue_paper_allowed": issue_paper,   # origin: a TRUSTED issue author's list; the CI guard honours this, never CLI-written paper_allowed
         "status": "open",
         "stop_blocks": 0,
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -264,21 +286,44 @@ def cmd_start(args: list[str]) -> int:
     return 0
 
 
-def cmd_allow(args: list[str]) -> int:
+def _paper_guard():
+    """The paper guard module (its CI classifier is the one source of truth for what a CI path is)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "foundry_paper_guard", Path(__file__).resolve().parent.parent / "hooks" / "foundry-paper-guard.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def cmd_ci_allow(args: list[str]) -> int:
+    return cmd_allow(args, ci=True)
+
+
+def cmd_allow(args: list[str], ci: bool = False) -> int:
     root = project_root()
     doc = load(root)
     if not doc:
         sys.exit("foundry-ticket: no active ticket; run `foundry-ticket.py start <issue>` first")
+    if "--ci" in args:
+        sys.exit("foundry-ticket: `allow --ci` is not a verb: the CI-edit lift is `ci-allow <path>` (its own "
+                 "permission-floor row, which asks the operator)")
     if not args:
-        sys.exit("usage: foundry-ticket.py allow <path> [<path>...]")
+        sys.exit("usage: foundry-ticket.py %s <path> [<path>...]" % ("ci-allow" if ci else "allow"))
+    key = "ci_allowed" if ci else "paper_allowed"
+    doc.setdefault(key, [])
+    guard = _paper_guard()
     for a in args:
         n = norm_path(a, root)
         if not n:
             sys.exit(f"foundry-ticket: {a!r} is not a path under the project root")
-        if n not in doc["paper_allowed"]:
-            doc["paper_allowed"].append(n)
+        if not ci and guard.ci_overlaps(n, root):
+            sys.exit(f"foundry-ticket: ci-path-needs-ci-flag: {n} is (or contains) a CI path; the CI-edit guard is "
+                     f"lifted only by `ci-allow {n}`, which asks the operator")
+        if n not in doc[key]:
+            doc[key].append(n)
     save(doc, root)
-    print("paper allowed for #%s: %s" % (doc["issue"], ", ".join(doc["paper_allowed"])))
+    print("%s allowed for #%s: %s" % ("ci" if ci else "paper", doc["issue"], ", ".join(doc[key])))
     return 0
 
 
@@ -1364,7 +1409,7 @@ def main(argv: list[str], run=None, now: float | None = None) -> int:
     verb, rest = argv[0], argv[1:]
     gh = run or default_run
     clock = time.time() if now is None else now
-    table = {"start": cmd_start, "allow": cmd_allow, "done": cmd_done,
+    table = {"start": cmd_start, "allow": cmd_allow, "ci-allow": cmd_ci_allow, "done": cmd_done,
              "status": cmd_status, "clear": cmd_clear}
     owned = {"next": lambda r: cmd_next(r, gh, clock), "read-issue": lambda r: cmd_read_issue(r, gh),
              "claim": lambda r: cmd_claim(r, gh, clock),

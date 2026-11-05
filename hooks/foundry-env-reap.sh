@@ -18,11 +18,6 @@
 # never blocks (always exit 0).
 set -uo pipefail
 
-# SubagentStop (hooks.json) passes --subagent-stop. A subagent stop must NEVER run the full SessionEnd reap: its
-# payload carries the MAIN session's id, so reaping would stop the parent's containers, clusters and dev servers
-# mid-work. gv-12 replaces this with the label-scoped sweep.
-[ "${1:-}" = "--subagent-stop" ] && exit 0
-
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 ENGINE="${PLUGIN_ROOT}/scripts/foundry-env-hygiene.py"
 PER_WORKER_ENV_CHECK="${PLUGIN_ROOT}/scripts/foundry_env_isolation.py"
@@ -32,6 +27,24 @@ if [ "${1:-}" = "--selftest" ]; then
   out="$(CLAUDE_SESSION_ID="selftest-noop" bash "$0" </dev/null 2>&1)"; rc=$?
   if [ "$rc" -eq 0 ]; then echo "AC-ENVHY-3 reaper never-blocks: PASS"; echo "FOUNDRY-ENV-REAP-SELFTEST-GREEN"; exit 0
   else echo "AC-ENVHY-3 reaper never-blocks: FAIL (rc=$rc)"; echo "FOUNDRY-ENV-REAP-SELFTEST-RED"; exit 1; fi
+fi
+
+# --subagent-stop (gv-12, F1): sweep orphans left by a stopped subagent, by PROJECT LABEL only.
+# The label comes from the event payload (`project_label`, or `label`) or FOUNDRY_PROJECT_LABEL.
+# The session id is deliberately NOT a fallback: a subagent shares its parent's session, so
+# reaping by it would tear down the parent's live resources. No label -> sweep nothing.
+if [ "${1:-}" = "--subagent-stop" ]; then
+  payload="$(cat 2>/dev/null || true)"
+  label="$(printf '%s' "$payload" | python3 -c 'import sys,json
+try:
+    d = json.load(sys.stdin)
+    print(d.get("project_label") or d.get("label") or "")
+except Exception: print("")' 2>/dev/null || true)"
+  if [ -z "$label" ]; then label="${FOUNDRY_PROJECT_LABEL:-}"; fi
+  if [ -n "$label" ] && [ -f "$ENGINE" ]; then
+    python3 "$ENGINE" reap --label "$label" 2>/dev/null || true
+  fi
+  exit 0
 fi
 
 # Resolve the session id from the SessionEnd payload (STDIN JSON) or the environment.

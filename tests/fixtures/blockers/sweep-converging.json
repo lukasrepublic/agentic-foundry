@@ -1,0 +1,24 @@
+{
+  "run_id": "wf_example0001",
+  "sweeps": [
+    {
+      "domain": "How do shops version a plugin manifest (synthetic example)",
+      "patterns": [
+        {"name": "Semver in the manifest", "mechanism": "One version field, bumped per release.",
+         "fits_brief": "Matches the proposal.", "risks": ["Drift between tag and manifest."],
+         "prior_art": ["Example Registry docs"]}
+      ],
+      "rejected_options_verdict": [
+        {"option": "Date-based versions", "verdict": "CONFIRM rejection", "evidence": "No source uses it for plugins."}
+      ],
+      "consensus": ["Use semver in the manifest.", "Tag releases with the same string."],
+      "no_consensus": [],
+      "negative_findings": ["No registry documents a downgrade path."],
+      "gaps": ["Pre-release naming not surveyed."],
+      "sources": [
+        {"title": "Example Registry manifest docs", "url": "https://example.org/docs/manifest", "retrieved": "2026-11-04"},
+        {"title": "Example Tools release guide", "url": "https://example.net/guide/releases", "retrieved": "2026-11-03"}
+      ]
+    }
+  ]
+}

@@ -162,6 +162,7 @@ _WRITERS = [
     ("foundry_usage.py", "--dataset /d fallback-transcripts --cli-version 1"),
     ("foundry_usage.py", "--dat=/d fallback-transcripts --cli-version 1"),
     ("foundry_usage.py", "--dataset /d ingest /c"), ("foundry_usage.py", "--dat=/d attribute"),
+    ("foundry_research_note.py", "--in s.json --slug x"),   # gv-14: every invocation writes under .foundry/
 ]
 _READERS = [
     ("foundry_migrate.py", "inventory"), ("foundry_deck_events.py", "parse o/r#1 --as-of 2026-01-01T00:00:00Z"),
@@ -171,6 +172,7 @@ _READERS = [
     ("foundry_operating_model.py", "status"), ("foundry_operating_model.py", "validate"),
     ("foundry_operating_model.py", "explain deck.max_builders"), ("foundry_operating_model.py", "render-tick-section E2"),
     ("foundry_usage.py", "ingest /c"), ("foundry_usage.py", "attribute"), ("foundry_usage.py", "coverage"),
+    ("foundry_blocker_check.py", "--in x"),               # gv-14: read-only lint
 ]
 
 
@@ -203,7 +205,7 @@ def test_r2_brace_and_glob_characters_in_an_argument_get_no_silent_allow(env, ar
 def test_r2_plain_arguments_are_unchanged(env):
     with open(os.path.join(env["root"], "scripts", "foundry-env-hygiene.py"), "w") as f:
         f.write("print('x')\n")
-    assert decide(env, f"python3 {env['root']}/scripts/foundry-env-hygiene.py reap --session s1") == "allow"
+    assert decide(env, f"python3 {env['root']}/scripts/foundry-env-hygiene.py status --session s1") == "allow"
     assert decide(env, f"python3 {env['root']}/scripts/foundry-doctor.py --json") == "allow"
 
 

@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""Scenario-driven `gh` stub for the gv-10 merge-primitive tests.
+
+Never contacts anything. Every invocation appends its argv (one JSON list per line) to the file
+named by $QL_LOG, then answers from the scenario file named by $QL_SCENARIO:
+
+    {"responses": [{"match": ["pr", "view"], "outputs": ["<stdout 1>", "<stdout 2>"], "rc": 0}]}
+
+A response matches when every token of `match` occurs in argv, in order. The first matching
+response wins. `outputs` is consumed one entry per matching call and its last entry repeats;
+`rc`, `stderr` are optional. An argv that no response matches exits 99 and says so, so a test
+cannot pass by accident on an unstubbed call.
+"""
+import json
+import os
+import sys
+
+argv = sys.argv[1:]
+log = os.environ.get("QL_LOG")
+if log:
+    with open(log, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(argv) + "\n")
+
+scenario_path = os.environ.get("QL_SCENARIO")
+if not scenario_path:
+    sys.stderr.write("gh-stub: no QL_SCENARIO\n")
+    sys.exit(99)
+scenario = json.load(open(scenario_path, encoding="utf-8"))
+
+
+def matches(pattern, args):
+    pos = 0
+    for tok in pattern:
+        try:
+            pos = args.index(tok, pos) + 1
+        except ValueError:
+            return False
+    return True
+
+
+counter_path = scenario_path + ".counts"
+counts = json.load(open(counter_path)) if os.path.exists(counter_path) else {}
+for idx, resp in enumerate(scenario.get("responses", [])):
+    if not matches(resp.get("match", []), argv):
+        continue
+    n = counts.get(str(idx), 0)
+    counts[str(idx)] = n + 1
+    json.dump(counts, open(counter_path, "w"))
+    outs = resp.get("outputs", [resp.get("stdout", "")])
+    sys.stdout.write(outs[min(n, len(outs) - 1)])
+    if resp.get("stderr"):
+        sys.stderr.write(resp["stderr"])
+    sys.exit(resp.get("rc", 0))
+sys.stderr.write("gh-stub: unstubbed call: %s\n" % " ".join(argv))
+sys.exit(99)
