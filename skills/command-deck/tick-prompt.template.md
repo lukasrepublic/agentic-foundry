@@ -33,6 +33,8 @@ If the latest inbox result has `dispatch_allowed: false`, or the delivery queue 
 dispatch in step 6 and list the `decision_needed` text under decisions. Steps 1-5 and already-authorized
 running work continue.
 
+Batch dispatch (dl-05, step 6). When the programme has an execution plan (`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_execution_plan.py" plan <programme>`), step 6 starts the batches of the plan's `open_wave` through ONE Workflow, `workflows/wave-dispatch.js`. Pass it the plan, a brief source for each atom (`done_when`, `issue`, `repo`), the deck job dir, the worktree root, the builder cap from the machine check as `concurrency`, the batches already merged as `merged_batches` and the batches that already run as `running_batches`. It runs the smaller of `max_concurrent` and the cap, one worktree for each batch, one build agent for each atom, and it starts the rest when a slot frees. It starts no batch of a group with a number above `open_wave` while a batch of the `open_wave` group is not merged. It ends at `review_ready` and never waits on CI: merge-when-green and the next tick do the check. A batch that returns `stopped_at_cap` has a state note: the next tick starts a continuation agent with that one note path. Every brief it renders carries `Deliverable:`, `Done when:`, the label `build:<atom>` and the stop rule of 150 tool calls and a state note of at most 2,000 tokens.
+
 Verify after merge (A6, step 5). {{SECTION:A6}}
 
 Merge plan (A1, step 6). {{SECTION:A1}} Run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_merge_plan.py" --ready <json> --paths <json> --open-prs <json>`. Its first output line is the plan line of the report.

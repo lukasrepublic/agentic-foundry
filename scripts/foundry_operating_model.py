@@ -563,7 +563,10 @@ def render_tick_section(policy, name, project_dir=None, session_size=None, promp
         return (f"Each tick, dispatch every ready cluster, up to {size} {noun}, through one Workflow: "
                 "build, then a separate-context review, then at most 2 fix rounds, with one worktree for each cluster. "
                 "Never wait idle on remote CI or queues. "
-                "If fewer builders run than there are ready clusters, that is a stall. Say so in the report.")
+                "If fewer builders run than there are ready clusters, that is a stall. Say so in the report. "
+                "When the programme has an execution plan, that Workflow is `workflows/wave-dispatch.js`: it takes the batches "
+                f"of the plan's open_wave, runs at most the smaller of the plan's max_concurrent and {size} batches at once, "
+                "and starts no batch of a later wave. It ends at review_ready.")
     if name == "B7":
         def who(v):
             return f"the {v} model" if v in ("smaller", "strongest") else f"the model {v}"
