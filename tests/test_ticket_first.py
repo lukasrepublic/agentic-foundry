@@ -86,7 +86,9 @@ def test_author_trust_uses_collaborator_permission():
     calls = {"api user": {"login": "me"}, "api repos/o/r/collaborators/bob/permission": {"permission": "read"},
              "api repos/o/r/collaborators/ann/permission": {"permission": "write"}}
     gh = lambda args: calls.get(" ".join(args))
-    assert foundry_ticket.author_trusted("o/r", "me", gh)[0]
+    ok, why = foundry_ticket.author_trusted("o/r", "me", gh, operators=())       # gv-16: the gh user is the agent itself
+    assert not ok and "agent itself" in why
+    assert foundry_ticket.author_trusted("o/r", "me", gh, operators=("me",))[0]   # ... unless it is a registered operator
     assert foundry_ticket.author_trusted("o/r", "ann", gh)[0]
     ok, why = foundry_ticket.author_trusted("o/r", "bob", gh)
     assert not ok and "read" in why

@@ -8,7 +8,7 @@ named by $QL_LOG, then answers from the scenario file named by $QL_SCENARIO:
 
 A response matches when every token of `match` occurs in argv, in order. The first matching
 response wins. `outputs` is consumed one entry per matching call and its last entry repeats;
-`rc`, `stderr` are optional. An argv that no response matches exits 99 and says so, so a test
+`rc`, `rcs` (one exit code per call), `stderr` are optional. An argv that no response matches exits 99 and says so, so a test
 cannot pass by accident on an unstubbed call.
 """
 import json
@@ -48,8 +48,12 @@ for idx, resp in enumerate(scenario.get("responses", [])):
     json.dump(counts, open(counter_path, "w"))
     outs = resp.get("outputs", [resp.get("stdout", "")])
     sys.stdout.write(outs[min(n, len(outs) - 1)])
-    if resp.get("stderr"):
+    rcs = resp.get("rcs")      # optional per-call exit codes (gv-16): the last entry repeats
+    rc = rcs[min(n, len(rcs) - 1)] if rcs else resp.get("rc", 0)
+    if resp.get("stderr") and rc != 0:
         sys.stderr.write(resp["stderr"])
-    sys.exit(resp.get("rc", 0))
+    elif resp.get("stderr") and not rcs:
+        sys.stderr.write(resp["stderr"])
+    sys.exit(rc)
 sys.stderr.write("gh-stub: unstubbed call: %s\n" % " ".join(argv))
 sys.exit(99)

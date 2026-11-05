@@ -180,7 +180,8 @@ def set_claim(root, age, number=2, **extra):
 
 
 def gd(root, command, *args):
-    env = dict(os.environ, CLAUDE_PROJECT_DIR=str(root))
+    # gv-16: the gate asks whether THIS session holds the lease; the claims below are session "A"'s
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=str(root), CLAUDE_CODE_SESSION_ID="A")
     return subprocess.run([str(HOOK), "--local-green=off", *args], capture_output=True, text=True, env=env,
                           input=json.dumps({"tool_input": {"command": command}, "cwd": str(root)}))
 
@@ -277,15 +278,15 @@ def test_the_gate_applies_only_where_claims_are_in_use(team):
 
 def test_claim_gate_unit_reasons(team):
     set_ticket(team)
-    ok, why = store.claim_gate(str(team))
+    ok, why = store.claim_gate(str(team), session_id="A")
     assert not ok and why.startswith("claim-required: no claim for example-org/app#2")
     set_claim(team, age=10)
-    assert store.claim_gate(str(team)) == (True, "live claim on example-org/app#2")
-    ok, why = store.claim_gate(str(team), now=time.time() + 2 * H + 30)
+    assert store.claim_gate(str(team), session_id="A") == (True, "live claim on example-org/app#2")
+    ok, why = store.claim_gate(str(team), session_id="A", now=time.time() + 2 * H + 30)
     assert not ok and why.startswith("claim-required:") and "expired" in why
     # a future heartbeat is not a live lease
     set_claim(team, age=-10 * H)
-    assert not store.claim_gate(str(team))[0]
+    assert not store.claim_gate(str(team), session_id="A")[0]
 
 
 # ---- fix round 1 ---------------------------------------------------------------------------------------------
@@ -315,7 +316,7 @@ def test_fix1_git_dash_C_picks_the_repository_the_push_is_aimed_at(team, tmp_pat
     (other / ".claude" / "foundry-project.json").write_text(json.dumps(
         {"github_scope": {"owner": "example-org", "planning_repo": "planning"}}))
     set_ticket(other)
-    env = dict(os.environ)
+    env = dict(os.environ, CLAUDE_CODE_SESSION_ID="A")
     env.pop("CLAUDE_PROJECT_DIR", None)
     def run(cmd, cwd):
         return subprocess.run([str(HOOK), "--local-green=off"], capture_output=True, text=True, env=env,
@@ -369,4 +370,7 @@ def test_fix1_a_session_whose_lease_was_taken_over_may_not_push(team):
     r = push("A")
     assert refused_claim(r) and "taken over" in r.stdout + r.stderr
     assert push("B").returncode == 0                  # the new holder
-    assert push("some-subagent").returncode == 0      # a worker dispatched by the holder is not the displaced session
+    # gv-16: the gate asks whether THIS session holds the live lease. A worker dispatched by the holder carries the holder's
+    # session id in the hook payload (a subagent adds `agent_id`, not a new `session_id`); an unrelated session is refused.
+    other = push("some-other-session")
+    assert refused_claim(other) and "held by session B" in other.stdout + other.stderr

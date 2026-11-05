@@ -18,12 +18,18 @@ A second class, `ci` (gv-10, operating-model rule A2: never edit CI to make a PR
 way: `.github/workflows/**`, `.github/actions/**`, other CI-system files (`.gitlab-ci.yml`, `.circleci/**`,
 `Jenkinsfile`, `azure-pipelines.yml`, `scripts/ci/**`, `ci/**`), any script the repo's own workflows invoke
 from `scripts/`/`ci/`/`tools/`, test configs (`pyproject.toml`, `setup.cfg`, `.coveragerc` at the root;
-`pytest.ini`, `tox.ini`, `Makefile`, `noxfile.py`, `.pre-commit-config.yaml`, `**/conftest.py`,
-`jest|vitest|playwright.config.*` and `karma.conf.*` anywhere; `package.json` only when the edit touches its
-`test`/`pretest`/`posttest` script), and quarantine lists (`quarantine*.json|yaml|yml`). It is refused unless the active ticket names the path (or a parent directory)
-in `ci_allowed` (`foundry-ticket.py ci-allow <path>`, which the permission floor asks on) or in
-`issue_paper_allowed` (the issue author's own `## Paper allowed` list, recorded at `start`). The
-CLI-writable `paper_allowed` never lifts a CI path. With no ticket it is refused.
+`pytest.ini`, `tox.ini`, `Makefile`/`GNUmakefile`/`makefile`, `noxfile.py`, `.pre-commit-config.yaml`, `codecov.yml`,
+`**/conftest.py`, `pyproject.toml` at any depth, `jest|vitest|playwright|cypress.config.*`, `vitest.workspace.*`,
+`.nycrc*` and `karma.conf.*` anywhere; `package.json` when the edit touches its `scripts`, `jest` or `vitest`
+block), and quarantine lists (`quarantine*.json|yaml|yml`). It is refused unless the active ticket names the path
+(or a parent directory) in `ci_allowed` (`foundry-ticket.py ci-allow <path>`, which the permission floor asks on) or
+in `issue_paper_allowed` (the issue author's own `## Paper allowed` list, recorded at `start`) AND those two lists
+carry a valid signature (gv-16: an HMAC under a per-git-dir key that `ci-allow` / `start` create, so a hand edit of
+the ticket file lifts nothing). The CLI-writable `paper_allowed` never lifts a CI path. With no ticket it is refused.
+The path is resolved as a FILE, symlinks included, so a link into a CI path is a CI path. A `Bash` payload is
+checked too (gv-16): the write targets of `sed -i`, `tee`, a `>`/`>>` redirect, `cp`/`mv`/`rm`/`truncate`/`dd of=`/
+`install` that name a CI path are refused the same way (a visibility control: it reads the command, it does not
+emulate a shell). The hook only sees Bash when hooks/hooks.json wires it into the Bash matcher.
 The point is not that CI never changes: it is that an agent never changes it to turn its own red check green.
 
 Everything else — code, infra, tests, CLAUDE.md, config — is admitted without a ticket. Writes
@@ -52,10 +58,11 @@ PAPER_FILES = ("acceptance-contract.yaml", "release.yaml", "state.yaml")
 CI_GLOBS = (
     ".github/workflows/**", ".github/actions/**", ".gitlab-ci.yml", ".circleci/**", "Jenkinsfile",
     "azure-pipelines.yml", "scripts/ci/**", "ci/**",
-    "pyproject.toml", "setup.cfg", ".coveragerc",
-    "Makefile", "noxfile.py", ".pre-commit-config.yaml", "**/conftest.py",
+    "pyproject.toml", "**/pyproject.toml", "setup.cfg", ".coveragerc",
+    "Makefile", "GNUmakefile", "makefile", "noxfile.py", ".pre-commit-config.yaml", "**/conftest.py",
     "**/pytest.ini", "**/tox.ini", "**/jest.config.*", "**/vitest.config.*", "**/playwright.config.*",
-    "**/karma.conf.*", ".mocharc.*",
+    "**/cypress.config.*", "**/vitest.workspace.*", "**/karma.conf.*", ".mocharc.*",
+    "codecov.yml", ".codecov.yml", "**/.nycrc*",
     "**/quarantine*.json", "**/quarantine*.yaml", "**/quarantine*.yml",
 )
 # A script a workflow names: `run: scripts/x.sh`, `python3 ci/check.py`, `bash ./tools/lint.sh`.
@@ -113,30 +120,60 @@ def _ci_scripts(root: Path) -> set:
 
 
 _TEST_SCRIPT_RE = re.compile(r'"(?:pre|post)?test(?::[\w:-]*)?"\s*:')
+_PKG_BLOCK_RE = re.compile(r'"(?:scripts|jest|vitest)"\s*:')
+_PKG_KEYS = ("scripts", "jest", "vitest")
 
 
-def _package_json_touches_test(ti: dict, abs_path: Path) -> bool:
-    """package.json is CI only when the edit touches a test script (an ordinary dependency edit is not)."""
+def _apply_edits(text: str, ti: dict):
+    """The file text after the payload's Edit / MultiEdit, or None when it cannot be simulated."""
+    edits = [e for e in (ti.get("edits") or []) if isinstance(e, dict)]
+    if not edits and isinstance(ti.get("old_string"), str):
+        edits = [{"old_string": ti["old_string"], "new_string": ti.get("new_string", ""),
+                  "replace_all": ti.get("replace_all")}]
+    if not edits:
+        return None
+    for e in edits:
+        old, new = e.get("old_string"), e.get("new_string", "")
+        if not isinstance(old, str) or not isinstance(new, str):
+            return None
+        if old and old in text:
+            text = text.replace(old, new) if e.get("replace_all") else text.replace(old, new, 1)
+    return text
+
+
+def _package_json_touches_ci(ti: dict, abs_path: Path) -> bool:
+    """package.json is CI when the edit touches its `scripts`, `jest` or `vitest` block (an ordinary dependency edit
+    is not). The edit is SIMULATED on the current file and the blocks compared, so a change to one line inside
+    `scripts` is seen even though the snippet never names the block; whatever cannot be parsed is treated as CI."""
     texts = [ti.get("old_string"), ti.get("new_string")]
     for e in ti.get("edits") or []:
         if isinstance(e, dict):
             texts += [e.get("old_string"), e.get("new_string")]
-    if any(isinstance(t, str) and _TEST_SCRIPT_RE.search(t) for t in texts):
+    if any(isinstance(t, str) and (_TEST_SCRIPT_RE.search(t) or _PKG_BLOCK_RE.search(t)) for t in texts):
         return True
-    if isinstance(ti.get("content"), str):             # a whole-file Write: compare the test scripts
-        def scripts(txt):
-            try:
-                sc = (json.loads(txt).get("scripts") or {})
-                return {k: v for k, v in sc.items() if re.fullmatch(r"(pre|post)?test(:[\w:-]*)?", k)}
-            except Exception:
-                return None
+
+    def blocks(txt):
         try:
-            old = scripts(abs_path.read_text(encoding="utf-8"))
-        except OSError:
-            old = {}
-        new = scripts(ti["content"])
-        return new is None or old is None or new != old
-    return False
+            doc = json.loads(txt)
+            return {k: doc.get(k) for k in _PKG_KEYS} if isinstance(doc, dict) else None
+        except Exception:
+            return None
+    try:
+        old_text = abs_path.read_text(encoding="utf-8")
+    except OSError:
+        old_text = None
+    if isinstance(ti.get("content"), str):             # a whole-file Write: compare the blocks
+        new_text = ti["content"]
+        if old_text is None:
+            old_text = ""
+    else:
+        if old_text is None:
+            return False
+        new_text = _apply_edits(old_text, ti)
+        if new_text is None or new_text == old_text:
+            return False
+    new, old = blocks(new_text), (blocks(old_text) if old_text else {k: None for k in _PKG_KEYS})
+    return new is None or old is None or new != old
 
 
 def _ci_prefixes() -> list:
@@ -161,7 +198,7 @@ def ci_overlaps(rel_s: str, root: Path) -> bool:
 def _is_ci(rel: Path, root: Path, ti: dict = None) -> bool:
     rel_s = _key(rel.as_posix())
     if rel_s.rsplit("/", 1)[-1] == "package.json":
-        return _package_json_touches_test(ti or {}, root / rel) if ti is not None else False
+        return _package_json_touches_ci(ti or {}, root / rel) if ti is not None else False
     if any(_glob_match(rel_s, _key(g)) for g in CI_GLOBS):
         return True
     return rel_s in _ci_scripts(root)
@@ -188,12 +225,134 @@ def _refuse(reason: str) -> int:
     return 2
 
 
+_WRITE_VERBS_ALL = {"tee", "rm", "truncate", "mv", "touch", "shred", "unlink"}   # every positional operand is written
+_DEST_VERBS = {"cp", "install", "rsync", "ln"}                                      # the LAST operand is written
+_WRAPPERS = {"sudo", "command", "env", "nohup", "time", "exec"}
+
+
+def _bash_write_targets(command: str) -> list:
+    """Candidate write targets named by a Bash command: `sed -i` / `perl -i` operands, `tee`, `>` / `>>` redirects,
+    cp/mv/rm/truncate/install/ln/rsync, `dd of=`. A reading of the command text, not a shell: whatever it cannot see
+    (a path built by expansion, `python -c`) is out of reach, which is why this is a visibility control."""
+    import shlex
+    try:
+        lex = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        toks = list(lex)
+    except ValueError:
+        toks = command.split()
+    out, words = [], []
+
+    def finish():
+        args = list(words)
+        words.clear()
+        while args and (re.fullmatch(r"[A-Za-z_]\w*=.*", args[0]) or os.path.basename(args[0]) in _WRAPPERS):
+            args = args[1:]
+        if not args:
+            return
+        verb, rest = os.path.basename(args[0]), args[1:]
+        pos = [a for a in rest if not a.startswith("-")]
+        flags = [a for a in rest if a.startswith("-")]
+        if verb in ("sed", "gsed", "perl") and any(re.fullmatch(r"-[A-Za-z]*i[A-Za-z0-9._]*", f) or f.startswith("--in-place")
+                                                  for f in flags):
+            out.extend(pos)                              # the script text never resolves to a CI path; the files do
+        elif verb in _WRITE_VERBS_ALL:
+            out.extend(pos)
+        elif verb in _DEST_VERBS and pos:
+            out.append(pos[-1])
+        elif verb == "dd":
+            out.extend(a.split("=", 1)[1] for a in rest if a.startswith("of="))
+
+    i = 0
+    while i < len(toks):
+        t = toks[i]
+        if t and set(t) <= set(";&|()"):                 # a command separator
+            finish()
+        elif t and set(t) <= set("<>&|") and (">" in t or "<" in t):   # a redirect operator: its operand is the next word
+            tgt = toks[i + 1] if i + 1 < len(toks) else ""
+            if ">" in t and tgt and not tgt.isdigit() and not tgt.startswith("&"):
+                out.append(tgt)
+            i += 1
+        elif t.isdigit() and i + 1 < len(toks) and set(toks[i + 1]) <= set("<>&") and ">" in toks[i + 1]:
+            pass                                         # the fd number of `2>file`
+        else:
+            words.append(t)
+        i += 1
+    finish()
+    return [x for x in out if x]
+
+
+def _resolve_rel(target: str, root: Path, base: Path):
+    """Root-relative path of the FILE the write lands on (symlinks followed, not only the parent), or None when it
+    lands outside the project root."""
+    abs_t = Path(target).expanduser()
+    if not abs_t.is_absolute():
+        abs_t = base / abs_t
+    try:
+        return abs_t.resolve().relative_to(root)
+    except Exception:
+        return None
+
+
+def _load_ticket(root: Path):
+    ticket_file = store.ticket_file(root)   # git dir only — never the work tree
+    if ticket_file and ticket_file.is_file():
+        try:
+            return json.loads(ticket_file.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+    return None
+
+
+def _ci_lists(doc, root: Path):
+    """(ci_allowed + issue_paper_allowed, signature_ok). The lists lift nothing without a valid signature."""
+    if not doc:
+        return [], True
+    lists = (doc.get("ci_allowed") or []) + (doc.get("issue_paper_allowed") or [])
+    if not lists:
+        return [], True
+    return (lists, True) if store.verify_ticket_lists(doc, root) else ([], False)
+
+
+def _refuse_ci(rel: Path, doc, sig_ok: bool) -> int:
+    p = rel.as_posix()
+    base = ("%s is a CI path (workflows, CI scripts, test configs, quarantine lists). Never edit CI "
+            "to make a PR pass: fix the code or report the failure. " % p)
+    if not sig_ok:
+        base += ("The ticket's ci_allowed / issue_paper_allowed carry no valid signature (a hand edit of the ticket "
+                 "file lifts nothing); the lists are ignored. ")
+    if doc:
+        return _refuse(base + "Ticket #%s does not allow it. If the operator asked for this CI change, run "
+                       "`python3 \"$CLAUDE_PLUGIN_ROOT/scripts/foundry-ticket.py\" ci-allow %s` and retry." % (doc.get("issue"), p))
+    return _refuse(base + "No active ticket; start one (`foundry-ticket.py start <issue>`) and have the "
+                   "operator allow the path with `ci-allow %s`." % p)
+
+
+def _main_bash(payload: dict, root: Path) -> int:
+    command = (payload.get("tool_input") or {}).get("command")
+    if not isinstance(command, str) or not command.strip():
+        return 0
+    cwd = payload.get("cwd")
+    base = Path(cwd) if isinstance(cwd, str) and cwd and Path(cwd).is_absolute() else root
+    doc = _load_ticket(root)
+    lists, sig_ok = _ci_lists(doc, root)
+    for tgt in _bash_write_targets(command):
+        rel = _resolve_rel(tgt, root, base)
+        if rel is None or rel.name == "package.json" or not _is_ci(rel, root, {}):
+            continue      # (a shell edit of package.json cannot be classified by block: the Edit/Write tools carry that check)
+        if not _allowed(rel, lists):
+            return _refuse_ci(rel, doc, sig_ok)
+    return 0
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
     except Exception:
         return 0
     tool = payload.get("tool_name", "")
+    if tool == "Bash":
+        return _main_bash(payload, _root())
     if tool not in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
         return 0
     ti = payload.get("tool_input") or {}
@@ -201,40 +360,24 @@ def main() -> int:
     if not target:
         return 0
     root = _root()
-    try:
-        abs_t = Path(target).expanduser()
-        if not abs_t.is_absolute():
-            abs_t = root / abs_t
-        # resolve the PARENT (the file may not exist yet) so symlinked dirs land where they point
-        resolved = abs_t.parent.resolve() / abs_t.name
-        rel = resolved.relative_to(root)
-    except Exception:
+    rel = _resolve_rel(target, root, root)
+    if rel is None:
         return 0  # outside the project → not our business
     is_paper = _is_paper(rel)
     is_ci = (not is_paper) and _is_ci(rel, root, ti)
     if not (is_paper or is_ci):
         return 0
 
-    ticket_file = store.ticket_file(root)   # git dir only — never the work tree
-    doc = None
-    if ticket_file and ticket_file.is_file():
-        try:
-            doc = json.loads(ticket_file.read_text(encoding="utf-8"))
-        except Exception:
-            doc = None
-    if doc and _allowed(rel, ((doc.get("ci_allowed") or []) + (doc.get("issue_paper_allowed") or []) if is_ci
-                                  else (doc.get("paper_allowed") or []))):
+    doc = _load_ticket(root)
+    if is_ci:
+        lists, sig_ok = _ci_lists(doc, root)
+        if _allowed(rel, lists):
+            return 0
+        return _refuse_ci(rel, doc, sig_ok)
+    if doc and _allowed(rel, doc.get("paper_allowed") or []):
         return 0
 
     p = rel.as_posix()
-    if is_ci:
-        base = ("%s is a CI path (workflows, CI scripts, test configs, quarantine lists). Never edit CI "
-                "to make a PR pass: fix the code or report the failure. " % p)
-        if doc:
-            return _refuse(base + "Ticket #%s does not allow it. If the operator asked for this CI change, run "
-                           "`python3 \"$CLAUDE_PLUGIN_ROOT/scripts/foundry-ticket.py\" ci-allow %s` and retry." % (doc.get("issue"), p))
-        return _refuse(base + "No active ticket; start one (`foundry-ticket.py start <issue>`) and have the "
-                       "operator allow the path with `ci-allow %s`." % p)
     if doc:
         return _refuse("ticket #%s does not allow writing %s. If the operator asked for this document, run "
                        "`python3 \"$CLAUDE_PLUGIN_ROOT/scripts/foundry-ticket.py\" allow %s` and retry. "

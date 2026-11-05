@@ -274,6 +274,16 @@
       "rationale": "renders the brief preamble to stdout from local governance files; writes nothing, no network"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_om_trace.py:*)",
+      "tier": "allow",
+      "rationale": "read-only operating-model traceability table: reads charter files (and the port prompt with --prompt) and prints a rule-to-criterion table; writes nothing, no network (gv-16, AC-OM-10)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_ci_budget_lint.py:*)",
+      "tier": "allow",
+      "rationale": "read-only lint: parses CI workflow YAML and flags a performance or request-count budget wired as a required check; writes nothing, no network (gv-16, rule C2)"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_events.py:*)",
       "tier": "ask",
       "rationale": "`emit` posts a structured comment on a GitHub issue under the operator's identity (a content-creating write); `parse` is read-only. One rule for the script: the write verb decides the tier (gn-04 deck events)."

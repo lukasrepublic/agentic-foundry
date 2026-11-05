@@ -28,6 +28,9 @@ rebase origin/main`), 4 escalate (AC-MWG-2 -- no check has reported for `--no-ch
 minutes, default 5, and no workflow is configured for this repo at all, so waiting is provably
 pointless).
 
+G2 (gv-16): on a merge the delivered-by record (PR, merger login, head sha) is posted as a PR comment in the same
+run and returned under `delivered_by`. Authorship alone never proves attestation: the record names who MERGED.
+
 Prints one JSON object on stdout: `{"status": "merged"|"blocked"|"escalate"|"waiting", "pr",
 "merge_commit", "checks": [...], "reason", "remediation"}`. In `--watch` mode, one such object is
 printed per observed state change (`status: "waiting"` for every non-terminal poll, flushed
@@ -192,6 +195,33 @@ def _result(status: str, pr: int, checks: list[dict], *, merge_commit=None, reas
     return doc
 
 
+def gh_pr_comment(pr: int, body: str) -> subprocess.CompletedProcess:
+    return _run_gh(["pr", "comment", str(pr), "--body", body])
+
+
+def delivered_by(pr: int, view: dict) -> dict:
+    """G2 (gv-16): the delivered-by record -- PR, merger login, head sha -- posted as a PR comment in the same run, right
+    after the merge. It names who MERGED (the platform's `mergedBy`) and the head that was merged. Authorship alone
+    never proves attestation: the commit author is not recorded as the attester. A record that cannot be posted
+    never turns a merged PR into a failure; the result carries `recorded: false` and the cause."""
+    login = ((view.get("mergedBy") or {}).get("login")) or "unknown (the platform did not report it)"
+    head = view.get("headRefOid") or "unknown"
+    oid = (view.get("mergeCommit") or {}).get("oid") or "unknown"
+    out = {"pr": pr, "merged_by": login, "head": head, "merge_commit": oid, "recorded": False}
+    text = (f"delivered-by: PR #{pr} | merged by {login} | head {str(head)[:12]} | merge commit {str(oid)[:12]}\n"
+            f"<!-- merge-when-green:v1 kind=delivered sig={str(head)[:12]} n=1 -->")
+    try:
+        proc = gh_pr_comment(pr, text)
+    except GhUnavailable as e:
+        out["record_error"] = str(e)[:200]
+        return out
+    if proc.returncode == 0:
+        out["recorded"] = True
+    else:
+        out["record_error"] = f"gh pr comment exited {proc.returncode}: {(proc.stderr or proc.stdout or '').strip()[:160]}"
+    return out
+
+
 def _emit(doc: dict) -> None:
     print(json.dumps(doc), flush=True)
 
@@ -265,9 +295,10 @@ def run(pr: int, *, timeout_min: float, poll_interval_sec: float, no_checks_grac
                                         f"{(merge_proc.stderr or merge_proc.stdout or '').strip()}",
                                   remediation="Inspect the merge failure and retry.")
                     return doc, 3
-                commit_view = gh_pr_view(pr, "mergeCommit")
+                commit_view = gh_pr_view(pr, "mergeCommit,mergedBy,headRefOid")
                 merge_commit = (commit_view.get("mergeCommit") or {}).get("oid")
-                doc = _result("merged", pr, rows, merge_commit=merge_commit)
+                doc = _result("merged", pr, rows, merge_commit=merge_commit,
+                              delivered_by=delivered_by(pr, commit_view))
                 return doc, 0
             if merge_state in _REBASE_STATES:
                 doc = _result("blocked", pr, rows,

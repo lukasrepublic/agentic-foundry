@@ -272,6 +272,14 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_om_trace.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_ci_budget_lint.py:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_leader_board.py:*)",
             "origin": "settings.json"
           },
@@ -608,6 +616,14 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_om_trace.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_ci_budget_lint.py:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_leader_board.py:*)",
             "origin": "settings.json"
           },
@@ -885,6 +901,14 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_brief.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_om_trace.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_ci_budget_lint.py:*)",
             "origin": "settings.json"
           },
           {
@@ -1180,6 +1204,14 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_om_trace.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_ci_budget_lint.py:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_leader_board.py:*)",
             "origin": "settings.json"
           },
@@ -1455,6 +1487,14 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_brief.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_om_trace.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_ci_budget_lint.py:*)",
             "origin": "settings.json"
           },
           {
