@@ -20,6 +20,7 @@ ROLE_MODEL = {
     "security-reviewer": "opus",
     "pr-reviewer": "sonnet",
     "design-reviewer": "sonnet",
+    "ticket-reviewer": "sonnet",
     "app-engineer": "sonnet",
     "framework-engineer": "sonnet",
     "infra-engineer": "sonnet",
@@ -108,12 +109,13 @@ def evaluate_persona_model_selection(root):
 # ==================================================== reference-agents ==== #
 
 NEW_AGENTS = {"app-engineer", "infra-engineer", "framework-engineer", "qa-engineer"}
-EXISTING_AGENTS = {"pr-reviewer", "security-reviewer", "design-reviewer"}
+EXISTING_AGENTS = {"pr-reviewer", "security-reviewer", "design-reviewer", "ticket-reviewer"}
 CANONICAL_AGENTS = NEW_AGENTS | EXISTING_AGENTS
 
 ROLE_TOOLS = {
     "pr-reviewer": frozenset({"Read", "Grep", "Glob"}),
     "design-reviewer": frozenset({"Read", "Grep", "Glob"}),
+    "ticket-reviewer": frozenset({"Read", "Grep", "Glob"}),
     "security-reviewer": frozenset({"Read", "Grep", "Glob"}),
     "app-engineer": frozenset({"Read", "Grep", "Glob", "Edit", "Write", "Bash"}),
     "infra-engineer": frozenset({"Read", "Grep", "Glob", "Edit", "Write", "Bash"}),

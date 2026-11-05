@@ -27,7 +27,7 @@ session's normal permission mode.
 ALSO NEVER ALLOWED SILENTLY (security review of #286) — the verbs the permission floor tiers `ask` because
 they write to GitHub or redirect writes: `foundry_migrate.py cutover`, `foundry_deck_events.py emit`,
 `foundry_inbox.py check|ack|schedule|resolve`, `foundry-ticket.py claim` and `ci-allow`,
-`foundry_governance.py render|baseline|select|declare|apply|upgrade`, `foundry_message_log.py post|import`, `foundry_research_note.py` (any invocation), `foundry_execution_plan.py` (any invocation, dl-04), `foundry_programme_issue.py` (any invocation, dl-06), `foundry_deck_resources.py --reset-oom-baseline|--from-json`, `foundry-env-hygiene.py mark-worktree|reap`, `foundry-deck-heavy` (runs a command), `foundry_prod_step.py` (runs a command, gv-13), `foundry_deck_report.py pause|resume`, `foundry_usage.py bind|fallback-transcripts` and `ingest|attribute` when `--dataset` is named, and any
+`foundry_governance.py render|baseline|select|declare|apply|upgrade`, `foundry_message_log.py post|import`, `foundry_research_note.py` (any invocation), `foundry_execution_plan.py` (any invocation, dl-04), `foundry_learned_distill.py` (any invocation, dl-10), `foundry_programme_issue.py` (any invocation, dl-06), `foundry_deck_resources.py --reset-oom-baseline|--from-json`, `foundry-env-hygiene.py mark-worktree|reap`, `foundry-deck-heavy` (runs a command), `foundry_prod_step.py` (runs a command, gv-13), `foundry_deck_report.py pause|resume`, `foundry_usage.py bind|fallback-transcripts` and `ingest|attribute` when `--dataset` is named, and any
 abbreviation of `--trust-author`. The hook is the only silent-allow mechanism, so without this the `ask` rows
 would never be enforced.
 
@@ -78,7 +78,8 @@ _ASK_VERBS = {
 # gv-10: foundry_queue_land.py enqueues a PR (writes to GitHub, pushes the base merge), so it asks as a whole too.
 # dl-06: foundry_programme_issue.py edits the programme issue and posts a Project status update, so the whole script asks.
 # dl-04: foundry_execution_plan.py publish pushes the planner ref and mutates the Project, so the whole script asks.
-_ASK_SCRIPTS = {"foundry_research_note.py", "foundry_queue_land.py", "foundry_execution_plan.py",
+# dl-10: foundry_learned_distill.py writes proposal files and, on --open-prs/--open-tickets, pushes and opens PRs/issues, so the whole script asks.
+_ASK_SCRIPTS = {"foundry_research_note.py", "foundry_queue_land.py", "foundry_execution_plan.py", "foundry_learned_distill.py",
                 "foundry_programme_issue.py"}
 _USAGE_DATASET_VERBS = {"ingest", "attribute"}   # ask only when a dataset is NAMED (`--dataset`, any argparse abbreviation)
 

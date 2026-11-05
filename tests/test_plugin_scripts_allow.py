@@ -167,6 +167,8 @@ _WRITERS = [
     ("foundry_programme_issue.py", "render prog --plan p.yaml"),     # dl-06: the whole script asks
     ("foundry_programme_issue.py", "publish prog --issue o/r#1 --plan p.yaml"),
     ("foundry_deck_report.py", "--in t.json --programme-issue /b.md"), ("foundry_deck_report.py", "--in t.json --programme /b.md"),
+    ("foundry_learned_distill.py", "propose prog --from-json c.json"),   # dl-10: the whole script asks
+    ("foundry_learned_distill.py", "collect prog --project o/1"),
     ("foundry_research_note.py", "--in s.json --slug x"),   # gv-14: every invocation writes under .foundry/
     ("foundry_deck_report.py", "--in t.json --append-cost /l"), ("foundry_deck_report.py", "--in t.json --append-c /l"),
     ("deck-cost-census.py", "--session-dir /s --append /l"), ("deck-cost-census.py", "--session-dir /s --app /l"),
