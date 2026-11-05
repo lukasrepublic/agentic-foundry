@@ -155,8 +155,6 @@ plugin-scripts allow hook does not grant `post` or `import` a silent allow.
 
 ```yaml
 messaging:
-  machine_channel: git-log
-  people_channel: issue-per-topic
   chat_mirror: off
   open_change_minutes: 120
   cleanup_timeout_s: 120      # total wait for foundry_prod_step.py --on-failure cleanups before STOP says "cleanup timed out"

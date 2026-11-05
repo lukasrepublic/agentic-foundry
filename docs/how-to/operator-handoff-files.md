@@ -3,20 +3,14 @@
 Operating-model rule E3. When the operator must do a step that the agent cannot (a credential step, a provisioning step, a
 priced decision), the agent writes step-by-step instructions for it as a file. Where that file goes is a policy key.
 
-## The key
+## Where the files go
 
-`report.handoff_dir` in `.foundry/operating-model.yaml` names the directory for operator hand-off files. The default is
-`~/Documents/<workspace-name>`; replace the placeholder with your workspace name. The directory is outside the repository
-on purpose. Hand-off files for one step are noise in a pull request.
+Put hand-off files in `~/Documents/<workspace-name>`, with your workspace name in place of the placeholder. The directory
+is outside the repository on purpose. Hand-off files for one step are noise in a pull request.
 
-```yaml
-report:
-  handoff_dir: ~/Documents/my-workspace
-```
-
-The key is validated (no control or invisible characters) and shown by `status`. Nothing writes to the directory
-automatically: no program reads the key today. The agent reads the policy and puts the file there. See
-[the operating-model policy](../operating-model-policy.md) for the "key only" meaning.
+There is no policy key for this. Earlier drafts had `report.handoff_dir`, but no program ever read it, so it was removed
+(see `docs/decisions/2026-11-05-key-only-policy-keys.md`). An agent follows this page. To use another directory, say so
+in the ticket or in the request.
 
 ## What goes where
 
@@ -32,7 +26,7 @@ automatically: no program reads the key today. The agent reads the policy and pu
 ## No PDF skill in 2.0
 
 Foundry 2.0 ships no PDF export skill. The port plan named one; it was not built. To make a PDF, convert the Markdown with
-a tool you already have (for example `pandoc`) and save the result in `report.handoff_dir`. Do not commit it. If a PDF
+a tool you already have (for example `pandoc`) and save the result next to the hand-off files. Do not commit it. If a PDF
 skill is added later, this page will say so.
 
 ## Reports and secrets

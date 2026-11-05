@@ -26,7 +26,6 @@ deck:
 
 decisions:
   research_first: true                # FLOOR
-  escalation_set: [external-provisioning, credential-step, no-consensus-after-research]
 
 claims:
   enabled: true
@@ -42,7 +41,6 @@ report:
   plain_language: true
   max_lines: 8
   include_ids: false
-  handoff_dir: ~/Documents/<workspace-name>
 
 communication:
   style: simplified-technical-english # simplified-technical-english | off | operator-defined
@@ -54,7 +52,6 @@ models:
   security_reviewer: strongest        # B7: auth, secrets and crypto reviews only
 
 hygiene:
-  disk_sweep_each_tick: true
   teardown_required: true             # FLOOR
 
 secrets:
@@ -63,8 +60,6 @@ secrets:
   no_print_roots: []                  # ADD-ONLY: extra paths no reader command may touch (defaults cannot be removed)
 
 messaging:
-  machine_channel: git-log
-  people_channel: issue-per-topic
   chat_mirror: "off"                  # off | on
   open_change_minutes: 120
   cleanup_timeout_s: 120              # total wait for foundry_prod_step.py --on-failure cleanups before STOP "cleanup timed out"

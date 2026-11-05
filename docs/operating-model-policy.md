@@ -54,7 +54,6 @@ The "Acts through" column says how far the key reaches. Read it before you rely 
 | `deck.resource_check` | floor | `true` | B2 | const floor | `scripts/foundry_deck_resources.py`, run first in every tick |
 | `deck.workflow_size_source` | floor | `"smallest"` | B8 | const floor | section B8 of the tick prompt (`resolve_workflow_size` in `scripts/foundry_operating_model.py`) |
 | `decisions.research_first` | floor | `true` | B3 | const floor | `skills/research-first/SKILL.md`, `scripts/foundry_research_note.py` |
-| `decisions.escalation_set` | tunable | `external-provisioning, credential-step, no-consensus-after-research` | B4 | key only | none: `scripts/foundry_blocker_check.py` lints against its own closed set and does not read this key |
 | `claims.enabled` | tunable | `true` | B5 | script | `scripts/foundry_ticket_store.py` (used by `scripts/foundry-ticket.py` and clause (m) of `hooks/foundry-git-discipline.sh`) |
 | `claims.expires_after` | tunable | `2h` | B5 | script | `scripts/foundry_ticket_store.py` |
 | `cost.weigh_in_every_decision` | floor | `true` | C1 | const floor | section C1 of the tick prompt |
@@ -64,19 +63,15 @@ The "Acts through" column says how far the key reaches. Read it before you rely 
 | `report.plain_language` | tunable | `true` | E1 | prompt | section E1 of the tick prompt |
 | `report.max_lines` | tunable | `8` | E1 | script | `scripts/foundry_deck_report.py` |
 | `report.include_ids` | tunable | `false` | E1 | script | `scripts/foundry_deck_report.py` |
-| `report.handoff_dir` | tunable | `~/Documents/<workspace-name>` | E3 | key only | none: the key records where hand-off files go; see [operator hand-off files](how-to/operator-handoff-files.md) |
 | `communication.style` | tunable | `simplified-technical-english` | E2 | script | `scripts/foundry_brief.py` (the brief); `render-tick-section E2` renders the same text into the tick prompt |
 | `communication.operator_style_file` | tunable | `` | E2 | prompt | `render-tick-section E2` |
 | `models.builder` | tunable | `smaller` | B7 | prompt | section B7 of the tick prompt |
 | `models.reviewer` | tunable | `smaller` | B7 | prompt | section B7 of the tick prompt |
 | `models.security_reviewer` | tunable | `strongest` | B7 | prompt | section B7 of the tick prompt |
-| `hygiene.disk_sweep_each_tick` | tunable | `true` | F2 | key only | none: `scripts/foundry_deck_resources.py` measures the disk whatever this says |
 | `hygiene.teardown_required` | floor | `true` | F1 | const floor | `hooks/foundry-env-reap.sh`, `scripts/foundry-env-hygiene.py` |
 | `secrets.value_reads_forbidden` | floor | `true` | D1 | const floor | `hooks/foundry-secret-read-guard.py` |
 | `secrets.forbidden_verbs` | tunable | `(empty)` | D1 | script | `hooks/foundry-secret-read-guard.py` (add-only) |
 | `secrets.no_print_roots` | tunable | `(empty)` | D1 | script | `hooks/foundry-secret-read-guard.py` (add-only) |
-| `messaging.machine_channel` | tunable | `git-log` | - | key only | none: `scripts/foundry_message_log.py` has one channel; only one value exists |
-| `messaging.people_channel` | tunable | `issue-per-topic` | - | key only | none: people use issues; only one value exists |
 | `messaging.chat_mirror` | tunable | `off` | - | key only | none: `cli/templates/workflows/message-log-chat-mirror.yml` runs only when the repository variable `MESSAGE_LOG_CHAT_MIRROR` is `on`; it does not read this key |
 | `messaging.open_change_minutes` | tunable | `120` | D2 | script | `scripts/foundry_message_log.py` (`audit`) |
 | `messaging.cleanup_timeout_s` | tunable | `120` | D2 | script | `scripts/foundry_prod_step.py` |
@@ -95,8 +90,9 @@ acceptance criterion that checks it.
   allow" for it would let any command run unprompted under the plugin's name. The permission floor tiers it `ask` and the
   plugin-scripts allow hook never grants it a silent allow. Approve each use.
 - **Subagents and rule D2.** The tick prompt tells the deck to put the production-step rule in the brief of every subagent
-  that can touch production. That is prompt text. The brief renderer (`scripts/foundry_brief.py`) does not add a D2 line
-  itself, so a brief you write by hand must carry it.
+  that can touch production. The brief renderer (`scripts/foundry_brief.py`) also ends every rendered brief with one D2
+  line: state the step before, report it after, wrap it in `foundry_prod_step.py`, never persist an allow. A brief you
+  write by hand must carry the same rule.
 - **Time zones.** `report.timezone` takes `auto`, `UTC` or an IANA name. `auto` and `UTC` work on any host. A host with
   no time zone database (the Python standard library reads the system `tzdata`) refuses every IANA name, with a
   `bad-timezone` line from `scripts/foundry_deck_report.py`. Install the `tzdata` package, or set `auto` or `UTC`.

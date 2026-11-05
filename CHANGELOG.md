@@ -44,6 +44,16 @@ what replaces it.
   rule-to-criterion table; a test regenerates it and compares it with the policy page.
 - CI: the `selftests` job runs a name census over the programme's change set (`tests/test_name_census.py`), with a planted
   name as its control, on top of the existing leak gate.
+- Dogfood (gv-19): the plugin ran governance intake on its own tree with the `claude-plugin` blueprint. `.foundry/governance.lock`
+  is committed, `foundry_governance.py check` is clean (zero drift, zero expired exceptions), the four kit CI workflows are
+  installed, and `governance/local/` holds scaffold files only, which `tests/test_dogfood_self.py` asserts. Six findings are
+  baselined with a reason and an expiry (four semgrep, two scorecard); gitleaks reported two false positives, narrowed in
+  `security-checks/gitleaks.toml`. The `selftests` job now installs conftest v0.71.1, opa v1.22.0 and kyverno v1.19.2 (pinned,
+  sha256-verified), and the policy-tool tests fail instead of skipping when `CI=true` and a tool is missing. Rendered subagent
+  briefs end with the one D2 production-step line. Five key-only policy keys were removed (`decisions.escalation_set`,
+  `report.handoff_dir`, `hygiene.disk_sweep_each_tick`, `messaging.machine_channel`, `messaging.people_channel`); a pre-release
+  policy file that still names one gets `unknown-key:` from `validate`, so delete the line
+  ([decision record](docs/decisions/2026-11-05-key-only-policy-keys.md)).
 
 **Added: the operating-model policy.** `.foundry/operating-model.yaml` (optional; absent means every default), read only
 through `scripts/foundry_operating_model.py` and `/foundry:operating-model status|validate|explain`. A floor key can only be

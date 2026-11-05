@@ -62,9 +62,10 @@ def test_ci_installs_the_three_tools_pinned_and_verified_before_the_suite():
     steps, step = _install_step()
     names = [s.get("name", "") for s in steps]
     assert names.index(step["name"]) < names.index(next(n for n in names if n.startswith("pytest suite")))
-    run = step["run"]
+    assert step["run"].strip() == "bash scripts/ci-install-policy-tools.sh"
+    run = (ROOT / "scripts" / "ci-install-policy-tools.sh").read_text(encoding="utf-8")
     urls = re.findall(r"https://github\.com/[\w./-]+", run)
-    assert len(urls) == 3
+    assert len(urls) == 3, urls
     for u in urls:
         assert "/releases/download/v" in u and "latest" not in u
     hashes = re.findall(r"\b[0-9a-f]{64}\b", run)

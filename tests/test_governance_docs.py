@@ -141,7 +141,7 @@ def test_the_routed_documentation_notes_are_in_their_sections():
     assert "non-interactive commands only" in notes.lower() and "controlling terminal" in notes
     assert "Never persist an allow for the `foundry_prod_step.py` row" in notes
     assert "tzdata" in notes and "bad-timezone" in notes and "`auto`" in notes
-    assert "does not add a D2 line" in notes
+    assert "ends every rendered brief with one D2 line" in notes.replace("\n", " ")       # gv-19: the renderer carries the line now
     assert "tzdata" not in flat(policy["Floor and tunable"])               # the note lives in its own section, not by accident elsewhere
 
     ticket = flat(sections(read("docs/governance.md"))["One ticket carries the rules to the agent"])
@@ -174,16 +174,16 @@ ACTS_THROUGH = {
     "merge.record_line_before_enqueue": "const floor", "merge.human_review_required": "script",
     "deck.max_builders": "script", "deck.heavy_slots": "script", "deck.resource_check": "const floor",
     "deck.workflow_size_source": "const floor",
-    "decisions.research_first": "const floor", "decisions.escalation_set": "key only",
+    "decisions.research_first": "const floor",
     "claims.enabled": "script", "claims.expires_after": "script",
     "cost.weigh_in_every_decision": "const floor", "cost.priced_ask_for_always_on": "const floor",
     "report.format": "prompt", "report.timezone": "script", "report.plain_language": "prompt", "report.max_lines": "script",
-    "report.include_ids": "script", "report.handoff_dir": "key only",
+    "report.include_ids": "script",
     "communication.style": "script", "communication.operator_style_file": "prompt",
     "models.builder": "prompt", "models.reviewer": "prompt", "models.security_reviewer": "prompt",
-    "hygiene.disk_sweep_each_tick": "key only", "hygiene.teardown_required": "const floor",
+    "hygiene.teardown_required": "const floor",
     "secrets.value_reads_forbidden": "const floor", "secrets.forbidden_verbs": "script", "secrets.no_print_roots": "script",
-    "messaging.machine_channel": "key only", "messaging.people_channel": "key only", "messaging.chat_mirror": "key only",
+    "messaging.chat_mirror": "key only",
     "messaging.open_change_minutes": "script",
     "messaging.cleanup_timeout_s": "script",
     "governance.design_required_paths": "script", "governance.size_tag_required": "script",
@@ -230,7 +230,8 @@ def test_acts_through_is_pinned_per_key():
 
 def test_the_handoff_page_states_there_is_no_pdf_skill():
     text = read("docs/how-to/operator-handoff-files.md")
-    assert "report.handoff_dir" in text and "No PDF skill" in text
+    assert "No PDF skill" in text and "~/Documents/<workspace-name>" in text
+    assert "report.handoff_dir" not in (ROOT / "schema" / "operating-model.schema.json").read_text(encoding="utf-8")
     assert not list((ROOT / "skills").glob("*pdf*")), "a PDF skill now exists: update the hand-off page"
 
 
