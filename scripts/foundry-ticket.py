@@ -1890,33 +1890,14 @@ def _epoch(iso) -> float:
 
 
 def _session_id(root: Path, flag: str | None, host: str) -> str:
-    """Stable across invocations of the CLI: --session-id (explicit beats ambient), else CLAUDE_CODE_SESSION_ID, else a per-user id
-    generated once and kept in the git dir (`foundry-lead-session`). Never derived from a parent pid."""
-    sid = flag or os.environ.get("CLAUDE_CODE_SESSION_ID")
+    """--session-id (explicit beats ambient), else CLAUDE_CODE_SESSION_ID, else an explicit FOUNDRY_SESSION_ID (a human
+    terminal). dl-11: with none of them the verb refuses with `session-id-missing`; there is no per-clone or host:user id."""
+    sid = flag or store.current_session_id(root)
     if sid:
         return sid
-    p = store._git_path("foundry-lead-session", root)
-    if p is None:
-        return f"{host}:{getpass.getuser()}"
-    try:
-        got = p.read_text(encoding="utf-8").strip()
-        if got:
-            return got
-    except OSError:
-        pass
-    new = uuid.uuid4().hex
-    try:
-        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(new + "\n")
-        return new
-    except FileExistsError:
-        try:
-            return p.read_text(encoding="utf-8").strip() or new
-        except OSError:
-            return new
-    except OSError:
-        return new
+    print("foundry-ticket: session-id-missing: set CLAUDE_CODE_SESSION_ID (a Claude Code session) or FOUNDRY_SESSION_ID "
+          "(a human terminal), or pass --session-id. There is no per-clone fallback. Nothing was recorded.", file=sys.stderr)
+    raise SystemExit(2)
 
 
 def _create_exclusive(path: Path, rec: dict) -> bool:

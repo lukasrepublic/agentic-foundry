@@ -132,6 +132,7 @@ def ws(tmp_path, monkeypatch):
             subprocess.run(["git", "-C", str(d), "remote", "add", "origin", remote], check=True)
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(r))
     monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.setenv("FOUNDRY_SESSION_ID", "test-terminal")
     return r
 
 

@@ -519,16 +519,9 @@ def _team_scope(root: Path):
 
 
 def current_session_id(root: Path | None = None) -> str:
-    """The caller's session id as the claim CLI derives it, WITHOUT creating anything: CLAUDE_CODE_SESSION_ID,
-    else the per-user id kept in the git dir; "" when neither exists."""
-    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
-    if sid:
-        return sid
-    p = _git_path("foundry-lead-session", root)
-    try:
-        return p.read_text(encoding="utf-8").strip() if p else ""
-    except OSError:
-        return ""
+    """The caller's session id: CLAUDE_CODE_SESSION_ID, else an explicit FOUNDRY_SESSION_ID (a human terminal);
+    "" when neither is set. dl-11: there is no per-clone or host:user fallback."""
+    return os.environ.get("CLAUDE_CODE_SESSION_ID", "") or os.environ.get("FOUNDRY_SESSION_ID", "")
 
 
 def claim_gate(cwd=None, now: float | None = None, explicit: bool = False,

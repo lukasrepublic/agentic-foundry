@@ -583,3 +583,14 @@ def test_the_docs_state_attribution_only_and_flags_not_policy_keys():
         flat = " ".join(text.split())
         assert "attribution only" in flat.lower() and "never an authorization input" in flat
         assert "CLI flags, not policy keys" in flat
+
+
+def test_the_claim_cli_refuses_with_session_id_missing_when_no_session_id_is_set(ws, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.delenv("FOUNDRY_SESSION_ID", raising=False)
+    gh = FakeGh(issues=[mk_issue(2, body=td.BODY)])
+    rc, _, err = run_cli(["claim", "2", "--trust-author"], gh)
+    assert rc == 2 and "session-id-missing" in err
+    assert ft.load_claims(ws) == {}
+    monkeypatch.setenv("FOUNDRY_SESSION_ID", "test-terminal")      # an explicit human-terminal id is accepted
+    assert run_cli(["claim", "2", "--trust-author"], gh)[0] == 0
