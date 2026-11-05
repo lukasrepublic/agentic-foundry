@@ -30,10 +30,15 @@ The path is resolved as a FILE, symlinks included, so a link into a CI path is a
 checked too (gv-16): the write targets of `sed -i`, `tee`, a `>`/`>>` redirect, `cp`/`mv`/`rm`/`truncate`/`dd of=`/
 `install` that name a CI path are refused the same way (a visibility control: it reads the command, it does not
 emulate a shell). The hook is wired into the Bash matcher group of hooks/hooks.json.
-DOCUMENTED LIMITS of the Bash reading (it is a visibility control, not a sandbox): it does not track `cd`, so a relative path is
-judged from the payload's cwd; it does not understand wrapper flags (`env -i`, `sudo -u x`), `-t` / `--target-directory`,
-`cp -r dir .github/` (a recursive copy of a directory), `rm -rf tests` (a removal of a non-CI directory that holds CI-named
-files), or `echo > package.json` (a shell edit of package.json is not judged by block; the Edit and Write tools carry that check).
+DOCUMENTED LIMITS of the Bash reading (it is a visibility control, not a sandbox; it reads the command text and never emulates a
+shell). gv-20 widened it: `cd X && ...` is tracked (a later relative operand is judged against the `cd` operand), `-t` /
+`--target-directory` is read as the destination, a recursive `cp -r` / `rsync -a` into a directory is judged by the files of the
+source directory, and refused outright when the destination directory is or contains a CI path, `rm -rf tests`, `rm -rf *`
+and `rm -rf ./` are judged by the files they would remove, a shell write to package.json (`echo ... > package.json`) is refused because
+a diff cannot be taken, and `.worktrees/<x>/.github/**` plus any nested clone's `.github/workflows/` and `.github/actions/` under the
+project root are CI. STILL NOT SEEN: wrapper flags (`env -i`, `sudo -u x`), `git checkout --` / `git apply` / `patch`, `python -c
+open().write`, process substitution, a path built by expansion or `$(...)`, `cd -`, and a `cd` inside a subshell or function (a `cd`
+is treated as sticky for the rest of the command line, which over-approximates).
 The point is not that CI never changes: it is that an agent never changes it to turn its own red check green.
 
 Everything else — code, infra, tests, CLAUDE.md, config — is admitted without a ticket. Writes
@@ -118,9 +123,14 @@ def _glob_match(rel_s: str, pat: str) -> bool:
     return fnmatch.fnmatchcase(rel_s, pat)
 
 
+_CI_SCRIPTS_MEMO = {}      # one hook process judges one payload; the workflows are read once
+
+
 def _ci_scripts(root: Path) -> set:
     """Scripts the repo's own workflows invoke (read live, so a new CI script is covered at once)."""
-    found = set()
+    if str(root) in _CI_SCRIPTS_MEMO:
+        return _CI_SCRIPTS_MEMO[str(root)]
+    found = _CI_SCRIPTS_MEMO.setdefault(str(root), set())
     wf = root / ".github" / "workflows"
     try:
         for f in sorted(wf.iterdir()):
@@ -201,11 +211,22 @@ def ci_overlaps(rel_s: str, root: Path) -> bool:
     if _is_ci(rel, root):
         return True
     k = _key(rel.as_posix().strip("/"))
+    if k.endswith("/.github") or re.search(r"(?:^|/)\.github/(?:workflows|actions)$", k):
+        return True                                     # a nested clone's / worktree's .github directory
     return any(_key(p).startswith(k + "/") for p in _ci_prefixes()) or k in {_key(p) for p in _ci_prefixes()}
+
+
+_NESTED_CI_RE = re.compile(r"(?:^|/)\.github/(?:workflows|actions)(?:/|$)")
+_WORKTREE_RE = re.compile(r"^\.worktrees/[^/]+/(.+)$")
 
 
 def _is_ci(rel: Path, root: Path, ti: dict = None) -> bool:
     rel_s = _key(rel.as_posix())
+    if _NESTED_CI_RE.search(rel_s):                      # a worktree's, or a nested product clone's, own workflows
+        return True
+    m = _WORKTREE_RE.match(rel_s)
+    if m and m.group(1) != rel_s:                        # `.worktrees/<x>/<path>` is judged as `<path>`
+        return _is_ci(Path(m.group(1)), root, ti)
     if rel_s.rsplit("/", 1)[-1] == "package.json":
         return _package_json_touches_ci(ti or {}, root / rel) if ti is not None else False
     if any(_glob_match(rel_s, _key(g)) for g in CI_GLOBS):
@@ -260,12 +281,42 @@ def _split_newlines(command: str) -> str:
     return "".join(out)
 
 
+_RECURSIVE_FLAG = re.compile(r"-[A-Za-z]*[rRa][A-Za-z]*")
+_GLOB_CHARS = set("*?[")
+
+
+def _is_recursive(flags: list) -> bool:
+    return any(_RECURSIVE_FLAG.fullmatch(f) or f in ("--recursive", "--archive") for f in flags)
+
+
+def _target_directory(rest: list):
+    """-> (target_dir or None, remaining operands) for cp/mv/install/ln: `-t DIR`, `-tDIR`, `-rt DIR`, `--target-directory DIR`,
+    `--target-directory=DIR`."""
+    pos, tdir, i = [], None, 0
+    while i < len(rest):
+        a = rest[i]
+        if a == "--target-directory" and i + 1 < len(rest):
+            tdir, i = rest[i + 1], i + 2
+            continue
+        if a.startswith("--target-directory="):
+            tdir = a.split("=", 1)[1]
+        elif re.fullmatch(r"-[A-Za-z]*t", a) and i + 1 < len(rest):
+            tdir, i = rest[i + 1], i + 2
+            continue
+        elif re.fullmatch(r"-[A-Za-z]*t.+", a) and not a.startswith("--"):
+            tdir = a.split("t", 1)[1]
+        elif not a.startswith("-"):
+            pos.append(a)
+        i += 1
+    return tdir, pos
+
+
 def _bash_write_targets(command: str) -> list:
-    """Write targets named by a Bash command, as (path, kind, sources) with kind `file` (written), `remove` (deleted or moved
-    away) or `dest` (a cp/mv/install/ln/rsync destination; it may be a directory the sources land in). Covers `sed -i` /
-    `perl -i` operands, `tee`, `>` / `>>` redirects, cp/mv/rm/truncate/install/ln/rsync and `dd of=`. A reading of the
-    command text, not a shell: whatever it cannot see (a path built by expansion, `python -c`) is out of reach, which is why
-    this is a visibility control."""
+    """Write targets named by a Bash command, as (path, kind, sources, recursive) with kind `file` (written), `remove` (deleted or
+    moved away) or `dest` (a cp/mv/install/ln/rsync destination; it may be a directory the sources land in). Covers `sed -i` /
+    `perl -i` operands, `tee`, `>` / `>>` redirects, cp/mv/rm/truncate/install/ln/rsync (`-t DIR` included) and `dd of=`. `cd X &&`
+    is tracked: a later relative operand is joined onto the `cd` operand. A reading of the command text, not a shell: whatever it
+    cannot see (a path built by expansion, `python -c`) is out of reach, which is why this is a VISIBILITY control, not a boundary."""
     import shlex
     command = _split_newlines(command)
     try:
@@ -274,7 +325,12 @@ def _bash_write_targets(command: str) -> list:
         toks = list(lex)
     except ValueError:
         toks = command.split()
-    out, words = [], []
+    out, words, cur = [], [], [""]
+
+    def jn(p):
+        if cur[0] and p and not p.startswith(("/", "~")):
+            return os.path.join(cur[0], p)
+        return p
 
     def finish():
         args = list(words)
@@ -286,19 +342,31 @@ def _bash_write_targets(command: str) -> list:
         verb, rest = os.path.basename(args[0]), args[1:]
         pos = [a for a in rest if not a.startswith("-")]
         flags = [a for a in rest if a.startswith("-")]
+        rec = _is_recursive(flags)
+        if verb in ("cd", "pushd"):
+            if not pos:
+                cur[0] = "~"
+            elif pos[0] != "-":
+                cur[0] = jn(pos[0])
+            return
         if verb in ("sed", "gsed", "perl") and any(re.fullmatch(r"-[A-Za-z]*i[A-Za-z0-9._]*", f) or f.startswith("--in-place")
                                                   for f in flags):
-            out.extend((p, "file", []) for p in pos)     # the script text never resolves to a CI path; the files do
+            out.extend((jn(p), "file", [], False) for p in pos)     # the script text never resolves to a CI path; the files do
         elif verb in _FILE_VERBS:
-            out.extend((p, "file", []) for p in pos)
+            out.extend((jn(p), "file", [], False) for p in pos)
         elif verb in _REMOVE_VERBS:
-            out.extend((p, "remove", []) for p in pos)
-        elif verb in _DEST_VERBS and pos:
-            out.append((pos[-1], "dest", pos[:-1]))
+            out.extend((jn(p), "remove", [], rec) for p in pos)
+        elif verb in _DEST_VERBS and verb != "rsync" and _target_directory(rest)[0] is not None:
+            tdir, srcs = _target_directory(rest)
+            out.append((jn(tdir), "dest", [jn(x) for x in srcs], rec))
             if verb == "mv":
-                out.extend((p, "remove", []) for p in pos[:-1])
+                out.extend((jn(p), "remove", [], True) for p in srcs)
+        elif verb in _DEST_VERBS and pos:
+            out.append((jn(pos[-1]), "dest", [jn(x) for x in pos[:-1]], rec or verb == "rsync"))
+            if verb == "mv":
+                out.extend((jn(p), "remove", [], True) for p in pos[:-1])
         elif verb == "dd":
-            out.extend((a.split("=", 1)[1], "file", []) for a in rest if a.startswith("of="))
+            out.extend((jn(a.split("=", 1)[1]), "file", [], False) for a in rest if a.startswith("of="))
 
     i = 0
     while i < len(toks):
@@ -308,7 +376,7 @@ def _bash_write_targets(command: str) -> list:
         elif t and set(t) <= set("<>&|") and (">" in t or "<" in t):   # a redirect operator: its operand is the next word
             tgt = toks[i + 1] if i + 1 < len(toks) else ""
             if ">" in t and tgt and not tgt.isdigit() and not tgt.startswith("&"):
-                out.append((tgt, "file", []))
+                out.append((jn(tgt), "file", [], False))
             i += 1
         elif t.isdigit() and i + 1 < len(toks) and set(toks[i + 1]) <= set("<>&") and ">" in toks[i + 1]:
             pass                                         # the fd number of `2>file`
@@ -336,15 +404,55 @@ def _resolve_rels(target: str, root: Path, base: Path) -> list:
     return rels
 
 
-def _bash_ci_hit(rel: Path, kind: str, srcs: list, root: Path, base: Path, raw: str):
+def _tree_files(top: Path, cap: int = 20000):
+    """Root-relative-agnostic walk of `top` (a directory): yields file paths below it, pruning .git and node_modules, capped."""
+    n = 0
+    for dp, dns, fns in os.walk(top):
+        dns[:] = [d for d in dns if d not in (".git", "node_modules", ".venv")]
+        for f in fns:
+            n += 1
+            if n > cap:
+                return
+            yield Path(dp) / f
+
+
+def _dir_holds_ci(directory: Path, root: Path) -> bool:
+    for f in _tree_files(directory):
+        try:
+            if _is_ci(f.relative_to(root), root, {}) and f.name != "package.json":
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def _bash_ci_hit(rel: Path, kind: str, srcs: list, root: Path, base: Path, raw: str, recursive: bool = False):
     """True when this Bash write lands on (or removes) a CI path. A directory destination is judged by what lands in it."""
     if rel.name == "package.json" and kind != "remove":
-        return False      # a shell edit of package.json cannot be classified by block: the Edit/Write tools carry that check
+        return True       # gv-20: a shell write of package.json cannot be diffed by block, so it is judged as CI (ci-allow lifts it)
+    absdir = root / rel
     if kind == "remove":
-        return _is_ci(rel, root, {}) or ci_overlaps(rel.as_posix(), root)
-    if kind == "dest" and (raw.endswith("/") or (root / rel).is_dir()):
-        names = [Path(x).name for x in srcs if Path(x).name] or ["_"]
-        return any(_is_ci(rel / n, root, {}) for n in names)
+        if _is_ci(rel, root, {}) or ci_overlaps(rel.as_posix(), root):
+            return True
+        return bool(recursive and absdir.is_dir() and _dir_holds_ci(absdir, root))
+    if kind == "dest":
+        into_dir = raw.endswith("/") or absdir.is_dir()
+        if into_dir:
+            names = [Path(x).name for x in srcs if Path(x).name] or ["_"]
+            if any(_is_ci(rel / n, root, {}) for n in names):
+                return True
+            if recursive:
+                if ci_overlaps(rel.as_posix(), root):
+                    return True                          # a recursive copy into a directory that is or holds CI paths
+                for x in srcs:
+                    sp = Path(x).expanduser()
+                    sp = sp if sp.is_absolute() else base / sp
+                    if sp.is_dir():                      # judged by the files that would land
+                        sub = rel if x.endswith("/") else rel / Path(x).name
+                        for f in _tree_files(sp):
+                            if _is_ci(sub / f.relative_to(sp), root, {}):
+                                return True
+            return False
     return _is_ci(rel, root, {})
 
 
@@ -382,6 +490,16 @@ def _refuse_ci(rel: Path, doc, sig_ok: bool) -> int:
                    "operator allow the path with `ci-allow %s`." % p)
 
 
+def _expand_glob(target: str, base: Path, cap: int = 500) -> list:
+    """`rm -rf *` / `rm a*`: the operand as the shell would expand it against the cwd (the pattern itself when nothing matches)."""
+    if not (set(target) & set("*?[")):
+        return [target]
+    import glob
+    t = os.path.expanduser(target)
+    hits = sorted(glob.glob(t if os.path.isabs(t) else os.path.join(str(base), t), recursive=False))[:cap]
+    return hits or [target]
+
+
 def _main_bash(payload: dict, root: Path) -> int:
     ti = payload.get("tool_input")
     if not isinstance(ti, dict) or not isinstance(ti.get("command"), str):
@@ -393,10 +511,11 @@ def _main_bash(payload: dict, root: Path) -> int:
     base = Path(cwd) if isinstance(cwd, str) and cwd and Path(cwd).is_absolute() else root
     doc = _load_ticket(root)
     lists, sig_ok = _ci_lists(doc, root)
-    for tgt, kind, srcs in _bash_write_targets(command):
-        for rel in _resolve_rels(tgt, root, base):          # the link AND the file it resolves to: either being CI refuses
-            if _bash_ci_hit(rel, kind, srcs, root, base, tgt) and not _allowed(rel, lists):
-                return _refuse_ci(rel, doc, sig_ok)
+    for tgt, kind, srcs, rec in _bash_write_targets(command):
+        for one in _expand_glob(tgt, base):
+            for rel in _resolve_rels(one, root, base):      # the link AND the file it resolves to: either being CI refuses
+                if _bash_ci_hit(rel, kind, srcs, root, base, one, rec) and not _allowed(rel, lists):
+                    return _refuse_ci(rel, doc, sig_ok)
     return 0
 
 

@@ -185,3 +185,67 @@ def test_item2_cleanup_timeout_policy_default_and_key(tmp_path):
     (tmp_path / ".foundry").mkdir()
     (tmp_path / ".foundry" / "operating-model.yaml").write_text("schema_version: 1\nmessaging:\n  cleanup_timeout_s: 7\n")
     assert ps._cleanup_timeout(tmp_path) == 7
+
+
+# ------------------------------------------------------------------------------------------ 3 paper guard (a visibility control)
+from test_gv16_followups import bash, repo  # noqa: E402,F401
+
+
+@pytest.fixture
+def prepo(repo):
+    (repo / "tests").mkdir(exist_ok=True)
+    (repo / "tests" / "conftest.py").write_text("x = 1\n")
+    (repo / "docs").mkdir(exist_ok=True)
+    (repo / "x").mkdir(exist_ok=True)
+    (repo / "x" / "a.txt").write_text("a\n")
+    (repo / "pkgdir" / "workflows").mkdir(parents=True, exist_ok=True)
+    (repo / "pkgdir" / "workflows" / "evil.yml").write_text("on: push\n")
+    return repo
+
+
+REFUSED_PAPER = [
+    "cd .github/workflows && sed -i s/a/b/ ci.yml",
+    "cd .github && cd workflows && echo x > ci.yml",
+    "cp -t .github/workflows /tmp/x.yml",
+    "cp --target-directory=.github/workflows /tmp/x.yml",
+    "mv -t .github/workflows /tmp/x.yml",
+    "cp -r x .github/",
+    "cp -r pkgdir/workflows .github/",
+    "rsync -a x/ .github/",
+    "rsync -a pkgdir/ .github/",
+    "rm -rf tests",
+    "rm -rf *",
+    "rm -rf ./",
+    "echo '{}' > package.json",
+    "cp -r x .worktrees/w1/.github/",
+    "sed -i s/a/b/ .worktrees/w1/.github/workflows/ci.yml",
+    "sed -i s/a/b/ nested-clone/.github/workflows/ci.yml",
+]
+ADMITTED_PAPER = [
+    "cp -r x docs/",
+    "cd docs && echo x > notes.md",
+    "cp -t docs /tmp/x.txt",
+    "rsync -a x/ docs/",
+    "rm -rf x",
+    "echo hi > docs/new.md",
+    "cd .github/workflows && cat ci.yml",
+    "cp -r x src/",
+]
+
+
+@pytest.mark.parametrize("cmd", REFUSED_PAPER)
+def test_item3_refused(prepo, cmd):
+    r = bash(prepo, cmd)
+    assert r.returncode == 2, (cmd, r.stdout, r.stderr)
+    assert "CI path" in r.stderr
+
+
+@pytest.mark.parametrize("cmd", ADMITTED_PAPER)
+def test_item3_control_admitted(prepo, cmd):
+    r = bash(prepo, cmd)
+    assert r.returncode == 0, (cmd, r.stdout, r.stderr)
+
+
+def test_item3_the_docstring_still_says_visibility_control_and_no_boundary():
+    doc = (ROOT / "hooks" / "foundry-paper-guard.py").read_text().split('"""')[1]
+    assert "visibility control" in doc and "not a sandbox" in doc

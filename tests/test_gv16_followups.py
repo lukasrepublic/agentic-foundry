@@ -270,7 +270,7 @@ def test_the_paper_allowed_list_still_never_lifts_ci(repo):
     "rm .github/workflows/ci.yml",
     "truncate -s 0 setup.cfg",
     "dd if=/dev/zero of=pyproject.toml",
-    "cd /tmp && echo x > /nonexistent && sed -i s/a/b/ pyproject.toml",
+    "cd src && echo x > /nonexistent && sed -i s/a/b/ ../pyproject.toml",
 ])
 def test_bash_edits_of_a_ci_path_are_refused(repo, cmd):
     r = bash(repo, cmd)
