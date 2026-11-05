@@ -150,7 +150,11 @@ def test_the_routed_documentation_notes_are_in_their_sections():
     log = sections(read("docs/how-to/shared-message-log.md"))
     protection = flat(log["How far the protection goes"])
     assert re.search(r"not (?:caught|tamper-evident)", protection) and "fast-forward" in protection
-    assert "history-rewritten" in protection and "planned" in protection
+    assert "history-rewritten" in protection and "planned" not in protection
+    assert "not tamper-evident against a fast-forward rewrite on its own" in protection
+    assert "--no-advance" in protection and "audit cursor" in protection and "cursor-commit-missing" in protection
+    assert "exits `3`" in protection and "ephemeral CI" in protection
+    assert "cleanup_timeout_s" in read("docs/how-to/shared-message-log.md")
     assert "self-declared" in protection
     branch = flat(log["The branch that `queue-land` can create"])
     assert "orphan branch" in branch and "foundry/messages" in branch
@@ -181,6 +185,7 @@ ACTS_THROUGH = {
     "secrets.value_reads_forbidden": "const floor", "secrets.forbidden_verbs": "script", "secrets.no_print_roots": "script",
     "messaging.machine_channel": "key only", "messaging.people_channel": "key only", "messaging.chat_mirror": "key only",
     "messaging.open_change_minutes": "script",
+    "messaging.cleanup_timeout_s": "script",
     "governance.design_required_paths": "script", "governance.size_tag_required": "script",
 }
 # A "script" key must be read by a named file; a "key only" key by none (the policy module and its template excluded).
@@ -191,6 +196,7 @@ READERS = {
     "report.timezone": "scripts/foundry_deck_report.py", "report.max_lines": "scripts/foundry_deck_report.py",
     "report.include_ids": "scripts/foundry_deck_report.py", "secrets.forbidden_verbs": "hooks/foundry-secret-read-guard.py",
     "secrets.no_print_roots": "hooks/foundry-secret-read-guard.py", "messaging.open_change_minutes": "scripts/foundry_message_log.py",
+    "messaging.cleanup_timeout_s": "scripts/foundry_prod_step.py",
     "governance.design_required_paths": "scripts/foundry-ticket.py", "governance.size_tag_required": "scripts/foundry-ticket.py",
 }
 
