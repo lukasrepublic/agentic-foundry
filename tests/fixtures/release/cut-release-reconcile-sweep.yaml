@@ -220,7 +220,7 @@ gv20_hook_pins:
   foundry-paper-guard.py: 'e8d53c711e40e9869f3b2076c04e8474f7e4dff240b1e5b0f653596961aae88d'
   foundry-shell-shape.py: 'de6722ba044b0029040a28b075227317bb0cd988da803c794de426ad414acc60'
   foundry-secret-read-guard.py: 'dbaac7eb5fe017c3088afdc6ca138886ad68211dd369dfe16a113472715a48be'
-  foundry-plugin-scripts-allow.py: '2df1bc47bb73ef1628e11c6da8c00fce2fd812e09b4c160883cae75891463fc2'
+  foundry-plugin-scripts-allow.py: '56fa94597d7c0e3ba7f68fec7136cede9447f42866fca508e26f14901574977f'
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
 operator_registry_shape:

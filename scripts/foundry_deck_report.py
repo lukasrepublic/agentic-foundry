@@ -48,6 +48,7 @@ import datetime as _dt
 import json
 import os
 import re
+import stat as _stat
 import sys
 import unicodedata
 from pathlib import Path
@@ -338,6 +339,13 @@ def append_cost(log_path, line, now=None, ci_pending=False):
 def read_cost_log(log_path):
     """-> the parsed log rows, read line by line; lines that do not parse are ignored. A missing file is empty."""
     rows = []
+    try:
+        if not _stat.S_ISREG(os.lstat(log_path).st_mode):
+            raise Refused("cost-log-not-a-regular-file")
+    except FileNotFoundError:
+        return rows
+    except OSError:
+        pass
     try:
         with open(log_path, encoding="utf-8") as fh:
             for raw in fh:

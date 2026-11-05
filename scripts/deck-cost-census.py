@@ -176,7 +176,10 @@ def run(a):
     merged, authorized = [], []
     if a.prs:
         with open(a.prs, encoding="utf-8") as fh:
-            merged, authorized = _groups(json.load(fh))
+            raw = json.load(fh)
+        if a.repo and isinstance(raw, list):
+            raise Refusal("--repo with a list-shaped --prs is ambiguous: use {\"authorized\": [...]} with --repo")
+        merged, authorized = _groups(raw)
     if a.repo:
         merged = gh_merged(a.repo, a.branch_prefix, since)
     k = count_since(merged, since) + count_since(authorized, since)

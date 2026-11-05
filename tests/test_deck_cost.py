@@ -339,3 +339,18 @@ def test_blocker_evidence_must_match_the_policy_count_and_order(tmp_path, monkey
     monkeypatch.delenv("CLAUDE_PROJECT_DIR")
     assert bc.partition([rev])["blockers"] == []
     assert bc.partition([_stall([STALLED] * 3, evidence=_stall([STALLED] * 3)["evidence"][:2] + [_stall([STALLED] * 3)["evidence"][2] + "\n"])])["blockers"] == []
+
+
+def test_a_non_regular_cost_log_is_refused(tmp_path, capsys):
+    assert census.main(["--stall-check", "/dev/null"]) == 2
+    with pytest.raises(dr.Refused):
+        dr.read_cost_log("/dev/null")
+    assert dr.read_cost_log(str(tmp_path / "missing.log")) == []
+
+
+def test_repo_with_a_list_shaped_prs_is_refused(session, capsys):
+    root, _ = session
+    f = root / "list.json"
+    f.write_text('["2026-11-05T10:40:00Z"]')
+    assert census.main(["--session-dir", str(root), "--repo", "o/r", "--branch-prefix", "dl/", "--prs", str(f)]) == 2
+    assert "list-shaped" in capsys.readouterr().err

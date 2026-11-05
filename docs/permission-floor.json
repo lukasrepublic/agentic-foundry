@@ -321,7 +321,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_report.py --in:*)",
       "tier": "allow",
-      "rationale": "renders the four-block deck report from one tick JSON file (or stdin) and prints it; reads the policy file and the pause flag, writes nothing, no network (gv-13)"
+      "rationale": "renders the four-block deck report from one tick JSON file (or stdin) and prints it; reads the policy file and the pause flag, no network; it writes nothing unless --append-cost names a cost log, which the plugin-scripts-allow hook leaves to ask (gv-13, dl-14)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_report.py state:*)",
