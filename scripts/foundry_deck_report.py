@@ -48,6 +48,7 @@ import datetime as _dt
 import json
 import os
 import re
+import stat as _stat
 import sys
 import unicodedata
 from pathlib import Path
@@ -291,6 +292,83 @@ def _first_line(tick, tzname):
     return f"{local.strftime('%Y-%m-%d %H:%M %Z').rstrip()} - {done} of {total} done, +{moved} moved"
 
 
+# ---------------------------------------------------------------------------------------------
+# S5 rule 7: the cost line, the cost log and the rule-8 stall check. The ONE implementation: the census
+# (scripts/deck-cost-census.py) and the blocker lint (scripts/foundry_blocker_check.py) import it.
+# ---------------------------------------------------------------------------------------------
+COST_LINE_RE = re.compile(r"agents started (\d+) \| longest agent (\d+) calls \| items closed (\d+)\Z")
+COST_LOG_RE = re.compile(r"(\S+) agents started (\d+) \| longest agent (\d+) calls \| items closed (\d+)( ci-pending)?\Z")
+DEFAULT_STALL_TICKS = 3
+
+
+def cost_line_text(n, c, k):
+    return f"agents started {n} | longest agent {c} calls | items closed {k}"
+
+
+def parse_log_line(line):
+    """-> (stamp, N, C, K, ci_pending) or None. A trailing newline or any extra text is rejected."""
+    m = COST_LOG_RE.fullmatch(line)
+    return (m.group(1), int(m.group(2)), int(m.group(3)), int(m.group(4)), bool(m.group(5))) if m else None
+
+
+def _cost_from_tick(tick):
+    """-> the cost line text, or raises Refused('cost-line-missing'). Accepts `cost_line` (the exact line) or
+    `cost` {agents_started, longest_agent_calls, items_closed} (non-negative integers)."""
+    line = tick.get("cost_line")
+    if isinstance(line, str):
+        if COST_LINE_RE.fullmatch(line):
+            return line
+        raise Refused("cost-line-missing")
+    cost = tick.get("cost")
+    if isinstance(cost, dict):
+        vals = [cost.get(k) for k in ("agents_started", "longest_agent_calls", "items_closed")]
+        if all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in vals):
+            return cost_line_text(*vals)
+    raise Refused("cost-line-missing")
+
+
+def append_cost(log_path, line, now=None, ci_pending=False):
+    """Append `<UTC stamp> <cost line>[ ci-pending]` to the cost log."""
+    if not COST_LINE_RE.fullmatch(line):
+        raise Refused("cost-line-missing")
+    stamp = (now or _dt.datetime.now(_dt.timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with open(log_path, "a", encoding="utf-8") as fh:
+        fh.write(f"{stamp} {line}{' ci-pending' if ci_pending else ''}\n")
+
+
+def read_cost_log(log_path):
+    """-> the parsed log rows, read line by line; lines that do not parse are ignored. A missing file is empty."""
+    rows = []
+    try:
+        if not _stat.S_ISREG(os.lstat(log_path).st_mode):
+            raise Refused("cost-log-not-a-regular-file")
+    except FileNotFoundError:
+        return rows
+    except OSError:
+        pass
+    try:
+        with open(log_path, encoding="utf-8") as fh:
+            for raw in fh:
+                row = parse_log_line(raw.rstrip("\n"))
+                if row:
+                    rows.append(row)
+    except OSError:
+        pass
+    return rows
+
+
+def stall_ticks(project_dir=None):
+    """The policy's `deck.stall_after_ticks` (default 3). Raises the policy loader's PolicyError on a broken file."""
+    return int(_om.load(project_dir).get("deck.stall_after_ticks"))
+
+
+def stall_check(log_path, ticks=DEFAULT_STALL_TICKS):
+    """Rule 8: True when the last `ticks` COUNTED rows all have N > 0 and K = 0. A ci-pending row is skipped:
+    it does not count and does not break the run."""
+    counted = [r for r in read_cost_log(log_path) if not r[4]]
+    return len(counted) >= ticks and all(r[1] > 0 and r[3] == 0 for r in counted[-ticks:])
+
+
 def render(tick, policy, flag=None):
     """-> report text. Raises Refused for the lead's own data. The message-log findings never cause a refusal:
     they are fitted into the lines that are left."""
@@ -299,6 +377,7 @@ def render(tick, policy, flag=None):
     errors = [f"missing-block:{key}" for key, _ in BLOCKS if not isinstance(tick.get(key), list)]
     if errors:
         raise Refused(errors)
+    cost_line = _cost_from_tick(tick)
     first = _first_line(tick, policy.get("report.timezone"))
     merged = _count(tick.get("merged"), "merged")
     verified = _count(tick.get("verified"), "verified")
@@ -360,6 +439,7 @@ def render(tick, policy, flag=None):
             out.append(title + (suffix if key == "needs_you" else ""))
             out += body[key]
     out += tail
+    out.append(cost_line)       # S5 rule 7: a trailer, not counted toward report.max_lines
     text = "\n".join(out) + "\n"
     if _WORD_RE.search(text):          # unreachable after clean(); kept as a last check on the final text
         raise Refused(f"forbidden-word:{_RETIRED}")
@@ -399,6 +479,8 @@ def _parser():
     ap = argparse.ArgumentParser(prog="foundry_deck_report.py", description="render the four-block deck report")
     ap.add_argument("--project-dir")
     ap.add_argument("--in", dest="in_path", help="tick JSON file, or - for stdin")
+    ap.add_argument("--append-cost", metavar="LOG", help="append the cost line to this cost-reports.log")
+    ap.add_argument("--ci-pending", action="store_true", help="tag the appended line ci-pending (rule 8: it does not count)")
     return ap
 
 
@@ -433,7 +515,13 @@ def main(argv=None):
             policy = _om.load(str(project))
         except _om.PolicyError as exc:
             raise Refused([f"policy:{e}" for e in exc.errors])
-        text = render(_read_in(args.in_path), policy, pause_state(project))
+        tick = _read_in(args.in_path)
+        text = render(tick, policy, pause_state(project))
+        if args.append_cost:
+            try:
+                append_cost(args.append_cost, _cost_from_tick(tick), ci_pending=args.ci_pending)
+            except OSError as exc:
+                raise Refused(f"cost-log-unwritable:{type(exc).__name__}")
         sys.stdout.write(text)
         return 0
     except Refused as exc:
