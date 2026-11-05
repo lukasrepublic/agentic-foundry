@@ -166,6 +166,8 @@ _WRITERS = [
     ("foundry_execution_plan.py", "publish prog --project o/1"),
     ("foundry_programme_issue.py", "render prog --plan p.yaml"),     # dl-06: the whole script asks
     ("foundry_programme_issue.py", "publish prog --issue o/r#1 --plan p.yaml"),
+    ("foundry_close_out.py", "run prog --repo o/r --integration b --tag v1.0.0"),   # dl-12: the whole script asks
+    ("foundry_close_out.py", "--help"),
     ("foundry_deck_report.py", "--in t.json --programme-issue /b.md"), ("foundry_deck_report.py", "--in t.json --programme /b.md"),
     ("foundry_learned_distill.py", "propose prog --from-json c.json"),   # dl-10: the whole script asks
     ("foundry_learned_distill.py", "collect prog --project o/1"),
