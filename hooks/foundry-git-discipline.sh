@@ -33,6 +33,15 @@
 # the default set; they are the `strict_history_ops` OPT-IN widening (--strict-history),
 # which ADDS them to the active set (a widening, never a relaxation).
 #
+#   (m) (gv-11, operating-model rule B5) a `git push` of a work branch (not a delete, a dry run or a
+#       tags-only push) or a non-draft `gh pr create` without a LIVE claim for the issue the active
+#       ticket is bound to — refused `claim-required`. Applies only where claims are in use: the
+#       workspace is GitHub-backed (`github_scope`), policy `claims.enabled` is not false, and the
+#       ticket names an issue; a single-operator workspace has no claims and is never gated. The
+#       claims store (git common dir) is read FAIL CLOSED: an unreadable store or ticket record
+#       refuses. A lease with no heartbeat for `claims.expires_after` (default 2h) is not live; see
+#       scripts/foundry_ticket_store.py claim_gate and `foundry-ticket.py claim|reconcile|lead renew`.
+#
 # VERB MATCHING (what "at ANY command position" actually covers) — the guarded verbs (`git`,
 # `gh`, `rm`) are matched by `_is_verb()` below, which resolves a PATH-QUALIFIED invocation to
 # its final path segment: `/usr/bin/git`, `./git`, `../bin/git`, `~/bin/git` and `bin/git` are
@@ -140,6 +149,14 @@ try:
 except Exception:
     print("")' 2>/dev/null || true)"
 
+# The calling session's id (clause (m) compares it with a claim's takeover record). Best effort: absent => "".
+payload_session="$(printf '%s' "$payload" | python3 -c 'import sys,json
+try:
+    c = json.load(sys.stdin).get("session_id", "")
+    print(c if isinstance(c, str) else "")
+except Exception:
+    print("")' 2>/dev/null || true)"
+
 # ----------------------------------------------------------------------------------------
 # The decision is delegated to a single python3 evaluator over the recovered command. It is
 # a PURE token scan (no shell execution of the command). Force intent is refspec-aware. The
@@ -151,7 +168,7 @@ except Exception:
 # (feat-foundry-bash32-parse-guard), so the substitution below contains only the function call.
 _git_discipline_eval() {
   PROTECTED="$PROTECTED" STRICT_HISTORY="$STRICT_HISTORY" LOCAL_GREEN="$LOCAL_GREEN" CMD="$cmd" PLUGIN_ROOT="$PLUGIN_ROOT" \
-    PAYLOAD_CWD="$payload_cwd" python3 - <<'PY'
+    PAYLOAD_CWD="$payload_cwd" PAYLOAD_SESSION="$payload_session" python3 - <<'PY'
 import json, os, re, shlex, subprocess, sys
 
 sys.path.insert(0, os.path.join(os.environ.get("PLUGIN_ROOT", ""), "scripts"))
@@ -522,6 +539,25 @@ def _resolve_no_refspec_push(git_idx, globals_, lrest_):
     return sorted(cands), None
 
 
+# (m) claim-required (gv-11). One shared check for `git push` and `gh pr create`; reads the claims store through
+# scripts/foundry_ticket_store.py claim_gate (applicability rules in its docstring). FAIL CLOSED on any error.
+_CLAIM_REMEDY = ("Claim the bound issue first (`foundry-ticket.py claim <n>`), or renew an expired lease "
+                 "(`foundry-ticket.py reconcile` / `lead renew`). A lease lasts `claims.expires_after` (default 2h) "
+                 "without a heartbeat.")
+
+
+def _claim_gate_or_block(what, repo_dir=None):
+    try:
+        import foundry_ticket_store as _claims_store
+        ok_, why_ = _claims_store.claim_gate(repo_dir or os.environ.get("PAYLOAD_CWD", "") or os.getcwd(),
+                                             explicit=bool(repo_dir),
+                                             session_id=os.environ.get("PAYLOAD_SESSION") or None)
+    except Exception as e_:
+        ok_, why_ = False, "claim-required: the claim check failed (%s: %s); failing closed" % (type(e_).__name__, e_)
+    if not ok_:
+        block("%s refused: %s. Command: %s" % (what, why_, cmd), remediation=_CLAIM_REMEDY, retryable=True)
+
+
 # Iterate every `git` token (position-independent — env-prefix/wrapper/compound all fall
 # out of scanning all indices).
 for i, t in enumerate(low):
@@ -565,7 +601,22 @@ for i, t in enumerate(low):
     # deploy — CI was the first test run. This clause moves the first run back to the branch.
     # It runs on ADMISSION only — after clause (a) has had its say — so a protected-branch
     # force-push is still refused with clause (a)'s own reason.
+    def _require_claim_push():
+        # clause (m): a push of commits needs a live claim (not --delete/-d, --dry-run, --tags-only, or a pure `:ref` delete)
+        bare_c = [r for r in rest if not r.startswith("-")]
+        refspecs_c = bare_c[1:] if bare_c else []
+        if any(r in ("--delete", "-d", "--dry-run", "-n") for r in lrest) \
+                or ("--tags" in lrest and not refspecs_c) \
+                or (refspecs_c and all(r.startswith(":") for r in refspecs_c)):
+            return
+        repo_c, literal_c = os.environ.get("PAYLOAD_CWD", "") or os.getcwd(), False
+        for opt_, val_ in git_globals:      # `git -C <dir> push`: the claim is looked up in THAT repository
+            if opt_ == "-C" and val_ and not any(c in val_ for c in ("$", "`", "*", "?")):
+                repo_c, literal_c = os.path.join(repo_c, os.path.expanduser(val_)), True
+        _claim_gate_or_block("push", repo_c if literal_c else None)
+
     def _require_local_green():
+        _require_claim_push()                           # clause (m)
         if not local_green_on:
             return
         bare_push = [r for r in rest if not r.startswith("-")]
@@ -897,6 +948,20 @@ for i, t in enumerate(low):
         continue
     args = clause_args(i)
     largs = [a.lower() for a in args]
+    # (m) a non-draft `gh pr create` needs a live claim for the bound issue (clause (m), see the header).
+    _bare_m, _skip_m = [], False
+    for _a in largs:
+        if _skip_m:
+            _skip_m = False
+            continue
+        if _a in ("-r", "--repo", "--hostname"):
+            _skip_m = True
+            continue
+        if not _a.startswith("-"):
+            _bare_m.append(_a)
+    if _bare_m[:2] == ["pr", "create"] and not any(_a in ("--draft", "-d") for _a in largs):
+        _claim_gate_or_block("non-draft `gh pr create`")
+
     # (j) `gh pr create` without --draft/-d is a request for CI — admitted only with local-green.
     if local_green_on:
         bare_gh, skip = [], False

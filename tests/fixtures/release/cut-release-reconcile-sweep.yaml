@@ -192,7 +192,12 @@ hook_comment_expectation:
   #      (`https://user:<token>@host` is stripped centrally in _redact), and clause (l) passes the push command's
   #      inline `-c k=v` into the `get-url --push` probe, refusing a `-c url.*`/`remote.*` rewrite whose result is
   #      neither local nor a host gh knows. Corpus: tests/test_git_discipline_queue.py (round 2 section).
-  executable_content_sha256: 'cf48708473b417a8c053cd292f7a7c6e0fc96a618226978c5469f40c9dc443a6'  # re-baselined for entry 13 (gv-10 round 2)
+  #  14. gv-11 clause (m) claim-required (2026-11-04, security lane, PR #300): a push of commits / a non-draft
+  #      `gh pr create` needs a LIVE claim for the issue the active ticket is bound to
+  #      (scripts/foundry_ticket_store.py claim_gate; honours `git -C`, fail-closed on an unreadable claims store
+  #      or project file, inert where claims are not in use). Every other clause byte-identical. Corpus:
+  #      tests/test_claims_expiry.py.
+  executable_content_sha256: '47e95a2a75461b0591866bf4127a7a4249f094cddec1a4a34f56de6fb0972fe3'  # re-baselined for entry 14 (gv-11)
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
 operator_registry_shape:

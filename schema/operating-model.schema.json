@@ -94,7 +94,19 @@
     "secrets": {
       "type": "object", "additionalProperties": false,
       "properties": {
-        "value_reads_forbidden": {"type": "boolean", "const": true, "description": "FLOOR (D1): never read a secret value."}
+        "value_reads_forbidden": {"type": "boolean", "const": true, "description": "FLOOR (D1): never read a secret value."},
+        "forbidden_verbs": {
+          "type": "array", "uniqueItems": true, "maxItems": 128, "x-add-only": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9 ._:=/@+-]*$"},
+          "default": [],
+          "description": "D1 ADD-ONLY: extra command phrases the secret-read guard refuses (the command word, then sub-words in order, e.g. `aws iam create-login-profile`). Merged OVER the built-in defaults, which can never be removed: an item that starts with `!` or `-`, or a mapping with `remove`, fails validation with `floor-rule-disabled:secrets.forbidden_verbs.removal`."
+        },
+        "no_print_roots": {
+          "type": "array", "uniqueItems": true, "maxItems": 128, "x-add-only": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9~/._*][A-Za-z0-9~/._*@+=:-]*$"},
+          "default": [],
+          "description": "D1 ADD-ONLY: extra paths (a directory prefix such as `~/.config/op`, or a basename glob such as `*.pem`) that no reader command may be pointed at. Merged OVER the built-in roots (~/.ssh, ~/.aws, ~/.config/gcloud, ~/.kube, .env*), which can never be removed; a removal marker fails with `floor-rule-disabled:secrets.no_print_roots.removal`."
+        }
       }
     },
     "messaging": {

@@ -349,12 +349,31 @@ def probe_issue_artifacts(timeout, runner):
 
 # ------------------------------------------- orchestration -------------------------------------------- #
 
+_SEGMENT_RE = re.compile(r"[A-Za-z0-9_.-]+")
+
+
+def safe_segment(value):
+    """A config-sourced repository-name segment that may reach a `gh` argument (gv-11): `[A-Za-z0-9_.-]+`,
+    never starting with `-` (an option) or `.` (so never `.` or `..`)."""
+    return isinstance(value, str) and _SEGMENT_RE.fullmatch(value) is not None and value[0] not in "-."
+
+
+def safe_slug(value):
+    """`owner/name`, each side a `safe_segment`."""
+    if not isinstance(value, str):
+        return False
+    parts = value.split("/")
+    return len(parts) == 2 and all(safe_segment(p) for p in parts)
+
+
 def load_scope(project_dir):
     """(manifest, github_scope) — github_scope is None when absent or malformed."""
     try:
         with open(os.path.join(project_dir, ".claude", "foundry-project.json"), encoding="utf-8") as f:
             manifest = json.load(f)
     except (OSError, ValueError):
+        return {}, None
+    except Exception:       # e.g. RecursionError on a pathologically nested file: malformed, never a traceback
         return {}, None
     if not isinstance(manifest, dict):
         return {}, None
@@ -363,6 +382,12 @@ def load_scope(project_dir):
         return manifest, None
     if not isinstance(cfg["owner"], str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*", cfg["owner"]):
         return manifest, None       # a config-sourced owner never reaches a gh argument unless it is a plain login (never starting with a hyphen)
+    if not safe_segment(cfg["planning_repo"]):
+        return manifest, None       # planning_repo and repos[] reach `gh api` / `gh issue list -R` arguments
+    if "repos" in cfg:
+        repos = cfg["repos"]
+        if not isinstance(repos, list) or not all(safe_slug(r) for r in repos):
+            return manifest, None
     ops = cfg.get("operators")
     if ops is not None and not isinstance(ops, dict):
         return manifest, None
@@ -380,7 +405,11 @@ def scope_missing_text(verb):
 def gate(project_dir, verb):
     """For a GitHub-backed entry point: print the one typed refusal to stderr and return 2 when
     `github_scope` is absent or malformed (before any network call), else None to proceed."""
-    if load_scope(str(project_dir))[1] is not None:
+    try:
+        scope = load_scope(str(project_dir))[1]
+    except Exception:       # any failure reading the scope is the typed refusal, never a traceback
+        scope = None
+    if scope is not None:
         return None
     print(scope_missing_text(verb), file=sys.stderr)
     return 2
