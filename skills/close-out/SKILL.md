@@ -16,7 +16,9 @@ reports. Do not re-implement the steps here.
 ```
 foundry_close_out.py run <programme> --repo <owner/name> --integration <branch> --tag <vX.Y.Z>
     --plan-ref --states <json> --atoms <json> --milestone <number> --project <owner/number>
-    [--learned-project <owner/number> | --learned-json <file>] [--done-means <yaml>]
+    [--learned-project <owner/number> | --learned-json <file>]
+    [--programme-issue <owner/repo#n> [--trust-author] | --done-means <committed yaml>]
+    [--done-means-timeout 1800] [--run-dir .]
     [--target-branch main] [--no-ruleset] [--recheck-in 300] [--dry-run]
 ```
 
@@ -36,6 +38,10 @@ foundry_close_out.py run <programme> --repo <owner/name> --integration <branch> 
 
 ## Rules
 
-- At most 60 seconds are spent on checks in the whole session.
+- The Done means come from the programme issue and must pass the trust check (author and every editor). An untrusted
+  one refuses with `done-means-untrusted`. A local `--done-means` file must be committed and unmodified. Run from a
+  work tree at the integration head.
+- The ruleset is created only after acceptance and the milestone pass. The report prints its delete command.
+- At most 60 seconds are spent waiting on checks in the whole session. Running the Done means has its own timeout.
 - It never tags and never publishes. The Release is a draft pinned to the integration head SHA.
 - If a lease is stale, the operator deletes the ref `refs/foundry/claims/close-out/<programme>`.
