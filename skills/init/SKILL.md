@@ -206,18 +206,19 @@ standalone plugin repo) so the gates are live + fail-closed.
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_governance.py" select --confirm <id>   #    one word from the operator
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_governance.py" declare --asvs-level <1|2|3> \
        --data-classification <class> --trust-boundary '<glob>' [--surfaces cli,api]       # 3. the declarations
-   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_governance.py" apply                   # 4. lock + governance/local/ + CI snippets, written locally
+   (git remote get-url origin >/dev/null 2>&1 && command -v gh >/dev/null 2>&1) \
+     && python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_governance.py" apply --pr          # 4. lock + governance/local/ + CI snippets, by PR
    ```
 
-   Step 4 writes locally first, so the operator reads the diff. Open the pull request only when both a remote
-   named `origin` and the GitHub CLI exist:
+   Step 4 opens the pull request directly when both a remote named `origin` and the GitHub CLI exist (a
+   `--pr` run also commits files an earlier local run already wrote). Otherwise write locally so the operator
+   reads the diff:
 
    ```bash
-   git remote get-url origin >/dev/null 2>&1 && command -v gh >/dev/null 2>&1 \
-     && python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_governance.py" apply --pr
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_governance.py" apply
    ```
 
-   With no `origin` or no `gh`, print "commit the diff on a branch and open the pull request yourself" and stop
+   With no `origin` or no `gh` (the second block), print "commit the diff on a branch and open the pull request yourself" and stop
    there; do not retry with `--pr`. Then freeze today's violations (step 5):
 
    ```bash

@@ -331,6 +331,7 @@ def test_stack_profile_lock_is_absorbed_by_a_one_time_migration(tmp_path):
     assert rc == 0, err
     lock = yaml.safe_load((proj / ".foundry" / "governance.lock").read_text())
     assert lock["blueprint"]["id"] == "cli-tool" and "absorbed" in out
+    assert lock["declarations"] == "pending"                              # never silently defaulted
     # once the governance lock exists the stack lock is never consulted again
     (proj / ".foundry" / "stack-profile.lock").write_text(json.dumps({"profiles": [{"id": "node-web"}]}))
     assert run(proj, "apply")[0] == 0
@@ -638,3 +639,130 @@ def test_the_lock_schema_pins_the_blueprint_id_and_check_refuses_a_traversal_id(
          "facts_sha256": sha, "intake_at": "d", "plugin_version": "1"}))
     rc, _, err = run(proj, "check")
     assert rc == 2 and "lock-malformed" in err
+
+
+# ================================================================ review round 2 ===
+
+def test_local_apply_then_pr_opens_a_pr_containing_the_files(tmp_path, monkeypatch):
+    log = gh_shim(tmp_path, monkeypatch)
+    bare = _remote(tmp_path, monkeypatch)
+    proj = make_repo(tmp_path / "r")
+    git(proj, "remote", "add", "origin", str(bare))
+    git(proj, "push", "-q", "origin", "main")
+    intake(proj)
+    assert run(proj, "apply")[0] == 0                                     # written locally, uncommitted
+    rc, out, err = run(proj, "apply", "--pr", "--base", "main")
+    assert rc == 0 and "already current" not in out, err
+    assert len(log.read_text().splitlines()) == 1
+    files = git(proj, "show", "--name-only", "--format=", "governance/intake").split()
+    assert ".foundry/governance.lock" in files and ".github/workflows/ci-gitleaks.yml" in files
+    assert git(proj, "rev-parse", "--abbrev-ref", "HEAD").strip() == "main"
+
+
+def test_a_committed_install_is_still_already_current_under_pr(tmp_path, monkeypatch):  # control
+    log = gh_shim(tmp_path, monkeypatch)
+    bare = _remote(tmp_path, monkeypatch)
+    proj = make_repo(tmp_path / "r")
+    git(proj, "remote", "add", "origin", str(bare))
+    git(proj, "push", "-q", "origin", "main")
+    intake(proj)
+    assert run(proj, "apply")[0] == 0
+    git(proj, "add", "-A", "-f")
+    git(proj, "commit", "-q", "-m", "adopt")
+    rc, out, _ = run(proj, "apply", "--pr", "--base", "main")
+    assert rc == 0 and "already current" in out and not log.exists()
+
+
+def test_a_failed_gh_after_a_successful_push_deletes_the_remote_branch(tmp_path, monkeypatch):
+    bindir = tmp_path / "shim-bin"
+    bindir.mkdir()
+    (bindir / "gh").write_text("#!/bin/sh\nexit 1\n")
+    (bindir / "gh").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
+    bare = _remote(tmp_path, monkeypatch)
+    proj = make_repo(tmp_path / "r")
+    git(proj, "remote", "add", "origin", str(bare))
+    git(proj, "push", "-q", "origin", "main")
+    intake(proj)
+    rc, _, err = run(proj, "apply", "--pr", "--base", "main")
+    assert rc == 2 and "gh-pr-create-failed" in err
+    assert "governance/intake" not in git(bare, "branch", "--list")        # the pushed branch is gone from origin
+    assert "governance/intake" not in git(proj, "branch", "--list")
+
+
+def test_a_branch_already_on_origin_is_a_skip_with_a_fix_hint(tmp_path, monkeypatch):
+    log = gh_shim(tmp_path, monkeypatch)
+    bare = _remote(tmp_path, monkeypatch)
+    proj = make_repo(tmp_path / "r")
+    git(proj, "remote", "add", "origin", str(bare))
+    git(proj, "push", "-q", "origin", "main")
+    git(proj, "push", "-q", "origin", "main:governance/intake")
+    intake(proj)
+    before = snapshot(proj)
+    rc, out, _ = run(proj, "apply", "--pr", "--base", "main")
+    assert rc == 0 and "branch-exists-on-origin:governance/intake" in out and "git push origin --delete" in out
+    assert snapshot(proj) == before and not log.exists()
+
+
+def test_undo_restores_through_the_safe_writer_and_skips_a_changed_file(tmp_path):
+    proj, outside = tmp_path / "p", tmp_path / "outside.txt"
+    proj.mkdir()
+    outside.write_text("untouched")
+    for name in ("sym.txt", "edited.txt", "plain.txt"):
+        (proj / name).write_text("old")
+    j = gov._Journal()
+    gov._JOURNAL = j
+    try:
+        for name in ("sym.txt", "edited.txt", "plain.txt"):
+            gov._write_text(proj, name, "new")
+    finally:
+        gov._JOURNAL = None
+    (proj / "sym.txt").unlink()
+    (proj / "sym.txt").symlink_to(outside)                                  # the path became a symlink after our write
+    (proj / "edited.txt").write_text("someone else's edit")
+    skipped = j.rollback()
+    assert outside.read_text() == "untouched"                               # never written through the link
+    assert (proj / "sym.txt").is_symlink()
+    assert (proj / "edited.txt").read_text() == "someone else's edit"
+    assert sorted(skipped) == ["edited.txt", "sym.txt"]
+    assert (proj / "plain.txt").read_text() == "old"                        # control: an unchanged file is restored
+
+
+def test_userinfo_redaction_stops_at_the_first_at_sign():
+    assert "p@ss" not in gov._redact("fatal: https://user:p@ss@host.example/x.git denied")
+    assert gov._redact("https://u:pa/ss@h/x").count("***@") == 1 and "pa/ss" not in gov._redact("https://u:pa/ss@h/x")
+    assert gov._redact("plain text, no urls") == "plain text, no urls"
+
+
+def _stack_lock_repo(tmp_path):
+    proj = make_repo(tmp_path / "r")
+    (proj / ".foundry").mkdir()
+    (proj / ".foundry" / "stack-profile.lock").write_text(json.dumps({"profiles": [{"id": "cli-tool"}]}))
+    return proj
+
+
+def test_an_absorbed_stack_lock_leaves_declarations_pending_and_says_so_last(tmp_path):
+    proj = _stack_lock_repo(tmp_path)
+    git(proj, "add", "-A", "-f")
+    git(proj, "commit", "-q", "-m", "stack lock")
+    rc, out, err = run(proj, "upgrade")
+    assert rc == 0, err
+    lock = yaml.safe_load((proj / ".foundry" / "governance.lock").read_text())
+    assert lock["declarations"] == "pending"
+    assert out.strip().splitlines()[-1] == "declarations pending: run `foundry_governance.py declare`"
+    rc, out, _ = run(proj, "check", "--today", "2026-11-04")
+    assert rc == 1 and "declarations-pending" in out
+    assert run(proj, "applicable", "--paths", "x", "--json")[0] == 0         # a pending lock does not break the readers
+    assert run(proj, "render", "--from-lock")[0] == 0
+    assert run(proj, "declare", "--asvs-level", "2")[0] == 0                # declared: no longer pending
+    rc, out, _ = run(proj, "check", "--today", "2026-11-04")
+    assert "declarations-pending" not in out
+    assert yaml.safe_load((proj / ".foundry" / "governance.lock").read_text())["declarations"]["asvs_level"] == 2
+
+
+def test_a_declared_workspace_never_reports_pending(tmp_path):  # control
+    proj = make_repo(tmp_path / "r")
+    intake(proj)
+    assert run(proj, "apply")[0] == 0
+    rc, out, _ = run(proj, "check", "--today", "2026-11-04")
+    assert "declarations-pending" not in out

@@ -367,6 +367,7 @@ def test_both_permission_floor_files_stay_identical_and_the_governance_row_is_as
     assert len(rows) == 1 and rows[0]["tier"] == "ask"
     for verb in ("discover", "select", "declare", "apply", "upgrade"):
         assert verb in rows[0]["rationale"], verb
+    assert "discover --out" in rows[0]["rationale"]
 
 
 def test_updater_never_overwrites_the_lock_or_the_adopter_layer():
@@ -505,4 +506,5 @@ def test_init_step_9a_applies_locally_and_opens_a_pr_only_when_origin_and_gh_exi
     text = (ROOT / "skills" / "init" / "SKILL.md").read_text()
     block = text[text.index("Step 9a."):text.index("10. **GitHub scope")]
     assert "git remote get-url origin" in block and "command -v gh" in block and "apply --pr" in block
-    assert "foundry_governance.py\" apply  " in block
+    assert "&& python3" in block and "apply --pr" in block.split("&&")[-1]     # --pr runs directly when both exist
+    assert "foundry_governance.py\" apply\n" in block                       # the local fallback is a plain apply

@@ -624,33 +624,77 @@ def cmd_discover(args):
 
 # ---- small safe writers ---------------------------------------------------------------------------
 
+def _atomic_write(base: Path, name: str, data: bytes, mode: int):
+    """Exclusive temp file (mkstemp: O_EXCL, never a followed link), fsync, rename."""
+    fd, tmp = tempfile.mkstemp(dir=str(base), prefix=name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, mode)
+        os.replace(tmp, base / name)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _plain_file_bytes(proj: Path, rel: str):
+    """(state, bytes): state is "missing", "file", or "odd" (a symlink - at the leaf or in any parent - or a
+    non-regular file)."""
+    cur = proj
+    for part in Path(rel).parts:
+        cur = cur / part
+        if cur.is_symlink():
+            return "odd", None
+    if not cur.exists():
+        return "missing", None
+    if not cur.is_file():
+        return "odd", None
+    return "file", cur.read_bytes()
+
+
 class _Journal:
-    """Remembers what every write is about to replace, so a verb that fails part-way restores the tree."""
+    """Remembers what every write replaced and what it wrote, so a verb that fails part-way restores the tree -
+    through the same symlink-safe writer, and never over a file that changed since."""
 
     def __init__(self):
-        self.items, self.seen = [], set()
+        self.items, self.seen, self.after = [], set(), {}
 
     def record(self, proj: Path, rel: str):
         if (str(proj), rel) in self.seen:
             return
         self.seen.add((str(proj), rel))
-        f = proj / rel
-        odd = f.is_symlink() or (f.exists() and not f.is_file())
-        self.items.append((proj, rel, f.read_bytes() if (f.is_file() and not odd) else None, odd))
+        state, data = _plain_file_bytes(proj, rel)
+        self.items.append((proj, rel, data, state == "odd"))
 
-    def rollback(self):
+    def wrote(self, proj: Path, rel: str, data):
+        self.after[(str(proj), rel)] = data       # bytes written, or None for a deletion
+
+    def rollback(self) -> list:
+        """Restore; returns the paths it left alone because they changed since the run wrote them."""
+        skipped = []
         for proj, rel, prev, odd in reversed(self.items):
-            f = proj / rel
+            if odd or (str(proj), rel) not in self.after:
+                continue
+            state, cur = _plain_file_bytes(proj, rel)
+            expected = self.after[(str(proj), rel)]
+            if state == "odd" or (expected is None and state != "missing") or (expected is not None and cur != expected):
+                skipped.append(rel)
+                continue
             try:
-                if odd:
-                    continue
                 if prev is None:
-                    if f.is_file() and not f.is_symlink():
-                        f.unlink()
+                    if state == "file":
+                        (proj / rel).unlink()
                 else:
-                    f.write_bytes(prev)
+                    f = proj / rel
+                    _atomic_write(f.parent, f.name, prev, stat.S_IMODE(f.stat().st_mode) if f.exists() else 0o644)
             except OSError:
-                pass
+                skipped.append(rel)
+        return skipped
 
 
 _JOURNAL = None
@@ -659,6 +703,11 @@ _JOURNAL = None
 def _jrec(proj: Path, rel: str):
     if _JOURNAL is not None:
         _JOURNAL.record(proj, rel)
+
+
+def _jwrote(proj: Path, rel: str, data):
+    if _JOURNAL is not None:
+        _JOURNAL.wrote(proj, rel, data)
 
 
 def _write_text(proj: Path, rel: str, text: str) -> bool:
@@ -673,20 +722,9 @@ def _write_text(proj: Path, rel: str, text: str) -> bool:
         return False
     _jrec(proj, rel)
     mode = stat.S_IMODE(target.stat().st_mode) if target.is_file() else 0o644
-    fd, tmp = tempfile.mkstemp(dir=str(base), prefix=target.name + ".", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape", newline="") as fh:
-            fh.write(text)
-            fh.flush()
-            os.fsync(fh.fileno())
-        os.chmod(tmp, mode)
-        os.replace(tmp, target)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    data = text.encode("utf-8", "surrogateescape")
+    _atomic_write(base, target.name, data, mode)
+    _jwrote(proj, rel, data)
     return True
 
 
@@ -802,7 +840,7 @@ def cmd_declare(args):
         raise Refused("asvs-level-out-of-range: 1-3")
     state = _read_intake(proj) or {}
     lock = _lenient_lock(proj)
-    prior = dict(state.get("declarations") or (lock or {}).get("declarations") or {})
+    prior = dict(state.get("declarations") or _decl(lock))
     classes = args.data_classification if args.data_classification is not None else prior.get("data_classification", [])
     for c in classes:
         if not CAT_RE.fullmatch(c):
@@ -842,6 +880,15 @@ def cmd_declare(args):
 
 
 # ---- lock -----------------------------------------------------------------------------------------
+
+PENDING = "pending"
+
+
+def _decl(lock) -> dict:
+    """The lock's declarations as a mapping ({} while they are still `pending`)."""
+    d = (lock or {}).get("declarations")
+    return d if isinstance(d, dict) else {}
+
 
 def _lenient_lock(proj: Path):
     """The lock as a mapping, or None when absent. A malformed lock raises (callers that must not fail use
@@ -950,12 +997,12 @@ def _filter_args(args, proj: Path):
         if lock is None:
             raise Refused("no-governance-lock")
         if surfaces is None:
-            surfaces = list(lock["declarations"]["surfaces"])
+            surfaces = _decl(lock).get("surfaces")
     return level, surfaces, lock
 
 
 def _lock_rules(rules, kits, lock):
-    return filter_rules(rules, kits, surfaces=list(lock["declarations"]["surfaces"]), lock=lock)
+    return filter_rules(rules, kits, surfaces=_decl(lock).get("surfaces"), lock=lock)
 
 
 # ---- install / three-way --------------------------------------------------------------------------
@@ -1146,12 +1193,14 @@ def write_rendered(proj: Path, docs: dict) -> list:
         if not target.is_file() or target.read_text(encoding="utf-8") != text:
             _jrec(proj, f"governance/rendered/{cat}.md")
             target.write_text(text, encoding="utf-8")
+            _jwrote(proj, f"governance/rendered/{cat}.md", text.encode("utf-8"))
             touched.append(f"governance/rendered/{cat}.md")
     for stale in out.glob("*.md"):
         if stale.stem not in docs and not stale.is_symlink() and \
                 is_generated(stale.read_text(encoding="utf-8", errors="replace")):
             _jrec(proj, f"governance/rendered/{stale.name}")
             stale.unlink()
+            _jwrote(proj, f"governance/rendered/{stale.name}", None)
             touched.append(f"governance/rendered/{stale.name}")
     return touched
 
@@ -1174,7 +1223,7 @@ def stack_lock_blueprint(root: Path, proj: Path):
 
 # ---- pull request ---------------------------------------------------------------------------------
 
-CRED_RE = re.compile(r"(\b[A-Za-z][A-Za-z0-9+.-]*://)[^/@\s]+@")
+CRED_RE = re.compile(r"(\b[A-Za-z][A-Za-z0-9+.-]*://)[^@\n]*@")
 
 
 def _redact(text) -> str:
@@ -1189,7 +1238,7 @@ def _tail(r) -> str:
 
 def pr_preflight(proj: Path, branch: str):
     """Everything a pull request needs, checked BEFORE anything is written: origin, gh, a clean tree, a branch
-    name. Returns (original_branch, branch_already_exists)."""
+    name. Returns (original_branch, branch_exists_locally, branch_exists_on_origin)."""
     r = _git(proj, "remote", "get-url", "origin")
     if r.returncode != 0 or not r.stdout.strip():
         raise Refused("no-origin: --pr needs a remote named origin (run without --pr to review the diff locally)")
@@ -1200,7 +1249,10 @@ def pr_preflight(proj: Path, branch: str):
     if not cur or cur == "HEAD":
         raise Refused("detached-head: check out a branch before using --pr")
     exists = _git(proj, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}").returncode == 0
-    return cur, exists
+    # exit 0 = the head exists on origin; 2 = it does not; anything else (unreachable origin) is "unknown", and the
+    # push step reports that honestly
+    remote = _git(proj, "ls-remote", "--exit-code", "--heads", "origin", branch).returncode == 0
+    return cur, exists, remote
 
 
 def _stage(proj: Path, rels: list) -> list:
@@ -1252,11 +1304,7 @@ def _plan_and_write(args, mode: str):
             notes.append(f"stack-profile.lock: absorbed (blueprint {seeded} carried into the governance lock; "
                          "one-time migration)")
             if decl is None:
-                doc = _blueprint_doc(root, seeded)
-                decl = {"asvs_level": 1, "data_classification": ["internal"], "trust_boundaries": [],
-                        "surfaces": sorted(doc.get("surfaces") or [])}
-                notes.append("declarations defaulted (asvs level 1, internal, no trust boundaries); "
-                             "run `declare` to set them")
+                decl = PENDING          # never silently defaulted: the operator declares (ASVS level, data, boundaries)
     if not bp_id:
         raise Refused("intake-incomplete: run `select --confirm <blueprint-id>` first")
     if decl is None:
@@ -1284,7 +1332,7 @@ def _plan_and_write(args, mode: str):
         if action != "unchanged":
             changes.append(f"{item['dest']}: {action}"
                            + (f" (kit version left at {item['dest']}.kit-new; the file is untouched)" if c else ""))
-        if action in ("created", "updated", "merged"):
+        if action in ("created", "updated", "merged", "unchanged"):
             touched.append(item["dest"])
         touched.append(f"{BASE_REL}/{item['dest']}")
     for rel in scaffold_local(proj):
@@ -1297,10 +1345,32 @@ def _plan_and_write(args, mode: str):
             _write_text(proj, LOCK_REL, _lock_text(lock))
             changes.append(f"{LOCK_REL}: {'written' if prior is None else 'bumped'}")
     touched.append(LOCK_REL)
-    for rel in write_rendered(proj, render_docs(_lock_rules(rules, kits, lock))):
+    docs = render_docs(_lock_rules(rules, kits, lock))
+    for rel in write_rendered(proj, docs):
         changes.append(f"{rel}: rendered")
         touched.append(rel)
+    # everything this verb manages, so `--pr` can commit it even when an earlier local run already wrote it
+    touched += [f"governance/rendered/{c}.md" for c in docs]
+    touched += ["governance/local/README.md", "governance/local/exceptions.yaml",
+                "governance/local/baselines/.gitkeep", "governance/local/adr/.gitkeep"]
     return proj, changes, touched, conflicts, notes
+
+
+def _uncommitted(proj: Path, touched: list) -> bool:
+    """True when governance files this verb manages are in the working tree but not committed: the lock is not
+    tracked, or any managed path is modified / untracked."""
+    if _git(proj, "ls-files", "--error-unmatch", "--", LOCK_REL).returncode != 0 and (proj / LOCK_REL).is_file():
+        return True
+    rels = sorted({t for t in touched if (proj / t).exists()})
+    if not rels:
+        return False
+    return bool(_git(proj, "status", "--porcelain", "--", *rels).stdout.strip())
+
+
+def _pending_line(proj: Path):
+    lock = _try_lock(proj)
+    if lock is not None and lock.get("declarations") == PENDING:
+        print("declarations pending: run `foundry_governance.py declare`")
 
 
 def _run_verb(args, mode: str) -> int:
@@ -1310,11 +1380,15 @@ def _run_verb(args, mode: str) -> int:
     use_pr, base_branch, branch, cur = bool(getattr(args, "pr", False)), getattr(args, "base", None), None, None
     if use_pr:
         branch = "governance/intake" if kind == "apply" else f"governance/upgrade-{_plugin_version(root) or 'next'}"
-        cur, exists = pr_preflight(proj, branch)
+        cur, exists, on_origin = pr_preflight(proj, branch)
         if exists:
             print(f"{kind} PR open: {branch} (merge or delete that branch, then run again)")
             return 0
-    _JOURNAL, switched = _Journal(), False
+        if on_origin:
+            print(f"branch-exists-on-origin:{branch} (a {kind} branch is already pushed; merge it, or delete it with "
+                  f"`git push origin --delete {branch}`, then run again)")
+            return 0
+    _JOURNAL, switched, pushed = _Journal(), False, False
     try:
         if use_pr:
             r = _git(proj, "checkout", "-q", "-b", branch)
@@ -1324,11 +1398,15 @@ def _run_verb(args, mode: str) -> int:
         proj, changes, touched, conflicts, notes = _plan_and_write(args, mode)
         for n in notes:
             print(n)
+        if not changes and not conflicts and use_pr and _uncommitted(proj, touched):
+            # the files are already in place (a local apply) but no governance branch carries them: commit them
+            changes = ["governance files already in place: committing the working-tree state"]
         if not changes and not conflicts:
             print(f"governance-{kind}: already current")
             if switched:
                 _git(proj, "checkout", "-q", cur)
                 _git(proj, "branch", "-D", branch)
+            _pending_line(proj)
             return 0
         for c in changes:
             print(f"  {c}")
@@ -1346,10 +1424,13 @@ def _run_verb(args, mode: str) -> int:
             title = "Governance intake" if kind == "apply" else "Governance upgrade"
             if _git(proj, "diff", "--cached", "--quiet").returncode == 0:
                 raise Refused("nothing-to-commit: every changed path is gitignored")
-            for st in (("commit", "-q", "-m", title), ("push", "-q", "-u", "origin", branch)):
-                r = _git(proj, *st)
-                if r.returncode != 0:
-                    raise Refused(f"git-{st[0]}-failed: {_tail(r)}")
+            r = _git(proj, "commit", "-q", "-m", title)
+            if r.returncode != 0:
+                raise Refused(f"git-commit-failed: {_tail(r)}")
+            r = _git(proj, "push", "-q", "-u", "origin", branch)
+            if r.returncode != 0:
+                raise Refused(f"git-push-failed: {_tail(r)}")
+            pushed = True
             gh = shutil.which("gh")
             r = subprocess.run([gh, "pr", "create", "--base", base_branch or cur, "--head", branch, "--title", title,
                                 "--body", _pr_body(kind, changes, notes)],
@@ -1359,12 +1440,18 @@ def _run_verb(args, mode: str) -> int:
             print(_redact((r.stdout.strip().splitlines() or ["pull request opened"])[-1]))
             _git(proj, "checkout", "-q", cur)
             switched = False
+        _pending_line(proj)
         return 1 if conflicts else 0
     except BaseException:
+        if pushed:              # the push succeeded but the pull request did not: do not leave an orphan branch
+            d = _git(proj, "push", "origin", "--delete", branch)
+            if d.returncode != 0:
+                print(f"remote-branch-not-deleted:{branch}: {_tail(d)}", file=sys.stderr)
         if switched:
             _git(proj, "checkout", "-q", "-f", cur)
             _git(proj, "branch", "-D", branch)
-        _JOURNAL.rollback()
+        for rel in _JOURNAL.rollback():
+            print(f"undo-skipped-modified:{rel}", file=sys.stderr)
         raise
     finally:
         _JOURNAL = None
@@ -1398,7 +1485,7 @@ def leak_findings(files: dict, lock=None, literals=()) -> list:
     product literal (foundry_blueprint's HOW/WHAT deny-list, generalised)."""
     bp = _bp()
     owned = [_fold(g) for g in ADOPTER_OWNED] + [
-        _fold(g) for g in (((lock or {}).get("declarations") or {}).get("trust_boundaries") or [])
+        _fold(g) for g in (_decl(lock).get("trust_boundaries") or [])
         if isinstance(g, str) and g]
     extras = [r"(?<!\w)" + re.escape(_fold(x)) + r"(?!\w)" for x in literals if isinstance(x, str) and x.strip()]
     out = []
@@ -1516,7 +1603,7 @@ def cmd_applicable(args):
     level, surfaces, lock = _filter_args(args, proj)
     rules = filter_rules(checked_effective(kits, local), kits, level=level, surfaces=surfaces, lock=lock)
     held = _try_lock(proj)
-    extra = [g for g in (((held or {}).get("declarations") or {}).get("trust_boundaries") or [])
+    extra = [g for g in (_decl(held).get("trust_boundaries") or [])
              if isinstance(g, str) and PATH_RE.fullmatch(g)]
     if extra:   # FG-SEC-032's security-review globs grow with the boundaries the adopter declared
         rules = [dict(r, applies_to=dict(r["applies_to"], paths=list(r["applies_to"]["paths"]) + extra))
@@ -1568,6 +1655,8 @@ def cmd_check(args):
             elif have != lk.get("version"):
                 findings.append(f"lock-version-drift:{lk.get('id')}: locked {lk.get('version')}, installed {have}")
         findings += _lock_drift(root, lock)
+        if lock.get("declarations") == PENDING:
+            findings.append("declarations-pending: run `foundry_governance.py declare --asvs-level N`")
     rdir = proj / "governance" / "rendered"
     if rdir.is_dir() or lock is not None:
         have_files = {p.stem: p for p in rdir.glob("*.md")} if rdir.is_dir() else {}
