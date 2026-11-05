@@ -1,18 +1,26 @@
 #!/usr/bin/env python3
 """governance-trace — the CI check that ties a PR to its ticket's Design (design §5.4, gv-16).
 
-    governance-trace.py ticket-ref --pr-json FILE
-    governance-trace.py check --pr-json FILE --ticket-json FILE [--project-dir DIR] [--plugin-root DIR] [--today YYYY-MM-DD] [--json]
+    governance-trace.py ticket-ref --pr-json FILE            prints `OWNER/NAME#N` (or `#N`) for the ticket the PR names
+    governance-trace.py check --pr-json FILE --ticket-json FILE [--files-json FILE] [--repo OWNER/NAME]
+                              [--project-dir PR_HEAD_DIR] [--base-dir BASE_REF_DIR] [--plugin-root DIR] [--today YYYY-MM-DD] [--json]
 
-`--pr-json` is `gh pr view <n> --json number,body,files` and `--ticket-json` is `gh issue view <n> --json number,body,labels`;
-this script never calls `gh` or the network itself, so the job template runs the two reads and hands the files over.
+`--pr-json` is `gh pr view <n> --json number,body`, `--files-json` the PAGED changed-file list (`gh api --paginate
+repos/O/R/pulls/N/files`, one `{"path": ...}` per file; without it `--pr-json` must carry `files`) and `--ticket-json` is
+`gh issue view <n> --repo <the repo of the ticket ref> --json number,body,labels,author`. The script calls `gh` only to vet the
+ticket author who is not a registered operator (`gh api user`, the collaborator permission); everything else is files.
+
+TWO TREES. The policy, the locked blueprint, the declared trust boundaries and the operator list decide what is governed and who
+is trusted, so they are read from `--base-dir` (a checkout of the PR's BASE ref): a PR cannot loosen the class that grades it.
+`--project-dir` (the PR head) supplies only what the PR itself produces: `governance/rendered/` and the exceptions file.
 It checks, and reports EVERY failing check (exit 1; exit 0 when all pass; exit 2 on bad input):
 
   ticket-named        the PR body names a ticket (`Ticket: #N`, `Closes|Fixes|Resolves|Refs #N`, `OWNER/NAME#N`)
+  ticket-author       the ticket's author is trusted (a registered operator, or a write collaborator other than the agent)
   design-present      a diff that touches a design-required path has a `## Design` that cites at least one existing id
   cited-ids-exist     every id the Design cites exists in the effective rules (kits + governance/local)
   paths-in-design     every changed path falls within the Design's components (a file, a directory, or a glob);
-                      `governance/rendered/` is generated and exempt. Without a Design, below the design-required
+                      `governance/rendered/` is generated and exempt; a component that matches everything (`**`) is refused. Without a Design, below the design-required
                       class, the check passes with a note (the sections are a checklist there).
   rendered-fresh      `governance/rendered/` matches what `foundry_governance.py render` would write
   exceptions-live     no exception in `governance/local/exceptions.yaml` has expired
@@ -35,7 +43,7 @@ import sys
 from pathlib import Path
 
 PR_REF_RE = re.compile(
-    r"(?im)^[ \t>*-]*(?:ticket|closes|fixes|resolves|refs?)[ \t]*:?[ \t]*(?:[\w.-]+/[\w.-]+)?#(\d+)\b")
+    r"(?im)^[ \t>*-]*(?:ticket|closes|fixes|resolves|refs?)[ \t]*:?[ \t]*(?:([\w.-]+/[\w.-]+))?#(\d+)\b")
 RENDERED_PREFIX = "governance/rendered/"
 
 
@@ -58,8 +66,32 @@ def _load_ticket_module(plugin: Path):
 
 
 def ticket_ref(pr: dict):
+    """(repo or None, number) of the first ticket the PR body names, or (None, None)."""
     m = PR_REF_RE.search(pr.get("body") or "")
-    return int(m.group(1)) if m else None
+    return (m.group(1), int(m.group(2))) if m else (None, None)
+
+
+def _too_broad(component: str, g) -> bool:
+    """A component that matches (nearly) any path says nothing about where the change is."""
+    c = component.strip("/")
+    if c in ("*", "**", "**/*", "*/**"):
+        return True
+    if g is None:
+        return False
+    try:
+        rx = g.glob_re(component)
+    except Exception:  # noqa: BLE001
+        return False
+    return all(rx.fullmatch(p) for p in ("x.py", "a/b.py", "a/b/c/d.txt", "docs/x/y/z.md"))
+
+
+def _default_gh_json(args):
+    import subprocess
+    try:
+        r = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=60)
+        return json.loads(r.stdout) if r.returncode == 0 else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
 
 
 def _within(path: str, components: list, gv: dict, ft) -> bool:
@@ -76,8 +108,11 @@ def _within(path: str, components: list, gv: dict, ft) -> bool:
     return False
 
 
-def run_checks(pr: dict, ticket: dict, project: Path, plugin: Path, today: str | None) -> list:
+def run_checks(pr: dict, ticket: dict, project: Path, plugin: Path, today: str | None, base: Path | None = None,
+               gh_json=None, repo: str | None = None, files: list | None = None) -> list:
     ft = _load_ticket_module(plugin)
+    base = base or project
+    gh_json = gh_json or _default_gh_json
     findings = []
 
     def add(check, ok, detail, path=None):
@@ -86,18 +121,23 @@ def run_checks(pr: dict, ticket: dict, project: Path, plugin: Path, today: str |
             f["path"] = path
         findings.append(f)
 
-    n = ticket_ref(pr)
+    ref_repo, n = ticket_ref(pr)
     add("ticket-named", n is not None,
-        f"the PR names ticket #{n}" if n else "the PR body names no ticket (add `Ticket: #<n>`)")
-    files = [str(f.get("path") if isinstance(f, dict) else f) for f in (pr.get("files") or [])]
-    files = [f for f in files if f and f != "None"]
+        f"the PR names ticket {(ref_repo or '') + '#' + str(n)}" if n else "the PR body names no ticket (add `Ticket: #<n>`)")
+    raw_files = files if files is not None else (pr.get("files") or [])
+    changed = [str(f.get("path") if isinstance(f, dict) else f) for f in raw_files]
+    changed = [f for f in changed if f and f != "None"]
+    # the ticket author must be trusted: a Design from an untrusted account is not a Design
+    login = ((ticket or {}).get("author") or {}).get("login") or ""
+    trust_repo = ref_repo or repo
+    ok_a, why_a = ft.author_trusted(trust_repo, login, gh_json, operators=ft.trusted_operator_logins(base))
+    add("ticket-author", ok_a, why_a)
     body = (ticket or {}).get("body") or ""
-    gv = ft.governance_context(project)
-    view = ft.design_view(body, (ticket or {}).get("labels") or [], gv=gv, root=project)
+    gv = ft.governance_context(base)               # policy, lock, boundaries and rules from the BASE ref
+    view = ft.design_view(body, (ticket or {}).get("labels") or [], gv=gv, root=base)
     design = view["design"]
-    governed = [f for f in files if ft._matches_any(gv, f, gv["design_globs"]) or ft._matches_any(gv, f, gv["sec_globs"])]
+    governed = [f for f in changed if ft._matches_any(gv, f, gv["design_globs"]) or ft._matches_any(gv, f, gv["sec_globs"])]
     needs_design = bool(governed) or view["design_required"]
-    # design-present + cited-ids-exist
     if needs_design:
         defects = ft.design_defects(ft.parse_sections(body), gv)
         add("design-present", not any(d.startswith(("no `## Design`", "`## Design` cites no")) for d in defects),
@@ -111,9 +151,13 @@ def run_checks(pr: dict, ticket: dict, project: Path, plugin: Path, today: str |
         unknown = [i for i in design["cites"] if i not in gv["rules"]] if (design["present"] and not gv.get("error")) else []
         add("design-present", True, "below the design-required class: the sections are a checklist")
         add("cited-ids-exist", not unknown, ("unknown cited id(s): " + ", ".join(unknown)) if unknown else "every cited id exists")
-    # paths-in-design
-    scoped = [f for f in files if not f.startswith(RENDERED_PREFIX)]
-    if design["present"] and design["components"]:
+    scoped = [f for f in changed if not f.startswith(RENDERED_PREFIX)]
+    g = gv.get("_gov")
+    broad = [c for c in design["components"] if _too_broad(c, g)]
+    if broad:
+        add("paths-in-design", False, "the Design's component(s) " + ", ".join(broad) + " match every path, so they say nothing about "
+            "where the change is; name the directories or files")
+    elif design["present"] and design["components"]:
         outside = [f for f in scoped if not _within(f, design["components"], gv, ft)]
         if outside:
             for f in outside:
@@ -124,19 +168,20 @@ def run_checks(pr: dict, ticket: dict, project: Path, plugin: Path, today: str |
         add("paths-in-design", False, "the Design names no components, so no changed path can be shown to be inside it")
     else:
         add("paths-in-design", True, "no Design components declared; below the design-required class")
-    # rendered-fresh, exceptions-live (foundry_governance.py check, in-process)
-    g = gv.get("_gov")
-    if g is None:
-        add("rendered-fresh", False, f"governance module unreadable: {gv.get('error')}")
-        add("exceptions-live", False, f"governance module unreadable: {gv.get('error')}")
+    # rendered-fresh, exceptions-live: what the PR itself produces, judged on the PR head (foundry_governance.py check)
+    gp = ft.governance_context(project)
+    gm = gp.get("_gov")
+    if gm is None:
+        add("rendered-fresh", False, f"governance module unreadable: {gp.get('error')}")
+        add("exceptions-live", False, f"governance module unreadable: {gp.get('error')}")
     else:
         ns = argparse.Namespace(project_dir=str(project), plugin_root=str(plugin), today=today)
         buf = io.StringIO()
         try:
             with contextlib.redirect_stdout(buf):
-                g.cmd_check(ns)
+                gm.cmd_check(ns)
             lines = [ln for ln in buf.getvalue().splitlines() if ln and not ln.startswith("governance-check-ok") and "SKIP exception" not in ln]
-        except g.Refused as e:
+        except gm.Refused as e:
             lines = [f"refused: {e}"]
         stale = [ln for ln in lines if ln.startswith(("rendered-stale", "lock-"))]
         exc = [ln for ln in lines if ln not in stale]
@@ -153,7 +198,10 @@ def main(argv=None) -> int:
     p = sub.add_parser("check")
     p.add_argument("--pr-json", required=True)
     p.add_argument("--ticket-json", required=True)
-    p.add_argument("--project-dir")
+    p.add_argument("--project-dir", help="the PR head checkout (rendered rules, exceptions)")
+    p.add_argument("--base-dir", help="a checkout of the PR's BASE ref (policy, lock, boundaries, operators); default: --project-dir")
+    p.add_argument("--files-json", help="the paged changed-file list: a JSON list of {\"path\": ...}")
+    p.add_argument("--repo", help="OWNER/NAME of the repository the PR is in (the default repo of a bare #N ticket ref)")
     p.add_argument("--plugin-root")
     p.add_argument("--today")
     p.add_argument("--json", action="store_true")
@@ -161,15 +209,17 @@ def main(argv=None) -> int:
     try:
         pr = json.loads(Path(a.pr_json).read_text(encoding="utf-8"))
         if a.verb == "ticket-ref":
-            n = ticket_ref(pr)
+            r, n = ticket_ref(pr)
             if n is None:
                 print("ticket-named: the PR body names no ticket", file=sys.stderr)
                 return 1
-            print(n)
+            print(f"{r or ''}#{n}")
             return 0
         ticket = json.loads(Path(a.ticket_json).read_text(encoding="utf-8"))
         project = Path(a.project_dir or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve()
-        findings = run_checks(pr, ticket, project, _plugin_root(a.plugin_root), a.today)
+        files = json.loads(Path(a.files_json).read_text(encoding="utf-8")) if a.files_json else None
+        base = Path(a.base_dir).resolve() if a.base_dir else None
+        findings = run_checks(pr, ticket, project, _plugin_root(a.plugin_root), a.today, base=base, repo=a.repo, files=files)
     except (OSError, ValueError) as e:
         print(f"refused: {e}", file=sys.stderr)
         return 2

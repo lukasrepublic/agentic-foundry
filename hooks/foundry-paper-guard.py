@@ -142,16 +142,10 @@ def _apply_edits(text: str, ti: dict):
 
 
 def _package_json_touches_ci(ti: dict, abs_path: Path) -> bool:
-    """package.json is CI when the edit touches its `scripts`, `jest` or `vitest` block (an ordinary dependency edit
-    is not). The edit is SIMULATED on the current file and the blocks compared, so a change to one line inside
-    `scripts` is seen even though the snippet never names the block; whatever cannot be parsed is treated as CI."""
-    texts = [ti.get("old_string"), ti.get("new_string")]
-    for e in ti.get("edits") or []:
-        if isinstance(e, dict):
-            texts += [e.get("old_string"), e.get("new_string")]
-    if any(isinstance(t, str) and (_TEST_SCRIPT_RE.search(t) or _PKG_BLOCK_RE.search(t)) for t in texts):
-        return True
-
+    """package.json is CI when the edit changes its TOP-LEVEL `scripts`, `jest` or `vitest` block (a dependency edit is
+    not, even a `"jest": "^29"` line under devDependencies). The edit is SIMULATED on the current file and the blocks
+    compared; only when the file is missing or unparseable (or the edit cannot be simulated) does the snippet text decide,
+    and then fail-closed on a block or test-script key."""
     def blocks(txt):
         try:
             doc = json.loads(txt)
@@ -162,18 +156,20 @@ def _package_json_touches_ci(ti: dict, abs_path: Path) -> bool:
         old_text = abs_path.read_text(encoding="utf-8")
     except OSError:
         old_text = None
+    old = blocks(old_text) if old_text else None
     if isinstance(ti.get("content"), str):             # a whole-file Write: compare the blocks
-        new_text = ti["content"]
-        if old_text is None:
-            old_text = ""
-    else:
-        if old_text is None:
-            return False
+        new = blocks(ti["content"])
+        return new is None or new != (old if old is not None else {k: None for k in _PKG_KEYS})
+    if old is not None:
         new_text = _apply_edits(old_text, ti)
-        if new_text is None or new_text == old_text:
-            return False
-    new, old = blocks(new_text), (blocks(old_text) if old_text else {k: None for k in _PKG_KEYS})
-    return new is None or old is None or new != old
+        if new_text is not None:
+            new = blocks(new_text)
+            return new is None or new != old
+    texts = [ti.get("old_string"), ti.get("new_string")]
+    for e in ti.get("edits") or []:
+        if isinstance(e, dict):
+            texts += [e.get("old_string"), e.get("new_string")]
+    return any(isinstance(t, str) and (_TEST_SCRIPT_RE.search(t) or _PKG_BLOCK_RE.search(t)) for t in texts)
 
 
 def _ci_prefixes() -> list:
@@ -225,16 +221,40 @@ def _refuse(reason: str) -> int:
     return 2
 
 
-_WRITE_VERBS_ALL = {"tee", "rm", "truncate", "mv", "touch", "shred", "unlink"}   # every positional operand is written
-_DEST_VERBS = {"cp", "install", "rsync", "ln"}                                      # the LAST operand is written
+_FILE_VERBS = {"tee", "truncate", "touch"}                 # every positional operand is written
+_REMOVE_VERBS = {"rm", "shred", "unlink"}                  # every positional operand is removed
+_DEST_VERBS = {"cp", "install", "rsync", "ln", "mv"}       # the LAST operand is the destination; mv also removes the rest
 _WRAPPERS = {"sudo", "command", "env", "nohup", "time", "exec"}
 
 
+def _split_newlines(command: str) -> str:
+    """An unquoted newline separates commands exactly like `;`: turn it into one."""
+    out, quote, esc = [], None, False
+    for ch in command:
+        if esc:
+            esc = False
+        elif ch == "\\" and quote != "'":
+            esc = True
+        elif quote:
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+        elif ch == "\n":
+            out.append(" ; ")
+            continue
+        out.append(ch)
+    return "".join(out)
+
+
 def _bash_write_targets(command: str) -> list:
-    """Candidate write targets named by a Bash command: `sed -i` / `perl -i` operands, `tee`, `>` / `>>` redirects,
-    cp/mv/rm/truncate/install/ln/rsync, `dd of=`. A reading of the command text, not a shell: whatever it cannot see
-    (a path built by expansion, `python -c`) is out of reach, which is why this is a visibility control."""
+    """Write targets named by a Bash command, as (path, kind, sources) with kind `file` (written), `remove` (deleted or moved
+    away) or `dest` (a cp/mv/install/ln/rsync destination; it may be a directory the sources land in). Covers `sed -i` /
+    `perl -i` operands, `tee`, `>` / `>>` redirects, cp/mv/rm/truncate/install/ln/rsync and `dd of=`. A reading of the
+    command text, not a shell: whatever it cannot see (a path built by expansion, `python -c`) is out of reach, which is why
+    this is a visibility control."""
     import shlex
+    command = _split_newlines(command)
     try:
         lex = shlex.shlex(command, posix=True, punctuation_chars=True)
         lex.whitespace_split = True
@@ -255,13 +275,17 @@ def _bash_write_targets(command: str) -> list:
         flags = [a for a in rest if a.startswith("-")]
         if verb in ("sed", "gsed", "perl") and any(re.fullmatch(r"-[A-Za-z]*i[A-Za-z0-9._]*", f) or f.startswith("--in-place")
                                                   for f in flags):
-            out.extend(pos)                              # the script text never resolves to a CI path; the files do
-        elif verb in _WRITE_VERBS_ALL:
-            out.extend(pos)
+            out.extend((p, "file", []) for p in pos)     # the script text never resolves to a CI path; the files do
+        elif verb in _FILE_VERBS:
+            out.extend((p, "file", []) for p in pos)
+        elif verb in _REMOVE_VERBS:
+            out.extend((p, "remove", []) for p in pos)
         elif verb in _DEST_VERBS and pos:
-            out.append(pos[-1])
+            out.append((pos[-1], "dest", pos[:-1]))
+            if verb == "mv":
+                out.extend((p, "remove", []) for p in pos[:-1])
         elif verb == "dd":
-            out.extend(a.split("=", 1)[1] for a in rest if a.startswith("of="))
+            out.extend((a.split("=", 1)[1], "file", []) for a in rest if a.startswith("of="))
 
     i = 0
     while i < len(toks):
@@ -271,7 +295,7 @@ def _bash_write_targets(command: str) -> list:
         elif t and set(t) <= set("<>&|") and (">" in t or "<" in t):   # a redirect operator: its operand is the next word
             tgt = toks[i + 1] if i + 1 < len(toks) else ""
             if ">" in t and tgt and not tgt.isdigit() and not tgt.startswith("&"):
-                out.append(tgt)
+                out.append((tgt, "file", []))
             i += 1
         elif t.isdigit() and i + 1 < len(toks) and set(toks[i + 1]) <= set("<>&") and ">" in toks[i + 1]:
             pass                                         # the fd number of `2>file`
@@ -279,19 +303,36 @@ def _bash_write_targets(command: str) -> list:
             words.append(t)
         i += 1
     finish()
-    return [x for x in out if x]
+    return [x for x in out if x[0]]
 
 
-def _resolve_rel(target: str, root: Path, base: Path):
-    """Root-relative path of the FILE the write lands on (symlinks followed, not only the parent), or None when it
-    lands outside the project root."""
+def _resolve_rels(target: str, root: Path, base: Path) -> list:
+    """Root-relative paths the write can be judged by: the LINK path (parent resolved, name kept) and the fully resolved
+    FILE path (symlinks followed). Either may be a CI path; a path that lands outside the project root is dropped."""
     abs_t = Path(target).expanduser()
     if not abs_t.is_absolute():
         abs_t = base / abs_t
-    try:
-        return abs_t.resolve().relative_to(root)
-    except Exception:
-        return None
+    rels = []
+    for cand in (lambda: abs_t.parent.resolve() / abs_t.name, lambda: abs_t.resolve()):
+        try:
+            r = cand().relative_to(root)
+        except Exception:
+            continue
+        if r not in rels:
+            rels.append(r)
+    return rels
+
+
+def _bash_ci_hit(rel: Path, kind: str, srcs: list, root: Path, base: Path, raw: str):
+    """True when this Bash write lands on (or removes) a CI path. A directory destination is judged by what lands in it."""
+    if rel.name == "package.json" and kind != "remove":
+        return False      # a shell edit of package.json cannot be classified by block: the Edit/Write tools carry that check
+    if kind == "remove":
+        return _is_ci(rel, root, {}) or ci_overlaps(rel.as_posix(), root)
+    if kind == "dest" and (raw.endswith("/") or (root / rel).is_dir()):
+        names = [Path(x).name for x in srcs if Path(x).name] or ["_"]
+        return any(_is_ci(rel / n, root, {}) for n in names)
+    return _is_ci(rel, root, {})
 
 
 def _load_ticket(root: Path):
@@ -336,12 +377,10 @@ def _main_bash(payload: dict, root: Path) -> int:
     base = Path(cwd) if isinstance(cwd, str) and cwd and Path(cwd).is_absolute() else root
     doc = _load_ticket(root)
     lists, sig_ok = _ci_lists(doc, root)
-    for tgt in _bash_write_targets(command):
-        rel = _resolve_rel(tgt, root, base)
-        if rel is None or rel.name == "package.json" or not _is_ci(rel, root, {}):
-            continue      # (a shell edit of package.json cannot be classified by block: the Edit/Write tools carry that check)
-        if not _allowed(rel, lists):
-            return _refuse_ci(rel, doc, sig_ok)
+    for tgt, kind, srcs in _bash_write_targets(command):
+        for rel in _resolve_rels(tgt, root, base):          # the link AND the file it resolves to: either being CI refuses
+            if _bash_ci_hit(rel, kind, srcs, root, base, tgt) and not _allowed(rel, lists):
+                return _refuse_ci(rel, doc, sig_ok)
     return 0
 
 
@@ -360,23 +399,23 @@ def main() -> int:
     if not target:
         return 0
     root = _root()
-    rel = _resolve_rel(target, root, root)
-    if rel is None:
+    rels = _resolve_rels(target, root, root)        # the link path AND the file it resolves to; each is judged
+    if not rels:
         return 0  # outside the project → not our business
-    is_paper = _is_paper(rel)
-    is_ci = (not is_paper) and _is_ci(rel, root, ti)
-    if not (is_paper or is_ci):
-        return 0
-
     doc = _load_ticket(root)
-    if is_ci:
-        lists, sig_ok = _ci_lists(doc, root)
-        if _allowed(rel, lists):
-            return 0
-        return _refuse_ci(rel, doc, sig_ok)
-    if doc and _allowed(rel, doc.get("paper_allowed") or []):
-        return 0
+    lists, sig_ok = _ci_lists(doc, root)
+    for rel in rels:
+        is_paper = _is_paper(rel)
+        is_ci = (not is_paper) and _is_ci(rel, root, ti)
+        if is_ci:
+            if not _allowed(rel, lists):
+                return _refuse_ci(rel, doc, sig_ok)
+        elif is_paper and not (doc and _allowed(rel, doc.get("paper_allowed") or [])):
+            return _refuse_paper(rel, doc)
+    return 0
 
+
+def _refuse_paper(rel: Path, doc) -> int:
     p = rel.as_posix()
     if doc:
         return _refuse("ticket #%s does not allow writing %s. If the operator asked for this document, run "

@@ -4,6 +4,7 @@ The script is pure over the files the job hands it (`gh pr view` / `gh issue vie
 here. Assertions are on the parsed JSON findings: check name, ok flag, and the path a finding names.
 """
 import json
+import os
 import re
 import subprocess
 import sys
@@ -36,19 +37,48 @@ def proj(tmp_path):
     (p / ".foundry").mkdir(parents=True)
     (p / ".foundry" / "operating-model.yaml").write_text(
         'schema_version: 1\ngovernance:\n  design_required_paths: ["hooks/**", "skills/**"]\n')
+    (p / ".claude").mkdir()
+    (p / ".claude" / "foundry-project.json").write_text(json.dumps(
+        {"github_scope": {"owner": "o", "planning_repo": "o/p", "operators": {"alice": "op_a"}}}))
     return p
 
 
-def run(proj, tmp_path, *, pr_body="Ticket: #7\n", files=("hooks/foundry-example.py",), ticket_body=DESIGN, labels=(), today=None):
+@pytest.fixture(autouse=True)
+def gh_path(tmp_path):
+    """A `gh` on PATH that answers the two trust probes and logs argv: nothing real is called."""
+    d = tmp_path / "ghbin"
+    d.mkdir()
+    g = d / "gh"
+    g.write_text("#!/bin/sh\necho \"$@\" >> \"$GH_LOG\"\ncase \"$*\" in\n"
+                 "  'api user') echo '{\"login\": \"agent-bot\"}';;\n"
+                 "  *collaborators/carol/*) echo '{\"permission\": \"write\"}';;\n"
+                 "  *) echo '{\"permission\": \"read\"}';;\nesac\n")
+    g.chmod(0o755)
+    return d
+
+
+def run(proj, tmp_path, *, pr_body="Ticket: #7\n", files=("hooks/foundry-example.py",), ticket_body=DESIGN, labels=(), today=None,
+        author="alice", base=None, paged=False, extra=()):
     pr = tmp_path / "pr.json"
     ticket = tmp_path / "ticket.json"
-    pr.write_text(json.dumps({"number": 3, "body": pr_body, "files": [{"path": f} for f in files]}))
-    ticket.write_text(json.dumps({"number": 7, "body": ticket_body, "labels": [{"name": n} for n in labels]}))
+    doc = {"number": 3, "body": pr_body}
+    if not paged:
+        doc["files"] = [{"path": f} for f in files]
+    pr.write_text(json.dumps(doc))
+    ticket.write_text(json.dumps({"number": 7, "body": ticket_body, "labels": [{"name": n} for n in labels],
+                                  "author": {"login": author}}))
     cmd = [sys.executable, str(CHECK), "check", "--pr-json", str(pr), "--ticket-json", str(ticket), "--project-dir", str(proj),
-           "--plugin-root", str(ROOT), "--json"]
+           "--plugin-root", str(ROOT), "--repo", "o/r", "--json", *extra]
+    if paged:
+        fj = tmp_path / "files.json"
+        fj.write_text(json.dumps([{"path": f} for f in files]))
+        cmd += ["--files-json", str(fj)]
+    if base is not None:
+        cmd += ["--base-dir", str(base)]
     if today:
         cmd += ["--today", today]
-    p = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    env = dict(os.environ, PATH=str(tmp_path / "ghbin") + os.pathsep + os.environ["PATH"], GH_LOG=str(tmp_path / "gh.log"))
+    p = subprocess.run(cmd, capture_output=True, text=True, timeout=120, env=env)
     return p, (json.loads(p.stdout) if p.stdout.strip().startswith("{") else None)
 
 
@@ -101,7 +131,10 @@ def test_ticket_ref_prints_the_number(tmp_path):
     f = tmp_path / "pr.json"
     f.write_text(json.dumps({"body": "Summary\n\nCloses o/r#41\n"}))
     p = subprocess.run([sys.executable, str(CHECK), "ticket-ref", "--pr-json", str(f)], capture_output=True, text=True)
-    assert p.returncode == 0 and p.stdout.strip() == "41"
+    assert p.returncode == 0 and p.stdout.strip() == "o/r#41"                              # a cross-repo ref keeps its repo
+    f.write_text(json.dumps({"body": "Closes #9\n"}))
+    assert subprocess.run([sys.executable, str(CHECK), "ticket-ref", "--pr-json", str(f)], capture_output=True, text=True).stdout.strip() == "#9"
+    f.write_text(json.dumps({"body": "Summary\n\nCloses o/r#41\n"}))
     f.write_text(json.dumps({"body": "nothing"}))
     p = subprocess.run([sys.executable, str(CHECK), "ticket-ref", "--pr-json", str(f)], capture_output=True, text=True)
     assert p.returncode == 1

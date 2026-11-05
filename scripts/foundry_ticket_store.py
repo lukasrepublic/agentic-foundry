@@ -397,21 +397,26 @@ def heartbeat_claims(root: Path | None, session_id: str, now: float) -> list[str
 
 
 def _gate_root(cwd) -> Path:
-    """The repository a push is aimed at. The pushing cwd's git toplevel wins over CLAUDE_PROJECT_DIR when the two
-    differ (a worktree or a sibling checkout is not the project dir: its ticket and claims are the ones that
-    count); CLAUDE_PROJECT_DIR is the answer only when the cwd is not inside a git repository (gv-16)."""
+    """The workspace a push is judged in. The pushing cwd's git toplevel wins over CLAUDE_PROJECT_DIR when the two differ AND
+    it carries `.claude/foundry-project.json` (a worktree or a sibling workspace checkout has its own ticket and claims). A
+    toplevel with no project file (a product clone pushed from inside the workspace) is NOT the answer: the push is still
+    gated by the workspace's ticket, so CLAUDE_PROJECT_DIR wins. The toplevel is the fallback only when there is no
+    CLAUDE_PROJECT_DIR (gv-16)."""
+    top = None
     if cwd:
         try:
-            top = subprocess.run(["git", "-C", str(cwd), "rev-parse", "--show-toplevel"], capture_output=True,
-                                 text=True, timeout=10)
-            if top.returncode == 0 and top.stdout.strip():
-                return Path(top.stdout.strip()).resolve()
+            r = subprocess.run(["git", "-C", str(cwd), "rev-parse", "--show-toplevel"], capture_output=True,
+                               text=True, timeout=10)
+            if r.returncode == 0 and r.stdout.strip():
+                top = Path(r.stdout.strip()).resolve()
         except Exception:
             pass
+    if top is not None and (top / ".claude" / "foundry-project.json").is_file():
+        return top
     env = os.environ.get("CLAUDE_PROJECT_DIR")
     if env and Path(env).is_dir():
         return Path(env).resolve()
-    return project_root()
+    return top if top is not None else project_root()
 
 
 def _team_scope(root: Path):

@@ -102,12 +102,15 @@ def test_the_authenticated_gh_user_is_not_trusted_by_that_fact(repo):
     assert ok is False and "agent itself" in why
 
 
-def test_a_registered_operator_is_trusted_even_when_it_is_the_gh_user(repo):
+def test_a_registered_operator_is_trusted_unless_it_is_the_gh_user(repo):
     (repo / ".claude").mkdir()
     (repo / ".claude" / "foundry-project.json").write_text(json.dumps(
         {"github_scope": {"owner": "o", "planning_repo": "o/p", "operators": {"alice": "op_a"}}}))
-    ok, why = ft.author_trusted("o/r", "Alice", gh_user("alice"))
+    ok, why = ft.author_trusted("o/r", "Alice", gh_user("agent"))
     assert ok is True and "registered operator" in why
+    # round 1: the agent-identity check runs FIRST, so a registered operator that IS the gh user is not trusted for its own bodies
+    ok, why = ft.author_trusted("o/r", "Alice", gh_user("alice"))
+    assert ok is False and "agent itself" in why and "nominal" in why
 
 
 def test_the_operator_registry_github_handle_counts(repo):
@@ -408,14 +411,19 @@ def test_claim_gate_through_the_hook_uses_the_ambient_session(tmp_path):
 
 
 def test_gate_root_prefers_the_pushing_cwds_toplevel_over_the_project_dir(tmp_path, monkeypatch):
-    a, b = _team(tmp_path, "a"), tmp_path / "b"
-    b.mkdir()
-    subprocess.run(["git", "init", "-q", "-b", "main", str(b)], check=True)
+    a, b = _team(tmp_path, "a"), _team(tmp_path, "b")
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(a))
-    assert store._gate_root(str(b)) == b.resolve()                                    # the cwd's repo wins
+    assert store._gate_root(str(b)) == b.resolve()                                    # the cwd's repo carries a project file: it wins
     sub = b / "deep"
     sub.mkdir()
     assert store._gate_root(str(sub)) == b.resolve()                                  # its toplevel, not the cwd itself
+    clone = tmp_path / "product-clone"                                                # round 1: a clone with NO project file
+    clone.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main", str(clone)], check=True)
+    assert store._gate_root(str(clone)) == a.resolve()                                # ... is still gated by the workspace
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR")
+    assert store._gate_root(str(clone)) == clone.resolve()                            # no project dir at all: the toplevel
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(a))
     assert store._gate_root(str(tmp_path / "not-a-repo-dir-xyz")) == a.resolve()      # control: no repo at the cwd
     assert store._gate_root(None) == a.resolve()
 

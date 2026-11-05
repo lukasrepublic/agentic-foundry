@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """foundry_om_trace — the operating-model traceability table (AC-OM-10, gv-16).
 
-    foundry_om_trace.py --charters DIR [--prompt FILE] [--json] [--strict]
+    foundry_om_trace.py --charters DIR [--prompt FILE] [--json]
 
 Maps every rule of the operating-model port prompt (A1 .. G3) to the acceptance criteria of the programme's charters
 and exits 1, naming each rule that maps to none. READ-ONLY: it reads the charter files (and, with --prompt, the
 prompt's own rule headings) and prints a table; it writes nothing and runs no network call.
 
-A charter MAPS a rule when the rule id appears in the charter's `## Goal` section or in one of its
-`## Acceptance criteria` bullets, and the charter has at least one acceptance criterion. A mention inside an
-acceptance-criterion bullet is the strong form (the row names the bullet's `AC-...` id when it has one); a mention
-in the Goal is the weak form (the charter's acceptance criteria collectively realise what its Goal declares). With
-`--strict` only the strong form counts. A single-letter range such as `A1-A4` or `F1-F4` expands; a cross-letter
-span written `A1..G3` is NOT a range and maps nothing (it would map every rule to the line that names the span).
+A charter MAPS a rule when the rule id appears in one of its acceptance criteria: a bullet under `## Acceptance criteria`,
+or the text of an `## Amendments` table row that carries `New AC:` (the row's "what changed" cell, which also names the rule it
+adds). The row names the criterion's `AC-...` id when it has one. A mention in the charter's Goal is NOT a mapping: a Goal
+sentence does not say which criterion checks the rule. A single-letter range such as `A1-A4`, `A1-4` or `F1-F4` expands; the
+hyphen must touch both ends (`D3 - 4 PRs` is not a range), and a cross-letter span written `A1..G3` maps nothing (it would map
+every rule to the line that names the span). The deck runs this over the workspace's charters directory, which lives outside the
+plugin; `tests/fixtures/om-trace/charters/` is a copy of the current charters for the repository's own test.
 
 `--prompt FILE` checks the embedded rule list against the prompt's own `A1. Title ...` headings and exits 2 on
 a difference (the list in this file is then out of date).
@@ -69,7 +70,7 @@ _HEADING = re.compile(r"^##[ \t]+(.+?)[ \t]*$", re.M)
 _BULLET = re.compile(r"^(?:[-*+]|\d+[.)])[ \t]+(.*)$")
 _AC_ID = re.compile(r"\bAC-[A-Z]+-\d+\b")
 # `A1`, `A1-A4`, `A1–4`; never part of a longer word, never an endpoint of an `A1..G3` span.
-_TOKEN = re.compile(r"(?<![\w.])(?<!\.\.)([A-G])(\d{1,2})(?:[ \t]*[–—-][ \t]*(?:\1)?(\d{1,2}))?(?![\w])(?!\.\.)")
+_TOKEN = re.compile(r"(?<![\w.])(?<!\.\.)([A-G])(\d{1,2})(?:[–—-](?:\1)?(\d{1,2})|[ \t]+[–—-][ \t]+\1(\d{1,2}))?(?![\w])(?!\.\.)")
 
 
 def _sections(text: str) -> dict:
@@ -85,7 +86,7 @@ def rule_mentions(text: str) -> set:
     """Rule ids named in `text` (single ids, and same-letter ranges expanded). Only ids in RULE_IDS count."""
     found = set()
     for m in _TOKEN.finditer(text):
-        letter, lo, hi = m.group(1), int(m.group(2)), m.group(3)
+        letter, lo, hi = m.group(1), int(m.group(2)), (m.group(3) or m.group(4))
         top = int(hi) if hi else lo
         if top < lo or top - lo > 12:
             continue
@@ -99,7 +100,6 @@ def rule_mentions(text: str) -> set:
 def charter_facts(path: Path) -> dict:
     text = path.read_text(encoding="utf-8")
     secs = _sections(text)
-    goal = next((v for k, v in secs.items() if k == "goal"), "")
     ac_text = next((v for k, v in secs.items() if k.startswith("acceptance criteria")), "")
     acs, cur = [], None
     for line in ac_text.split("\n"):
@@ -112,28 +112,29 @@ def charter_facts(path: Path) -> dict:
     for ac in acs:
         m = _AC_ID.search(ac["text"])
         ac["id"] = m.group(0) if m else None
-    return {"charter": path.stem, "goal": goal, "acs": acs}
+    # an amendment row that adds an AC: the row's "what changed" cell names the rule and carries `New AC:`
+    for line in next((v for k, v in secs.items() if k.startswith("amendments")), "").split("\n"):
+        if line.lstrip().startswith("|") and "New AC:" in line:
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            what = next((c for c in cells if "New AC:" in c), "")
+            m = _AC_ID.search(what)
+            acs.append({"text": what, "id": m.group(0) if m else f"Amendment {cells[0]} New AC", "amendment": True})
+    return {"charter": path.stem, "acs": acs}
 
 
-def trace(charters_dir: Path, strict: bool = False) -> dict:
+def trace(charters_dir: Path) -> dict:
     files = sorted(charters_dir.glob("*.md"))
     if not files:
         raise FileNotFoundError(f"no charter files (*.md) in {charters_dir}")
     facts = [charter_facts(f) for f in files]
     rows = {rid: [] for rid in RULE_IDS}
     for f in facts:
-        if not f["acs"]:
-            continue                      # a charter with no acceptance criterion maps nothing
         for i, ac in enumerate(f["acs"], 1):
             for rid in sorted(rule_mentions(ac["text"])):
                 rows[rid].append({"charter": f["charter"], "via": "ac", "ac": ac["id"] or f"AC#{i}"})
-        if not strict:
-            seen_ac = {rid for rid, hits in rows.items() if any(h["charter"] == f["charter"] for h in hits)}
-            for rid in sorted(rule_mentions(f["goal"]) - seen_ac):
-                rows[rid].append({"charter": f["charter"], "via": "goal", "ac": None})
     unmapped = [rid for rid in RULE_IDS if not rows[rid]]
     return {"rules": [{"rule": rid, "title": dict(RULES)[rid], "maps": rows[rid]} for rid in RULE_IDS],
-            "unmapped": unmapped, "charters": [f["charter"] for f in facts], "strict": strict}
+            "unmapped": unmapped, "charters": [f["charter"] for f in facts]}
 
 
 def render_table(result: dict) -> str:
@@ -143,8 +144,7 @@ def render_table(result: dict) -> str:
             lines.append(f"| {r['rule']} | {r['title']} | UNMAPPED | - |")
             continue
         for m in r["maps"]:
-            ac = m["ac"] if m["via"] == "ac" else "(the charter's Goal)"
-            lines.append(f"| {r['rule']} | {r['title']} | {m['charter']} | {ac} |")
+            lines.append(f"| {r['rule']} | {r['title']} | {m['charter']} | {m['ac']} |")
     return "\n".join(lines)
 
 
@@ -157,7 +157,6 @@ def main(argv=None) -> int:
     ap.add_argument("--charters", required=True, help="directory holding the programme's charter files")
     ap.add_argument("--prompt", help="the port prompt; its rule headings must equal the embedded list")
     ap.add_argument("--json", action="store_true")
-    ap.add_argument("--strict", action="store_true", help="count only a mention inside an acceptance-criterion bullet")
     a = ap.parse_args(argv)
     try:
         if a.prompt:
@@ -166,7 +165,7 @@ def main(argv=None) -> int:
                 diff = sorted(set(have) ^ set(RULE_IDS))
                 print(f"prompt-drift: the prompt's rule ids differ from the embedded list: {', '.join(diff)}", file=sys.stderr)
                 return 2
-        result = trace(Path(a.charters), strict=a.strict)
+        result = trace(Path(a.charters))
     except (OSError, UnicodeDecodeError) as e:
         print(f"refused: {e}", file=sys.stderr)
         return 2

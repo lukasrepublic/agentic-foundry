@@ -48,9 +48,13 @@ def test_design_reviewer_is_a_registered_read_only_persona():
     secs = sections(p)
     assert {"What to review", "How to report", "Write scope (least agency)"} <= set(secs)
     assert "write-paths: none" in secs["Write scope (least agency)"]
-    review = " ".join(bullets(secs["What to review"]))
-    for needle in ("cited ids", "Unknown ids", "Components", "Surfaces", "Security"):
-        assert needle.lower() in review.lower(), needle
+    review = {re.match(r"\*\*(.+?)\*\*", b).group(1).rstrip("."): b for b in bullets(secs["What to review"])}
+    assert list(review) == ["Conformance to cited ids", "Missing ids", "Unknown ids", "Components", "Reused pattern", "Security", "Surfaces"]
+    # each bullet states its own severity: the unknown-id, components, security and surfaces bullets are Blocks
+    for name in ("Unknown ids", "Components", "Security", "Surfaces", "Conformance to cited ids"):
+        assert "Block" in review[name], name
+    assert "Risk" in review["Reused pattern"] and "Block" not in review["Reused pattern"]
+    assert "floor rule" in review["Missing ids"] and "Risk" in review["Missing ids"]
     assert "verdict" in secs["How to report"] and "Block" in secs["How to report"]
 
 
@@ -63,6 +67,9 @@ def test_pr_reviewer_gains_the_conformance_flag_cleanup_and_rollout_lenses():
     assert conf.count("**Block**") == 3
     for needle in ("deviates from a cited id", "governed path", "Surfaces"):
         assert needle in conf
+    flag, rollout = lens["Flag-cleanup lens"], lens["Rollout lens"]
+    assert "FG-DLV-008" in flag and "**Risk**" in flag and "**Nit**" in flag and "**Block**" not in flag
+    assert "FG-OPS-008" in rollout and "**Risk**" in rollout and "**Block**" in rollout
     assert "foundry_brief.py render" in secs["The rule block you receive"]
 
 

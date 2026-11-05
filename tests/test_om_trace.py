@@ -73,9 +73,9 @@ def test_an_unmapped_rule_fails_naming_it(tmp_path, rule):
 def test_ranges_and_lists_expand_within_one_letter(tmp_path):
     d = tmp_path / "ch"
     d.mkdir()
-    (d / "gv-01.md").write_text(charter("Rules A1–A4 and B2, F1-F2 of the port prompt.", ["AC-OM-1 WHEN x THE SYSTEM SHALL y."]))
+    (d / "gv-01.md").write_text(charter("Some goal.", ["AC-OM-1 WHEN x THE SYSTEM SHALL cover rules A1–A4 and B2, F1-F2, G1-3."]))
     got = {r: [m["charter"] for m in rows] for r, rows in ((x["rule"], x["maps"]) for x in om.trace(d)["rules"]) if rows}
-    assert set(got) == {"A1", "A2", "A3", "A4", "B2", "F1", "F2"}
+    assert set(got) == {"A1", "A2", "A3", "A4", "B2", "F1", "F2", "G1", "G2", "G3"}
 
 
 def test_a_cross_letter_span_is_not_a_range_and_maps_nothing(tmp_path):
@@ -92,14 +92,56 @@ def test_ids_inside_longer_words_are_not_rules(tmp_path):
     assert om.trace(d)["unmapped"] == list(om.RULE_IDS)
 
 
-def test_a_goal_mention_counts_but_strict_wants_an_ac_bullet(tmp_path):
+def test_a_goal_mention_is_not_a_mapping(tmp_path):
     d = tmp_path / "ch"
     d.mkdir()
     (d / "gv-01.md").write_text(charter("Rule G2 of the port prompt.", ["AC-OM-1 WHEN x THE SYSTEM SHALL y."]))
-    assert "G2" not in om.trace(d)["unmapped"]
-    weak = [m for r in om.trace(d)["rules"] if r["rule"] == "G2" for m in r["maps"]]
-    assert weak == [{"charter": "gv-01", "via": "goal", "ac": None}]
-    assert "G2" in om.trace(d, strict=True)["unmapped"]
+    assert "G2" in om.trace(d)["unmapped"]                       # the Goal names it; no acceptance criterion checks it
+    (d / "gv-01.md").write_text(charter("Rule G2 of the port prompt.", ["AC-OM-1 WHEN x THE SYSTEM SHALL record G2."]))
+    assert "G2" not in om.trace(d)["unmapped"]                   # control: the same rule inside an AC bullet maps
+
+
+def test_a_spaced_hyphen_is_not_a_range(tmp_path):
+    d = tmp_path / "ch"
+    d.mkdir()
+    (d / "gv-01.md").write_text(charter("g", ["AC-OM-1 WHEN x THE SYSTEM SHALL honour D3 - 4 PRs per tick."]))
+    mapped = {r["rule"] for r in om.trace(d)["rules"] if r["maps"]}
+    assert mapped == {"D3"}                                      # not D3..D4 and not 4 anything
+    (d / "gv-01.md").write_text(charter("g", ["AC-OM-1 WHEN x THE SYSTEM SHALL honour D1 – D3 together."]))   # a spaced en dash that repeats the letter is one
+    assert {r["rule"] for r in om.trace(d)["rules"] if r["maps"]} == {"D1", "D2", "D3"}
+
+
+def test_an_amendment_row_with_a_new_ac_maps_the_rule_it_adds(tmp_path):
+    d = tmp_path / "ch"
+    d.mkdir()
+    text = charter("g", ["AC-OM-1 WHEN x THE SYSTEM SHALL y."]) + (
+        "\n## Amendments\n| date | what changed | why | auth_seq |\n|---|---|---|---|\n"
+        "| 2026-11-05 | goal adds rule B7 (token discipline). New AC: WHEN rendered, THE SYSTEM SHALL include the hints. | found | 1 |\n"
+        "| 2026-11-06 | goal mentions rule C1 and nothing else | why | 2 |\n")
+    (d / "gv-01.md").write_text(text)
+    t = om.trace(d)
+    b7 = next(r for r in t["rules"] if r["rule"] == "B7")["maps"]
+    assert b7 == [{"charter": "gv-01", "via": "ac", "ac": "Amendment 2026-11-05 New AC"}]
+    assert "C1" in t["unmapped"]                                 # a row without `New AC:` maps nothing
+
+
+# The CURRENT charters, copied (the retired-token line of gv-01 reworded). The deck runs the trace over the workspace's own
+# charters directory; this copy keeps the repository's test self-contained. These rules still have no acceptance criterion in
+# any charter: the run exits 1 naming them, which is the point of the tool. When a charter gains the AC, remove the rule here.
+REAL = ROOT / "tests" / "fixtures" / "om-trace" / "charters"
+KNOWN_UNMAPPED_IN_REAL_CHARTERS = {"A2", "A3", "A4", "B2", "B3", "B4", "B5", "B6", "B10", "C2", "C3", "D1", "D3", "E3", "F1", "F2",
+                                   "F3", "F4", "G1", "G2", "G3"}
+
+
+def test_the_trace_over_a_copy_of_the_real_charters():
+    p = run(REAL, "--json")
+    doc = json.loads(p.stdout)
+    assert p.returncode == 1
+    assert [r["rule"] for r in doc["rules"]] == list(om.RULE_IDS)
+    assert set(doc["unmapped"]) == KNOWN_UNMAPPED_IN_REAL_CHARTERS
+    b7 = next(r for r in doc["rules"] if r["rule"] == "B7")["maps"]
+    assert b7 and b7[0]["charter"].startswith("gv-13") and b7[0]["ac"].startswith("Amendment")          # the New AC row
+    assert len(doc["charters"]) == 19
 
 
 def test_a_charter_without_acceptance_criteria_maps_nothing(tmp_path):

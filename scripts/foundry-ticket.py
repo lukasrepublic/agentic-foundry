@@ -163,10 +163,11 @@ def parse_body(body: str) -> tuple[str, list[str]]:
 # (governance/kits/delivery/checks/governance-trace.py).
 # ====================================================================================================
 
-_DESIGN_H = re.compile(r"^##+[ \t]*design\b.*?$", re.I | re.M)
-_SECURITY_H = re.compile(r"^##+[ \t]*security\b.*?$", re.I | re.M)
-_SURFACES_H = re.compile(r"^##+[ \t]*surfaces?\b.*?$", re.I | re.M)
-_SCOPE_H = re.compile(r"^##+[ \t]*(?:scope|paths)\b.*?$", re.I | re.M)
+_DESIGN_H = re.compile(r"^##[ \t]+design[ \t]*:?[ \t]*$", re.I | re.M)
+_SECURITY_H = re.compile(r"^##[ \t]+security[ \t]*:?[ \t]*$", re.I | re.M)
+_SURFACES_H = re.compile(r"^##[ \t]+surfaces?[ \t]*:?[ \t]*$", re.I | re.M)
+_SCOPE_H = re.compile(r"^##[ \t]+(?:scope|paths)[ \t]*:?[ \t]*$", re.I | re.M)
+_H2_RE = re.compile(r"^##(?!#)[ \t]", re.M)          # the end of a section: the next level-2 heading (### stays inside)
 _RULE_ID_RE = re.compile(r"\b[A-Z][A-Z0-9]*-[A-Z]{2,8}-\d{3}\b")
 _DESIGN_KEY_RE = re.compile(
     r"^[ \t]*(?:[-*+][ \t]+)?\**[ \t]*(components?|reuses?|reused[ \t]+pattern|pattern|cites?|cited[ \t]+(?:rule[ \t]+)?ids?|rules)"
@@ -181,7 +182,7 @@ def _section(body: str, rx) -> str | None:
     if not m:
         return None
     rest = body[m.end():]
-    nxt = _HEADING_RE.search(rest)
+    nxt = _H2_RE.search(rest)
     return rest[: nxt.start()] if nxt else rest
 
 
@@ -228,10 +229,10 @@ def _parse_design(sec: str | None) -> dict:
                 "cites" if name.startswith(("cite", "rules")) else "reuses")
             eat(key, m.group(2))
             continue
-        nested = re.match(r"^[ \t]+[-*+][ \t]+(.*)$", line)
+        nested = re.match(r"^[ \t]*[-*+][ \t]+(.*)$", line)     # indented or column-0 bullets continue the last key
         if nested and key:
             eat(key, nested.group(1))
-        elif line.strip():
+        elif line.strip() and not line.lstrip().startswith("#"):    # a ### subheading does not end the Design
             key = None
     d["components"] = _dedupe(d["components"])
     d["cites"] = _dedupe(d["cites"])
@@ -468,12 +469,17 @@ def author_trusted(repo: str | None, login: str, gh_json=_gh_json, operators=Non
     if not login:
         return False, "issue author unknown"
     ops = trusted_operator_logins() if operators is None else {str(x).lower() for x in operators}
-    if login.lower() in ops:
-        return True, f"{login} is a registered operator"
     me = (gh_json(["api", "user"]) or {}).get("login")
     if me and me.lower() == login.lower():
-        return False, (f"{login} is the authenticated gh user, which is the agent itself and is never trust by itself; "
-                       "register the login under github_scope.operators")
+        # Checked FIRST: the authenticated gh login is the agent's own identity. Even when it is also a registered operator
+        # its self-authored or self-edited body is not vouched for by that fact (a shared identity makes the guarantee
+        # nominal: the agent and the operator are indistinguishable to GitHub). The operator reads such a command and passes
+        # `--trust-author` themselves.
+        return False, (f"{login} is the authenticated gh user, which is the agent itself; a body it authored or edited is "
+                       "not trusted on that identity, even for a registered operator (a shared identity makes trust "
+                       "nominal). The operator reads the command and passes --trust-author")
+    if login.lower() in ops:
+        return True, f"{login} is a registered operator"
     if not repo:
         return False, "the issue's repository could not be determined"
     perm = gh_json(["api", f"repos/{repo}/collaborators/{login}/permission"]) or {}
@@ -666,6 +672,12 @@ def cmd_allow(args: list[str], ci: bool = False) -> int:
         sys.exit("usage: foundry-ticket.py %s <path> [<path>...]" % ("ci-allow" if ci else "allow"))
     key = "ci_allowed" if ci else "paper_allowed"
     doc.setdefault(key, [])
+    dropped = []
+    if ci and not store.verify_ticket_lists(doc, root):
+        # The signature is checked BEFORE it is renewed: an entry whose signature does not verify (a hand edit, a copied
+        # ticket, a missing key) is dropped and named, never laundered into a fresh signature.
+        dropped = [x for k in ("ci_allowed", "issue_paper_allowed") for x in (doc.get(k) or [])]
+        doc["ci_allowed"], doc["issue_paper_allowed"] = [], []
     guard = _paper_guard()
     for a in args:
         n = norm_path(a, root)
@@ -677,10 +689,15 @@ def cmd_allow(args: list[str], ci: bool = False) -> int:
         if n not in doc[key]:
             doc[key].append(n)
     if ci:
-        # gv-16: `ci_allowed` is signed (HMAC with a per-git-dir secret created here, by the ask-gated verb), so a hand
-        # edit of the ticket file does not lift the CI guard
+        # gv-16: `ci_allowed` / `issue_paper_allowed` carry an HMAC under a per-git-dir key (created by whichever of `start`
+        # or this verb runs first; `start` is allow-tier). It is a VISIBILITY control: a hand edit of the ticket file lifts
+        # nothing and shows up as a refusal that says so, but a process that can read the key can sign. The operator's
+        # decision is the `ask` on this verb, not the key.
         store.sign_ticket_lists(doc, root, create=True)
     save(doc, root)
+    if dropped:
+        print("ci-allow: the existing ci_allowed / issue_paper_allowed lists did not verify, so these entries were "
+              "DROPPED (re-allow them if the operator wants them): " + ", ".join(dropped))
     print("%s allowed for #%s: %s" % ("ci" if ci else "paper", doc["issue"], ", ".join(doc[key])))
     return 0
 
@@ -1559,11 +1576,11 @@ def cmd_reconcile(args: list[str], run, now: float) -> int:
     beat: list[str] = []
     hb_refused = None
     ambient = store.current_session_id(root)
-    if a.session_id and ambient and a.session_id != ambient:
+    if a.session_id and a.session_id != ambient:      # an empty ambient id refuses too: nothing vouches for the flag
         # gv-16: a reconcile heartbeats the claims of the session that RUNS it. `--session-id <other>` names another
         # session: refreshing its heartbeat would keep a dead session's lease live, so no heartbeat is written (the
         # verdicts are still computed and reported)
-        hb_refused = (f"--session-id {a.session_id} is not this session ({ambient}): no heartbeat was written; the "
+        hb_refused = (f"--session-id {a.session_id} is not this session ({ambient or 'no ambient session id'}): no heartbeat was written; the "
                       "verdicts below are still reported")
         print(f"reconcile: {hb_refused}", file=sys.stderr)
     else:

@@ -88,7 +88,9 @@ def test_author_trust_uses_collaborator_permission():
     gh = lambda args: calls.get(" ".join(args))
     ok, why = foundry_ticket.author_trusted("o/r", "me", gh, operators=())       # gv-16: the gh user is the agent itself
     assert not ok and "agent itself" in why
-    assert foundry_ticket.author_trusted("o/r", "me", gh, operators=("me",))[0]   # ... unless it is a registered operator
+    ok, why = foundry_ticket.author_trusted("o/r", "me", gh, operators=("me",))   # ... even a registered operator: the check runs first
+    assert not ok and "agent itself" in why
+    assert foundry_ticket.author_trusted("o/r", "ann", gh, operators=("ann",))[0]  # control: an operator that is not the gh user
     assert foundry_ticket.author_trusted("o/r", "ann", gh)[0]
     ok, why = foundry_ticket.author_trusted("o/r", "bob", gh)
     assert not ok and "read" in why

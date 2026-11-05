@@ -98,7 +98,8 @@ def test_a_record_without_a_session_is_not_a_lease(ws):
 
 
 # ---- heartbeats --------------------------------------------------------------------------------------------
-def test_reconcile_is_a_heartbeat_for_my_claims_only(ws):
+def test_reconcile_is_a_heartbeat_for_my_claims_only(ws, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "A")          # gv-16: `--session-id` must name THIS session
     claim(ws, 2, "A")
     claim(ws, 1, "B")
     t = NOW + 90 * 60
