@@ -54,6 +54,11 @@
       "rationale": "plan reads a corpus file or the programme's GitHub Project through read-only GraphQL and prints execution-plan.yaml; publish also commits it to the planner ref plan/<programme>, pushes it (never forced) and sets the Project fields wave and batch through GraphQL mutations: a remote write, so the whole script asks (dl-04)"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_programme_issue.py:*)",
+      "tier": "ask",
+      "rationale": "render prints the programme issue body from the execution plan; publish edits the programme issue body on GitHub, status-update posts one Project status update and overrides reads the issue: remote writes, so the whole script asks (dl-06)"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_resources.py:*)",
       "tier": "allow",
       "rationale": "reads /proc/loadavg, /proc/meminfo, /proc/uptime, the boot id, cgroup memory limits, statvfs of / and --path, the kernel log (/dev/kmsg or journalctl -k) when readable, the OOM-baseline file and the policy file; prints a verdict. The two verbs that read a named file or write (--from-json, --reset-oom-baseline) are never silent: the plugin-scripts-allow hook leaves them to ask (gv-12)"
