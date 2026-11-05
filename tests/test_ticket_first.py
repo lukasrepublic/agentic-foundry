@@ -564,6 +564,7 @@ def test_claim_refuses_when_the_claims_file_is_unreadable(tmp_path, monkeypatch,
     monkeypatch.setattr(foundry_ticket, "read_queue", lambda run, cfg: [target])
     monkeypatch.setattr(foundry_ticket, "read_issue", lambda *a, **k: {
         "_has_done": False, "done_trusted": True, "done": "", "done_digest": "d", "body_sha256": "b",
+        "ticket_digest": "t" * 64, "ticket_sections": {},
         "name_with_owner_raw": "O/R", "name_with_owner": "o/r"})
     rc = foundry_ticket.cmd_claim(["7"], lambda a, stdin=None: "", 0.0)
     assert rc == 2 and "claims-unreadable" in capsys.readouterr().err
@@ -579,6 +580,7 @@ def test_claim_emits_the_start_marker_with_the_canonical_case_target(tmp_path, m
     monkeypatch.setattr(foundry_ticket, "read_queue", lambda run, cfg: [target])
     monkeypatch.setattr(foundry_ticket, "read_issue", lambda *a, **k: {
         "_has_done": False, "done_trusted": True, "done": "", "done_digest": "d", "body_sha256": "b",
+        "ticket_digest": "t" * 64, "ticket_sections": {},
         "name_with_owner_raw": "Org/Repo", "name_with_owner": "org/repo"})
     seen = {}
 
