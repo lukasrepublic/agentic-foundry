@@ -64,6 +64,11 @@
       "rationale": "render prints the programme issue body from the execution plan; publish edits the programme issue body on GitHub, status-update posts one Project status update and overrides reads the issue: remote writes, so the whole script asks (dl-06)"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_fleet.py:*)",
+      "tier": "ask",
+      "rationale": "claim, heartbeat, transition, arm-deck and build-next create and move claim refs on GitHub with a per-session App installation token: remote writes, so the whole script asks; it creates no App and no credential (dl-11)"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_close_out.py:*)",
       "tier": "ask",
       "rationale": "run closes the atom issues, creates the lease ref, ensures the programme/acceptance ruleset, posts the programme/acceptance commit status, creates a DRAFT Release and posts the final Project status update: remote writes, so the whole script asks; it never tags and never publishes (dl-12)"

@@ -80,8 +80,9 @@ _ASK_VERBS = {
 # dl-04: foundry_execution_plan.py publish pushes the planner ref and mutates the Project, so the whole script asks.
 # dl-10: foundry_learned_distill.py writes proposal files and, on --open-prs/--open-tickets, pushes and opens PRs/issues, so the whole script asks.
 # dl-12: foundry_close_out.py closes issues, takes a lease ref, creates a draft Release and posts a status update, so the whole script asks.
+# dl-11: foundry_fleet.py creates and moves claim refs on GitHub with an installation token, so the whole script asks.
 _ASK_SCRIPTS = {"foundry_research_note.py", "foundry_queue_land.py", "foundry_execution_plan.py", "foundry_learned_distill.py",
-                "foundry_programme_issue.py", "foundry_close_out.py"}
+                "foundry_programme_issue.py", "foundry_close_out.py", "foundry_fleet.py"}
 _USAGE_DATASET_VERBS = {"ingest", "attribute"}   # ask only when a dataset is NAMED (`--dataset`, any argparse abbreviation)
 
 

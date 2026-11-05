@@ -187,6 +187,26 @@ def claim_done_digest(root: Path | None, repo: str, number) -> str | None:
     return dd
 
 
+def claim_ticket_digest(root: Path | None, repo: str, number) -> str | None:
+    """dl-11: the whole-ticket digest a `claim` recorded for repo#number, or None when there is no file / no record /
+    no ticket_digest in it (a pre-dl-03 or unclaimed path). Raises ClaimsUnreadable when the file is present but
+    unusable or the record carries a malformed ticket_digest."""
+    claims, found = read_claims(root)
+    if not found:
+        return None
+    rec = claims.get(claim_key(repo, number))
+    if rec is None:
+        return None
+    if not isinstance(rec, dict):
+        raise ClaimsUnreadable(f"record for {claim_key(repo, number)} is malformed")
+    if "ticket_digest" not in rec:
+        return None
+    td = rec["ticket_digest"]
+    if not isinstance(td, str) or not td:
+        raise ClaimsUnreadable(f"record for {claim_key(repo, number)} has a malformed ticket_digest")
+    return td
+
+
 def lease_file(root: Path | None = None) -> Path:
     return (root or project_root()) / LEASE_RELPATH
 

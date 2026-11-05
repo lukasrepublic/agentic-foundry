@@ -707,7 +707,12 @@ def cmd_start(args: list[str]) -> int:
     editors = None
     edited_at = None
     live = None
-    if done or paper:
+    try:
+        claimed_ticket = store.claim_ticket_digest(project_root(), issue_repo or "", issue["number"])
+    except store.ClaimsUnreadable as e:
+        sys.exit(f"foundry-ticket: claims-unreadable — the local claim record cannot be read ({e}); nothing was "
+                 "recorded. Repair or remove the claims file in the git common dir.")
+    if done or paper or claimed_ticket:
         # the same reader the claim path uses (never a second GraphQL shape): who edited the body
         try:
             live = read_issue(default_run, issue_repo or "", int(issue["number"]), trust_author=True)
@@ -721,6 +726,15 @@ def cmd_start(args: list[str]) -> int:
             editors = live.get("editors")
             edited_at = live.get("last_edited_at")
             issue_repo = live.get("name_with_owner") or issue_repo
+    if claimed_ticket:
+        # dl-11: the whole-ticket digest recorded at `claim` time must still match the live ticket, not only Done means
+        if live is None or not live.get("ticket_digest"):
+            sys.exit("foundry-ticket: could not read the issue to compare it with the claimed ticket; nothing was "
+                     "recorded. Retry `start`.")
+        if live["ticket_digest"] != claimed_ticket:
+            sys.exit("foundry-ticket: ticket_changed — the ticket (Acceptance, Design, Security, Surfaces or Done means) "
+                     "differs from the one recorded at `claim` time; it will not start. Re-read it and run " + RECOVERY +
+                     " (--trust-author does not override this). Nothing was recorded.")
     if done:
         try:
             vetted = store.claim_done_digest(project_root(), issue_repo or "", issue["number"])
@@ -1350,27 +1364,31 @@ def judge(issue: dict, login: str, claim: dict | None, withdrawn_by: tuple | Non
         return {**base, "stop_dispatch": True, "reason": "closed"}
     if issue["status"] not in STARTED_STATUSES:       # Ready / blocked / none / unknown: nothing was started
         return {**base, "stop_dispatch": True, "reason": "not_started"}
-    if claim:
-        # dl-03: every claim is judged on the signed whole-ticket digest. A record with no ticket_digest or no valid
-        # signature never authorizes (no downgrade to the unsigned body-hash check)
-        if not claim.get("ticket_digest") or not store.verify_claim(claim, root):
-            return {**base, "stop_dispatch": True, "reason": "claim_unverified",
-                    "cause": f"the claim record for {key} has no valid signed ticket digest (hand-edited, or recorded before "
-                             f"dl-03); run `claim {issue['number']} --rebase-acceptance` once to record a signed one"}
-        moved = claim["ticket_digest"] != issue.get("ticket_digest")
-        done_moved = bool(claim.get("done_digest")) and claim["done_digest"] != issue.get("done_digest")
-        if moved or done_moved:
-            old, new = claim.get("ticket_sections") or {}, issue.get("ticket_sections") or {}
-            changed = [k for k in store.TICKET_SECTIONS if old.get(k) != new.get(k)]
-            if done_moved and "done_means" not in changed:
-                changed.append("done_means")
-            reason = "acceptance_changed" if changed == ["acceptance"] else "ticket_changed"
-            return {**base, "stop_dispatch": True, "reason": reason, "changed_sections": changed}
+    if claim is None:
+        # an issue that was never claimed through this store (started by hand): no baseline, nothing to compare.
+        # (dl-11 follow-up: a DELETED record looks the same; tests/test_owned_queue.py still pins this as authorized)
         return {**base, "stop_dispatch": False, "reason": "authorized"}
-    if claim and claim.get("body_sha256") and claim["body_sha256"] != issue["body_sha256"]:
-        return {**base, "stop_dispatch": True, "reason": "acceptance_changed"}
-    if claim and claim.get("done_digest") and claim["done_digest"] != issue.get("done_digest"):
-        return {**base, "stop_dispatch": True, "reason": "acceptance_changed"}
+    if not isinstance(claim, dict) or not claim:
+        # dl-11: a claim record that is present but emptied to {} (or is not an object) has no ticket baseline to
+        # judge against, so it never authorizes
+        return {**base, "stop_dispatch": True, "reason": "claim_unverified",
+                "cause": f"the claim record for {key} is empty, so no signed ticket baseline exists; run "
+                         f"`claim {issue['number']} --rebase-acceptance` once to record a signed one"}
+    # dl-03: every claim is judged on the signed whole-ticket digest. A record with no ticket_digest or no valid
+    # signature never authorizes (no downgrade to the unsigned body-hash check)
+    if not claim.get("ticket_digest") or not store.verify_claim(claim, root):
+        return {**base, "stop_dispatch": True, "reason": "claim_unverified",
+                "cause": f"the claim record for {key} has no valid signed ticket digest (hand-edited, or recorded before "
+                         f"dl-03); run `claim {issue['number']} --rebase-acceptance` once to record a signed one"}
+    moved = claim["ticket_digest"] != issue.get("ticket_digest")
+    done_moved = bool(claim.get("done_digest")) and claim["done_digest"] != issue.get("done_digest")
+    if moved or done_moved:
+        old, new = claim.get("ticket_sections") or {}, issue.get("ticket_sections") or {}
+        changed = [k for k in store.TICKET_SECTIONS if old.get(k) != new.get(k)]
+        if done_moved and "done_means" not in changed:
+            changed.append("done_means")
+        reason = "acceptance_changed" if changed == ["acceptance"] else "ticket_changed"
+        return {**base, "stop_dispatch": True, "reason": reason, "changed_sections": changed}
     return {**base, "stop_dispatch": False, "reason": "authorized"}
 
 
