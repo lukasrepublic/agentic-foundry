@@ -42,13 +42,16 @@ At programme close, `scripts/foundry_learned_distill.py propose <programme> --fr
 (dl-10) turns the `## Learned` comments of the programme's atoms into proposals. A lesson that names an `FG-` rule
 id, or carries `[upstream]`, becomes a kit-fix ticket body, `<dir>/upstream/kit-fix-<n>.md`, with exactly these
 sections: `## Kit` (the category), `## Rule` (the `FG-` id, or `none (new rule proposed)`), `## Lesson`,
-`## Proposed edit`, `## Evidence`. A ticket carries no atom id, no issue URL and no adopter text: those stay in the
-private `<dir>/proposals.json`.
+`## Proposed edit`, `## Evidence`. A lesson routes upstream only when its author tagged it `[upstream]`; an `FG-` id
+alone keeps it private. A ticket carries no atom id and no issue URL. Its `## Lesson` is the author's own line, so the
+distill refuses any lesson that holds a URL, an `owner/repo` shape, a `#<n>` reference or the project's remote owner
+or repo name, and keeps it private. Source ids stay in the private `<dir>/proposals.json`. Only `## Learned`
+blocks from the atom closer, a registered operator or `--trusted-authors` are read.
 
 The distill runs the leak guard over every ticket itself. A lesson that names a private rule id, or fails the
 guard, is kept private and goes to the `governance/local` pull request instead. It never reaches an upstream file.
 Run the guard in step 2 over the ticket files again before you file them (`gh issue create --body-file`). The
-distill opens nothing unless you pass `--open-tickets` (and `--open-prs` for the private pull request); a
+distill files only this run's in-memory tickets (never files left in the directory) and only when you pass `--open-tickets` (and `--open-prs` for the private pull request); a
 maintainer reviews every ticket.
 
 ## Never
