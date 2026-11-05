@@ -1350,11 +1350,13 @@ def judge(issue: dict, login: str, claim: dict | None, withdrawn_by: tuple | Non
         return {**base, "stop_dispatch": True, "reason": "closed"}
     if issue["status"] not in STARTED_STATUSES:       # Ready / blocked / none / unknown: nothing was started
         return {**base, "stop_dispatch": True, "reason": "not_started"}
-    if claim and claim.get("ticket_digest"):
-        # dl-03: a claim carrying a whole-ticket digest is judged on the five sections, not the raw body hash
-        if not store.verify_claim(claim, root):
+    if claim:
+        # dl-03: every claim is judged on the signed whole-ticket digest. A record with no ticket_digest or no valid
+        # signature never authorizes (no downgrade to the unsigned body-hash check)
+        if not claim.get("ticket_digest") or not store.verify_claim(claim, root):
             return {**base, "stop_dispatch": True, "reason": "claim_unverified",
-                    "cause": f"the signed claim record for {key} fails verification; re-run `claim` to record a new one"}
+                    "cause": f"the claim record for {key} has no valid signed ticket digest (hand-edited, or recorded before "
+                             f"dl-03); run `claim {issue['number']} --rebase-acceptance` once to record a signed one"}
         moved = claim["ticket_digest"] != issue.get("ticket_digest")
         done_moved = bool(claim.get("done_digest")) and claim["done_digest"] != issue.get("done_digest")
         if moved or done_moved:
@@ -1431,7 +1433,7 @@ def select_next(run, root: Path, now: float) -> dict:
         if login not in i["assignees"]:
             skip(i, "other-owner"); continue
         if i["status"] in STARTED_STATUSES:
-            v = judge(i, login, claims.get(store.claim_key(i['repo'], i['number'])))
+            v = judge(i, login, claims.get(store.claim_key(i['repo'], i['number'])), root=root)
             if v["stop_dispatch"]:
                 skip(i, "stop-dispatch:" + v["reason"])
             elif untrusted_done(i):
@@ -1630,20 +1632,23 @@ def cmd_claim(args: list[str], run, now: float) -> int:
     ref = f"{vetted.get('name_with_owner_raw') or repo}#{number}"   # canonical case for GitHub; `key` is only the local map key
     payload = {"by": login, "target": ref,
                "note": store.redact(f"start recorded by {login} for {ref}" + (f" (exception, {exc_text})" if exc_text else ""))}
+    prior = claims.get(key) or {}
+    if not isinstance(prior, dict):
+        prior = {}
+    if prior.get("body_sha256") and not a.rebase_acceptance and not store.verify_claim(prior, root):
+        # dl-03: a baseline is only kept (and re-signed) when its own signature verifies; never adopt a live digest silently
+        print(f"claim refused: baseline-unverified: the existing claim record for {key} has no valid signature "
+              f"(hand-edited, or recorded before the signed digest); pass --rebase-acceptance to adopt the current ticket", file=sys.stderr)
+        return 2
     try:
         ev = deck.emit(ref, "start", payload, adapter=_Adapter(run))
     except (ValueError, RuntimeError) as e:
         print(f"claim refused: recording `start` failed: {store.redact(str(e))}", file=sys.stderr)
         return 2
-    prior = claims.get(key) or {}
-    keep = bool(prior.get("body_sha256")) and not a.rebase_acceptance
+    keep = bool(prior.get("body_sha256")) and not a.rebase_acceptance     # kept only from a record that verified above
     keep_done = keep and "done_digest" in prior
-    v_digest, v_sections = (vetted["ticket_digest"], vetted["ticket_sections"]) if vetted.get("ticket_digest") \
-        else ticket_digest(vetted.get("body") or "")
-    # dl-03: the ticket baseline follows the same keep/rebase rule as the body baseline, and a prior record whose
-    # signature fails is never kept (a hand-edited baseline is not adopted)
-    keep_ticket = keep and bool(prior.get("ticket_digest")) and isinstance(prior.get("ticket_sections"), dict) \
-        and store.verify_claim(prior, root)
+    v_digest, v_sections = vetted["ticket_digest"], vetted["ticket_sections"]
+    keep_ticket = keep and bool(prior.get("ticket_digest")) and isinstance(prior.get("ticket_sections"), dict)
     rec = {"issue": key, "number": number, "repo": repo, "operator": login,
            "body_sha256": prior["body_sha256"] if keep else vetted["body_sha256"],
            # the vetted Done-means: reconcile stops dispatch when the live digest differs from this one
@@ -1745,7 +1750,7 @@ def reconcile_one(run, cfg: dict, login: str, repo: str, number: int, claim: dic
             h = deck.fetch_history(key, _iso(now), _Adapter(run))
             w = [e for e in h.events if e.event == "withdrawn"]
             wd = (True, w[-1].by) if w else (False, None)
-        return judge(issue, login, claim, wd)
+        return judge(issue, login, claim, wd, root=project_root())
     except (GhError, RuntimeError, ValueError, KeyError) as e:
         return {"issue": key, "number": number, "repo": repo, "stop_dispatch": True, "reason": "unverified",
                 "cause": store.redact(str(e))}

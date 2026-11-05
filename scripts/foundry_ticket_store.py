@@ -273,15 +273,18 @@ def _lists_payload(doc: dict) -> bytes:
 
 
 def _read_key(root: Path | None = None, create: bool = False) -> bytes | None:
-    p = _git_path(KEY_BASENAME, root)
+    # the key lives in the COMMON git dir (like claims_file), so a claim signed in one worktree verifies from every
+    # other; a key at the old per-worktree path is still read (never created there)
+    p = _git_common_path(KEY_BASENAME, root)
     if p is None:
         return None
-    try:
-        got = p.read_bytes()
-        if got.strip():
-            return got.strip()
-    except OSError:
-        pass
+    for cand in (p, _git_path(KEY_BASENAME, root)):
+        try:
+            got = cand.read_bytes() if cand is not None else b""
+            if got.strip():
+                return got.strip()
+        except OSError:
+            pass
     if not create:
         return None
     new = os.urandom(32).hex().encode("ascii")

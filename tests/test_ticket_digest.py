@@ -171,11 +171,59 @@ def test_stripped_signature_is_refused(ws):
     assert reconcile(gh)["reason"] == "claim_unverified"
 
 
-def test_a_tampered_baseline_is_not_kept_by_a_plain_reclaim(ws):
+def test_plain_reclaim_over_a_tampered_baseline_is_refused(ws):
+    """Block B: a plain claim never adopts the live digest over an unverifiable baseline."""
     gh = claimed(ws)
     gh.node(2)["body"] = BODY.replace(*EDITS["design"])
     new_d, new_s = ft.ticket_digest(gh.node(2)["body"])
     ft.store.update_claims(ws, lambda c: c[KEY].update(ticket_digest=new_d, ticket_sections=new_s))
-    assert run_cli(["claim", "2", "--trust-author"], gh)[0] == 0
+    before = ft.load_claims(ws)[KEY]
+    rc, _, err = run_cli(["claim", "2", "--trust-author"], gh)
+    assert rc == 2 and "baseline-unverified" in err and "--rebase-acceptance" in err
+    assert ft.load_claims(ws)[KEY] == before
+    assert run_cli(["claim", "2", "--trust-author", "--rebase-acceptance"], gh)[0] == 0
     rec = ft.load_claims(ws)[KEY]
-    assert ft.store.verify_claim(rec, ws) and rec["ticket_digest"] == new_d   # re-vetted from the live ticket, re-signed
+    assert ft.store.verify_claim(rec, ws) and rec["ticket_digest"] == new_d
+
+
+def test_downgrade_by_deleting_digest_and_signature_is_refused(ws):
+    """Block A: remove ticket_digest + claim_sig, set body/done digests to the live values: not authorized."""
+    gh = claimed(ws)
+    live = gh.node(2)["body"]
+    def strip(c):
+        for f in ("ticket_digest", "ticket_sections", "claim_sig"):
+            c[KEY].pop(f, None)
+        c[KEY]["body_sha256"] = ft.store.command_digest(live)
+        c[KEY]["done_digest"] = ft.store.command_digest("python3 -m pytest -q")
+    ft.store.update_claims(ws, strip)
+    r = reconcile(gh)
+    assert (r["stop_dispatch"], r["reason"]) == (True, "claim_unverified")
+    assert "--rebase-acceptance" in r["cause"] and KEY in r["cause"]
+
+
+def test_prior_with_edited_done_fields_is_refused_not_resigned(ws):
+    """Block C: a hand-edited done_digest/done_trusted in the prior record is not copied and re-signed."""
+    gh = claimed(ws)
+    ft.store.update_claims(ws, lambda c: c[KEY].update(done_digest="3" * 64, done_trusted=True))
+    rc, _, err = run_cli(["claim", "2", "--trust-author"], gh)
+    assert rc == 2 and "baseline-unverified" in err
+    rec = ft.load_claims(ws)[KEY]
+    assert rec["done_digest"] == "3" * 64 and not ft.store.verify_claim(rec, ws)
+
+
+def test_key_is_shared_across_worktrees(tmp_path):
+    """Block D: a claim signed under one worktree verifies from another worktree and the main clone."""
+    import subprocess
+    main = tmp_path / "main"
+    main.mkdir()
+    g = lambda *a, cwd=main: subprocess.run(["git", "-C", str(cwd), *a], check=True, capture_output=True)  # noqa: E731
+    g("init", "-q", "-b", "main")
+    g("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "i")
+    w1, w2 = tmp_path / "w1", tmp_path / "w2"
+    g("worktree", "add", "-q", str(w1), "-b", "b1")
+    g("worktree", "add", "-q", str(w2), "-b", "b2")
+    rec = {"issue": "o/r#1", "ticket_digest": "a" * 64, "ticket_sections": {"acceptance": "b" * 64}, "done_digest": "c" * 64}
+    assert ft.store.sign_claim(rec, w1, create=True)
+    assert ft.store.verify_claim(rec, w2) and ft.store.verify_claim(rec, main)
+    rec["done_digest"] = "d" * 64
+    assert not ft.store.verify_claim(rec, w2)

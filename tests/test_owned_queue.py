@@ -226,8 +226,8 @@ def test_resume_of_in_progress_beats_a_new_ready(ws):
 def test_resume_is_dropped_when_reconcile_says_stop(ws):
     gh = FakeGh()
     label_status(gh.node(1), "in progress")
-    ft.save_claim(ws, "example-org/app#1", {"issue": "example-org/app#1", "number": 1, "repo": "example-org/app",
-                                              "body_sha256": "0" * 64})
+    signed_claim(ws, "example-org/app#1", {"issue": "example-org/app#1", "number": 1, "repo": "example-org/app",
+                                           "body_sha256": "0" * 64}, "## Acceptance criteria\n- an older criterion\n")
     rc, res = nxt(ws, gh)
     assert res["selected"]["number"] == 2     # the Ready one, since #1's acceptance changed
     assert {"number": 1, "reason": "stop-dispatch:acceptance_changed"}.items() <= next(
@@ -332,10 +332,17 @@ def test_claim_counts_a_blocked_started_issue_by_its_claim_record(ws):
 
 # ---- AC5/AC6: reconcile --------------------------------------------------------------------------------
 
+def signed_claim(ws, key, rec, body):
+    """dl-03: reconcile only honours a claim record that carries a signed whole-ticket digest."""
+    rec = {**rec, "ticket_digest": ft.ticket_digest(body)[0], "ticket_sections": ft.ticket_digest(body)[1]}
+    ft.store.sign_claim(rec, ws, create=True)
+    ft.save_claim(ws, key, rec)
+
+
 def claimed(ws, gh, n=1):
     label_status(gh.node(n), "in progress")
-    ft.save_claim(ws, f"example-org/app#{n}", {"issue": f"example-org/app#{n}", "number": n, "repo": "example-org/app",
-                                                  "body_sha256": ft.store.command_digest(gh.node(n)["body"])})
+    signed_claim(ws, f"example-org/app#{n}", {"issue": f"example-org/app#{n}", "number": n, "repo": "example-org/app",
+                                              "body_sha256": ft.store.command_digest(gh.node(n)["body"])}, gh.node(n)["body"])
 
 
 def rec_one(ws, gh, n=1):
@@ -748,15 +755,15 @@ def test_next_skips_an_untrusted_started_issue_too(ws):
 def test_reconcile_reports_acceptance_changed_when_only_the_done_digest_differs(ws):
     gh = FakeGh(issues=[mk_issue(2, body=DONE_BODY, labels=("status:in progress", "repo:app"))])
     key = "example-org/app#2"
-    ft.save_claim(ws, key, {"issue": key, "number": 2, "repo": "example-org/app",
-                            "body_sha256": ft.store.command_digest(DONE_BODY),         # body unchanged...
-                            "done_digest": ft.store.command_digest("echo vetted")})  # ...vetted command differs
+    signed_claim(ws, key, {"issue": key, "number": 2, "repo": "example-org/app",
+                           "body_sha256": ft.store.command_digest(DONE_BODY),         # body unchanged...
+                           "done_digest": ft.store.command_digest("echo vetted")}, DONE_BODY)  # ...vetted command differs
     rc, out, _ = run_cli(["reconcile", "2", "--json"], with_perm(gh, "write"))
     r = json.loads(out)["results"][0]
-    assert r["stop_dispatch"] is True and r["reason"] == "acceptance_changed"
-    ft.save_claim(ws, key, {"issue": key, "number": 2, "repo": "example-org/app",
-                            "body_sha256": ft.store.command_digest(DONE_BODY),
-                            "done_digest": ft.store.command_digest("python3 -m pytest -q")})
+    assert r["stop_dispatch"] is True and r["reason"] == "ticket_changed"    # Done means is one of the five sections
+    signed_claim(ws, key, {"issue": key, "number": 2, "repo": "example-org/app",
+                           "body_sha256": ft.store.command_digest(DONE_BODY),
+                           "done_digest": ft.store.command_digest("python3 -m pytest -q")}, DONE_BODY)
     r = json.loads(run_cli(["reconcile", "2", "--json"], with_perm(gh, "write"))[1])["results"][0]
     assert r["stop_dispatch"] is False
 
