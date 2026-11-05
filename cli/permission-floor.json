@@ -49,6 +49,11 @@
       "rationale": "pure planner: reads one atoms JSON file, prints waves; writes nothing, no network (dl-04)"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_learned_distill.py:*)",
+      "tier": "ask",
+      "rationale": "collect and propose read a corpus file or the programme's issue comments through read-only GraphQL and write proposal files under --out; --open-prs creates a branch, pushes it and opens a draft pull request, --open-tickets creates upstream issues: remote writes, so the whole script asks (dl-10)"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_execution_plan.py:*)",
       "tier": "ask",
       "rationale": "plan reads a corpus file or the programme's GitHub Project through read-only GraphQL and prints execution-plan.yaml; publish also commits it to the planner ref plan/<programme>, pushes it (never forced) and sets the Project fields wave and batch through GraphQL mutations: a remote write, so the whole script asks (dl-04)"

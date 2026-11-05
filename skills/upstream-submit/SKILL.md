@@ -36,6 +36,21 @@ puts one mechanical check in front of the submission (design 5.6): **it refuses;
    (where it stays private); do not edit the finding away by renaming an id.
 3. Only after a clean result, open the pull request against the upstream repository.
 
+## The kit-fix ticket (input from the learned distill)
+
+At programme close, `scripts/foundry_learned_distill.py propose <programme> --from-json <comments.json> --out <dir>`
+(dl-10) turns the `## Learned` comments of the programme's atoms into proposals. A lesson that names an `FG-` rule
+id, or carries `[upstream]`, becomes a kit-fix ticket body, `<dir>/upstream/kit-fix-<n>.md`, with exactly these
+sections: `## Kit` (the category), `## Rule` (the `FG-` id, or `none (new rule proposed)`), `## Lesson`,
+`## Proposed edit`, `## Evidence`. A ticket carries no atom id, no issue URL and no adopter text: those stay in the
+private `<dir>/proposals.json`.
+
+The distill runs the leak guard over every ticket itself. A lesson that names a private rule id, or fails the
+guard, is kept private and goes to the `governance/local` pull request instead. It never reaches an upstream file.
+Run the guard in step 2 over the ticket files again before you file them (`gh issue create --body-file`). The
+distill opens nothing unless you pass `--open-tickets` (and `--open-prs` for the private pull request); a
+maintainer reviews every ticket.
+
 ## Never
 
 - Never submit a file because "the matched text is harmless": the operator decides what is public, and the
