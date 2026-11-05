@@ -190,7 +190,7 @@ def test_brief_without_acceptance_has_no_section(tmp_path):
 
 def test_reviewer_grades_per_ac_id():
     text = (ROOT / "agents" / "pr-reviewer.md").read_text()
-    assert "AC-<n>" in text and "Block" in text.split("Acceptance lens", 1)[1].split("\n- **", 1)[0]
+    assert "AC-<n>" in text and "Block" in text.split("## Acceptance grading", 1)[1].split("\n## ", 1)[0]
 
 
 def test_governance_documents_the_section():

@@ -101,12 +101,6 @@ this file.
     reason you can check counts as a line), or the diff adds a capability to one surface only.
   - **Risk** — a changed path is outside the Design's components (the `governance-trace` CI check fails this; say so
     here when you see it first).
-- **Acceptance lens** (decision 1, `## Acceptance`). The brief lists the ticket's EARS bullets under their ids
-  (`AC-<n>`). Grade the diff against each id and report one verdict per `AC-<n>`: pass, or Block.
-  - **Block** — the diff does not meet the bullet, or no test or other evidence in the diff shows it does. Name the
-    failing `AC-<n>` id in the finding. Done means stays the machine check; the bullets are your review target.
-  - **Risk** — the ticket is in the design-required class and carries no `## Acceptance`, or a bullet cannot be
-    graded as written. Say which.
 - **Flag-cleanup lens** (FG-DLV-008). A feature flag the diff adds without an owner and a removal date is a **Risk**;
   a flag whose removal date has passed and that the diff leaves in the code is a **Risk**; code behind a flag the diff
   itself shows as always on is a **Nit** to remove.
@@ -114,6 +108,15 @@ this file.
   production environment, a release step) without a rollout plan that is progressive (canary or staged) and names an
   abort condition is a **Risk**; a destructive step (a migration that drops data, a delete) with no abort path is a
   **Block**.
+
+## Acceptance grading
+
+The brief lists the ticket's EARS bullets under their ids
+(`AC-<n>`). Grade the diff against each id and report one verdict per `AC-<n>`: pass, or Block.
+- **Block** — the diff does not meet the bullet, or no test or other evidence in the diff shows it does. Name the
+  failing `AC-<n>` id in the finding. Done means stays the machine check; the bullets are your review target.
+- **Risk** — the ticket is in the design-required class and carries no `## Acceptance`, or a bullet cannot be
+  graded as written. Say which.
 
 ## How to report
 
