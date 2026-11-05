@@ -78,7 +78,8 @@ upgrade; removing `github_scope` turns them off.
 
 **Changed: restored by this programme.** The list of removed skills, scripts and hooks further down names `command-deck`, `upstream-submit`,
 `foundry_message_kind.py` and `foundry_blocker_check.py` as removed. Governance brings each back in a new form: the
-command-deck skill runs the policy-driven tick and report, `upstream-submit` carries the upstream leak guard for the
+command-deck skill runs the policy-driven tick and report (its tick prompt template,
+`skills/command-deck/tick-prompt.template.md`, is back and is filled from the policy by `render-tick-section`), `upstream-submit` carries the upstream leak guard for the
 adopter layer, and the message-kind lint and the blocker lint serve the shared message log and the operator-ask rules. Read
 the current files, not that list, for what they do.
 

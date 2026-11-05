@@ -33,10 +33,10 @@ The "Acts through" column says how far the key reaches. Read it before you rely 
 
 | Value | Meaning |
 |---|---|
-| script | A script or hook reads the value when it runs. Changing the key changes the behavior. |
-| prompt | The value is rendered into the command-deck tick prompt or a brief by `render-tick-section`. It is instruction text an agent follows. It is not a gate. |
-| fixed | A floor key. The named primitive runs whatever the file says; the key exists so that the file cannot switch it off. |
-| key only | The policy reader validates and shows the key. No program changes behavior because of its value. |
+| script | A script or hook reads the key when it runs. Changing the key changes the behavior. |
+| prompt | The key is rendered into the command-deck tick prompt by `render-tick-section` and nowhere else. It is instruction text an agent follows. It is not a gate. |
+| key only | The policy reader validates and shows the key. Nothing reads it, so changing it changes no behavior. |
+| const floor | The schema fixes the value. The primitive in the last column enforces the rule whatever the file says; the key exists so that the file cannot switch the rule off. |
 
 ## Every key
 
@@ -44,40 +44,40 @@ The "Acts through" column says how far the key reaches. Read it before you rely 
 |---|---|---|---|---|---|
 | `pr_strategy.granularity` | tunable | `coarse` | A1 | prompt | `skills/command-deck/tick-prompt.template.md` (section A1); clusters from `scripts/foundry_merge_plan.py` |
 | `pr_strategy.one_pr_per_hot_file_per_round` | tunable | `true` | A1 | prompt | `skills/command-deck/tick-prompt.template.md` (section A1) |
-| `merge.queue` | tunable | `auto` | A2 | script | `scripts/foundry_queue_land.py`, `hooks/foundry-git-discipline.sh` |
-| `merge.requeue_budget_outside_diff` | floor | `1` | A2 | script | `scripts/foundry_queue_land.py` |
+| `merge.queue` | tunable | `auto` | A2 | script | `scripts/foundry_queue_land.py` (the git-discipline hook does not read this key) |
+| `merge.requeue_budget_outside_diff` | floor | `1` | A2 | const floor | `scripts/foundry_queue_land.py` |
 | `merge.full_suite_on_branch` | tunable | `shared-catalogue-change, after-queue-rejection` | A3 | script | `scripts/foundry_queue_land.py` |
-| `merge.record_line_before_enqueue` | floor | `true` | A2 | fixed | `scripts/foundry_queue_land.py` posts the record line |
+| `merge.record_line_before_enqueue` | floor | `true` | A2 | const floor | `scripts/foundry_queue_land.py` posts the record line |
 | `merge.human_review_required` | tunable | `false` | A4 | script | `scripts/foundry_queue_land.py` |
 | `deck.max_builders` | tunable | `4` | B1 | script | `scripts/foundry_deck_resources.py`; section B1 and B8 of the tick prompt |
 | `deck.heavy_slots` | tunable | `auto` | B2 | script | `scripts/foundry_deck_resources.py`, `scripts/foundry-deck-heavy` |
-| `deck.resource_check` | floor | `true` | B2 | fixed | `scripts/foundry_deck_resources.py`, run first in every tick |
-| `deck.workflow_size_source` | floor | `"smallest"` | B8 | prompt | section B8 of the tick prompt (`resolve_workflow_size` in `scripts/foundry_operating_model.py`) |
-| `decisions.research_first` | floor | `true` | B3 | fixed | `skills/research-first/SKILL.md`, `scripts/foundry_research_note.py` |
-| `decisions.escalation_set` | tunable | `external-provisioning, credential-step, no-consensus-after-research` | B4 | key only | `scripts/foundry_blocker_check.py` lints against its own closed set; this key is shown by `status` and does not change that set |
-| `claims.enabled` | tunable | `true` | B5 | script | `scripts/foundry-ticket.py`, clause (m) of `hooks/foundry-git-discipline.sh` |
-| `claims.expires_after` | tunable | `2h` | B5 | script | `scripts/foundry-ticket.py` |
-| `cost.weigh_in_every_decision` | floor | `true` | C1 | prompt | section C1 of the tick prompt |
-| `cost.priced_ask_for_always_on` | floor | `true` | C1 | fixed | `scripts/foundry_blocker_check.py` (the `priced-ask` kind) |
+| `deck.resource_check` | floor | `true` | B2 | const floor | `scripts/foundry_deck_resources.py`, run first in every tick |
+| `deck.workflow_size_source` | floor | `"smallest"` | B8 | const floor | section B8 of the tick prompt (`resolve_workflow_size` in `scripts/foundry_operating_model.py`) |
+| `decisions.research_first` | floor | `true` | B3 | const floor | `skills/research-first/SKILL.md`, `scripts/foundry_research_note.py` |
+| `decisions.escalation_set` | tunable | `external-provisioning, credential-step, no-consensus-after-research` | B4 | key only | none: `scripts/foundry_blocker_check.py` lints against its own closed set and does not read this key |
+| `claims.enabled` | tunable | `true` | B5 | script | `scripts/foundry_ticket_store.py` (used by `scripts/foundry-ticket.py` and clause (m) of `hooks/foundry-git-discipline.sh`) |
+| `claims.expires_after` | tunable | `2h` | B5 | script | `scripts/foundry_ticket_store.py` |
+| `cost.weigh_in_every_decision` | floor | `true` | C1 | const floor | section C1 of the tick prompt |
+| `cost.priced_ask_for_always_on` | floor | `true` | C1 | const floor | `scripts/foundry_blocker_check.py` (the `priced-ask` kind) |
 | `report.format` | tunable | `four-block` | E1 | prompt | section E1 of the tick prompt; `scripts/foundry_deck_report.py` renders the blocks |
 | `report.timezone` | tunable | `auto` | E1 | script | `scripts/foundry_deck_report.py` |
 | `report.plain_language` | tunable | `true` | E1 | prompt | section E1 of the tick prompt |
 | `report.max_lines` | tunable | `8` | E1 | script | `scripts/foundry_deck_report.py` |
 | `report.include_ids` | tunable | `false` | E1 | script | `scripts/foundry_deck_report.py` |
 | `report.handoff_dir` | tunable | `~/Documents/<workspace-name>` | E3 | key only | none: the key records where hand-off files go; see [operator hand-off files](how-to/operator-handoff-files.md) |
-| `communication.style` | tunable | `simplified-technical-english` | E2 | prompt | `render-tick-section E2`; `scripts/foundry_brief.py` reads it for the brief |
+| `communication.style` | tunable | `simplified-technical-english` | E2 | script | `scripts/foundry_brief.py` (the brief); `render-tick-section E2` renders the same text into the tick prompt |
 | `communication.operator_style_file` | tunable | `` | E2 | prompt | `render-tick-section E2` |
 | `models.builder` | tunable | `smaller` | B7 | prompt | section B7 of the tick prompt |
 | `models.reviewer` | tunable | `smaller` | B7 | prompt | section B7 of the tick prompt |
 | `models.security_reviewer` | tunable | `strongest` | B7 | prompt | section B7 of the tick prompt |
-| `hygiene.disk_sweep_each_tick` | tunable | `true` | F2 | key only | `scripts/foundry_deck_resources.py` measures the root disk and the work disk; the key does not switch it |
-| `hygiene.teardown_required` | floor | `true` | F1 | fixed | `hooks/foundry-env-reap.sh`, `scripts/foundry-env-hygiene.py` |
-| `secrets.value_reads_forbidden` | floor | `true` | D1 | fixed | `hooks/foundry-secret-read-guard.py` |
+| `hygiene.disk_sweep_each_tick` | tunable | `true` | F2 | key only | none: `scripts/foundry_deck_resources.py` measures the disk whatever this says |
+| `hygiene.teardown_required` | floor | `true` | F1 | const floor | `hooks/foundry-env-reap.sh`, `scripts/foundry-env-hygiene.py` |
+| `secrets.value_reads_forbidden` | floor | `true` | D1 | const floor | `hooks/foundry-secret-read-guard.py` |
 | `secrets.forbidden_verbs` | tunable | `(empty)` | D1 | script | `hooks/foundry-secret-read-guard.py` (add-only) |
 | `secrets.no_print_roots` | tunable | `(empty)` | D1 | script | `hooks/foundry-secret-read-guard.py` (add-only) |
-| `messaging.machine_channel` | tunable | `git-log` | - | key only | `scripts/foundry_message_log.py`; only one value exists |
-| `messaging.people_channel` | tunable | `issue-per-topic` | - | key only | issues, read by the operator inbox (`scripts/foundry_inbox.py`); only one value exists |
-| `messaging.chat_mirror` | tunable | `off` | - | script | `cli/templates/workflows/message-log-chat-mirror.yml` |
+| `messaging.machine_channel` | tunable | `git-log` | - | key only | none: `scripts/foundry_message_log.py` has one channel; only one value exists |
+| `messaging.people_channel` | tunable | `issue-per-topic` | - | key only | none: people use issues; only one value exists |
+| `messaging.chat_mirror` | tunable | `off` | - | key only | none: `cli/templates/workflows/message-log-chat-mirror.yml` runs only when the repository variable `MESSAGE_LOG_CHAT_MIRROR` is `on`; it does not read this key |
 | `messaging.open_change_minutes` | tunable | `120` | D2 | script | `scripts/foundry_message_log.py` (`audit`) |
 | `governance.design_required_paths` | tunable | `(empty)` | - | script | `scripts/foundry-ticket.py` (`design-required`) |
 | `governance.size_tag_required` | tunable | `L` | - | script | `scripts/foundry-ticket.py` (`design-required`) |
@@ -96,9 +96,9 @@ acceptance criterion that checks it.
 - **Subagents and rule D2.** The tick prompt tells the deck to put the production-step rule in the brief of every subagent
   that can touch production. That is prompt text. The brief renderer (`scripts/foundry_brief.py`) does not add a D2 line
   itself, so a brief you write by hand must carry it.
-- **Time zones.** `report.timezone` takes `auto`, `UTC` or an IANA name. A host with no time zone database (the Python
-  standard library reads the system `tzdata`) refuses every zone except `UTC`, with a `bad-timezone` line from
-  `scripts/foundry_deck_report.py`. Install the `tzdata` package, or set `UTC`.
+- **Time zones.** `report.timezone` takes `auto`, `UTC` or an IANA name. `auto` and `UTC` work on any host. A host with
+  no time zone database (the Python standard library reads the system `tzdata`) refuses every IANA name, with a
+  `bad-timezone` line from `scripts/foundry_deck_report.py`. Install the `tzdata` package, or set `auto` or `UTC`.
 - **The shared message log.** `messaging.*` keys configure the log described in
   [the shared message log](how-to/shared-message-log.md), including how far its tamper evidence goes and which branch the
   queue-land script can create.

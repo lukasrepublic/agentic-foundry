@@ -80,7 +80,8 @@ jobs:
           git show "${base_sha}:skills/init/SKILL.md" > "$INIT_SLIMMING_BASE"
           [ -s "$INIT_SLIMMING_BASE" ] || { echo "::error::empty AC-INS-5 baseline"; exit 1; }
           export INIT_SLIMMING_BASE
-          python3 -m pytest tests/ -q
+          # The name census (tests/test_name_census.py) runs once, in its own step below, so a skip reads there.
+          python3 -m pytest tests/ -q --ignore=tests/test_name_census.py
       # AC-CXZ-13 — the re-entry guard. The 400-line reference-sweep gate this atom deleted was
       # retired because it had become the largest instance of what it banned AND shipped to every
       # adopter (a plugin install is a full clone with no file-exclusion mechanism). That reasoning

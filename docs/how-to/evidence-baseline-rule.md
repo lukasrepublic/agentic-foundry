@@ -29,7 +29,7 @@ When the first green run still shows violations that exist today, freeze them pe
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_governance.py" baseline --check <name> --findings <file>
 ```
 
-The verb writes `governance/local/baselines/<name>.json`, sorted and de-duplicated. Review the file in the pull request like
+`<file>` is a JSON list (or `-` for standard input); each item is a string or an object, one for each finding. The verb writes `governance/local/baselines/<name>.json`, sorted and de-duplicated. Review the file in the pull request like
 code. A baseline is a decision, so record who took it and from which run.
 
 ## What is enforced

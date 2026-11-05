@@ -55,8 +55,8 @@ read it and start the ticket with `--trust-author`, which the Stop hook then nev
 ## The map
 
 Between the ticket and the platform there is one more layer: **governance**, the rules an implementing agent follows so it
-does not reinvent your architecture, security or delivery principles. Rules ship as read-only kits in the plugin, one for each
-of sixteen categories. A blueprint selects the kits for a project type, and your private rules live in `governance/local/`
+does not reinvent your architecture, security or delivery principles. There are sixteen categories. Rules ship as read-only kits in the
+plugin, one kit for each of fifteen of them; the sixteenth, `factory`, is the operating-model policy file. A blueprint selects the kits for a project type, and your private rules live in `governance/local/`
 and never reach the plugin. A ticket cites the rule ids it applies in its `## Design`, and the brief inlines their text. The
 floor above is the same set of rules at their strictest: a floor rule is a hook, a CI check or a review lens, and no
 configuration turns it off. Everything else is tunable. The factory's own operating rules (merge flow, deck, cost, report,
