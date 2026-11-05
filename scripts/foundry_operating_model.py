@@ -487,6 +487,9 @@ _EXPLAIN = {
         "Opt-in mirror of PROD-BEFORE and PROD-AFTER lines to chat; off by default.", "Chat is a convenience, not a record.", "message-log script."),
     "messaging.open_change_minutes": (
         "A PROD-BEFORE with no terminal PROD-AFTER after this many minutes is reported open.", "A missed after-line is a process miss.", "message-log audit."),
+    "messaging.cleanup_timeout_s": (
+        "The total wait for the --on-failure cleanup commands of a wrapped production step before STOP says the cleanup timed out.",
+        "A hung cleanup must not hold the STOP line back forever.", "foundry_prod_step.py."),
     "governance.design_required_paths": (
         "Changes touching these path globs need a design before build.", "Large changes without a design rework late.", "the governance brief renderer."),
     "governance.size_tag_required": (
