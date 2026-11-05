@@ -12,16 +12,20 @@ progress count "X of N done, +moved". It REFUSES (exit 2, one named defect per l
 stdout) on: more lines than `report.max_lines`, a missing block, a stuck item without a reason, the retired
 word for the shared message log, a bad progress count, a bad timezone, a tick that dispatched while paused.
 A tick that merged nothing and verified nothing prints `STALL: <why>`, and so does a tick with fewer running
-builders than ready clusters; either one needs a reason or the render is refused.
+builders than ready clusters; either one needs a reason or the render is refused. Every item field is cleaned
+(control and format characters removed, length bounded) and the retired word is masked, never a refusal.
 `report.include_ids: false` moves every id to one trailing "IDs:" line.
 
-Counting: `max_lines` counts the first line and every line under a heading (items, STALL, IDs). The four
-headings are structure and are not counted.
+Counting: `max_lines` counts EVERY line of the output: the first line, the four headings, the items, STALL and IDs.
+An empty block is one line ("Ledger: none"). The message-log findings never make the render refuse: they are
+fitted into the lines that are left (a summary and the first finding at most; with no room the summary rides on
+the Needs you heading line). Only the lead's own data can overflow the limit.
 
 Tick JSON (all keys are plain data):
   now (optional RFC 3339 UTC), progress {done,total,moved}, merged, verified (integers),
   decisions / building / needs_you / ledger (lists; an item is a string or {text, id, reason, stuck}),
-  ready_clusters, running_builders (optional integers), stall_reason, paused, dispatched_new,
+  ready_clusters, running_builders (required integers: B1 compares them), stall_reason, plan (the A1 plan line;
+  first line of Building now), paused, dispatched_new,
   message_log {read: <output of `read`>, audit: <output of `audit`>} (optional).
 A Needs you item is stuck by definition and needs a reason. A Building now item needs one when `stuck` is true.
 
@@ -62,7 +66,9 @@ _RETIRED = "b" + "us"
 _WORD_RE = re.compile(r"\b" + _RETIRED + r"\b", re.IGNORECASE)
 MASK = "***"
 MALFORMED_CAP = 20
-FINDING_CAP = 5
+ITEM_MAX = 240
+ID_MAX = 40
+PLAN_MAX = 300
 IN_MAX_BYTES = 1024 * 1024
 _AUDIT_REASONS = {
     "missing-corr": "a production record has no corr id, so its before and after lines cannot be joined",
@@ -91,25 +97,26 @@ def clean(value, limit=120):
 
 
 def _item(raw, block, index):
-    """-> (text, id, reason, stuck). Raises Refused on a wrong shape."""
+    """-> (text, id, reason, stuck). Every field is cleaned (control and format characters removed, bounded,
+    the retired word masked). Raises Refused on a wrong shape or a stuck item without a reason."""
     if isinstance(raw, str):
         raw = {"text": raw}
-    if not isinstance(raw, dict) or not isinstance(raw.get("text"), str) or not raw["text"].strip():
+    if not isinstance(raw, dict) or not isinstance(raw.get("text"), str):
         raise Refused(f"bad-item:{block}:{index}")
-    text = " ".join(raw["text"].split())
-    ident = raw.get("id")
-    ident = " ".join(str(ident).split()) if ident not in (None, "") else None
-    reason = raw.get("reason")
-    reason = " ".join(str(reason).split()) if isinstance(reason, str) and reason.strip() else None
+    text = clean(raw["text"], ITEM_MAX)
+    if not text:
+        raise Refused(f"bad-item:{block}:{index}")
+    ident = clean(raw["id"], ID_MAX) if raw.get("id") not in (None, "") else None
+    reason = clean(raw["reason"], ITEM_MAX) if isinstance(raw.get("reason"), str) else None
     stuck = block == "needs_you" or raw.get("stuck") is True
     if stuck and not reason:
         raise Refused(f"stuck-item-without-reason:{block}:{index}")
-    return text, ident, reason, stuck
+    return text, ident or None, reason or None, stuck
 
 
-def _count(value, name, optional=False):
-    if value is None and optional:
-        return None
+def _count(value, name):
+    if value is None:
+        raise Refused(f"missing-key:{name}")
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise Refused(f"bad-counter:{name}")
     return value
@@ -139,7 +146,8 @@ def pause_state(project):
             raise ValueError("shape")
     except (OSError, ValueError):
         return {"paused": True, "error": "flag-unreadable"}
-    return data
+    return {k: (clean(v, 200) if isinstance(v, str) else v) for k, v in data.items()
+            if k in ("paused", "since", "until", "reason")}
 
 
 def write_pause(project, until=None, reason=None, now=None):
@@ -169,62 +177,78 @@ def clear_pause(project):
 # ---------------------------------------------------------------------------------------------
 # message-log findings (data in, report lines out)
 # ---------------------------------------------------------------------------------------------
-def _sender_mismatches(records):
-    before_from, out = {}, []
-    for r in records:
-        if not isinstance(r, dict):
-            continue
-        kind, corr = r.get("kind"), r.get("corr")
-        if not corr or not isinstance(corr, str):
-            continue
-        if kind == "PROD-BEFORE":
-            before_from.setdefault(corr, r.get("from"))
-        elif kind in ("PROD-AFTER", "STOP") and corr in before_from and r.get("from") != before_from[corr]:
-            out.append((kind, corr, r.get("from"), before_from[corr]))
+_KNOWN_RULES = ("missing-corr", "after-without-before", "stop-without-before", "before-open", "malformed-prod-record",
+                "sender-mismatch")
+
+
+def _finding_line(f):
+    """-> (text, reason) for one audit finding. Every borrowed string is cleaned."""
+    rule = f.get("rule")
+    corr = clean(f.get("corr", "no corr"), 40)
+    if rule == "before-open":
+        reason = f"the before line has had no outcome for {clean(f.get('age_minutes', '?'), 12)} minutes"
+    elif rule == "malformed-prod-record":
+        reason = f"a production record failed the format check: {clean(f.get('reason', 'no reason given'), 80)}"
+    elif rule == "sender-mismatch":
+        reason = (f"the {clean(f.get('kind', 'outcome'), 12)} line came from {clean(f.get('from', '?'), 40)} but the before line "
+                  f"came from {clean(f.get('before_from', '?'), 40)}; check that one session did not close another session's step")
+    else:
+        reason = _AUDIT_REASONS.get(rule, "the audit reported a rule this deck does not know")
+    label = clean(rule, 40) if rule in _KNOWN_RULES else "unknown-rule"
+    return f"Process miss in the shared message log: {label} (corr {corr})", reason
+
+
+def _malformed_unique(read, audit):
+    """Malformed entries of `read` and `audit`, each distinct record once (by line text, else reason and kind)."""
+    seen, out = set(), []
+    for src in (read.get("malformed"), audit.get("malformed")):
+        for b in src if isinstance(src, list) else []:
+            if not isinstance(b, dict):
+                continue
+            key = (str(b.get("line")), str(b.get("reason")), str(b.get("kind")))
+            if key not in seen:
+                seen.add(key)
+                out.append(b)
     return out
 
 
-def message_log_items(data):
-    """-> list of {text, reason} dicts for Needs you."""
+def message_log_summary(data):
+    """-> (findings, malformed): `findings` is a list of (text, reason); `malformed` a de-duplicated list."""
     if not isinstance(data, dict):
-        return []
-    items = []
+        return [], []
     audit = data.get("audit") if isinstance(data.get("audit"), dict) else {}
     read = data.get("read") if isinstance(data.get("read"), dict) else {}
-    findings = audit.get("findings") if isinstance(audit.get("findings"), list) else []
-    findings = [f for f in findings if isinstance(f, dict)]
-    mism = _sender_mismatches(read.get("records") if isinstance(read.get("records"), list) else [])
-    rows = []
-    for f in findings:
-        rule = f.get("rule")
-        corr = clean(f.get("corr", "no corr"), 40)
-        if rule == "before-open":
-            reason = f"the before line has had no outcome for {clean(f.get('age_minutes', '?'), 12)} minutes"
-        elif rule == "malformed-prod-record":
-            reason = f"a production record failed the format check: {clean(f.get('reason', 'no reason given'), 80)}"
-        else:
-            reason = _AUDIT_REASONS.get(rule, "the audit reported a rule this deck does not know")
-        label = clean(rule, 40) if rule in ("missing-corr", "after-without-before", "stop-without-before",
-                                             "before-open", "malformed-prod-record") else "unknown-rule"
-        rows.append((f"Process miss in the shared message log: {label} (corr {corr})", reason))
-    for kind, corr, frm, bfrom in mism:
-        rows.append((f"A {kind} line in the shared message log came from a different sender (corr {clean(corr, 40)})",
-                     f"it came from {clean(frm, 40)} but the before line came from {clean(bfrom, 40)}; "
-                     "check that one session did not close another session's step"))
-    shown, extra = rows[:FINDING_CAP], len(rows) - FINDING_CAP
-    items += [{"text": t, "reason": r} for t, r in shown]
-    if extra > 0:
-        items.append({"text": f"{extra} more process misses in the shared message log are not listed",
-                      "reason": "run the audit verb to see them all"})
-    malformed = read.get("malformed") if isinstance(read.get("malformed"), list) else []
-    audit_bad = audit.get("malformed") if isinstance(audit.get("malformed"), list) else []
-    bad = [b for b in malformed + audit_bad if isinstance(b, dict)]
-    if bad:
-        shown_bad = "; ".join(f"{i + 1}: {clean(b.get('reason', 'no reason'), 60)}" for i, b in enumerate(bad[:MALFORMED_CAP]))
-        items.append({"text": f"{len(bad)} malformed records in the shared message log (first {min(len(bad), MALFORMED_CAP)} "
-                              f"shown as data: {shown_bad})",
-                      "reason": _ml.NOTICE})
-    return items
+    raw = audit.get("findings") if isinstance(audit.get("findings"), list) else []
+    return [_finding_line(f) for f in raw if isinstance(f, dict)], _malformed_unique(read, audit)
+
+
+def _malformed_line(bad):
+    shown = "; ".join(f"{i + 1}: {clean(b.get('reason', 'no reason'), 60)}" for i, b in enumerate(bad[:MALFORMED_CAP]))
+    return (f"{len(bad)} malformed records in the shared message log (first {min(len(bad), MALFORMED_CAP)} shown as data: {shown})",
+            _ml.NOTICE)
+
+
+def budget_message_lines(data, room):
+    """Fit the message-log findings into `room` lines under Needs you. Returns (lines, heading_suffix).
+    Never more than 2 lines: a summary, then the first finding. With 1 line: the summary. With none: the
+    summary rides on the heading line, so the findings are always visible and never cost a line."""
+    findings, bad = message_log_summary(data)
+    n, m = len(findings), len(bad)
+    if not n and not m:
+        return [], ""
+    summary = f"{n} process findings, {m} malformed records - see audit"
+    first = _finding_line_text(findings[0]) if n else _finding_line_text(_malformed_line(bad))
+    if n + (1 if m else 0) == 1 and room >= 1:
+        return [first], ""                       # exactly one thing to say: say it
+    if room >= 2:
+        return [summary, first], ""
+    if room == 1:
+        return [summary], ""
+    return [], f" ({summary})"
+
+
+def _finding_line_text(pair):
+    return f"{pair[0]} -- reason: {pair[1]}"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -238,8 +262,12 @@ def _zone(name):
     try:
         import zoneinfo
         return zoneinfo.ZoneInfo(name)
-    except Exception:  # noqa: BLE001 -- unknown name or no tz database
-        raise Refused(f"bad-timezone:{clean(name, 40)}")
+    except ImportError:
+        raise Refused(f"bad-timezone:{clean(name, 40)}: no time zone database is installed")
+    except zoneinfo.ZoneInfoNotFoundError:
+        raise Refused(f"bad-timezone:{clean(name, 40)}: the time zone database has no such zone")
+    except (ValueError, OSError) as exc:
+        raise Refused(f"bad-timezone:{clean(name, 40)}: {type(exc).__name__}")
 
 
 def _first_line(tick, tzname):
@@ -265,20 +293,18 @@ def _first_line(tick, tzname):
 
 
 def render(tick, policy, flag=None):
-    """-> report text. Raises Refused. `flag` is the pause state of the project (None = not paused)."""
+    """-> report text. Raises Refused for the lead's own data. The message-log findings never cause a refusal:
+    they are fitted into the lines that are left."""
     if not isinstance(tick, dict):
         raise Refused("bad-tick:not an object")
-    errors = []
-    for key, _ in BLOCKS:
-        if not isinstance(tick.get(key), list):
-            errors.append(f"missing-block:{key}")
+    errors = [f"missing-block:{key}" for key, _ in BLOCKS if not isinstance(tick.get(key), list)]
     if errors:
         raise Refused(errors)
     first = _first_line(tick, policy.get("report.timezone"))
     merged = _count(tick.get("merged"), "merged")
     verified = _count(tick.get("verified"), "verified")
-    ready = _count(tick.get("ready_clusters"), "ready_clusters", optional=True)
-    running = _count(tick.get("running_builders"), "running_builders", optional=True)
+    ready = _count(tick.get("ready_clusters"), "ready_clusters")
+    running = _count(tick.get("running_builders"), "running_builders")
     dispatched = _count(tick.get("dispatched_new", 0), "dispatched_new")
     paused = bool(tick.get("paused")) or bool(flag and flag.get("paused"))
     if paused and dispatched:
@@ -286,15 +312,16 @@ def render(tick, policy, flag=None):
 
     ids, body = [], {}
     include_ids = bool(policy.get("report.include_ids"))
-    needs = list(tick["needs_you"]) + message_log_items(tick.get("message_log"))
-    sources = {"decisions": tick["decisions"], "building": tick["building"], "needs_you": needs, "ledger": tick["ledger"]}
     for key, _ in BLOCKS:
         lines = []
-        if key == "building" and paused:
-            until = (flag or {}).get("until") or tick.get("paused_until")
-            lines.append("- Paused: no new work started" + (f" (until: {clean(until, 120)})" if until else "")
-                         + ". Running work finishes or parks.")
-        for i, raw in enumerate(sources[key], 1):
+        if key == "building":
+            if paused:
+                until = (flag or {}).get("until") or tick.get("paused_until")
+                lines.append("- Paused: no new work started" + (f" (until: {clean(until, 120)})" if until else "")
+                             + ". Running work finishes or parks.")
+            if tick.get("plan"):
+                lines.append("- Plan: " + clean(tick["plan"], PLAN_MAX))
+        for i, raw in enumerate(tick[key], 1):
             text, ident, reason, stuck = _item(raw, key, i)
             line = text
             if reason:
@@ -305,31 +332,37 @@ def render(tick, policy, flag=None):
                 elif ident not in ids:
                     ids.append(ident)
             lines.append("- " + line)
-        body[key] = lines or ["- none"]
+        body[key] = lines
 
     stalls = []
     if merged == 0 and verified == 0:
         stalls.append("this tick merged nothing and verified nothing")
-    if ready is not None and running is not None and not paused and running < ready:
+    if not paused and running < ready:
         stalls.append(f"{_plural(running, 'builder')} running, {ready} ready")
     head = [first]
     if stalls:
-        why = tick.get("stall_reason")
-        if not isinstance(why, str) or not why.strip():
+        why = clean(tick.get("stall_reason") or "", ITEM_MAX)
+        if not why:
             raise Refused("stall-without-reason")
-        head.append("STALL: " + "; ".join(stalls) + f" -- why: {' '.join(why.split())}")
+        head.append("STALL: " + "; ".join(stalls) + f" -- why: {why}")
+
+    max_lines = policy.get("report.max_lines")
+    tail = ["IDs: " + ", ".join(ids)] if ids else []
+    base = len(head) + sum(1 if not body[k] else 1 + len(body[k]) for k, _ in BLOCKS) + len(tail)
+    if base > max_lines:
+        raise Refused(f"too-many-lines:{base}>max_lines={max_lines}")
+    extra, suffix = budget_message_lines(tick.get("message_log"), max_lines - base)
+    body["needs_you"] = body["needs_you"] + ["- " + e for e in extra]
     out = list(head)
     for key, title in BLOCKS:
-        out.append(title)
-        out += body[key]
-    if ids:
-        out.append("IDs: " + ", ".join(ids))
-    counted = [ln for ln in out if ln not in {t for _, t in BLOCKS}]
-    max_lines = policy.get("report.max_lines")
-    if len(counted) > max_lines:
-        raise Refused(f"too-many-lines:{len(counted)}>max_lines={max_lines}")
+        if not body[key] and not (suffix and key == "needs_you"):
+            out.append(f"{title}: none")
+        else:
+            out.append(title + (suffix if key == "needs_you" else ""))
+            out += body[key]
+    out += tail
     text = "\n".join(out) + "\n"
-    if _WORD_RE.search(text):
+    if _WORD_RE.search(text):          # unreachable after clean(); kept as a last check on the final text
         raise Refused(f"forbidden-word:{_RETIRED}")
     return text
 
@@ -338,7 +371,15 @@ def render(tick, policy, flag=None):
 # CLI
 # ---------------------------------------------------------------------------------------------
 def _project(arg):
-    return Path(arg or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    """--project-dir, else CLAUDE_PROJECT_DIR, else the working directory ONLY when it is a workspace (it has a
+    `.foundry` directory). Anything else is refused: a flag read from the wrong place would say "not paused"."""
+    raw = arg or os.environ.get("CLAUDE_PROJECT_DIR")
+    if raw:
+        return Path(raw)
+    cwd = Path(os.getcwd())
+    if (cwd / ".foundry").is_dir():
+        return cwd
+    raise Refused("no-project-dir: pass --project-dir or set CLAUDE_PROJECT_DIR (the working directory is not a workspace)")
 
 
 def _read_in(path):

@@ -40,28 +40,30 @@ def paragraph_of(text, needle):
 
 
 # ---- AC-OM-3 -------------------------------------------------------------------------------------------
-SECTION_MARKERS = {
-    "A1": "Merge overlapping items into one cluster",
-    "A5": "Dispatch the largest and most complex cluster first",
-    "A6": "A fix is done only when you re-measure it",
-    "B1": "Each tick, dispatch every ready cluster",
-    "B8": "the smaller size wins",
-    "B9": "Check the pause flag first",
-    "C1": "Weigh cost in every decision",
-    "D2": "Before each irreversible or production write",
-    "E1": "four blocks: Your decisions, Building now, Needs you, Ledger",
-}
+SECTION_NAMES = ("A1", "A5", "A6", "B1", "B7", "B8", "B9", "C1", "D2", "E1", "E2")
 
 
-def test_default_render_has_every_section_with_policy_values(tmp_path):
-    text = render(tmp_path)
-    for name, mark in SECTION_MARKERS.items():
-        assert mark in text, name
+def test_the_template_carries_each_section_marker_once():
+    raw = TEMPLATE.read_text()
+    for name in SECTION_NAMES:
+        assert raw.count("{{SECTION:" + name + "}}") == 1, name
+    assert sorted(set(re.findall(r"\{\{SECTION:([A-Z]\d)\}\}", raw))) == sorted(SECTION_NAMES)
+
+
+def test_default_render_fills_every_marker_with_the_policy_section(tmp_path):
+    raw, text = TEMPLATE.read_text(), render(tmp_path)
+    pol = om.load(str(tmp_path))
+    cursor = 0
+    for name in sorted(SECTION_NAMES, key=lambda n: raw.index("{{SECTION:" + n + "}}")):
+        filled = om.render_tick_section(pol, name, str(tmp_path))
+        assert filled and filled in text, name
+        # the section text sits exactly where its marker sat: after the text of the marker before it
+        at = text.index(filled, cursor)
+        cursor = at + len(filled)
     assert "up to 4 builders" in text                      # B1 from deck.max_builders
     assert "The policy limit is 4. The size for this tick is 4." in text   # B8
     assert "Use at most 8 lines." in text                  # E1 from report.max_lines
     assert STYLE_MARK in text                              # E2 on by default
-    assert om.render_tick_section(om.load(str(tmp_path)), "A5") in text
 
 
 def test_policy_values_flow_into_the_render(tmp_path):
@@ -70,7 +72,7 @@ def test_policy_values_flow_into_the_render(tmp_path):
                              "pr_strategy": {"granularity": "fine"}})
     assert "up to 2 builders" in text and "Use at most 12 lines." in text and "IDs are allowed." in text
     assert "Europe/Warsaw" in text and "Fine-grained PRs are allowed" in text
-    assert SECTION_MARKERS["A1"] not in text
+    assert om.render_tick_section(om.load(str(tmp_path / "default")), "A1") not in text      # control: the default A1 is gone
 
 
 def test_smallest_size_wins_in_the_render(tmp_path):
@@ -155,22 +157,27 @@ def test_the_rendered_template_passes_the_brief_size_lint(tmp_path, data):
 
 
 def test_steps_one_to_seven_stay_in_order_with_the_new_sections_around_them(tmp_path):
-    text = render(tmp_path)
-    paras = re.split(r"\n[ \t]*\n", text)
-    pos = {}
-    for i, p in enumerate(paras):
-        m = re.match(r"(\d)\. ", p)
-        if m:
-            pos[int(m.group(1))] = i
-        for key, lead in (("B9", "Pause flag (B9)."), ("B2", "Machine check (B2)."), ("A6", "Verify after merge (A6"),
-                          ("A1", "Merge plan (A1"), ("A5", "Order of work (A5"), ("B1", "Fan-out (B1"),
-                          ("B8", "Smallest size (B8"), ("C1", "Cost (C1)."), ("D2", "Production steps (D2)."),
-                          ("E1", "Report (E1")):
-            if p.startswith(lead):
-                pos[key] = i
-    assert [pos[n] for n in range(1, 8)] == sorted(pos[n] for n in range(1, 8))
-    assert pos["B9"] < pos["B2"] < pos[1]                  # pause flag and machine check come first
-    assert pos[7] < pos["A6"] < pos["A1"] < pos["A5"] < pos["B1"] < pos["B8"] < pos["C1"] < pos["D2"] < pos["E1"]
+    raw = TEMPLATE.read_text()
+    mark = lambda n: raw.index("{{SECTION:" + n + "}}")      # noqa: E731
+    step = lambda n: raw.index(f"\n{n}. ")                  # noqa: E731
+    steps = [step(n) for n in range(1, 8)]
+    assert steps == sorted(steps)
+    machine = raw.index("Machine check (B2).")
+    # before step 1: the pause flag, then the machine check; after step 7: A6, A1, A5, B1, B8, B7, C1, D2, E1, E2
+    assert mark("B9") < machine < steps[0]
+    after = [mark(n) for n in ("A6", "A1", "A5", "B1", "B8", "B7", "C1", "D2", "E1", "E2")]
+    assert steps[-1] < after[0] and after == sorted(after)
+    # the rendered text keeps the same order
+    text, pol = render(tmp_path), om.load(str(tmp_path))
+    spots = [text.index(om.render_tick_section(pol, n, str(tmp_path))) for n in ("B9", "A6", "A1", "A5", "B1", "B8", "B7", "C1", "D2", "E1", "E2")]
+    assert spots == sorted(spots)
+    assert spots[0] < text.index("\n1. Begin") < text.index("\n7. Emit") < spots[1]
+
+
+def test_b2_is_static_prose_in_the_template_and_the_skill_says_so(tmp_path):
+    assert "SECTION:B2" not in TEMPLATE.read_text()
+    assert "Machine check (B2)." in render(tmp_path)
+    assert "fixed prose in the template" in SKILL.read_text()
 
 
 # ---- the other rules in the template ------------------------------------------------------------------
@@ -260,3 +267,56 @@ def test_b7_a_bad_model_value_is_refused_and_models_has_no_floor(tmp_path, bad):
         om.load(str(d))
     schema = om._schema()
     assert all("const" not in leaf for k, leaf in om._leaves(schema) if k.startswith("models."))
+
+
+# ---- PR #304 round 1 -----------------------------------------------------------------------------------
+def test_render_tick_section_template_is_confined_to_the_plugin_root(tmp_path):
+    d = policy_dir(tmp_path)
+    outside = tmp_path / "secret.txt"
+    outside.write_text("TOP-SECRET {{WORKSPACE}} {{OPERATOR}}")
+    cmd = [sys.executable, str(SCRIPTS / "foundry_operating_model.py"), "--project-dir", str(d), "render-tick-section",
+           "TEMPLATE", "--workspace", "/w", "--operator", "o", "--template"]
+    p = subprocess.run(cmd + [str(outside)], capture_output=True, text=True, timeout=60)
+    assert p.returncode == 2 and "template-outside-plugin-root" in p.stdout and "TOP-SECRET" not in p.stdout
+    link = tmp_path / "link.md"
+    link.symlink_to(outside)
+    p = subprocess.run(cmd + [str(link)], capture_output=True, text=True, timeout=60)
+    assert p.returncode == 2 and "TOP-SECRET" not in p.stdout
+    p = subprocess.run(cmd + [str(tmp_path / "missing.md")], capture_output=True, text=True, timeout=60)
+    assert p.returncode == 2
+    # control: the shipped template, by absolute path or through a link that resolves into the plugin root
+    ok = subprocess.run(cmd + [str(TEMPLATE)], capture_output=True, text=True, timeout=60)
+    assert ok.returncode == 0 and "COMMAND DECK TICK." in ok.stdout
+    inward = tmp_path / "inward.md"
+    inward.symlink_to(TEMPLATE)
+    ok = subprocess.run(cmd + [str(inward)], capture_output=True, text=True, timeout=60)
+    assert ok.returncode == 0
+
+
+def _corpus():
+    import json
+    return json.loads((ROOT / "tests" / "fixtures" / "floor-drift-corpus.json").read_text())["cases"]
+
+
+def _floor_rows():
+    import json
+    rows = json.loads((ROOT / "docs" / "permission-floor.json").read_text())["entries"]
+    return [(e["rule"], e["tier"]) for e in rows if "foundry_deck_report.py" in e["rule"] or "foundry_prod_step.py" in e["rule"]]
+
+
+def test_the_drift_corpus_has_single_prefix_rules_and_the_five_new_rows_in_the_full_floor_cases():
+    new = _floor_rows()
+    assert len(new) == 5 and sorted(t for _, t in new) == ["allow", "allow", "ask", "ask", "ask"]
+    for case in _corpus():
+        for tier in ("allow", "ask", "deny"):
+            for e in case["effective"][tier]:
+                assert not e["rule"].startswith("Bash(Bash("), (case["name"], e["rule"])
+    full = {c["name"]: c for c in _corpus()}["full-floor-verbatim"]["effective"]
+    for rule, tier in new:
+        assert rule in [e["rule"] for e in full[tier]], rule
+        assert rule not in [e["rule"] for e in full["ask" if tier == "allow" else "allow"]]
+
+
+def test_the_prefix_check_would_catch_the_old_defect():
+    bad = [{"rule": "Bash(Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_prod_step.py:*)"}]
+    assert any(e["rule"].startswith("Bash(Bash(") for e in bad)

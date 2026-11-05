@@ -326,7 +326,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_prod_step.py:*)",
       "tier": "ask",
-      "rationale": "EXECUTES the command given after `--` (and any --on-failure cleanup commands) and posts PROD-BEFORE, PROD-AFTER or STOP to the foundry/messages branch of the named repo and remote; the plugin-scripts-allow hook never grants it a silent allow (gv-13, rule D2)"
+      "rationale": "EXECUTES the command given after `--` (and any --on-failure cleanup commands) and posts PROD-BEFORE, PROD-AFTER or STOP to the foundry/messages branch of the named repo and remote; the plugin-scripts-allow hook never grants it a silent allow (gv-13, rule D2). NEVER persist an allow for this row: it runs whatever command it is given; approve each call"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_events.py:*)",

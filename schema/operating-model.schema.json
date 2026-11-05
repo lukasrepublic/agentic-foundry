@@ -72,7 +72,7 @@
         "format": {"enum": ["four-block", "detailed"], "default": "four-block", "description": "E1 tunable."},
         "timezone": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^(auto|UTC|[A-Za-z_]+(/[A-Za-z0-9_+-]+){1,2})$", "default": "auto", "description": "auto = the operator's local zone."},
         "plain_language": {"type": "boolean", "default": true},
-        "max_lines": {"type": "integer", "minimum": 4, "maximum": 200, "default": 8},
+        "max_lines": {"type": "integer", "minimum": 6, "maximum": 200, "default": 8},
         "include_ids": {"type": "boolean", "default": false},
         "handoff_dir": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u200b-\\u200d\\u2028\\u2029\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$", "default": "~/Documents/<workspace-name>", "description": "E3 tunable; the placeholder is filled by the operator."}
       }

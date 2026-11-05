@@ -183,6 +183,85 @@ def test_the_script_never_goes_through_a_shell():
     assert ("c" + "t" + "x") not in src.lower()
 
 
+# ---- signals, cleanup that raises, empty cleanup, repo validation (PR #304 round 1) ----------------------------
+import signal  # noqa: E402
+import time  # noqa: E402
+
+
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT])
+def test_a_signal_ends_the_child_runs_cleanup_and_still_posts_stop(tmp_path, sig):
+    _, clone = make_clone(tmp_path)
+    ready, order = tmp_path / "ready", tmp_path / "order.txt"
+    child = f"import time; open({str(ready)!r}, 'w').write('1'); time.sleep(60)"
+    cleanup = f"{PY} -c \"open({str(order)!r}, 'a').write('cleanup')\""
+    proc = subprocess.Popen([PY, str(CLI), "--repo", str(clone), "--remote", "origin", "--from", "s", "--what", "w",
+                             "--on-failure", cleanup, "--", PY, "-c", child],
+                            env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
+    for _ in range(100):
+        if ready.exists():
+            break
+        time.sleep(0.1)
+    assert ready.exists()
+    proc.send_signal(sig)
+    assert proc.wait(timeout=60) == 128 + int(sig)
+    recs = records(clone)
+    assert [r["kind"] for r in recs] == ["PROD-BEFORE", "STOP"]
+    assert f"signal {int(sig)}" in recs[1]["body"] and "cleanup: ok" in recs[1]["body"]
+    assert order.read_text() == "cleanup"
+
+
+def test_a_cleanup_that_raises_is_a_failed_cleanup_and_stop_is_still_posted(tmp_path):
+    _, clone = make_clone(tmp_path)
+    calls = []
+
+    def runner(argv):
+        calls.append(argv)
+        if len(calls) == 1:
+            return 3, "the command exited with status 3"
+        raise RuntimeError("cleanup blew up")
+
+    rc = ps.run_step(["prog"], clone, "origin", "s", "all", "w", cleanups=["one", "two"], runner=runner)
+    recs = records(clone)
+    assert rc == 3 and [r["kind"] for r in recs] == ["PROD-BEFORE", "STOP"]
+    assert "cleanup: failed (2 of 2 commands)" in recs[1]["body"]
+
+
+def test_an_unexpected_exception_from_the_command_still_posts_stop(tmp_path):
+    _, clone = make_clone(tmp_path)
+
+    def runner(argv):
+        raise MemoryError("boom")
+
+    rc = ps.run_step(["prog"], clone, "origin", "s", "all", "w", runner=runner)
+    recs = records(clone)
+    assert rc == 1 and [r["kind"] for r in recs] == ["PROD-BEFORE", "STOP"] and "MemoryError" in recs[1]["body"]
+
+
+def test_an_empty_on_failure_is_rejected_and_nothing_runs(tmp_path):
+    _, clone = make_clone(tmp_path)
+    marker = tmp_path / "ran.txt"
+    for bad in ("", "   "):
+        rc = ps.main(["--repo", str(clone), "--remote", "origin", "--from", "s", "--what", "w", "--on-failure", bad,
+                      "--", PY, "-c", f"open({str(marker)!r}, 'w')"])
+        assert rc == 2 and not marker.exists()
+    assert records(clone) == []
+
+
+@pytest.mark.parametrize("repo", ["-evil", "/no/such/dir/at/all"])
+def test_a_bad_repo_is_rejected_before_anything_runs(tmp_path, repo):
+    marker = tmp_path / "ran.txt"
+    rc = ps.main(["--repo", repo, "--remote", "origin", "--from", "s", "--what", "w", "--",
+                  PY, "-c", f"open({str(marker)!r}, 'w')"])
+    assert rc == 2 and not marker.exists()
+
+
+def test_the_skill_and_the_floor_say_never_to_persist_an_allow_for_prod_step():
+    assert "never persist an allow" in (ROOT / "skills" / "command-deck" / "SKILL.md").read_text()
+    for rel in ("docs/permission-floor.json", "cli/permission-floor.json"):
+        rows = [e for e in json.load(open(ROOT / rel))["entries"] if e["rule"].endswith("foundry_prod_step.py:*)")]
+        assert len(rows) == 1 and rows[0]["tier"] == "ask" and "NEVER persist an allow" in rows[0]["rationale"]
+
+
 # ---- the plugin-scripts-allow hook (gv-13): reports are silent, anything that executes or writes asks ---------
 def _hook():
     import importlib.util

@@ -440,7 +440,7 @@ _EXPLAIN = {
         "deck-report renderer."),
     "report.timezone": ("E1: the first line uses this zone; auto means the operator's local zone.", "The operator reads local time.", "deck-report renderer."),
     "report.plain_language": ("E1: name fixes by what they do, not by IDs.", "ID-heavy status text could not be followed.", "deck-report renderer."),
-    "report.max_lines": ("E1: the renderer refuses output longer than this.", "The operator reads short, plain reports.", "deck-report renderer."),
+    "report.max_lines": ("E1: the renderer refuses output longer than this; every line counts, headings included.", "The operator reads short, plain reports.", "deck-report renderer."),
     "report.include_ids": ("E1: when false, the report names work by what it does, not by ID.", "ID-heavy status text could not be followed.", "deck-report renderer."),
     "report.handoff_dir": (
         "E3: step-by-step operator documents go to this directory; generated PDFs go next to them.",
@@ -733,6 +733,12 @@ def main(argv=None):
                     print("template-needs: --workspace and --operator")
                     return 2
                 tpl = Path(args.template) if args.template else HERE.parent / TEMPLATE_REL
+                try:
+                    tpl = tpl.resolve(strict=True)
+                    tpl.relative_to(HERE.parent.resolve())      # confined to the plugin root (symlinks resolved)
+                except (OSError, ValueError):
+                    print(f"template-outside-plugin-root:{str(args.template)[:128]}")
+                    return 2
                 try:
                     text = tpl.read_text(encoding="utf-8")
                 except (OSError, UnicodeDecodeError):
