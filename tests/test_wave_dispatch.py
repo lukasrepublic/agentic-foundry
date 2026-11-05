@@ -359,6 +359,26 @@ def test_parked_atom_holds_back_the_atoms_behind_it(tmp_path):
     out = run_workflow(tmp_path, args)
     assert [e["atom"] for e in starts(out)] == ["a0"]
     assert {"id": "a2", "reason": "behind-parked-atom"} in out["result"]["skipped"]
+    batch = out["result"]["batches"][0]
+    assert batch["status"] == "partial"                                   # never review_ready
+    assert batch["parked"] == [{"id": "a1", "reason": "review-required"}, {"id": "a2", "reason": "behind-parked-atom"}]
+    assert brief_fields(starts(out)[0]["prompt"])["PR rule"].startswith("open no PR")   # no openPr
+    assert [a["atom"] for a in batch["atoms"]] == ["a0"]
+
+
+@pytest.mark.parametrize("bad", ["true", 1, "yes"])
+def test_non_boolean_design_required_is_refused(tmp_path, bad):
+    args = make_args({"b0": ["a0"], "b1": ["a1"]})
+    args["briefs"]["a0"]["design_required"] = bad
+    out = run_workflow(tmp_path, args)
+    assert [e["atom"] for e in starts(out)] == ["a1"]
+    assert {"id": "a0", "reason": "bad-design-required"} in out["result"]["skipped"]
+
+
+def test_boolean_false_design_required_has_no_gate(tmp_path):
+    args = make_args({"b0": ["a0"]})
+    args["briefs"]["a0"]["design_required"] = False
+    assert [e["atom"] for e in starts(run_workflow(tmp_path, args))] == ["a0"]
 
 
 def test_atom_without_a_brief_is_not_started(tmp_path):

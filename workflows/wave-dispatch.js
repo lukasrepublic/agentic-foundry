@@ -94,21 +94,23 @@ function selectOpenWave(plan, mergedBatches, runningBatches, briefs) {
     if (isHeld(b)) { out.skipped.push({ id: b.id, reason: 'held' }); continue }
     const atoms = []
     let parked = false
+    const parkedList = []
     for (const a of b.atoms || []) {
       if (!isSafeId(a)) { out.skipped.push({ id: String(a), reason: 'unsafe-atom-id' }); continue }
       if (seenAtoms.has(a)) { out.skipped.push({ id: a, reason: 'duplicate-atom' }); continue }
       seenAtoms.add(a)
-      if (parked) { out.skipped.push({ id: a, reason: 'behind-parked-atom' }); continue }
+      if (parked) { out.skipped.push({ id: a, reason: 'behind-parked-atom' }); parkedList.push({ id: a, reason: 'behind-parked-atom' }); continue }
       const gate = briefs ? reviewGate(briefs[a]) : null
       if (gate) {
         // atoms of a batch run in order and may depend on each other: the parked atom and everything behind it wait
         out.skipped.push({ id: a, reason: gate })
+        parkedList.push({ id: a, reason: gate })
         parked = true
         continue
       }
       atoms.push(a)
     }
-    if (atoms.length) out.batches.push({ id: b.id, atoms, total_float: Number.isInteger(b.total_float) ? b.total_float : 0 })
+    if (atoms.length) out.batches.push({ id: b.id, atoms, parked: parkedList, total_float: Number.isInteger(b.total_float) ? b.total_float : 0 })
   }
   // critical path first: least total float, then id (stable and deterministic)
   out.batches.sort((x, y) => (x.total_float - y.total_float) || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0))
@@ -118,6 +120,7 @@ function selectOpenWave(plan, mergedBatches, runningBatches, briefs) {
 // The review gate (step 0 design-reviewer, step 0b ticket-reviewer of /foundry:dispatch). Returns a skip reason or null.
 function reviewGate(brief) {
   if (!brief || typeof brief !== 'object') return 'no-brief'
+  if (brief.design_required !== undefined && brief.design_required !== null && typeof brief.design_required !== 'boolean') return 'bad-design-required'
   if (brief.design_required === true && !(brief.design_verdict === 'clear' && brief.ticket_verdict === 'clear')) return 'review-required'
   return null
 }
@@ -250,7 +253,7 @@ async function runBatch(batch) {
       const atom = pending[i]
       if (startedAtoms.has(atom)) { results.push({ atom, repo, status: 'failed', reason: 'duplicate build agent refused' }); continue }
       startedAtoms.add(atom)
-      const openPr = i === pending.length - 1
+      const openPr = i === pending.length - 1 && !(batch.parked || []).length   // no PR while atoms behind it are parked
       const b = briefs[atom] || {}
       const prompt = renderBrief({
         atom, batch: batch.id, repo, worktree, branch, openPr,
@@ -275,6 +278,8 @@ async function runBatch(batch) {
   }
   const allDone = results.length === batch.atoms.length && results.every((r) => r.status === 'done')
   const stopped = results.find((r) => r.status === 'stopped_at_cap')
+  const parkedAtoms = batch.parked || []
+  if (parkedAtoms.length) return { id: batch.id, status: 'partial', parked: parkedAtoms, atoms: results }
   return { id: batch.id, status: allDone ? 'review_ready' : stopped ? 'stopped_at_cap' : 'failed', atoms: results }
 }
 
