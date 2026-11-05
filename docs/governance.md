@@ -95,7 +95,7 @@ connect it to governance, and a fourth that states what done looks like (parsed 
 - `## Surfaces`: one line for each surface the blueprint declares, or `n/a:` with the reason.
 - `## Acceptance`: EARS bullets (`WHEN <condition>, THE SYSTEM SHALL <response>` or `THE SYSTEM SHALL <response>`),
   each with a stable id (`- AC-1: ...`), and one `Grounding:` line that names the research-gate source. A bullet
-  with no id, a repeated id, or a bullet without `SHALL` is refused and named. `read-issue --json` exposes the
+  with no id, a repeated id, or a bullet without `SHALL` is refused and named; ids are `AC-<n>`; the script caps the id length, the bullet count and the bullet length (see `AC_MAX_BULLETS` and `AC_MAX_BULLET_CHARS`). `## Acceptance criteria` names the same section. Below the design-required class a malformed section is a checklist line, not a refusal. `read-issue --json` exposes the
   parsed bullets and the grounding line. The brief renderer inlines every bullet under its id, and `pr-reviewer`
   reports a pass or a Block per id. Done means stays the machine check; the bullets are the review target.
 

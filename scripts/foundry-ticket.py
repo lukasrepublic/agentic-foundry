@@ -61,6 +61,7 @@ import socket
 import subprocess
 import sys
 import time
+import unicodedata
 import uuid
 from pathlib import Path
 
@@ -166,11 +167,13 @@ def parse_body(body: str) -> tuple[str, list[str]]:
 _DESIGN_H = re.compile(r"^##[ \t]+design[ \t]*:?[ \t]*$", re.I | re.M)
 _SECURITY_H = re.compile(r"^##[ \t]+security[ \t]*:?[ \t]*$", re.I | re.M)
 _SURFACES_H = re.compile(r"^##[ \t]+surfaces?[ \t]*:?[ \t]*$", re.I | re.M)
-_ACCEPTANCE_H = re.compile(r"^##[ \t]+acceptance[ \t]*:?[ \t]*$", re.I | re.M)      # exact: not "Acceptance criteria"
-_AC_ID_RE = re.compile(r"^AC-(\d+)$")
+_ACCEPTANCE_H = re.compile(r"^##[ \t]+acceptance(?:[ \t]+criteria)?[ \t]*:?[ \t]*$", re.I | re.M)   # both spellings, one section
+_AC_ID_RE = re.compile(r"^AC-(\d{1,6})$")
 _AC_BULLET_RE = re.compile(r"^[-*+][ \t]+(.*)$")
-_AC_LEAD_RE = re.compile(r"^(?:\[(AC-\d+)\]|\**(AC-\d+)\**[ \t]*[:.)\-]?\**)[ \t]*(.*)$", re.I)
-_GROUNDING_RE = re.compile(r"^[ \t]*(?:[-*+][ \t]+)?\**grounding\**[ \t]*:\**[ \t]*(.*)$", re.I)
+_AC_LEAD_RE = re.compile(r"^(?:\[(AC-\d{1,6})\]|\**(AC-\d{1,6})\**[ \t]*[:.)\-]?\**)(?!\d)[ \t]*(.*)$", re.I)
+_GROUNDING_RE = re.compile(r"^(?:[-*+][ \t]+)?\**grounding\**[ \t]*:\**[ \t]*(.*)$", re.I)
+AC_MAX_BULLETS = 50
+AC_MAX_BULLET_CHARS = 500
 _SCOPE_H = re.compile(r"^##[ \t]+(?:scope|paths)[ \t]*:?[ \t]*$", re.I | re.M)
 _H2_RE = re.compile(r"^##(?!#)[ \t]", re.M)          # the end of a section: the next level-2 heading (### stays inside)
 _RULE_ID_RE = re.compile(r"\b[A-Z][A-Z0-9]*-[A-Z]{2,8}-\d{3}\b")
@@ -278,49 +281,73 @@ def _parse_surfaces(sec: str | None) -> dict:
     return out
 
 
+def _ac_clean(text: str) -> str:
+    """Drop control, zero-width and bidi-override characters (Unicode categories Cc, Cf, Zl, Zp); tab becomes a space."""
+    text = text.replace("\t", " ")
+    return "".join(c for c in text if unicodedata.category(c) not in ("Cc", "Cf", "Zl", "Zp"))
+
+
+def _ac_show(text: str, n: int = 80) -> str:
+    """Bullet text as it is echoed in an error: cleaned, cut to n characters, quoted with repr()."""
+    text = _ac_clean(text)
+    return repr(text[:n] + ("..." if len(text) > n else ""))
+
+
 def parse_acceptance(body: str) -> dict:
     """`## Acceptance` (dl-01): EARS bullets, each `AC-<n>: WHEN ... THE SYSTEM SHALL ...` or
     `THE SYSTEM SHALL ...`, plus one `Grounding:` line. {present, bullets:[{id,text}], grounding, errors}.
-    A bullet without an id, a repeated id, or a bullet that is not EARS (no `SHALL`) is an error that names it."""
+    The heading `## Acceptance criteria` names the same section. A bullet without an id, a repeated id, a bullet
+    that is not EARS (no `SHALL`, any case), more than 50 bullets, or a bullet over 500 characters is an error
+    that names it. Text is stripped of control, zero-width and bidi characters; errors echo it through repr()."""
     sec = _section(body, _ACCEPTANCE_H)
     out = {"present": sec is not None, "bullets": [], "grounding": None, "errors": []}
     if sec is None:
         return out
     raw, cur = [], None
-    for line in sec.split("\n"):
-        g = _GROUNDING_RE.match(line)
+    for line in _ac_clean_lines(sec):
+        m = _AC_BULLET_RE.match(line)
+        if cur is not None and line[:1] == " " and not m and line.strip():
+            cur.append(line.strip())                         # a wrapped bullet: never a Grounding line
+            continue
+        g = _GROUNDING_RE.match(line.lstrip()) if (line[:1] != " " or cur is None) else None
         if g:
             out["grounding"] = out["grounding"] or g.group(1).strip() or None
             cur = None
-            continue
-        m = _AC_BULLET_RE.match(line)
-        if m:
+        elif m:
             cur = [m.group(1).strip()]
             raw.append(cur)
-        elif line.strip() and cur is not None and line[:1] in " \t":
-            cur.append(line.strip())
         elif line.strip():
             cur = None
-    used = {int(x.group(1)) for r in raw for x in [_AC_ID_RE.match((_AC_LEAD_RE.match(r[0]) or [0, "", ""])[1] or
-            (_AC_LEAD_RE.match(r[0]) or [0, "", ""])[2] or "")] if x}
-    nxt, seen = max(used or {0}) + 1, set()
-    for r in raw:
-        lead = _AC_LEAD_RE.match(r[0])
-        aid = ((lead.group(1) or lead.group(2)) if lead else None)
+    leads = [(r, _AC_LEAD_RE.match(r[0])) for r in raw]
+    used = [int(_AC_ID_RE.match((ld.group(1) or ld.group(2)).upper()).group(1)) for _, ld in leads if ld]
+    nxt, seen = max(used or [0]) + 1, set()
+    if len(raw) > AC_MAX_BULLETS:
+        out["errors"].append(f"`## Acceptance` has {len(raw)} bullets; the limit is {AC_MAX_BULLETS} bullets")
+        return out
+    for r, lead in leads:
         text = " ".join([lead.group(3) if lead else r[0]] + r[1:]).strip()
-        aid = aid.upper() if aid else None
+        aid = (lead.group(1) or lead.group(2)).upper() if lead else None
         if aid is None:
-            out["errors"].append(f"bullet has no AC id: \"{text}\" (start it with `AC-{nxt}:`)")
+            out["errors"].append(f"bullet has no AC id: {_ac_show(text)} (start it with `AC-{nxt}:`; ids are AC-<n>, at most 6 digits)")
             nxt += 1
             continue
         if aid in seen:
-            out["errors"].append(f"duplicate id {aid}: \"{text}\"")
+            out["errors"].append(f"duplicate id {aid}: {_ac_show(text)}")
             continue
         seen.add(aid)
-        if not re.search(r"\bSHALL\b", text):
-            out["errors"].append(f"{aid} is not an EARS bullet (needs `THE SYSTEM SHALL ...`): \"{text}\"")
+        if len(text) > AC_MAX_BULLET_CHARS:
+            out["errors"].append(f"{aid} is {len(text)} characters; the limit is {AC_MAX_BULLET_CHARS} characters per bullet")
+            continue
+        if not re.search(r"\bSHALL\b", text, re.I):
+            out["errors"].append(f"{aid} is not an EARS bullet (needs `THE SYSTEM SHALL ...`): {_ac_show(text)}")
         out["bullets"].append({"id": aid, "text": text})
+    if out["grounding"]:
+        out["grounding"] = out["grounding"][:AC_MAX_BULLET_CHARS]
     return out
+
+
+def _ac_clean_lines(sec: str):
+    return [_ac_clean(line) for line in sec.split("\n")]
 
 
 def acceptance_defects(acc: dict) -> list:
@@ -468,6 +495,7 @@ def checklist(sections: dict, gv: dict) -> list:
         out.append("## Acceptance has no EARS bullet")
     elif not a["grounding"]:
         out.append("## Acceptance has no `Grounding:` line")
+    out += ["## Acceptance: " + e for e in (a.get("errors") or [])]
     if not f["present"]:
         out.append("## Surfaces missing (one line per surface, or `n/a: <why>`)")
     elif not f["na_reason"]:
@@ -493,6 +521,7 @@ def design_view(body: str, labels, gv: dict | None = None, root: Path | None = N
     return {"design": sec["design"], "security": sec["security"], "surfaces": sec["surfaces"], "scope": sec["scope"],
             "acceptance": sec["acceptance"],
             "acceptance_defects": (acceptance_defects(sec["acceptance"]) if reasons else []) + sec["acceptance"]["errors"],
+            "acceptance_refuses": bool(reasons) and bool(acceptance_defects(sec["acceptance"]) + sec["acceptance"]["errors"]),
             "design_required": bool(reasons), "design_required_reasons": reasons,
             "design_defects": design_defects(sec, gv) if reasons else [],
             "applicable_ids": sorted(app), "surfaces_expected": gv.get("surfaces") or [],
@@ -646,9 +675,9 @@ def cmd_start(args: list[str]) -> int:
                      + "; ".join(view["design_required_reasons"]) + "), and it has a defect in its Design: "
                      + "; ".join(view["design_defects"]) + ". Add a `## Design` section citing at least one existing "
                      "rule id (see `governance/rendered/`), then start again. Nothing was recorded.")
-    if view["acceptance_defects"]:
-        sys.exit("foundry-ticket: acceptance-required: " + ("this ticket is in the design-required class ("
-                 + "; ".join(view["design_required_reasons"]) + "), and " if view["design_required"] else "")
+    if view["acceptance_refuses"]:       # below the class a malformed section is a checklist line, never a refusal
+        sys.exit("foundry-ticket: acceptance-required: this ticket is in the design-required class ("
+                 + "; ".join(view["design_required_reasons"]) + "), and "
                  + "its `## Acceptance` has a defect: " + "; ".join(view["acceptance_defects"])
                  + ". Add EARS bullets with ids (`- AC-1: WHEN ..., THE SYSTEM SHALL ...`) and a `Grounding:` line, "
                  "then start again. Nothing was recorded.")
@@ -902,7 +931,7 @@ SKIP_REASONS = ("unassigned", "other-owner", "backlog", "blocked", "no-acceptanc
 STOP_REASONS = ("reassigned", "cancelled", "duplicate", "withdrawn", "acceptance_changed",
                 "closed", "not_started", "unverified")
 _PRIORITY_WORDS = {"critical": 0, "urgent": 0, "blocker": 0, "high": 1, "medium": 2, "normal": 2, "low": 3}
-_ACCEPT_RE = re.compile(r"^##+[ \t]*acceptance[ \t]+criteria\b.*?$", re.I | re.M)
+_ACCEPT_RE = re.compile(r"^##+[ \t]*acceptance(?:[ \t]+criteria)?\b.*?$", re.I | re.M)
 _ITEM_RE = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\S", re.M)
 _REF_RE = re.compile(r"^(?:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#)?(\d+)$")
 
