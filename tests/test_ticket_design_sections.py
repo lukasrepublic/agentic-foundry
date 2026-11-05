@@ -21,6 +21,12 @@ _spec = importlib.util.spec_from_file_location("ft_design_sections", SCRIPTS / "
 ft = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ft)
 
+ACCEPTANCE_OK = """
+## Acceptance
+- AC-1: WHEN the example hook runs, THE SYSTEM SHALL record the design.
+Grounding: EARS requirement syntax.
+"""
+
 DESIGN_OK = """## Design
 - Components: hooks/foundry-example.py, skills/dispatch/
 - Reuses: the shared brief renderer
@@ -142,7 +148,7 @@ def test_design_citing_no_id_is_refused(repo, monkeypatch):
 
 def test_governed_path_with_an_existing_id_admits_and_records_the_design(repo, monkeypatch):
     policy(repo, paths=["hooks/**"])
-    code, out, err = start(repo, monkeypatch, DESIGN_OK)
+    code, out, err = start(repo, monkeypatch, DESIGN_OK + ACCEPTANCE_OK)
     assert code == 0, err
     doc = recorded(repo)
     assert doc["cites"] == ["FG-SEC-006", "FG-QA-001"]

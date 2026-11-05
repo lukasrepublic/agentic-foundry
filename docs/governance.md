@@ -88,16 +88,22 @@ the table as "every floor rule is mechanical".
 ## One ticket carries the rules to the agent
 
 The ticket is the unit of work. Besides `## Done means` and `## Paper allowed`, a ticket has three sections that
-connect it to governance (parsed by `scripts/foundry-ticket.py`):
+connect it to governance, and a fourth that states what done looks like (parsed by `scripts/foundry-ticket.py`):
 
 - `## Design`: the components the change touches, the pattern it reuses, and the rule ids it cites.
 - `## Security`: the security rule ids that apply, or `none:` with the reason.
 - `## Surfaces`: one line for each surface the blueprint declares, or `n/a:` with the reason.
+- `## Acceptance`: EARS bullets (`WHEN <condition>, THE SYSTEM SHALL <response>` or `THE SYSTEM SHALL <response>`),
+  each with a stable id (`- AC-1: ...`), and one `Grounding:` line that names the research-gate source. A bullet
+  with no id, a repeated id, or a bullet without `SHALL` is refused and named; ids are `AC-<n>`; the script caps the id length, the bullet count and the bullet length (see `AC_MAX_BULLETS` and `AC_MAX_BULLET_CHARS`). `## Acceptance criteria` names the same section. Below the design-required class a malformed section is a checklist line, not a refusal. `read-issue --json` exposes the
+  parsed bullets and the grounding line. The brief renderer inlines every bullet under its id, and `pr-reviewer`
+  reports a pass or a Block per id. Done means stays the machine check; the bullets are the review target.
 
 A ticket in the **design-required class** is refused with `design-required` until its Design cites at least one rule id
-that exists. The class is: a path in the policy key `governance.design_required_paths` or the blueprint's list, a
+that exists, and with `acceptance-required` until it has an `## Acceptance` section with at least one EARS bullet and
+a `Grounding:` line. The class is: a path in the policy key `governance.design_required_paths` or the blueprint's list, a
 declared trust-boundary path, or a size label at or above the policy key `governance.size_tag_required`. Below the class
-the three sections are a checklist.
+the sections are a checklist (a malformed `## Acceptance` is still refused).
 
 `scripts/foundry_brief.py` builds the brief for a builder or a reviewer. It inlines the statement of every cited rule, so
 the agent reads the rule, not a pointer to it.
