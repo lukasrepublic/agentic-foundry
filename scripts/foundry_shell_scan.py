@@ -326,6 +326,8 @@ def _scan(cmd: str, emit_words: bool):
             flush_word()
             pending.append({
                 "delim": delim, "strip_tabs": strip_tabs,
+                # a QUOTED delimiter suppresses all expansion in the body; an unquoted one does not
+                "quoted": ("'" in cmd[open_pos:j]) or ('"' in cmd[open_pos:j]),
                 "clause_prefix": cmd[hard_clause_start:open_pos],
             })
             i = j
@@ -341,7 +343,7 @@ def _scan(cmd: str, emit_words: bool):
                     body_end, term_end, found = _find_heredoc_end(
                         cmd, body_start, hd["delim"], hd["strip_tabs"])
                     heredoc_regions.append({
-                        "delim": hd["delim"], "strip_tabs": hd["strip_tabs"],
+                        "delim": hd["delim"], "strip_tabs": hd["strip_tabs"], "quoted": hd["quoted"],
                         "body_start": body_start, "body_end": body_end, "term_end": term_end,
                         "clause_prefix": hd["clause_prefix"],
                         "hard_clause_start": hard_clause_start, "line_end": line_end_pos,
@@ -396,7 +398,7 @@ def _scan(cmd: str, emit_words: bool):
     if pending:
         for hd in pending:
             heredoc_regions.append({
-                "delim": hd["delim"], "strip_tabs": hd["strip_tabs"],
+                "delim": hd["delim"], "strip_tabs": hd["strip_tabs"], "quoted": hd["quoted"],
                 "body_start": n, "body_end": n, "term_end": n,
                 "clause_prefix": hd["clause_prefix"],
                 "hard_clause_start": hard_clause_start, "line_end": n,
@@ -412,6 +414,9 @@ def _path_word(tok: str) -> str:
     return parts[-1] if parts else tok
 
 
+_SCRATCH_SINK_RE = re.compile(r"^/tmp/claude-[^/]+/(?:[^/.][^/]*/)+scratchpad/[^/.][^/]*(?:/[^/.][^/]*)*$")
+
+
 def _valid_sink_path(path: str) -> bool:
     """AC-GSO-2(iii): a plain relative or absolute regular-file path."""
     if not path or path == "-":
@@ -421,9 +426,12 @@ def _valid_sink_path(path: str) -> bool:
         return False
     if path.startswith("/dev/") or path.startswith("/proc/"):
         return False
-    for pre in _temp_prefixes():
-        if path == pre.rstrip("/") or path.startswith(pre):
-            return False
+    if _SCRATCH_SINK_RE.match(path):
+        pass       # gv-11: the Claude session scratch directory is where "write the script to a file" goes
+    else:
+        for pre in _temp_prefixes():
+            if path == pre.rstrip("/") or path.startswith(pre):
+                return False
     expanded = os.path.expanduser(path)
     try:
         if os.path.exists(expanded):
@@ -548,6 +556,12 @@ def _classify_region(cmd: str, region: Dict, all_regions: List[Dict], has_crlf: 
         return False
     if region["other_consumer"]:
         return False
+    if not region.get("quoted"):
+        # gv-11: bash EXPANDS an unquoted-delimiter body (`$(…)`, backticks, `${…}` run before the sink sees
+        # the text), so it is code, whatever the sink.
+        body = cmd[region["body_start"]:region["body_end"]]
+        if "$(" in body or "`" in body or "${" in body:
+            return False
     sink_path = _match_inert_sink(region["clause_prefix"])
     if sink_path is None:
         return False
@@ -621,3 +635,143 @@ def neutralize(command) -> str:
                 if chars[k] != "\n":
                     chars[k] = " "
     return "".join(chars)
+
+
+# ---------------------------------------------------------------------------------------------
+# gv-11: command-position resolution for the shape hook and the secret-read guard.
+#
+# Both hooks need to know "which command does this clause run, and with which arguments", seeing
+# through the usual prefixes (`VAR=x`, `sudo`, `env`, `command`, `nohup`, `timeout 5`, `xargs`, a
+# path-qualified or backslash-escaped name). This is the SAME convict-on-doubt scanner as above, not
+# a shell parser: it models the wrappers it names and nothing else, and a command substitution is
+# reported as such so a caller can refuse a target it cannot know.
+# ---------------------------------------------------------------------------------------------
+class Invocation(NamedTuple):
+    """One resolved command invocation.
+
+    cmd       — basename of the command word (`/bin/rm` and `\\rm` are `rm`), after wrappers/assignments.
+    args      — the literal words after the command (verbatim, quotes already removed).
+    clause    — the clause_index the words came from.
+    sub       — True when the words were inside `$( )` / backticks / `<( )` (command position unreliable).
+    has_subst — True when the same clause also contains a command/process substitution, i.e. some argument
+                is a value this scan cannot know.
+    wrappers  — the wrapper commands that were looked through (`xargs` means more arguments arrive on stdin).
+    """
+    cmd: str
+    args: List[str]
+    clause: int
+    sub: bool
+    has_subst: bool
+    wrappers: Tuple[str, ...] = ()
+
+
+_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\+?=")
+_PREFIX_KEYWORDS = {"{", "(", "!", "then", "do", "else", "elif", "if", "while", "until", "coproc"}
+# wrapper -> (options that consume the next word, positional words to skip after the options)
+_WRAPPERS = {
+    "sudo": ({"-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "-T", "-R"}, 0),
+    "doas": ({"-u", "-C"}, 0),
+    "env": ({"-u", "-C", "-S", "--unset", "--chdir"}, 0),
+    "command": (set(), 0),
+    "builtin": (set(), 0),
+    "nohup": (set(), 0),
+    "exec": ({"-a"}, 0),
+    "nice": ({"-n", "--adjustment"}, 0),
+    "ionice": ({"-c", "-n", "-p", "-P", "-u"}, 0),
+    "timeout": ({"-s", "-k", "--signal", "--kill-after"}, 1),
+    "stdbuf": ({"-i", "-o", "-e"}, 0),
+    "setsid": (set(), 0),
+    "time": (set(), 0),
+    "xargs": ({"-I", "-n", "-P", "-L", "-d", "-E", "-s", "-a", "-l", "-i"}, 0),
+}
+
+
+def _cmd_basename(word: str) -> str:
+    w = word.replace("\\", "")        # bash removes an unquoted backslash: `r\m` runs `rm`
+    return w.rsplit("/", 1)[-1] if "/" in w else w
+
+
+def resolve_command(words: List[str]) -> Optional[Tuple[str, List[str]]]:
+    """(command basename, argument words) for one clause's words, or None when the clause names no command
+    (only assignments / keywords)."""
+    r = _resolve(words)
+    return None if r is None else (r[0], r[1])
+
+
+def _resolve(words: List[str]) -> Optional[Tuple[str, List[str], Tuple[str, ...]]]:
+    i, n = 0, len(words)
+    seen: List[str] = []
+    while i < n:
+        w = words[i]
+        stripped = w.lstrip("({")
+        if w in _PREFIX_KEYWORDS or stripped == "":
+            i += 1
+            continue
+        if stripped != w:
+            w = stripped
+        if _ASSIGN_RE.match(w):
+            i += 1
+            continue
+        base = _cmd_basename(w)
+        if base in _WRAPPERS:
+            argopts, positional = _WRAPPERS[base]
+            seen.append(base)
+            i += 1
+            while i < n:
+                t = words[i]
+                if t == "--":
+                    i += 1
+                    break
+                if base == "env" and _ASSIGN_RE.match(t):
+                    i += 1
+                    continue
+                if t.startswith("-") and len(t) > 1:
+                    if base == "env" and ((not t.startswith("--") and "S" in t[1:]) or t.startswith("--split-string")):
+                        seen.append("env-S")          # `env -S 'cmd args'` runs a command string we cannot see
+                    i += 2 if t in argopts else 1
+                    continue
+                break
+            i += positional
+            continue
+        return base, [a.rstrip(")") if a.endswith(")") and "(" not in a else a for a in words[i + 1:]], tuple(seen)
+    if "env-S" in seen:
+        return "env", [], tuple(seen)
+    if seen and seen[-1] == "env":          # a bare `env` (no command) prints the environment: it IS the command
+        return "env", [], tuple(seen[:-1])
+    return None
+
+
+def invocations(command) -> List[Invocation]:
+    """Every command invocation visible in `command`: one per top-level clause and one per run of
+    substitution words. Words in a `data` heredoc body, trailing comments and code-heredoc body words are
+    NOT invocations (a caller that must scan code-heredoc bodies re-parses the body text itself)."""
+    if not isinstance(command, str) or not command:
+        return []
+    by_clause: Dict[int, List[str]] = {}
+    sub_clause: Dict[int, List[str]] = {}
+    for w in tokenize(command):
+        if w.kind == "word":
+            by_clause.setdefault(w.clause_index, []).append(w.word)
+        elif w.kind in ("cmd_sub", "proc_sub"):
+            sub_clause.setdefault(w.clause_index, []).append(w.word)
+    out: List[Invocation] = []
+    for idx in sorted(set(by_clause) | set(sub_clause)):
+        has_sub = idx in sub_clause
+        for words, is_sub in ((by_clause.get(idx), False), (sub_clause.get(idx), True)):
+            if not words:
+                continue
+            r = _resolve(words)
+            if r is not None:
+                out.append(Invocation(r[0], r[1], idx, is_sub, has_sub, r[2]))
+    return out
+
+
+def has_code_heredoc(command) -> bool:
+    """True when `command` contains a heredoc this module does NOT classify `data` (or one it could not
+    resolve at all). An empty-bodied heredoc carries no script and is not reported."""
+    if not isinstance(command, str) or "<<" not in command:
+        return False
+    for w in tokenize(command):
+        if w.kind == "code" or (w.kind == "heredoc" and not w.data):
+            return True
+    return False

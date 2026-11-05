@@ -54,6 +54,8 @@ hygiene:
 
 secrets:
   value_reads_forbidden: true         # FLOOR
+  forbidden_verbs: []                 # ADD-ONLY: extra command phrases the secret-read guard refuses (defaults cannot be removed)
+  no_print_roots: []                  # ADD-ONLY: extra paths no reader command may touch (defaults cannot be removed)
 
 messaging:
   machine_channel: git-log

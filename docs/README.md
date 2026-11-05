@@ -34,6 +34,7 @@ Four kinds of page, four kinds of question. Start where your question lives:
 - [Finish a plugin upgrade](how-to/post-upgrade.md) — `npx update-agentic-workspace@latest` (the script half), then `/foundry:post-upgrade` (the judgement half)
 - [Turn a standing grant into policy](how-to/standing-grants.md) — `.foundry/permissions.yaml` (seeded by the updater), compile, the capability preflight
 - [Enable agent teams](how-to/agent-teams.md)
+- [Never read a secret value](how-to/secrets-never-read.md) — rule D1: verify by metadata only; the secret-read guard, its add-only policy lists, and why only an IAM-level boundary prevents the read
 - [Run the plugin's native evals](how-to/plugin-evals.md)
 
 ## Reference — look it up

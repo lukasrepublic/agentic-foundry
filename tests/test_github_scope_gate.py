@@ -131,3 +131,67 @@ def test_capabilities_probe_without_scope_stays_na_exit_zero(tmp_path):
     r = _run(root, stub, "foundry_github_capabilities.py", ["--project-dir", str(root)])
     assert r.returncode == 0 and r.stdout.strip() == "n/a (no github_scope configured)"
     assert not calls.exists()
+
+
+# ---- gv-11: planning_repo / repos[] reach gh arguments, so they are validated like `owner` ----
+
+BAD_SEGMENTS = ["--delete", "-x", ".hidden", "..", ".", "a/b", "a b", "a;b", "a$(x)", "", "a\nb"]
+
+
+@pytest.mark.parametrize("bad", BAD_SEGMENTS)
+def test_planning_repo_must_be_a_plain_segment(tmp_path, bad):
+    root, stub, calls = _proj(tmp_path, {"github_scope": {"owner": "example-org", "planning_repo": bad}})
+    r = _run(root, stub, "foundry-ticket.py", ["next"])
+    assert r.returncode == 2 and r.stderr.startswith(TYPED), (bad, r.stdout, r.stderr)
+    assert not calls.exists()
+
+
+@pytest.mark.parametrize("repos", [
+    "owner/name", ["--evil/x"], ["o/-x"], ["o/.."], ["o/.x"], ["o"], ["o/n/extra"], [7], [["o/n"]], ["o/n", "o/n m"],
+], ids=lambda v: repr(v)[:30])
+def test_repos_entries_must_be_owner_slash_name(tmp_path, repos):
+    root, stub, calls = _proj(tmp_path, {"github_scope": {**SCOPE, "repos": repos}})
+    r = _run(root, stub, "foundry-ticket.py", ["next"])
+    assert r.returncode == 2 and r.stderr.startswith(TYPED), (repos, r.stdout, r.stderr)
+    assert not calls.exists()
+
+
+@pytest.mark.parametrize("scope", [
+    {**SCOPE, "planning_repo": "my.repo_1-x"},
+    {**SCOPE, "repos": ["example-org/planning", "other.org/app_1"]},
+    {**SCOPE, "repos": []},
+], ids=["dotted-name", "slug-list", "empty-list"])
+def test_well_formed_planning_repo_and_repos_are_admitted(tmp_path, scope):
+    root, stub, calls = _proj(tmp_path, {"github_scope": scope})
+    r = _run(root, stub, "foundry-ticket.py", ["next"])
+    assert TYPED not in r.stderr + r.stdout, (r.stdout, r.stderr)
+    assert "no repos{} entry" in r.stdout + r.stderr          # got past the gate to the verb's own validation
+
+
+def test_pathologically_nested_manifest_is_the_typed_refusal_not_a_traceback(tmp_path):
+    """A non-OSError/ValueError failure while reading the scope (RecursionError here) is still exit 2."""
+    deep = "[" * 200000 + "]" * 200000
+    root, stub, calls = _proj(tmp_path, None, raw='{"github_scope": ' + deep + "}")
+    r = _run(root, stub, "foundry-ticket.py", ["next"])
+    assert r.returncode == 2 and r.stderr.startswith(TYPED), (r.returncode, r.stderr[-300:])
+    assert "Traceback" not in r.stderr and not calls.exists()
+
+
+def test_gate_converts_an_unexpected_load_scope_exception_to_exit_two(tmp_path, monkeypatch, capsys):
+    sys.path.insert(0, S)
+    import foundry_github_capabilities as g
+
+    def boom(_):
+        raise RuntimeError("unexpected")
+    monkeypatch.setattr(g, "load_scope", boom)
+    assert g.gate(tmp_path, "verb x") == 2
+    assert g.SCOPE_MISSING in capsys.readouterr().err
+
+
+def test_worktree_create_hook_runs_its_inline_python_isolated():
+    """`-I`: no PYTHONPATH / cwd / user-site import can shadow the stdlib in the hook's inline python."""
+    text = open(os.path.join(REPO_ROOT, "hooks", "foundry-worktree-create.sh"), encoding="utf-8").read()
+    uses = [ln for ln in text.splitlines()
+            if "python3" in ln and not ln.lstrip().startswith("#") and ("<<" in ln or "-c " in ln or "python3 - " in ln)]
+    assert uses, "expected inline python invocations"
+    assert all("python3 -I " in ln for ln in uses), [ln for ln in uses if "python3 -I " not in ln]
