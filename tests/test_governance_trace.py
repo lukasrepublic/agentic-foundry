@@ -214,3 +214,112 @@ def test_the_template_is_a_read_only_job_with_every_uses_pinned_to_a_40_char_sha
     assert "plugin/governance/kits/delivery/checks/governance-trace.py" in text
     assert "pull_request_target" not in text
     assert "persist-credentials: false" in text
+
+
+# ---- dl-07: the built-from rule, the .tmpl template, the Learned comment ------------------------------------
+GOOD_SHA = "a" * 40
+MISSING_SHA = "b" * 40
+TMPL = ROOT / "governance" / "kits" / "delivery" / "templates" / "governance-trace.yml.tmpl"
+
+
+@pytest.fixture
+def ws_proj(proj):
+    """A product repo o/r governed from the workspace o/ws, and a `gh` that knows one workspace commit."""
+    (proj / ".claude" / "foundry-project.json").write_text(json.dumps(
+        {"github_scope": {"owner": "o", "planning_repo": "o/ws", "repos": ["o/r"], "operators": {"alice": "op_a"}}}))
+    return proj
+
+
+@pytest.fixture
+def ws_gh(tmp_path, gh_path):
+    g = gh_path / "gh"
+    g.write_text("#!/bin/sh\necho \"$@\" >> \"$GH_LOG\"\ncase \"$*\" in\n"
+                 f"  'api repos/o/ws/commits/{GOOD_SHA}') echo '{{\"sha\": \"{GOOD_SHA}\"}}';;\n"
+                 "  *repos/o/ws/commits/*) exit 1;;\n"
+                 "  'api user') echo '{\"login\": \"agent-bot\"}';;\n"
+                 "  *) echo '{\"permission\": \"read\"}';;\nesac\n")
+    g.chmod(0o755)
+    return g
+
+
+def built_from(doc):
+    (f,) = by_check(doc)["built-from"]
+    return f
+
+
+def test_built_from_passes_with_a_resolvable_trailer(ws_proj, ws_gh, tmp_path):
+    p, doc = run(ws_proj, tmp_path, pr_body=f"Ticket: #7\n\nBuilt-from: {GOOD_SHA}\n")
+    assert built_from(doc)["ok"] is True and GOOD_SHA in built_from(doc)["detail"]
+
+
+def test_built_from_reads_the_head_commit_too(ws_proj, ws_gh, tmp_path):
+    p, doc = run(ws_proj, tmp_path)
+    assert built_from(doc)["ok"] is False                                  # base case: no trailer anywhere
+    pr = tmp_path / "pr.json"
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("gt", CHECK)
+    gt = importlib.util.module_from_spec(spec)
+    sys.dont_write_bytecode = True                  # never leave a .pyc inside the kit directory
+    spec.loader.exec_module(gt)
+    pr_doc = {"body": "Ticket: #7", "commits": [{"messageHeadline": "old", "messageBody": ""},
+                                                {"messageHeadline": "feat: x", "messageBody": f"Built-from: {GOOD_SHA}"}]}
+    assert gt._built_from_values(pr_doc) == [GOOD_SHA]
+
+
+def test_built_from_missing_trailer_fails_and_names_the_rule(ws_proj, ws_gh, tmp_path):
+    p, doc = run(ws_proj, tmp_path)
+    f = built_from(doc)
+    assert p.returncode == 1 and f["ok"] is False and "no `Built-from:" in f["detail"]
+
+
+@pytest.mark.parametrize("value", ["abc123", "A" * 40, "a" * 39, "a" * 41, ""])
+def test_built_from_malformed_sha_fails(ws_proj, ws_gh, tmp_path, value):
+    p, doc = run(ws_proj, tmp_path, pr_body=f"Ticket: #7\nBuilt-from: {value}\n")
+    assert built_from(doc)["ok"] is False and "malformed" in built_from(doc)["detail"]
+
+
+def test_built_from_unresolvable_sha_fails_closed(ws_proj, ws_gh, tmp_path):
+    p, doc = run(ws_proj, tmp_path, pr_body=f"Ticket: #7\nBuilt-from: {MISSING_SHA}\n")
+    f = built_from(doc)
+    assert f["ok"] is False and "does not resolve" in f["detail"] and p.returncode == 1
+
+
+def test_built_from_single_repo_skips_with_a_named_reason(proj, tmp_path):
+    p, doc = run(proj, tmp_path)                                           # o/r is not in the binding: single-repo
+    f = built_from(doc)
+    assert f["ok"] is True and f["detail"].startswith("skipped: single-repo")
+
+
+def test_built_from_is_skipped_in_the_workspace_repo_itself(ws_proj, ws_gh, tmp_path):
+    p, doc = run(ws_proj, tmp_path, extra=())                              # --repo is o/r; re-run as the workspace
+    cmd_repo = ["--repo", "o/ws"]
+    import subprocess as sp
+    pr, ticket = tmp_path / "pr.json", tmp_path / "ticket.json"
+    r = sp.run([sys.executable, str(CHECK), "check", "--pr-json", str(pr), "--ticket-json", str(ticket), "--project-dir", str(ws_proj),
+                "--plugin-root", str(ROOT), *cmd_repo, "--json", "--base-dir", str(ws_proj)], capture_output=True, text=True,
+               env=dict(os.environ, PATH=str(tmp_path / "ghbin") + os.pathsep + os.environ["PATH"], GH_LOG=str(tmp_path / "gh.log")))
+    assert built_from(json.loads(r.stdout))["detail"].startswith("skipped: single-repo")
+
+
+def test_built_from_makes_one_workspace_call_and_never_prints_the_token(ws_proj, ws_gh, tmp_path):
+    p, doc = run(ws_proj, tmp_path, pr_body=f"Ticket: #7\nBuilt-from: {GOOD_SHA}\n")
+    log = (tmp_path / "gh.log").read_text()
+    assert log.count("repos/o/ws/commits/") == 1
+    assert "WORKSPACE_GH_TOKEN" not in p.stdout + p.stderr
+
+
+def test_the_tmpl_template_is_the_one_the_kit_lists():
+    assert TMPL.is_file()
+    assert "governance-trace.yml.tmpl" in (ROOT / "governance" / "kits" / "delivery" / "rules.yaml").read_text()
+    # the legacy name stays only because older tests read it; it must not drift from the installed template
+    assert TEMPLATE.read_text() == TMPL.read_text()
+    text = TMPL.read_text()
+    assert "--json number,body,commits" in text
+    uses = re.findall(r"^[ \t]*(?:-[ \t]*)?uses:[ \t]*(\S+)", text, re.M)
+    assert uses and all(re.fullmatch(r"[\w./-]+@[0-9a-f]{40}", u) for u in uses)
+
+
+def test_dispatch_skill_instructs_the_learned_comment_and_the_trailer_rule():
+    text = (ROOT / "skills" / "dispatch" / "SKILL.md").read_text()
+    assert "## Learned" in text and "at most ten lines" in text
+    assert "Built-from: <workspace sha>" in text

@@ -1,0 +1,70 @@
+# governance-trace — the job template the delivery kit ships (gv-16, design §5.4).
+#
+# Copy this job into the adopter's CI workflow (the intake `apply` step does it from the kit). It runs on `pull_request`
+# with a READ-ONLY token and three checkouts, none of which executes anything from the PR:
+#   base/    the PR's BASE commit. Policy, the locked blueprint, declared trust boundaries and the operator list are read from
+#            here, so a PR cannot loosen the class that grades it.
+#   pr/      the checkout `pull_request` gives by default, which is the MERGE commit of the PR head into the base (refs/pull/N/
+#            merge), not the head alone. It is only READ: governance/rendered/ and the exceptions file come from it.
+#   plugin/  the plugin at the locked version: the check itself runs from here, never from a script the PR could have rewritten.
+# Every `uses:` is pinned to a 40-character commit SHA; replace <PLUGIN_REF> with the 40-character commit of the plugin version
+# in `.foundry/governance.lock`. Add the job's name (`governance-trace`) to the base branch's required status checks to make it a gate.
+name: governance-trace
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+jobs:
+  governance-trace:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the base commit (policy, boundaries, operators)
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+          persist-credentials: false
+      - name: Check out the PR merge commit (read only)
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          path: pr
+          persist-credentials: false
+      - name: Check out the plugin at the locked version
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          repository: lukasrepublic/agentic-foundry
+          ref: <PLUGIN_REF>
+          path: plugin
+          persist-credentials: false
+      - name: Read the PR, its paged file list and its ticket
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh pr view "$PR" --repo "$REPO" --json number,body,commits > pr.json
+          gh api --paginate "repos/${REPO}/pulls/${PR}/files" --jq '.[] | ({path: .filename}, (if .previous_filename then {path: .previous_filename} else empty end))' | jq -s . > files.json
+          REF="$(python3 plugin/governance/kits/delivery/checks/governance-trace.py ticket-ref --pr-json pr.json)"
+          N="${REF##*#}"
+          R="${REF%#*}"
+          gh issue view "$N" --repo "${R:-$REPO}" --json number,body,labels,author > ticket.json
+      - name: governance-trace
+        env:
+          CLAUDE_PLUGIN_ROOT: ${{ github.workspace }}/plugin
+          GH_TOKEN: ${{ github.token }}
+          # Optional: a read-only token for the WORKSPACE repo, so the built-from rule can resolve the trailer's sha there.
+          # Without it a private workspace is unreachable and the rule fails closed. Provisioning it is operator-held.
+          WORKSPACE_GH_TOKEN: ${{ secrets.FOUNDRY_WORKSPACE_READ_TOKEN }}
+          REPO: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
+        run: >-
+          python3 plugin/governance/kits/delivery/checks/governance-trace.py check
+          --pr-json pr.json --files-json files.json --ticket-json ticket.json --repo "$REPO" --agent-login "$ACTOR"
+          --project-dir pr --base-dir base

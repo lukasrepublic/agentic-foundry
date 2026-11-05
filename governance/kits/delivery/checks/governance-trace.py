@@ -24,6 +24,10 @@ It checks, and reports EVERY failing check (exit 1; exit 0 when all pass; exit 2
                       class, the check passes with a note (the sections are a checklist there).
   rendered-fresh      `governance/rendered/` matches what `foundry_governance.py render` would write
   exceptions-live     no exception in `governance/local/exceptions.yaml` has expired
+  built-from          (dl-07) a PR in a product repo that a workspace governs carries `Built-from: <40-hex workspace sha>` in
+                      its body or head commit, and that sha exists in the workspace repo (one `gh api` call, `_workspace_has_sha`).
+                      A single-repo adopter (the repo is not a product repo named by the base ref's binding) skips it with a
+                      named reason. Missing, malformed or unresolvable fails closed.
 
 The Design parser and the design-required class are the ticket verb's own (`scripts/foundry-ticket.py`), loaded from the
 plugin root; the freshness and exception checks are `foundry_governance.py check`'s. Nothing is re-implemented here.
@@ -45,6 +49,8 @@ from pathlib import Path
 PR_REF_RE = re.compile(
     r"(?im)^[ \t>*-]*(?:ticket|closes|fixes|resolves|refs?)[ \t]*:?[ \t]*(?:([\w.-]+/[\w.-]+))?#(\d+)\b")
 RENDERED_PREFIX = "governance/rendered/"
+BUILT_FROM_RE = re.compile(r"(?im)^[ \t>*-]*built-from[ \t]*:[ \t]*(\S*)[ \t]*$")
+SHA40_RE = re.compile(r"[0-9a-f]{40}")
 
 
 def _plugin_root(arg) -> Path:
@@ -111,10 +117,65 @@ def _scope_repos(base: Path) -> set:
     return out
 
 
-def _default_gh_json(args):
-    import subprocess
+def _workspace_slug(base: Path):
+    """Lower-cased OWNER/NAME of the workspace (`github_scope.planning_repo`) the BASE ref's binding names, or None."""
     try:
-        r = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=60)
+        scope = json.loads((base / ".claude" / "foundry-project.json").read_text(encoding="utf-8")).get("github_scope") or {}
+        x = str(scope.get("planning_repo") or "").strip()
+        owner = str(scope.get("owner") or "")
+    except (OSError, ValueError, AttributeError):
+        return None
+    if re.fullmatch(r"[\w.-]+/[\w.-]+", x):
+        return x.lower()
+    return f"{owner}/{x}".lower() if x and owner and re.fullmatch(r"[\w.-]+", x) else None
+
+
+def _built_from_values(pr: dict) -> list:
+    """Every `Built-from:` value in the PR body and in the head commit's message (the last commit `gh pr view --json commits` lists)."""
+    texts = [pr.get("body") or ""]
+    commits = pr.get("commits")
+    if isinstance(commits, list) and commits and isinstance(commits[-1], dict):
+        c = commits[-1]
+        texts.append("\n".join(str(c.get(k) or "") for k in ("messageHeadline", "messageBody")))
+    return [m.group(1) for t in texts for m in BUILT_FROM_RE.finditer(t)]
+
+
+def _workspace_has_sha(gh_json, workspace: str, sha: str) -> bool:
+    """The ONE network call of the built-from check: does `sha` exist in the workspace repo? Fails closed (False) on any error."""
+    try:
+        args = ["api", f"repos/{workspace}/commits/{sha}"]
+        doc = _default_gh_json(args, "WORKSPACE_GH_TOKEN") if gh_json is _default_gh_json else gh_json(args)
+    except Exception:  # noqa: BLE001
+        return False
+    return isinstance(doc, dict) and str(doc.get("sha") or "").lower() == sha
+
+
+def _built_from_finding(pr: dict, base: Path, repo, gh_json):
+    """(ok, detail) for the built-from check."""
+    ws, scope = _workspace_slug(base), _scope_repos(base)
+    if not repo or not ws or repo.lower() == ws or repo.lower() not in scope:
+        return True, ("skipped: single-repo (this repository is not a product repo that a workspace governs, per the base ref's "
+                      "github_scope binding), so no Built-from trailer is required")
+    vals = _built_from_values(pr)
+    if not vals:
+        return False, f"the PR carries no `Built-from: <workspace sha>` trailer (body or head commit); {repo} is governed from {ws}"
+    bad = [v for v in vals if not SHA40_RE.fullmatch(v)]
+    if bad:
+        return False, "malformed Built-from trailer: the value must be a 40-character lower-case hex sha"
+    sha = vals[0]
+    if not _workspace_has_sha(gh_json, ws, sha):
+        return False, f"Built-from {sha} does not resolve to a commit in the workspace repo {ws}"
+    return True, f"Built-from {sha} exists in {ws}"
+
+
+def _default_gh_json(args, token_env: str | None = None):
+    """The one place `gh` is run. `token_env` names an env var whose value replaces GH_TOKEN for this call (never printed)."""
+    import subprocess
+    env = dict(os.environ)
+    if token_env and env.get(token_env):
+        env["GH_TOKEN"] = env[token_env]
+    try:
+        r = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=60, env=env)
         return json.loads(r.stdout) if r.returncode == 0 else None
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
@@ -245,6 +306,8 @@ def run_checks(pr: dict, ticket: dict, project: Path, plugin: Path, today: str |
         add("paths-in-design", False, "the Design names no components, so no changed path can be shown to be inside it")
     else:
         add("paths-in-design", True, "no Design components declared; below the design-required class")
+    ok_b, why_b = _built_from_finding(pr, base, repo, gh_json)
+    add("built-from", ok_b, why_b)
     # rendered-fresh, exceptions-live: what the PR itself produces, judged on the PR head (foundry_governance.py check)
     gp = ft.governance_context(project)
     gm = gp.get("_gov")
