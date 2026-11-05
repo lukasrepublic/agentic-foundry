@@ -5,7 +5,7 @@
   "cases": [
     {
       "name": "empty-target",
-      "why": "no configuration at all — every absence class must fire, including the 16 ask entries the vocabulary could not name before AC-FDC-1",
+      "why": "no configuration at all \u2014 every absence class must fire, including the 16 ask entries the vocabulary could not name before AC-FDC-1",
       "effective": {
         "allow": [],
         "ask": [],
@@ -14,7 +14,7 @@
     },
     {
       "name": "full-floor-verbatim",
-      "why": "every map rule present in its declared tier, literal text — no finding of any class",
+      "why": "every map rule present in its declared tier, literal text \u2014 no finding of any class",
       "effective": {
         "allow": [
           {
@@ -59,6 +59,10 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_merge_plan.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_wave_plan.py:*)",
             "origin": "settings.json"
           },
           {
@@ -352,6 +356,10 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_execution_plan.py:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-worktree-gc.py --apply:*)",
             "origin": "settings.json"
           },
@@ -402,7 +410,7 @@
     },
     {
       "name": "full-floor-home-expanded",
-      "why": "THE CANONICALIZATION CASE. Allow rules as absolute, version-resolved paths — what the harness writes on ask-to-allow persist. Python folded these and Node did not, so the two disagreed on 42 rules; this case is what pins them together",
+      "why": "THE CANONICALIZATION CASE. Allow rules as absolute, version-resolved paths \u2014 what the harness writes on ask-to-allow persist. Python folded these and Node did not, so the two disagreed on 42 rules; this case is what pins them together",
       "effective": {
         "allow": [
           {
@@ -447,6 +455,10 @@
           },
           {
             "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry_merge_plan.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(/home/testuser/.claude/plugins/cache/agentic-foundry/foundry/1.3.1/scripts/foundry_wave_plan.py:*)",
             "origin": "settings.json"
           },
           {
@@ -740,6 +752,10 @@
             "origin": "settings.json"
           },
           {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_execution_plan.py:*)",
+            "origin": "settings.json"
+          },
+          {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-worktree-gc.py --apply:*)",
             "origin": "settings.json"
           },
@@ -790,7 +806,7 @@
     },
     {
       "name": "cross-tier-placement",
-      "why": "an allow entry the operator deliberately moved into ask — tier-conflict fires and the false allow-absent is suppressed",
+      "why": "an allow entry the operator deliberately moved into ask \u2014 tier-conflict fires and the false allow-absent is suppressed",
       "effective": {
         "allow": [
           {
@@ -831,6 +847,10 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_merge_plan.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_wave_plan.py:*)",
             "origin": "settings.json"
           },
           {
@@ -1106,7 +1126,7 @@
     },
     {
       "name": "blanket-star",
-      "why": "Bash(*) — covers() is false for a body not ending ':*', so every entry still classifies absent and every finding must be qualified",
+      "why": "Bash(*) \u2014 covers() is false for a body not ending ':*', so every entry still classifies absent and every finding must be qualified",
       "effective": {
         "allow": [
           {
@@ -1120,7 +1140,7 @@
     },
     {
       "name": "blanket-interpreter-word",
-      "why": "Bash(python3 *) — blanket via the interpreter-word fold, which the old hardcoded three-spelling set reached only by coincidence",
+      "why": "Bash(python3 *) \u2014 blanket via the interpreter-word fold, which the old hardcoded three-spelling set reached only by coincidence",
       "effective": {
         "allow": [
           {
@@ -1134,7 +1154,7 @@
     },
     {
       "name": "local-only-origin",
-      "why": "a rule carried ONLY in the untracked settings.local.json — the union sees it covered; AC-FDC-3's origin is what lets a consumer tell the tracked file apart",
+      "why": "a rule carried ONLY in the untracked settings.local.json \u2014 the union sees it covered; AC-FDC-3's origin is what lets a consumer tell the tracked file apart",
       "effective": {
         "allow": [
           {
@@ -1179,6 +1199,10 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_merge_plan.py:*)",
+            "origin": "settings.local.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_wave_plan.py:*)",
             "origin": "settings.local.json"
           },
           {
@@ -1450,7 +1474,7 @@
     },
     {
       "name": "unclassified-shape",
-      "why": "a non-Bash rule — reported by tool prefix only, never by body",
+      "why": "a non-Bash rule \u2014 reported by tool prefix only, never by body",
       "effective": {
         "allow": [
           {
@@ -1464,7 +1488,7 @@
     },
     {
       "name": "broader-deny-does-not-cover",
-      "why": "the deny direction refuses the fold and requires EXACT reach equality — a broader deny must NOT stand in for the map's narrower one",
+      "why": "the deny direction refuses the fold and requires EXACT reach equality \u2014 a broader deny must NOT stand in for the map's narrower one",
       "effective": {
         "allow": [
           {
@@ -1509,6 +1533,10 @@
           },
           {
             "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_merge_plan.py:*)",
+            "origin": "settings.json"
+          },
+          {
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_wave_plan.py:*)",
             "origin": "settings.json"
           },
           {
@@ -1768,7 +1796,7 @@
     },
     {
       "name": "ask-shadowed-by-broad-allow",
-      "why": "a broad but NON-blanket allow shadows the ask tier. Two distinct classes must fire: the 15 ceremony entries (scripts/ basenames) give ask-shadowed-ceremony, and the one non-ceremony entry, Bash(claude plugin tag:*), gives plain ask-shadowed — reachable only when that entry is ABSENT from the ask tier and covered from allow, which no blanket case can produce",
+      "why": "a broad but NON-blanket allow shadows the ask tier. Two distinct classes must fire: the 15 ceremony entries (scripts/ basenames) give ask-shadowed-ceremony, and the one non-ceremony entry, Bash(claude plugin tag:*), gives plain ask-shadowed \u2014 reachable only when that entry is ABSENT from the ask tier and covered from allow, which no blanket case can produce",
       "effective": {
         "allow": [
           {
@@ -1803,7 +1831,7 @@
     },
     {
       "name": "unreadable-and-unclassified",
-      "why": "a non-Bash rule in each tier — reported by tool prefix only, body never disclosed; these classes name no MAP rule, so the differential compares them as empty on both sides",
+      "why": "a non-Bash rule in each tier \u2014 reported by tool prefix only, body never disclosed; these classes name no MAP rule, so the differential compares them as empty on both sides",
       "effective": {
         "allow": [
           {
