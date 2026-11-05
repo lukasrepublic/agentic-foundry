@@ -47,7 +47,7 @@ These are recorded here because the same dogfood pass produced them; they are no
   file bytes by hand. This is the known kit gap: there is no verb that re-baselines a deliberate snippet edit. The next
   `upgrade` merges three-way against the untouched `governance/local/.kit-base/` copy, as designed.
 - **The `governance-trace` CI job is not installed here, and `apply` would not install it.** The kit's
-  `governance-trace.yml.template` is neither a `.tmpl` file nor listed in the kit's `checks`, so intake never places it, and an
+  `governance-trace.yml.template` was neither a `.tmpl` file nor listed in the kit's `checks`, so intake never placed it (the provenance atom moved it to `templates/governance-trace.yml.tmpl` and listed it), and an
   `upgrade` drops a lock entry that was recorded by hand. Separately, the job needs an agent identity distinct from the account
   that authors tickets. This repository has one GitHub identity, so the job's `ticket-author` check refuses every
   agent-authored pull request (the refusal is correct by design; the fix is provisioning, not code). Install it from the kit

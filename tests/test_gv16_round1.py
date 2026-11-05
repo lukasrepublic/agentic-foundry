@@ -359,7 +359,7 @@ def test_a_cross_repo_ticket_ref_is_judged_in_round_2(tmp_path):
 
 
 def test_the_template_states_which_ref_each_checkout_is():
-    text = (ROOT / "governance" / "kits" / "delivery" / "checks" / "governance-trace.yml.template").read_text()
+    text = (ROOT / "governance" / "kits" / "delivery" / "templates" / "governance-trace.yml.tmpl").read_text()
     assert "MERGE commit" in text and "not the head alone" in text
     assert "ref: ${{ github.event.pull_request.base.sha }}" in text and "--base-dir base" in text
     assert "gh api --paginate" in text and "--files-json files.json" in text and "${R:-$REPO}" in text

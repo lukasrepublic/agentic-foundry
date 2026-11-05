@@ -130,7 +130,7 @@ def test_a_listed_ref_repo_is_accepted_and_still_vetted_in_the_prs_repo(tmp_path
 
 
 def test_the_template_passes_a_token_and_the_previous_filename_of_a_rename():
-    text = (ROOT / "governance" / "kits" / "delivery" / "checks" / "governance-trace.yml.template").read_text()
+    text = (ROOT / "governance" / "kits" / "delivery" / "templates" / "governance-trace.yml.tmpl").read_text()
     step = text.split("- name: governance-trace\n")[1]
     assert "GH_TOKEN: ${{ github.token }}" in step and "REPO: ${{ github.repository }}" in step and '--repo "$REPO"' in step
     assert "previous_filename" in text and "ticket-repo.txt" not in text

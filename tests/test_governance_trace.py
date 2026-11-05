@@ -15,7 +15,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECK = ROOT / "governance" / "kits" / "delivery" / "checks" / "governance-trace.py"
-TEMPLATE = ROOT / "governance" / "kits" / "delivery" / "checks" / "governance-trace.yml.template"
+TEMPLATE = ROOT / "governance" / "kits" / "delivery" / "templates" / "governance-trace.yml.tmpl"
 GOV = ROOT / "scripts" / "foundry_governance.py"
 
 DESIGN = """## Design
@@ -311,8 +311,10 @@ def test_built_from_makes_one_workspace_call_and_never_prints_the_token(ws_proj,
 def test_the_tmpl_template_is_the_one_the_kit_lists():
     assert TMPL.is_file()
     assert "governance-trace.yml.tmpl" in (ROOT / "governance" / "kits" / "delivery" / "rules.yaml").read_text()
-    # the legacy name stays only because older tests read it; it must not drift from the installed template
-    assert TEMPLATE.read_text() == TMPL.read_text()
+    kit = yaml.safe_load((ROOT / "governance" / "kits" / "delivery" / "kit.yaml").read_text())
+    assert "templates/governance-trace.yml.tmpl" in kit["checks"] and "templates/governance-trace.yml.tmpl" in kit["templates"]
+    assert not (ROOT / "governance" / "kits" / "delivery" / "checks" / "governance-trace.yml.template").exists()
+    assert "FOUNDRY_WORKSPACE_READ_TOKEN" in TMPL.read_text() and "FAILS CLOSED" in TMPL.read_text()
     text = TMPL.read_text()
     assert "--json number,body,commits" in text
     uses = re.findall(r"^[ \t]*(?:-[ \t]*)?uses:[ \t]*(\S+)", text, re.M)

@@ -59,8 +59,9 @@ jobs:
         env:
           CLAUDE_PLUGIN_ROOT: ${{ github.workspace }}/plugin
           GH_TOKEN: ${{ github.token }}
-          # Optional: a read-only token for the WORKSPACE repo, so the built-from rule can resolve the trailer's sha there.
-          # Without it a private workspace is unreachable and the rule fails closed. Provisioning it is operator-held.
+          # The secret is named FOUNDRY_WORKSPACE_READ_TOKEN: a read-only token for the WORKSPACE repo, used only by the
+          # built-from rule to resolve the trailer's sha there. The operator provisions it (never commit its value). When it is
+          # unset, `github.token` is used; if that cannot read the workspace repo the lookup fails and the rule FAILS CLOSED.
           WORKSPACE_GH_TOKEN: ${{ secrets.FOUNDRY_WORKSPACE_READ_TOKEN }}
           REPO: ${{ github.repository }}
           ACTOR: ${{ github.actor }}

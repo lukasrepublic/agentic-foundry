@@ -102,11 +102,17 @@ the three sections are a checklist.
 `scripts/foundry_brief.py` builds the brief for a builder or a reviewer. It inlines the statement of every cited rule, so
 the agent reads the rule, not a pointer to it.
 
-The CI job `governance-trace` (template: `governance/kits/delivery/checks/governance-trace.yml.template`) checks the
+The CI job `governance-trace` (template: `governance/kits/delivery/templates/governance-trace.yml.tmpl`) checks the
 pull request against its ticket: the ticket is named, its author is trusted, a Design is present where required, the
 cited ids exist, every changed path is inside the Design's components, the rendered rules are fresh and no exception has
 expired. It reads policy, boundaries and the operator list from the base commit, so a pull request cannot loosen the
 class that grades it.
+
+In a product repo that a workspace governs, the job also runs `built-from`: the pull request body or head commit must carry
+`Built-from: <40-character workspace sha>`, and that sha must exist in the workspace repo. Single-repo adopters skip the rule
+with a named reason. The lookup uses the secret `FOUNDRY_WORKSPACE_READ_TOKEN` (a read-only token for the workspace repo,
+exposed to the job as `WORKSPACE_GH_TOKEN`; the operator provisions it, and its value is never written to a file). If the
+secret is unset and the default job token cannot read the workspace repo, the lookup fails and the rule fails closed.
 
 Two honest notes on that job:
 

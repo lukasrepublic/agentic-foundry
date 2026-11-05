@@ -2,6 +2,6 @@ kit: delivery
 version: 1.0.0
 category: delivery
 rules: [FG-DLV-001, FG-DLV-002, FG-DLV-003, FG-DLV-004, FG-DLV-005, FG-DLV-006, FG-DLV-007, FG-DLV-008, FG-DLV-009, FG-DLV-010, FG-DLV-011, FG-DLV-012, FG-DLV-013, FG-DLV-014, FG-DLV-015, FG-DLV-016, FG-DLV-017, FG-DLV-018, FG-DLV-019]
-checks: [checks/commitlint.config.js, checks/release-please-config.json]
-templates: [templates/CODEOWNERS.template]
+checks: [checks/commitlint.config.js, checks/release-please-config.json, templates/governance-trace.yml.tmpl]
+templates: [templates/CODEOWNERS.template, templates/governance-trace.yml.tmpl]
 migrations: []

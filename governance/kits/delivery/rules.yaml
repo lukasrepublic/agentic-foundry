@@ -1,6 +1,6 @@
 kit: delivery
 version: 1.0.0
-checks: [templates/governance-trace.yml.tmpl]   # dl-07: the trace workflow `apply` installs (the installer reads kit.yaml `checks`; see the PR note)
+checks: [templates/governance-trace.yml.tmpl]   # dl-07: mirrors kit.yaml `checks`, the list the installer reads
 rules:
   - id: FG-DLV-001
     title: Branch discipline
