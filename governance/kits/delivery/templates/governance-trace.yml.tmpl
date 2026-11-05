@@ -49,7 +49,7 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          gh pr view "$PR" --repo "$REPO" --json number,body,commits > pr.json
+          gh pr view "$PR" --repo "$REPO" --json number,body > pr.json
           gh api --paginate "repos/${REPO}/pulls/${PR}/files" --jq '.[] | ({path: .filename}, (if .previous_filename then {path: .previous_filename} else empty end))' | jq -s . > files.json
           REF="$(python3 plugin/governance/kits/delivery/checks/governance-trace.py ticket-ref --pr-json pr.json)"
           N="${REF##*#}"
@@ -59,13 +59,18 @@ jobs:
         env:
           CLAUDE_PLUGIN_ROOT: ${{ github.workspace }}/plugin
           GH_TOKEN: ${{ github.token }}
-          # The secret is named FOUNDRY_WORKSPACE_READ_TOKEN: a read-only token for the WORKSPACE repo, used only by the
-          # built-from rule to resolve the trailer's sha there. The operator provisions it (never commit its value). When it is
-          # unset, `github.token` is used; if that cannot read the workspace repo the lookup fails and the rule FAILS CLOSED.
-          WORKSPACE_GH_TOKEN: ${{ secrets.FOUNDRY_WORKSPACE_READ_TOKEN }}
+          # The secret FOUNDRY_WORKSPACE_READ_TOKEN is a read-only token for the WORKSPACE repo, used only by the built-from rule
+          # to verify the trailer's sha there. Make it a fine-grained token or GitHub App token scoped to the workspace repo with
+          # contents: read only, ideally held in a protected environment. The operator provisions it (never commit its value).
+          # When it is unset, `github.token` is used; if that cannot read the workspace repo, the lookup fails and the rule FAILS CLOSED.
+          FOUNDRY_WORKSPACE_READ_TOKEN: ${{ secrets.FOUNDRY_WORKSPACE_READ_TOKEN }}
+          # The repository (or organisation) variable FOUNDRY_WORKSPACE_REPO (OWNER/NAME) arms the built-from rule in a product repo.
+          # An undefined variable becomes the word `unset`, which skips the rule with a named reason; an empty or malformed value fails.
+          FOUNDRY_WORKSPACE_REPO: ${{ vars.FOUNDRY_WORKSPACE_REPO || 'unset' }}
           REPO: ${{ github.repository }}
           ACTOR: ${{ github.actor }}
         run: >-
           python3 plugin/governance/kits/delivery/checks/governance-trace.py check
           --pr-json pr.json --files-json files.json --ticket-json ticket.json --repo "$REPO" --agent-login "$ACTOR"
+          --head-sha "${{ github.event.pull_request.head.sha }}"
           --project-dir pr --base-dir base

@@ -73,11 +73,15 @@ The unit of work is a **ticket** (a GitHub issue with a `## Done means` command;
      > `context/branch-discipline.md`: build on a branch cut from the integration branch, run
      > `scripts/foundry-test.sh` until green, push once, and open the PR via `gh pr create`; the
      > merge floor (branch protection / required CI checks, plus
-     > `hooks/foundry-git-discipline.sh` within sessions) decides the merge. Return the structured
+     > `hooks/foundry-git-discipline.sh` within sessions) decides the merge. On a multi-repo ticket
+     > put the trailer `Built-from: <workspace sha>` in the PR body or the head commit, using the
+     > workspace main sha this brief supplies (the sha the ticket was planned against). When you
+     > close the atom, post one `## Learned` comment on the ticket: friction, successes and distill
+     > candidates, one line each, at most ten lines. Return the structured
      > result per the worker return contract below (pointers only).
    - **Multi-repo ticket** (its `target_repo` is a product repo): the brief also carries the provenance rule - the PR body or
      the head commit MUST carry the trailer `Built-from: <workspace sha>` (the 40-character workspace commit the atom was
-     authorized against). `governance-trace` fails the PR when it is missing or does not resolve in the workspace repo.
+     authorized against; the deck's brief supplies the workspace main sha the ticket was planned against). `governance-trace` fails the PR when it is missing or does not resolve in the workspace repo.
      A single-repo ticket needs no trailer.
    - **Completion step - the `## Learned` comment.** When the builder closes its atom, it posts one comment on the ticket
      headed `## Learned`: friction met, what worked, and distill candidates - one line each, at most ten lines in all
