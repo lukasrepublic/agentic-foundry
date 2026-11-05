@@ -165,8 +165,8 @@ def test_read_issue_returns_owner_fields_and_keeps_the_old_ones():
     n["parent"] = {"number": 3, "repository": {"nameWithOwner": "example-org/app"}}
     n["closedByPullRequestsReferences"] = {"nodes": [{"number": 40, "state": "OPEN", "url": "https://github.com/example-org/app/pull/40"}]}
     n["body"] = ACC + "\n## Done means\n```\nAPI_TOKEN=abcd1234 python3 -m pytest -q\n```\n"
-    n["author"] = {"login": "alice"}   # the authenticated operator: trusted
-    rec = ft.read_issue(gh, "example-org/app", 1)
+    n["author"] = {"login": "carol"}   # a write collaborator: trusted. (gv-16: the authenticated gh user, alice, is the agent itself and is not)
+    rec = ft.read_issue(with_perm(gh, "write"), "example-org/app", 1)
     for k in ("number", "title", "body", "url", "author", "state"):
         assert k in rec
     assert rec["assignees"] == ["alice"]
@@ -674,10 +674,12 @@ def test_read_issue_verb_returns_the_trust_checked_view(ws):
     gh = FakeGh(issues=[mk_issue(2, body=DONE_BODY)])
     gh.node(2)["editor"] = {"login": "mallory"}
     gh.node(2)["lastEditedAt"] = "2026-11-02T00:00:00Z"
+    # gv-16: every editor is vetted, from the edit history (without it a body edited by anyone but its author fails closed)
+    gh.node(2)["userContentEdits"] = {"totalCount": 2, "nodes": [{"editor": {"login": "carol"}}, {"editor": {"login": "mallory"}}]}
     rc, out, err = run_cli(["read-issue", "2", "--json"], with_perm(gh, "write"))
     assert rc == 0, err
     rec = json.loads(out)
-    assert rec["last_edited_by"] == "mallory" and rec["done_trusted"] is True
+    assert rec["last_edited_by"] == "mallory" and rec["done_trusted"] is True and rec["editors"] == ["carol", "mallory"]
     assert rec["done_digest"] == ft.store.command_digest("python3 -m pytest -q")
     assert not any(k.startswith("_") for k in rec)
     # an untrusted author: the command is withheld and flagged

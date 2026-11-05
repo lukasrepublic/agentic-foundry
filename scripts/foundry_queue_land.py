@@ -62,6 +62,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import foundry_merge_plan as mplan  # noqa: E402  (the catalogue globs are shared with the merge plan)
+import foundry_ticket_store as _store  # noqa: E402  (the one redactor: secret assignments, tokens, URL userinfo)
 
 COLUMNS = ("PR", "head", "base merged at", "catalogue tests", "branch full suite", "queued")
 PR_FIELDS = "number,state,isDraft,isCrossRepository,headRefName,headRefOid,baseRefName,url,files,reviewDecision"
@@ -76,14 +77,28 @@ EXIT = {"merged": 0, "refused": 2, "fix-own-files": 3, "quarantine-requested": 4
         "rejection-unclassified": 6, "timeout": 7, "not-in-queue": 8}
 
 
+def scrub(obj):
+    """Every string in `obj` passed through the redactor the git-discipline hook uses: gh and git stderr can quote a
+    remote (`https://user:<token>@host/...`) or a token assignment, and a Refused message or a JSON line must never
+    carry one into the transcript (gv-16)."""
+    if isinstance(obj, str):
+        return _store.redact(obj)
+    if isinstance(obj, dict):
+        return {k: scrub(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [scrub(v) for v in obj]
+    return obj
+
+
 class Refused(Exception):
     def __init__(self, reason, **extra):
+        reason, extra = scrub(reason), scrub(extra)
         super().__init__(reason)
         self.reason, self.extra = reason, extra
 
 
 def emit(status=None, **kw):
-    print(json.dumps(({"status": status} if status else {}) | kw, sort_keys=True), flush=True)
+    print(json.dumps(scrub(({"status": status} if status else {}) | kw), sort_keys=True), flush=True)
 
 
 # ------------------------------------------------------------------------------------------- adapter
@@ -591,13 +606,21 @@ class Lander:
 
     # -- 7. delivered-by
     def delivered_by(self):
+        """G2: the record is written in the same run, right after the platform reports the merge. It names who MERGED
+        (the platform's `mergedBy`, never the commit author: authorship alone proves nothing about who attested) and
+        the head that was merged. A record that cannot be posted never turns a merged PR into a refusal: the result
+        says `recorded: false` and carries the cause."""
         v = self.view(POLL_FIELDS)
         login = ((v.get("mergedBy") or {}).get("login")) or "unknown (the platform did not report it)"
         oid = ((v.get("mergeCommit") or {}).get("oid")) or "unknown"
         text = ("delivered-by: PR #%s | merged by %s | head %s | merge commit %s\n<!-- queue-land:v1 kind=delivered sig=%s n=1 -->"
                 % (self.pr, login, self.head[:12], str(oid)[:12], self.head[:12]))
-        self.post(text, "delivered-by record")
-        return {"pr": self.pr, "merged_by": login, "head": self.head, "merge_commit": oid}
+        out = {"pr": self.pr, "merged_by": login, "head": self.head, "merge_commit": oid, "recorded": True}
+        try:
+            self.post(text, "delivered-by record")
+        except Refused as exc:
+            out.update(recorded=False, record_error=exc.reason)
+        return out
 
     # -- the loop
     def land(self):

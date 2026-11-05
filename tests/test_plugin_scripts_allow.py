@@ -173,6 +173,8 @@ _READERS = [
     ("foundry_operating_model.py", "explain deck.max_builders"), ("foundry_operating_model.py", "render-tick-section E2"),
     ("foundry_usage.py", "ingest /c"), ("foundry_usage.py", "attribute"), ("foundry_usage.py", "coverage"),
     ("foundry_blocker_check.py", "--in x"),               # gv-14: read-only lint
+    ("foundry_om_trace.py", "--charters x"),              # gv-16: read-only traceability table
+    ("foundry_ci_budget_lint.py", "x.yml"),               # gv-16: read-only CI budget lint
 ]
 
 

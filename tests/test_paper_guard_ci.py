@@ -16,6 +16,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 HOOKS = ROOT / "hooks"
 SCRIPTS = ROOT / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+import foundry_ticket_store as store  # noqa: E402
 
 
 def _git(cwd, *a):
@@ -54,6 +56,7 @@ def ticket(root, **lists):
     doc = {"issue": 7, "title": "t", "done": "true", "paper_allowed": [], "status": "open",
            "stop_blocks": 0, "trusted_by": "author"}
     doc.update(lists)
+    store.sign_ticket_lists(doc, root, create=True)     # gv-16: ci_allowed / issue_paper_allowed count only when signed
     tf.write_text(json.dumps(doc))
 
 
@@ -64,6 +67,7 @@ CI_PATHS = [
     "tests/quarantine.json", "ops/quarantine-list.yaml", "ops/quarantine.yml",
     "scripts/gate-check.sh", "tools/lint.py",       # named by the repo's own workflow
     "Makefile", "noxfile.py", ".pre-commit-config.yaml", "conftest.py", "tests/unit/conftest.py", "web/karma.conf.js",
+    "svc/pyproject.toml",                              # gv-16: a nested pyproject.toml carries test config too
 ]
 
 
@@ -145,7 +149,7 @@ def test_ci_allowed_does_not_unlock_paper(repo):
 
 
 @pytest.mark.parametrize("rel", [
-    "src/app.py", "tests/test_a.py", "scripts/deploy.sh", "src/pyproject.toml", "CLAUDE.md",
+    "src/app.py", "tests/test_a.py", "scripts/deploy.sh", "src/pyproject.py", "CLAUDE.md",
     ".github/ISSUE_TEMPLATE/bug.md", ".github/CODEOWNERS", "README.md", "src/quarantined_users.py",
 ])
 def test_code_elsewhere_stays_never_gated(repo, rel):

@@ -274,6 +274,16 @@
       "rationale": "renders the brief preamble to stdout from local governance files; writes nothing, no network"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_om_trace.py:*)",
+      "tier": "allow",
+      "rationale": "read-only operating-model traceability table: reads charter files (and the port prompt with --prompt) and prints a rule-to-criterion table; writes nothing, no network (gv-16, AC-OM-10)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_ci_budget_lint.py:*)",
+      "tier": "allow",
+      "rationale": "read-only lint: parses CI workflow YAML and flags a performance or request-count budget wired as a required check; writes nothing, no network (gv-16, rule C2)"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_message_log.py post:*)",
       "tier": "ask",
       "rationale": "appends one record to the foundry/messages branch and pushes it to the git remote under the operator's identity (a remote write); never forces, retries only a lost race (gv-09 shared message log)."
