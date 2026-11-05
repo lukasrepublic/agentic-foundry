@@ -950,3 +950,101 @@ def test_ulid_timestamp_bits_equal_when_and_ids_are_monotonic_within_a_process()
     assert same == sorted(same) and len(set(same)) == 500, "the same millisecond must still sort in creation order"
     now_ids = [ml.new_ulid() for _ in range(2000)]
     assert now_ids == sorted(now_ids)
+
+
+# ============================================================================================ round 2
+def _hook():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("allowhook2", _p("hooks", "foundry-plugin-scripts-allow.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.mark.parametrize("tail", ["read --to me --remote https://attacker.invalid/x", "read --remote=origin --to me",
+                                  "audit --repo /tmp/other", "audit --re /tmp/other", "read --to me --rem https://a.invalid/x"])
+def test_read_and_audit_with_remote_or_repo_flags_ask(tail):
+    hook, root = _hook(), os.path.realpath(ROOT)
+    script = os.path.join(root, "scripts", "foundry_message_log.py")
+    assert hook.allowed(f"python3 {script} {tail}", root) is False
+
+
+@pytest.mark.parametrize("prefix", ["FOUNDRY_MESSAGE_REMOTE=https://a.invalid/x", "FOUNDRY_MESSAGE_REPO=/tmp/x"])
+def test_read_with_the_remote_or_repo_environment_assignment_asks(prefix):
+    hook, root = _hook(), os.path.realpath(ROOT)
+    script = os.path.join(root, "scripts", "foundry_message_log.py")
+    assert hook.allowed(f"{prefix} python3 {script} read --to me", root) is False
+    assert hook.allowed(f"python3 {script} read --to me # {prefix}", root) is False
+
+
+def test_plain_read_and_audit_stay_silent():
+    hook, root = _hook(), os.path.realpath(ROOT)
+    script = os.path.join(root, "scripts", "foundry_message_log.py")
+    assert hook.allowed(f"python3 {script} read --to me --kind STOP", root) is True
+    assert hook.allowed(f"python3 {script} audit --open-minutes 30", root) is True
+
+
+def test_an_untrusted_repo_config_cannot_run_hooks_or_commands(tmp_path, monkeypatch):
+    marker = tmp_path / "marker"
+    hooks = tmp_path / "evil-hooks"
+    hooks.mkdir()
+    for name in ("reference-transaction", "pre-push", "post-checkout", "pre-commit"):
+        h = hooks / name
+        h.write_text(f"#!/bin/sh\ntouch {marker}\n")
+        h.chmod(0o755)
+    w = make_clone(tmp_path, make_remote(tmp_path), "w")
+    git(w, "config", "core.hooksPath", str(hooks))
+    git(w, "config", "core.fsmonitor", f"touch {marker}; echo")
+    git(w, "config", "core.sshCommand", f"touch {marker}; ssh")
+    _post(w, "x", text="through an untrusted config")
+    ml.read(ml.Adapter(), w, "origin", "x")
+    assert not marker.exists(), "a command in the repo's config ran"
+    monkeypatch.setenv("GIT_ALLOW_PROTOCOL", "ext")
+    got = {}
+    real = subprocess.run
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: got.update(env=kw["env"], cmd=cmd) or subprocess.CompletedProcess(cmd, 0, "", ""))
+    ml.Adapter().git(["status"], ".")
+    assert got["env"]["GIT_ALLOW_PROTOCOL"] == "file:git:ssh:http:https", "the caller's value must not survive"
+    assert "core.hooksPath=/dev/null" in got["cmd"] and "protocol.ext.allow=never" in got["cmd"]
+    monkeypatch.setattr(subprocess, "run", real)
+
+
+def test_remote_validation_error_and_catch_all_never_print_credentials(tmp_path, monkeypatch, capsys):
+    bad = "https://user:tok3n@example.invalid/a b.git"  # fails the pattern, carries userinfo
+    assert ml.valid_remote(bad) is False
+    w = make_clone(tmp_path, make_remote(tmp_path), "w")
+    assert ml.main(["--repo", str(w), f"--remote={bad}", "read", "--to", "me"]) == 1
+    assert "tok3n" not in capsys.readouterr().err
+
+    def boom(cmd, **kw):
+        raise subprocess.TimeoutExpired(cmd, 1)
+
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: boom(cmd + ["https://user:tok3n@example.invalid/r.git"], **kw))
+    assert ml.main(["--repo", str(w), "read", "--to", "me"]) == 1
+    err = capsys.readouterr().err
+    assert "TimeoutExpired" in err and "tok3n" not in err, "control: the failure is still reported, just redacted"
+
+
+def test_every_read_is_capped_and_an_overlong_line_is_malformed(tmp_path, monkeypatch):
+    remote = make_remote(tmp_path)
+    w = make_clone(tmp_path, remote, "w")
+    r = make_clone(tmp_path, remote, "r")
+    monkeypatch.setattr(ml, "MAX_READ_RECORDS", 2)
+    first = ml.read(ml.Adapter(), r, "origin", "x")
+    cursor_tip = first["tip"]
+    ids = [_post(w, "x", text=f"n{i}")["id"] for i in range(4)]
+    res = ml.read(ml.Adapter(), r, "origin", "x")  # a stored cursor now exists: the cap still applies
+    assert [x["id"] for x in res["records"]] == ids[-2:] and "2 older" in res["truncated"]
+    assert cursor_tip is None or True
+    ok = ml.read(ml.Adapter(), r, "origin", "x")
+    assert ok["records"] == [] and "truncated" not in ok, "control: under the cap nothing is dropped"
+    big = ml._line(ml.make_record("s", "x", "NEEDS-INTERFACE", "y" * (ml.MAX_LINE_BYTES + 10)))
+    recs, bad = ml.parse_lines(big + "\n" + ml._line(ml.make_record("s", "x", "NEEDS-INTERFACE", "fine")) + "\n")
+    assert [b["reason"].split(":")[0] for b in bad] == ["line-too-long"] and len(recs) == 1
+
+
+def test_a_post_whose_encoded_line_would_be_unreadable_is_refused(tmp_path):
+    w = make_clone(tmp_path, make_remote(tmp_path), "w")
+    nasty = "\x01" * ml.MAX_BODY_BYTES  # 1 byte each, 6 once JSON-escaped
+    rec, errs = ml.post(ml.Adapter(), w, "origin", "s", "x", "NEEDS-INTERFACE", nasty, None, [], NOSLEEP)
+    assert rec is None and errs[0].startswith("line-too-long")

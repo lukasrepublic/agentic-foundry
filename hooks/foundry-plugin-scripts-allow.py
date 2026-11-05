@@ -123,6 +123,9 @@ def allowed(command, root):
         return False
     if name in _ASK_SCRIPTS:
         return False
+    if name == "foundry_message_log.py" and (_names_option(argv[1:], "--remote") or _names_option(argv[1:], "--repo")
+                                            or "FOUNDRY_MESSAGE_REMOTE" in command or "FOUNDRY_MESSAGE_REPO" in command):
+        return False  # read|audit stay silent only against the default remote and repo (an injected --remote is an exfil path)
     if any(a in _ASK_VERBS.get(name, ()) for a in argv[1:]):
         return False
     if name == "foundry_usage.py" and _names_option(argv[1:], "--dataset") \
