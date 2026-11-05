@@ -1638,6 +1638,8 @@ def cmd_claim(args: list[str], run, now: float) -> int:
     prior = claims.get(key) or {}
     keep = bool(prior.get("body_sha256")) and not a.rebase_acceptance
     keep_done = keep and "done_digest" in prior
+    v_digest, v_sections = (vetted["ticket_digest"], vetted["ticket_sections"]) if vetted.get("ticket_digest") \
+        else ticket_digest(vetted.get("body") or "")
     # dl-03: the ticket baseline follows the same keep/rebase rule as the body baseline, and a prior record whose
     # signature fails is never kept (a hand-edited baseline is not adopted)
     keep_ticket = keep and bool(prior.get("ticket_digest")) and isinstance(prior.get("ticket_sections"), dict) \
@@ -1646,8 +1648,8 @@ def cmd_claim(args: list[str], run, now: float) -> int:
            "body_sha256": prior["body_sha256"] if keep else vetted["body_sha256"],
            # the vetted Done-means: reconcile stops dispatch when the live digest differs from this one
            "done_digest": prior["done_digest"] if keep_done else vetted["done_digest"],
-           "ticket_digest": prior["ticket_digest"] if keep_ticket else vetted["ticket_digest"],
-           "ticket_sections": prior["ticket_sections"] if keep_ticket else vetted["ticket_sections"],
+           "ticket_digest": prior["ticket_digest"] if keep_ticket else v_digest,
+           "ticket_sections": prior["ticket_sections"] if keep_ticket else v_sections,
            "done_trusted": prior.get("done_trusted", False) if keep_done else (not has_done or vetted["done_trusted"]),
            "done_means": prior.get("done_means", "") if keep_done else vetted["done"],
            "done_trusted_by": "operator-flag" if (a.trust_author and has_done) else ("author" if has_done else None),
