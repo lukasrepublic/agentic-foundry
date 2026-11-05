@@ -49,6 +49,15 @@ The unit of work is a **ticket** (a GitHub issue with a `## Done means` command;
 
 ## Procedure (single ticket)
 
+0. **Design review (design-required class only).** Run `python3 scripts/foundry-ticket.py read-issue <n> --json` and read
+   `design_required`. When it is `true` (a governed path, a declared trust-boundary path, or a size tag at or above the
+   policy threshold), `foundry-ticket.py start` has already refused a ticket without a `## Design` that cites at least one
+   existing rule id (`design-required`). Before any build, spawn the **`design-reviewer`** agent in a fresh context
+   (`subagent_type: foundry:design-reviewer`, read-only) with pointers to the ticket body and to the brief renderer's rule
+   block (`python3 scripts/foundry_brief.py render --ticket <json> --paths <components>`). It returns `clear` or `block`.
+   Fix a Block by editing the Design and review once more; ask the operator for one word only on a Block you cannot fix
+   (a rule the Design must deviate from, a boundary decision). Below the class this step is skipped: the sections are a
+   checklist `start` prints. Hand the same rule block to `pr-reviewer` and `security-reviewer` at review time.
 1. **Resolve** the ticket (`gh issue view <n>`): its `## Done means` command and `## Paper allowed` list.
 2. **Invoke the native `Agent` tool** - no queue, no manifest:
    - `subagent_type`: the engineer agent (`foundry:app-engineer` / `foundry:infra-engineer` / `foundry:framework-engineer` per the ticket's surface).

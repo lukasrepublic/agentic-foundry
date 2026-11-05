@@ -43,6 +43,33 @@ def _print_checkpoints(contract_path: str) -> None:
         print(f"        expect: {exp.get('op')} {exp.get('value','')} (baseline={exp.get('baseline')})")
 
 
+def uncommitted_paths(paths):
+    """G3 (gv-16): the entries among `paths` with uncommitted changes (staged, unstaged or untracked), as
+    `git status --porcelain` reports them. -> (dirty, note): `dirty` is a list of "<xy> <path>" lines; `note` is
+    non-empty (and `dirty` empty) when the check could not run -- a path outside any git repository -- so the caller
+    can disclose the degrade rather than guess."""
+    import subprocess
+    dirty, notes = [], []
+    for p in paths:
+        ap = os.path.abspath(p)
+        d = os.path.dirname(ap)
+        try:
+            top = subprocess.run(["git", "-C", d, "rev-parse", "--show-toplevel"], capture_output=True, text=True, timeout=30)
+            if top.returncode != 0:
+                notes.append(f"{p}: not inside a git repository")
+                continue
+            st = subprocess.run(["git", "-C", d, "status", "--porcelain", "--untracked-files=all", "--", ap],
+                                capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError) as e:
+            notes.append(f"{p}: git could not be run ({e})")
+            continue
+        if st.returncode != 0:
+            notes.append(f"{p}: git status failed")
+            continue
+        dirty += [ln.rstrip() for ln in st.stdout.splitlines() if ln.strip()]
+    return dirty, "; ".join(notes)
+
+
 def _front_authz_main() -> int:
     """The front-authorization entrypoint body (historically named `main()`, kept as a separate
     function so `main()` below can dispatch to it directly)."""
@@ -216,6 +243,22 @@ def _front_authz_main() -> int:
     if state == az.AUTHORIZED and not args.reauth_after_impl:
         print("Already AUTHORIZED and hashes match — nothing to do (idempotent).")
         return 0
+
+    # 3.4 G3 (gv-16, operating-model rule G3): commit before you authorize. The freeze binds the SHA-256 of the spec and
+    # of the contract; a spec or contract that is not committed cannot be reproduced from git by the reviewer or by the
+    # merge floor, so authorization of uncommitted text is refused (floor: no flag turns it off). A workspace that is not
+    # a git repository cannot be checked; that degrade is disclosed, never silent.
+    _dirty, _note = uncommitted_paths([args.spec, args.contract])
+    if _dirty:
+        print("FAIL (fail-closed): commit-before-authorize: the spec or the contract has uncommitted changes:",
+              file=sys.stderr)
+        for ln in _dirty:
+            print(f"  {ln}", file=sys.stderr)
+        print("  Commit them (git add + git commit), then authorize: the freeze binds the committed text.",
+              file=sys.stderr)
+        return 1
+    if _note:
+        print(f"  warn: commit-before-authorize check degraded - {_note}")
 
     # 3.5 The §8 audit ledger is not a precondition of authorization and is no longer read here.
     # Single-read spec hash: this SAME value binds the freeze below (kills the

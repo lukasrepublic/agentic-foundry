@@ -107,3 +107,6 @@ def _clean_env(monkeypatch):
     into a test that doesn't explicitly request one via the fixtures above."""
     monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
     monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    # gv-16: under GITHUB_ACTIONS=true the trust check skips the `gh api user` self-identity lookup (an App token cannot call it);
+    # a test must ask for that explicitly, so the CI runner's own variable never changes what a local-style test sees.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)

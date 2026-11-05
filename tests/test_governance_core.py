@@ -403,9 +403,14 @@ def test_no_verb_spawns_a_process_or_calls_the_network(tmp_path, monkeypatch):
 
 
 def test_the_scripts_import_no_process_or_network_module():
+    # gv-15: foundry_governance.py gains the intake / upgrade verbs, which run local `git` (dirty-tree check,
+    # three-way merge, branch/commit/push) and one `gh pr create`; it is therefore the one script allowed to import
+    # `subprocess`. No script may import a network module, and the brief renderer stays process-free. The resolver
+    # verbs' no-subprocess behaviour is asserted at runtime by the `calls == []` test above.
     for name in ("foundry_governance.py", "foundry_brief.py"):
         src = (SCRIPTS / name).read_text()
-        for mod in ("subprocess", "socket", "urllib", "http.client", "requests"):
+        mods = ("socket", "urllib", "http.client", "requests") + (("subprocess",) if name == "foundry_brief.py" else ())
+        for mod in mods:
             assert f"import {mod}" not in src and f"from {mod}" not in src
 
 

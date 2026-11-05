@@ -46,6 +46,7 @@ import {
 } from './pluginRefresh.mjs';
 import { runCleanupPhase } from './cleanup.mjs';
 import { loadPythonRequirements, ensurePythonDeps, renderPythonDepsRow } from './pythonDeps.mjs';
+import { runGovernanceUpgrade, renderGovernanceUpgradeRow, resolveInstallPath, hasGovernanceLock } from './governanceUpgrade.mjs';
 
 export { ALLOWED_CLAUDE_SUBCOMMANDS };
 
@@ -57,11 +58,12 @@ const SEPARATELY_RECONCILED = new Set(['.claude/settings.json', '.gitignore']);
  * QUESTION_TABLE, which is denied to the sibling cleanup atom and whose flag set is derived from
  * the wizard's prompts, not this command's. `--cleanup` is the cleanup atom's own opt-in. */
 export function parseUpdateArgv(argv) {
-  const values = { cleanup: false, help: false, dryRun: false, legacyMaintenance: false };
+  const values = { cleanup: false, help: false, dryRun: false, legacyMaintenance: false, pr: false };
   for (const tok of argv) {
     if (tok === '--cleanup') values.cleanup = true;
     else if (tok === '--legacy-maintenance') values.legacyMaintenance = true;
     else if (tok === '--dry-run') values.dryRun = true;
+    else if (tok === '--pr') values.pr = true;
     else if (tok === '--help') values.help = true;
     else throw new RefusalError(`unknown flag: ${tok}`, tok);
   }
@@ -179,7 +181,7 @@ export async function runUpdate(argv, {
 
   if (flags.help) {
     print([
-      'Usage: update-agentic-workspace [--dry-run] [--cleanup] [--legacy-maintenance] [--help]',
+      'Usage: update-agentic-workspace [--dry-run] [--cleanup] [--legacy-maintenance] [--pr] [--help]',
       '',
       '  --cleanup   Also quarantine retired workspace artifacts (moved, never deleted, under',
       '              .foundry/retired/<run-id>/ with their restore path recorded) and remove a stale',
@@ -189,6 +191,8 @@ export async function runUpdate(argv, {
       '              Also append the empty "## Amendments" section to old specs and true up release',
       '              manifests. Edits retained history, so it runs only with this flag AND while no',
       '              cutover record exists at .foundry/migration/authority.yaml. Off by default.',
+      '  --pr        With a governance lock, let `governance upgrade` branch, push and open its pull request',
+      '              (also UPDATE_AGENTIC_WORKSPACE_PR=1). Without it the upgrade is written to the working tree only.',
       '  --dry-run   Plan and print everything; write nothing and run no claude command.',
       '              Exits 1 if a pre-flight stop check fires, 2 if a pre-flight continue check fires',
       '              or the plan holds a drifted managed file or a refused .gitignore block, else 0.',
@@ -495,6 +499,10 @@ export async function runUpdate(argv, {
     // v1.18.2: python deps — the preview only probes (nothing installed before the first write).
     const pythonRequirements = loadPythonRequirements(pkgDir);
     previewLines.push(renderPythonDepsRow(ensurePythonDeps(pythonRequirements, { env: spawnEnv, python: spawnEnv.FOUNDRY_PYTHON || 'python3', dryRun: true }), pythonRequirements));
+    // gv-15: the governance upgrade runs after the plugin refresh when the workspace has a governance lock.
+    // A pull request is opened only on explicit opt-in (--pr or UPDATE_AGENTIC_WORKSPACE_PR=1).
+    const governancePr = flags.pr || spawnEnv.UPDATE_AGENTIC_WORKSPACE_PR === '1';
+    if (hasGovernanceLock(physicalRoot)) previewLines.push(renderGovernanceUpgradeRow(runGovernanceUpgrade({ cwd: physicalRoot, dryRun: true, pr: governancePr })));
 
     // ── AC-NPX-4/-5: one `[<effect>] <class> <target>` row per planned effect ───────────────────
     const effectRows = [];
@@ -684,6 +692,23 @@ export async function runUpdate(argv, {
     print(renderPythonDepsRow(pythonDeps, pythonRequirements));
     phases.push({ name: 'python-deps', verdict: pythonDeps.verdict, ...(pythonDeps.reason ? { reason: pythonDeps.reason } : {}) });
     afterPhase('python-deps');
+
+    // ── Phase 2c (gv-15): `governance upgrade --pr` from the freshly updated plugin, when a lock exists ──
+    // Not run (and no row printed) in a workspace without `.foundry/governance.lock`. The step opens a pull
+    // request and never merges; `/foundry:post-upgrade` reviews it. FOUNDRY_GOVERNANCE_PYTHON, then
+    // FOUNDRY_PYTHON, names another interpreter.
+    if (hasGovernanceLock(physicalRoot)) {
+      st.phase = 'governance-upgrade';
+      const gov = runGovernanceUpgrade({
+        cwd: physicalRoot, pluginRoot: resolveInstallPath(registryAfter, pluginKey, cwd),
+        python: spawnEnv.FOUNDRY_GOVERNANCE_PYTHON || spawnEnv.FOUNDRY_PYTHON || 'python3', env: spawnEnv, pr: governancePr,
+      });
+      if (gov.verdict === 'changed' || gov.verdict === 'attention') st.mutated = true;
+      print(renderGovernanceUpgradeRow(gov));
+      phases.push({ name: 'governance-upgrade', verdict: gov.verdict, ...(gov.reason ? { reason: gov.reason } : {}) });
+      st.governanceUpgrade = gov;
+      afterPhase('governance-upgrade');
+    }
 
     // ── Phase 3: cleanup (sibling atom; always previewed, only acts under --cleanup) ────────────
     st.phase = 'cleanup';
@@ -898,7 +923,8 @@ export async function runUpdate(argv, {
   const stoppedEarly = Boolean(st.error) || st.stopped;
   const anyDrifted = (st.filePlan || []).some((f) => f.action === 'drifted');
   const attention = diagnoses.some((d) => effectOf(d.code) === 'continue') || anyDrifted || st.gitignoreRefused
-    || Boolean(st.pythonDeps && st.pythonDeps.verdict === 'failed');
+    || Boolean(st.pythonDeps && st.pythonDeps.verdict === 'failed')
+    || Boolean(st.governanceUpgrade && ['failed', 'attention'].includes(st.governanceUpgrade.verdict));
   let outcome = stoppedEarly ? (mutated ? 'partial' : 'refused') : (attention ? 'attention-needed' : 'complete');
   let nextAction;
   let failure = null;

@@ -29,6 +29,20 @@ Issue body conventions (both optional, both plain Markdown):
     ## Paper allowed
     CHANGELOG.md, docs/how-to/x.md
 
+Three more sections are parsed by `start` and `read-issue --json` (gv-16, design 5.3):
+
+    ## Design        - Components: <path or glob>[, ...]   - Reuses: <existing pattern>   - Cites: <rule id>[, <rule id>]
+    ## Security      <rule ids>   or   none: <why>
+    ## Surfaces      one line per blueprint surface (`cli: ...`), or `n/a: <why>`
+    ## Scope         optional: the paths the work will touch (used to decide the class below)
+
+A ticket in the DESIGN-REQUIRED class (a path in policy `governance.design_required_paths` or the locked blueprint's list, a
+declared trust-boundary path, or a size label `size:L` or larger) is refused with `design-required` unless its Design cites at
+least one rule id that exists. Below the class the sections are a printed checklist. `ci_allowed` and `issue_paper_allowed`
+are signed (HMAC under <git-dir>/foundry-ticket.key, created by `ci-allow` and `start`); the paper guard ignores them
+unless the signature verifies. Trust of an issue author / editor means a login in `github_scope.operators` or the operator
+registry, never the authenticated `gh` user, and EVERY editor of the body is checked (the edit history, else fail closed).
+
 Only the FENCED block under `## Done means` is ever executed, and only after `start` confirmed the
 issue's author has write access to the issue's own repository. `--trust-author` overrides that for a
 command the OPERATOR has read; it is not silently allowed by the plugin's permission hook, and neither
@@ -136,6 +150,283 @@ def parse_body(body: str) -> tuple[str, list[str]]:
     return done, paper
 
 
+# ====================================================================================================
+# gv-16 — ticket translation: `## Design`, `## Security`, `## Surfaces` (design §5.3).
+#
+# `start` parses the three sections. A ticket in the DESIGN-REQUIRED class (a path in policy
+# `governance.design_required_paths` or the locked blueprint's list, a declared trust-boundary path, or a size
+# tag at or above policy `governance.size_tag_required`) refuses to start without a Design that cites at
+# least one rule id that exists (`design-required`). Below the class the sections are a checklist that is
+# printed, never a refusal. The class is decided from what the ticket DECLARES: the Design's components, an
+# optional `## Scope` list, `## Paper allowed`, and the size label. The diff-level check (a changed path
+# outside the Design's components) is the CI job `governance-trace`
+# (governance/kits/delivery/checks/governance-trace.py).
+# ====================================================================================================
+
+_DESIGN_H = re.compile(r"^##[ \t]+design[ \t]*:?[ \t]*$", re.I | re.M)
+_SECURITY_H = re.compile(r"^##[ \t]+security[ \t]*:?[ \t]*$", re.I | re.M)
+_SURFACES_H = re.compile(r"^##[ \t]+surfaces?[ \t]*:?[ \t]*$", re.I | re.M)
+_SCOPE_H = re.compile(r"^##[ \t]+(?:scope|paths)[ \t]*:?[ \t]*$", re.I | re.M)
+_H2_RE = re.compile(r"^##(?!#)[ \t]", re.M)          # the end of a section: the next level-2 heading (### stays inside)
+_RULE_ID_RE = re.compile(r"\b[A-Z][A-Z0-9]*-[A-Z]{2,8}-\d{3}\b")
+_DESIGN_KEY_RE = re.compile(
+    r"^[ \t]*(?:[-*+][ \t]+)?\**[ \t]*(components?|reuses?|reused[ \t]+pattern|pattern|cites?|cited[ \t]+(?:rule[ \t]+)?ids?|rules)"
+    r"[ \t]*\**[ \t]*:\**[ \t]*(.*)$", re.I)
+_SIZE_RE = re.compile(r"^size[ \t]*[:/=\- ][ \t]*(xs|s|m|l|xl)$", re.I)
+SIZE_ORDER = ("xs", "s", "m", "l", "xl")
+
+
+def _section(body: str, rx) -> str | None:
+    body = (body or "").replace("\r\n", "\n").replace("\r", "\n")
+    m = rx.search(body)
+    if not m:
+        return None
+    rest = body[m.end():]
+    nxt = _H2_RE.search(rest)
+    return rest[: nxt.start()] if nxt else rest
+
+
+def clean_component(raw: str) -> str:
+    """A Design component or Scope entry as a root-relative POSIX path or glob; "" when unusable."""
+    s = raw.strip().strip("`'\"").strip()
+    for sep in (" — ", " - ", " –"):
+        if sep in s:
+            s = s.split(sep, 1)[0].strip().strip("`")
+    while s.startswith("./"):
+        s = s[2:]
+    if not s or s.startswith(("/", "#")) or ".." in s.split("/"):
+        return ""
+    return s.rstrip("/") or ""
+
+
+def _dedupe(seq):
+    out = []
+    for x in seq:
+        if x and x not in out:
+            out.append(x)
+    return out
+
+
+def _parse_design(sec: str | None) -> dict:
+    d = {"present": sec is not None, "components": [], "reuses": "", "cites": []}
+    if sec is None:
+        return d
+    key = None
+
+    def eat(k, val):
+        if k == "components":
+            d["components"] += [clean_component(x) for x in re.split(r"[,;]", val)]
+        elif k == "cites":
+            d["cites"] += _RULE_ID_RE.findall(val)
+        else:
+            d["reuses"] = (d["reuses"] + " " + val.strip()).strip()
+
+    for line in sec.split("\n"):
+        m = _DESIGN_KEY_RE.match(line)
+        if m:
+            name = m.group(1).lower()
+            key = "components" if name.startswith("component") else (
+                "cites" if name.startswith(("cite", "rules")) else "reuses")
+            eat(key, m.group(2))
+            continue
+        nested = re.match(r"^[ \t]*[-*+][ \t]+(.*)$", line)     # indented or column-0 bullets continue the last key
+        if nested and key:
+            eat(key, nested.group(1))
+        elif line.strip() and not line.lstrip().startswith("#"):    # a ### subheading does not end the Design
+            key = None
+    d["components"] = _dedupe(d["components"])
+    d["cites"] = _dedupe(d["cites"])
+    return d
+
+
+def _parse_security(sec: str | None) -> dict:
+    out = {"present": sec is not None, "ids": [], "none_reason": None}
+    if sec is None:
+        return out
+    for line in sec.split("\n"):
+        m = re.match(r"^[ \t]*(?:[-*+][ \t]+)?none[ \t]*:[ \t]*(\S.*)$", line, re.I)
+        if m and out["none_reason"] is None:
+            out["none_reason"] = m.group(1).strip()
+        out["ids"] += _RULE_ID_RE.findall(line)
+    out["ids"] = _dedupe(out["ids"])
+    return out
+
+
+def _parse_surfaces(sec: str | None) -> dict:
+    out = {"present": sec is not None, "lines": [], "na_reason": None}
+    if sec is None:
+        return out
+    for line in sec.split("\n"):
+        s = re.sub(r"^[ \t]*[-*+][ \t]+", "", line).strip()
+        if not s:
+            continue
+        whole = re.match(r"^n/a(?:[ \t]*:[ \t]*(\S.*))?$", s, re.I)
+        if whole:
+            out["na_reason"] = (whole.group(1) or "").strip() or None
+            continue
+        m = re.match(r"^`?([A-Za-z][\w-]*)`?[ \t]*:[ \t]*(.*)$", s)
+        if m:
+            text = m.group(2).strip()
+            na = re.match(r"^n/a\b[ \t]*:?[ \t]*(.*)$", text, re.I)
+            out["lines"].append({"surface": m.group(1).lower(), "text": text, "na": bool(na),
+                                 "reason": (na.group(1).strip() or None) if na else None})
+    return out
+
+
+def parse_sections(body: str) -> dict:
+    """{design, security, surfaces, scope} parsed from an issue body (pure; nothing is executed or fetched)."""
+    scope_sec = _section(body, _SCOPE_H)
+    scope = _dedupe(clean_component(x) for x in re.split(r"[,\n]", scope_sec or "")) if scope_sec else []
+    return {"design": _parse_design(_section(body, _DESIGN_H)),
+            "security": _parse_security(_section(body, _SECURITY_H)),
+            "surfaces": _parse_surfaces(_section(body, _SURFACES_H)),
+            "scope": scope}
+
+
+def governance_context(root: Path) -> dict:
+    """What the design-required class is decided against: the effective rules (kits + governance/local), the
+    class globs (policy ∪ locked blueprint; declared trust boundaries), the size threshold and the blueprint's
+    surfaces. A part that cannot be read is reported in `error`, never guessed."""
+    gv = {"rules": {}, "rule_list": [], "error": None, "design_globs": [], "sec_globs": [], "size_req": "l",
+           "surfaces": [], "blueprint": None, "_gov": None}
+    try:
+        import foundry_governance as g
+        gv["_gov"] = g
+        plugin = g.plugin_root()
+        rules = g.checked_effective(g.load_kits(plugin), g.load_local(root))
+        gv["rule_list"], gv["rules"] = rules, {r["id"]: r for r in rules}
+    except Exception as e:  # noqa: BLE001 - reported, and fails closed where the class needs the rules
+        gv["error"] = store.redact(f"{type(e).__name__}: {e}")[:240]
+        plugin = None
+    try:
+        import foundry_operating_model as om
+        pol = om.load(str(root))
+        gv["design_globs"] = [str(x) for x in (pol.get("governance.design_required_paths") or [])]
+        gv["size_req"] = str(pol.get("governance.size_tag_required") or "L").lower()
+    except Exception as e:  # noqa: BLE001
+        print(f"foundry-ticket: policy-loader-error: {type(e).__name__} (defaults used for the design-required class)",
+              file=sys.stderr)
+    try:
+        import yaml
+        lock = gv["_gov"]._read_lock(root) if gv["_gov"] else None
+        if isinstance(lock, dict):
+            decl = lock.get("declarations") or {}
+            gv["sec_globs"] = [str(x) for x in (decl.get("trust_boundaries") or [])]
+            gv["surfaces"] = [str(x).lower() for x in (decl.get("surfaces") or [])]
+            bid = (lock.get("blueprint") or {}).get("id")
+            if isinstance(bid, str) and re.fullmatch(r"[a-z0-9][a-z0-9-]*", bid):
+                gv["blueprint"] = bid
+                pack = (plugin or Path(__file__).resolve().parent.parent) / "packs" / "stack-profiles" / bid / "stack-profile.yaml"
+                if pack.is_file():
+                    prof = yaml.safe_load(pack.read_text(encoding="utf-8")) or {}
+                    gv["design_globs"] += [str(x) for x in ((prof.get("governance") or {}).get("design_required_paths") or [])]
+                    if not gv["surfaces"]:
+                        gv["surfaces"] = [str(x).lower() for x in (prof.get("surfaces") or [])]
+    except Exception as e:  # noqa: BLE001
+        print(f"foundry-ticket: governance-lock-unreadable: {type(e).__name__} (blueprint paths not applied)", file=sys.stderr)
+    gv["design_globs"] = _dedupe(gv["design_globs"])
+    return gv
+
+
+def _matches_any(gv: dict, path: str, globs: list) -> bool:
+    g = gv.get("_gov")
+    if g is None:
+        return False
+    cands = [path, path.rstrip("/") + "/_"]       # a directory component stands for what is under it
+    for gl in globs:
+        try:
+            rx = g.glob_re(gl)
+        except Exception:  # noqa: BLE001 - a malformed glob matches nothing
+            continue
+        if any(rx.fullmatch(c) for c in cands):
+            return True
+    return False
+
+
+def size_at_least(labels, threshold: str) -> bool:
+    need = SIZE_ORDER.index(threshold.lower()) if threshold.lower() in SIZE_ORDER else SIZE_ORDER.index("l")
+    for lb in labels or []:
+        name = lb.get("name") if isinstance(lb, dict) else lb
+        m = _SIZE_RE.match(str(name or "").strip())
+        if m and SIZE_ORDER.index(m.group(1).lower()) >= need:
+            return True
+    return False
+
+
+def design_class_reasons(gv: dict, paths: list, labels) -> list:
+    """Why a ticket is in the design-required class ([] = it is not)."""
+    why = []
+    if size_at_least(labels, gv.get("size_req") or "l"):
+        why.append(f"size tag at or above {(gv.get('size_req') or 'l').upper()}")
+    for p in paths:
+        if _matches_any(gv, p, gv.get("design_globs") or []):
+            why.append(f"{p} is a design-required path")
+        elif _matches_any(gv, p, gv.get("sec_globs") or []):
+            why.append(f"{p} crosses a declared trust boundary")
+    return why
+
+
+def design_defects(sections: dict, gv: dict) -> list:
+    """The pieces a design-required ticket is missing (each starts with what is missing)."""
+    d, out = sections["design"], []
+    if not d["present"]:
+        return ["no `## Design` section (components, reused pattern, cited rule ids)"]
+    if not d["cites"]:
+        out.append("`## Design` cites no rule id (add `- Cites: <id>[, <id>]`)")
+    elif gv.get("error"):
+        out.append(f"the rule ids cannot be checked because the governance rules are unreadable ({gv['error']})")
+    else:
+        unknown = [i for i in d["cites"] if i not in gv["rules"]]
+        if unknown:
+            out.append("`## Design` cites unknown rule id(s): " + ", ".join(unknown))
+    return out
+
+
+def checklist(sections: dict, gv: dict) -> list:
+    """Advisory lines for the sections a ticket should carry (never a refusal)."""
+    d, s, f, out = sections["design"], sections["security"], sections["surfaces"], []
+    if not d["present"]:
+        out.append("## Design missing (components, reused pattern, cited rule ids)")
+    else:
+        if not d["components"]:
+            out.append("## Design names no components")
+        if not d["cites"]:
+            out.append("## Design cites no rule id")
+        if not d["reuses"]:
+            out.append("## Design names no reused pattern")
+    if not s["present"]:
+        out.append("## Security missing (rule ids, or `none: <why>`)")
+    elif not s["ids"] and not s["none_reason"]:
+        out.append("## Security names no rule id and no `none: <why>`")
+    if not f["present"]:
+        out.append("## Surfaces missing (one line per surface, or `n/a: <why>`)")
+    elif not f["na_reason"]:
+        have = {x["surface"] for x in f["lines"]}
+        miss = [x for x in (gv.get("surfaces") or []) if x not in have]
+        if miss:
+            out.append("## Surfaces has no line for: " + ", ".join(miss))
+    return out
+
+
+def design_view(body: str, labels, gv: dict | None = None, root: Path | None = None) -> dict:
+    """The parsed sections plus what the governance says about them (used by `start` and `read-issue --json`)."""
+    root = root or project_root()
+    gv = gv or governance_context(root)
+    sec = parse_sections(body)
+    paths = _dedupe(sec["design"]["components"] + sec["scope"] + parse_body(body)[1])
+    reasons = design_class_reasons(gv, paths, labels)
+    g = gv.get("_gov")
+    app = set(i for i in sec["design"]["cites"] if i in gv["rules"])
+    if g is not None and gv["rule_list"] and sec["design"]["components"]:
+        probe = [x for c in sec["design"]["components"] for x in (c, c.rstrip("/") + "/_")]
+        app |= set(g.applicable(gv["rule_list"], probe))
+    return {"design": sec["design"], "security": sec["security"], "surfaces": sec["surfaces"], "scope": sec["scope"],
+            "design_required": bool(reasons), "design_required_reasons": reasons,
+            "design_defects": design_defects(sec, gv) if reasons else [],
+            "applicable_ids": sorted(app), "surfaces_expected": gv.get("surfaces") or [],
+            "checklist": checklist(sec, gv), "governance_error": gv.get("error")}
+
+
 def _gh_json(args: list[str]) -> dict | None:
     out = subprocess.run(["gh", *args], capture_output=True, text=True)
     if out.returncode != 0:
@@ -155,13 +446,50 @@ def repo_of_issue(issue: dict, explicit: str | None) -> str | None:
     return explicit
 
 
-def author_trusted(repo: str | None, login: str, gh_json=_gh_json) -> tuple[bool, str]:
-    """True when `login` has write/maintain/admin on `repo` (or is the authenticated user)."""
+def trusted_operator_logins(root: Path | None = None) -> set:
+    """Logins that count as TRUSTED issue authors/editors: `github_scope.operators` of the project file plus the
+    `github` handle of every entry in the operator registry (`.claude/foundry-operators.json`). Lower-cased.
+    The authenticated `gh` user is deliberately NOT here: that is the agent's own identity (gv-16)."""
+    root = root or project_root()
+    out = {str(x).lower() for x in (deck.scope_operators(str(root)) or ())}
+    try:
+        reg = json.loads((root / ".claude" / "foundry-operators.json").read_text(encoding="utf-8"))
+        for rec in ((reg.get("operators") if isinstance(reg, dict) else None) or {}).values():
+            if isinstance(rec, dict) and isinstance(rec.get("github"), str) and rec["github"].strip():
+                out.add(rec["github"].strip().lower())
+    except (OSError, ValueError, AttributeError):
+        pass
+    return out
+
+
+def author_trusted(repo: str | None, login: str, gh_json=_gh_json, operators=None, agent_login=None) -> tuple[bool, str]:
+    """True when `login` is a registered operator (`trusted_operator_logins`), or has write/maintain/admin on `repo`.
+    The authenticated gh user is never trusted for being the authenticated user (it is the agent itself, gv-16): it
+    counts only when it is ALSO a registered operator. The permission route never applies to it."""
     if not login:
         return False, "issue author unknown"
-    me = gh_json(["api", "user"]) or {}
-    if me.get("login") and me["login"] == login:
-        return True, "issue author is the authenticated user"
+    ops = trusted_operator_logins() if operators is None else {str(x).lower() for x in operators}
+    # Who is "the agent itself"? An explicit `agent_login` (CI passes the workflow's actor: `github.token` is an App installation
+    # token, so `gh api user` answers 403 there). Under GITHUB_ACTIONS=true with no explicit login the self-identity branch is
+    # skipped. Everywhere else the authenticated gh user is the agent, and a failed lookup fails closed.
+    if agent_login:
+        me = str(agent_login)
+    elif os.environ.get("GITHUB_ACTIONS") == "true":
+        me = ""
+    else:
+        me = (gh_json(["api", "user"]) or {}).get("login")
+        if not me:
+            return False, "identity lookup failed (`gh api user` returned no login), so the issue author cannot be vetted"
+    if me and me.lower() == login.lower():
+        # Checked FIRST: the authenticated gh login is the agent's own identity. Even when it is also a registered operator
+        # its self-authored or self-edited body is not vouched for by that fact (a shared identity makes the guarantee
+        # nominal: the agent and the operator are indistinguishable to GitHub). The operator reads such a command and passes
+        # `--trust-author` themselves.
+        return False, (f"{login} is the authenticated gh user, which is the agent itself; a body it authored or edited is "
+                       "not trusted on that identity, even for a registered operator (a shared identity makes trust "
+                       "nominal). The operator reads the command and passes --trust-author")
+    if login.lower() in ops:
+        return True, f"{login} is a registered operator"
     if not repo:
         return False, "the issue's repository could not be determined"
     perm = gh_json(["api", f"repos/{repo}/collaborators/{login}/permission"]) or {}
@@ -171,14 +499,26 @@ def author_trusted(repo: str | None, login: str, gh_json=_gh_json) -> tuple[bool
     return False, f"issue author {login} has {level or 'no'} access on {repo}"
 
 
-def done_trust(repo: str | None, author: str, editor: str | None, gh_json=_gh_json) -> tuple[bool, str]:
-    """Trust for a Done-means command: the issue AUTHOR must be trusted and, when a different login last
-    edited the body, that editor too (a triage-level editor can rewrite a trusted author's command)."""
+def done_trust(repo: str | None, author: str, editor: str | None, gh_json=_gh_json, editors=None,
+               edited_at=None) -> tuple[bool, str]:
+    """Trust for a Done-means command: the issue AUTHOR and EVERY editor of the body must be trusted. `editors` is
+    the issue's edit history (GraphQL `userContentEdits`); when it is not readable (None) the check FAILS CLOSED
+    for a body edited by anyone other than the author -- the last editor alone would hide an earlier untrusted
+    edit that a trusted last editor re-saved."""
     ok, why = author_trusted(repo, author, gh_json)
-    if ok and editor and editor != author:
-        ok2, why2 = author_trusted(repo, editor, gh_json)
-        if not ok2:
-            return False, f"the issue body was last edited by {editor}: {why2}"
+    if not ok:
+        return ok, why
+    low = (author or "").lower()
+    if editors is not None:
+        others = sorted({e for e in list(editors) + ([editor] if editor else []) if e and e.lower() != low})
+        for e in others:
+            ok2, why2 = author_trusted(repo, e, gh_json)
+            if not ok2:
+                return False, f"the issue body was edited by {e}: {why2}"
+        return True, why
+    if (editor and editor.lower() != low) or (edited_at and not editor):
+        return False, (f"the issue body was edited by {editor or 'an unknown account'} and its edit history is not readable, so "
+                       "every editor cannot be vetted (fail closed)")
     return ok, why
 
 
@@ -196,28 +536,44 @@ def cmd_start(args: list[str]) -> int:
             sys.exit("foundry-ticket: --repo needs OWNER/NAME")
         repo = args[i + 1]
     trust = "--trust-author" in args
-    cmd = ["issue", "view", str(number), "--json", "number,title,body,url,author,state"]
+    cmd = ["issue", "view", str(number), "--json", "number,title,body,url,author,state,labels"]
     if repo:
         cmd += ["--repo", repo]
     issue = _gh_json(cmd)
     if issue is None:
         sys.exit("foundry-ticket: gh issue view failed (is gh authenticated, and is the issue number right?)")
     done, paper = parse_body(issue.get("body") or "")
+    # gv-16: the Design / Security / Surfaces sections. A design-required ticket without a Design that cites an
+    # existing rule id is refused BEFORE anything is recorded or fetched further.
+    view = design_view(issue.get("body") or "", issue.get("labels") or [])
+    if view["design_required"]:
+        if view["design_defects"]:
+            sys.exit("foundry-ticket: design-required: this ticket is in the design-required class ("
+                     + "; ".join(view["design_required_reasons"]) + "), and it has a defect in its Design: "
+                     + "; ".join(view["design_defects"]) + ". Add a `## Design` section citing at least one existing "
+                     "rule id (see `governance/rendered/`), then start again. Nothing was recorded.")
     login = ((issue.get("author") or {}).get("login")) or ""
     issue_repo = repo_of_issue(issue, repo)
     trusted_by = "author"
     editor = None
-    if done:
-        # the same reader the claim path uses (never a second GraphQL shape): who last edited the body
+    editors = None
+    edited_at = None
+    live = None
+    if done or paper:
+        # the same reader the claim path uses (never a second GraphQL shape): who edited the body
         try:
             live = read_issue(default_run, issue_repo or "", int(issue["number"]), trust_author=True)
         except (GhError, ValueError):
             live = None
-        if not live or live.get("done_sha256") != store.command_digest(done):
+        if done and (not live or live.get("done_sha256") != store.command_digest(done)):
             sys.exit("foundry-ticket: could not read the issue's last editor consistently (or the body changed "
                      "while reading); nothing was recorded. Retry `start`.")
-        editor = live.get("last_edited_by")
-        issue_repo = live.get("name_with_owner") or issue_repo
+        if live:
+            editor = live.get("last_edited_by")
+            editors = live.get("editors")
+            edited_at = live.get("last_edited_at")
+            issue_repo = live.get("name_with_owner") or issue_repo
+    if done:
         try:
             vetted = store.claim_done_digest(project_root(), issue_repo or "", issue["number"])
         except store.ClaimsUnreadable as e:
@@ -235,33 +591,30 @@ def cmd_start(args: list[str]) -> int:
             if me and me.lower() in {str(x).lower() for x in (live.get("assignees") or [])}:
                 print(f"foundry-ticket: warning — {issue_repo}#{issue['number']} is assigned to you but has no local claim "
                       "record; its Done-means command was not vetted at claim time.", file=sys.stderr)
+    author_ok, author_why = (False, "the issue could not be read")
+    if live is not None:
+        author_ok, author_why = done_trust(issue_repo, login, editor, editors=editors, edited_at=edited_at)
     if done and not trust:
-        ok, why = done_trust(issue_repo, login, editor)
-        if not ok:
-            sys.exit("foundry-ticket: the Done-means command in this issue was not adopted — " + why +
+        if not author_ok:
+            sys.exit("foundry-ticket: the Done-means command in this issue was not adopted — " + author_why +
                      ". The Stop hook would run it unattended, so a command from outside the repository's "
                      "write team needs the OPERATOR to read it and start the ticket themselves. Nothing was recorded.")
     elif done and trust:
         trusted_by = "flag"
     # The issue author's own `## Paper allowed` list may lift the CI-edit guard (issue_paper_allowed) ONLY when the
-    # author, and whoever last edited the body, pass the same trust check as a Done-means command. An untrusted
-    # author's list is recorded as paper_allowed (as before) but never reaches the CI guard.
+    # author AND EVERY editor of the body pass the same trust check as a Done-means command. `--trust-author` vouches
+    # for the Done-means command the operator read; it does NOT vouch for a paper list, so an untrusted author's list is
+    # recorded as paper_allowed (as before) but never reaches the CI guard -- and this output says so (gv-16).
     issue_paper = []
+    notices = []
     if paper:
-        if trust:
+        if author_ok:
             issue_paper = list(paper)
         else:
-            if not done:                      # the editor has not been read yet
-                try:
-                    live = read_issue(default_run, issue_repo or "", int(issue["number"]), trust_author=True)
-                    editor = live.get("last_edited_by")
-                    issue_repo = live.get("name_with_owner") or issue_repo
-                except (GhError, ValueError, AttributeError):
-                    live = None
-            else:
-                live = True
-            if live:
-                issue_paper = list(paper) if done_trust(issue_repo, login, editor)[0] else []
+            why = author_why if live is not None else "the issue's editors could not be read"
+            notices.append(("--trust-author does not vouch for the issue's `## Paper allowed` list: " if trust else "")
+                           + "its paths (" + ", ".join(paper) + ") were NOT copied into issue_paper_allowed, so they do "
+                           "not lift the CI-edit guard (" + why + "); use `foundry-ticket.py ci-allow <path>` for a CI path.")
     doc = {
         "issue": issue["number"],
         "url": issue.get("url", ""),
@@ -274,14 +627,31 @@ def cmd_start(args: list[str]) -> int:
         "trusted_by": trusted_by,
         "paper_allowed": paper,
         "issue_paper_allowed": issue_paper,   # origin: a TRUSTED issue author's list; the CI guard honours this, never CLI-written paper_allowed
+        "cites": view["design"]["cites"],
+        "design": {"components": view["design"]["components"], "reuses": view["design"]["reuses"],
+                   "cites": view["design"]["cites"]},
+        "security": {"ids": view["security"]["ids"], "none_reason": view["security"]["none_reason"]},
         "status": "open",
         "stop_blocks": 0,
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+    store.sign_ticket_lists(doc, create=True)   # ci_allowed / issue_paper_allowed are only honoured with a valid signature
     p = save(doc)
     print(f"ticket #{doc['issue']} active: {doc['title']}")
     print(f"  done means : {store.redact(done) or '(none declared — add a fenced block under `## Done means`)'}")
     print(f"  paper      : {', '.join(paper) if paper else '(none — paper writes are refused)'}")
+    for n in notices:
+        print(f"  notice     : {n}")
+    if view["design"]["present"]:
+        print(f"  design     : components {', '.join(view['design']['components']) or '(none)'}; cites "
+              f"{', '.join(view['design']['cites']) or '(none)'}")
+    if view["design_required"]:
+        print("  class      : design-required (" + "; ".join(view["design_required_reasons"]) + ") — the Design is admitted")
+    items = view["checklist"]
+    if items:
+        print("  checklist  : " + ("advisory below the design-required class" if not view["design_required"] else "advisory"))
+        for it in items:
+            print(f"    - {it}")
     print(f"  recorded   : {p}")
     return 0
 
@@ -312,6 +682,12 @@ def cmd_allow(args: list[str], ci: bool = False) -> int:
         sys.exit("usage: foundry-ticket.py %s <path> [<path>...]" % ("ci-allow" if ci else "allow"))
     key = "ci_allowed" if ci else "paper_allowed"
     doc.setdefault(key, [])
+    dropped = []
+    if ci and not store.verify_ticket_lists(doc, root):
+        # The signature is checked BEFORE it is renewed: an entry whose signature does not verify (a hand edit, a copied
+        # ticket, a missing key) is dropped and named, never laundered into a fresh signature.
+        dropped = [x for k in ("ci_allowed", "issue_paper_allowed") for x in (doc.get(k) or [])]
+        doc["ci_allowed"], doc["issue_paper_allowed"] = [], []
     guard = _paper_guard()
     for a in args:
         n = norm_path(a, root)
@@ -322,7 +698,16 @@ def cmd_allow(args: list[str], ci: bool = False) -> int:
                      f"lifted only by `ci-allow {n}`, which asks the operator")
         if n not in doc[key]:
             doc[key].append(n)
+    if ci:
+        # gv-16: `ci_allowed` / `issue_paper_allowed` carry an HMAC under a per-git-dir key (created by whichever of `start`
+        # or this verb runs first; `start` is allow-tier). It is a VISIBILITY control: a hand edit of the ticket file lifts
+        # nothing and shows up as a refusal that says so, but a process that can read the key can sign. The operator's
+        # decision is the `ask` on this verb, not the key.
+        store.sign_ticket_lists(doc, root, create=True)
     save(doc, root)
+    if dropped:
+        print("ci-allow: the existing ci_allowed / issue_paper_allowed lists did not verify, so these entries were "
+              "DROPPED (re-allow them if the operator wants them): " + ", ".join(dropped))
     print("%s allowed for #%s: %s" % ("ci" if ci else "paper", doc["issue"], ", ".join(doc[key])))
     return 0
 
@@ -422,7 +807,8 @@ _ITEM_RE = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\S", re.M)
 _REF_RE = re.compile(r"^(?:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#)?(\d+)$")
 
 # GraphQL fields used below that are NOT in the vendor record of the issue API (docs.github.com/en/graphql/reference/objects):
-#   Issue.closedByPullRequestsReferences, ProjectV2Item.fieldValueByName, ProjectV2SingleSelectField.options
+#   Issue.closedByPullRequestsReferences, ProjectV2Item.fieldValueByName, ProjectV2SingleSelectField.options,
+#   Issue.userContentEdits (gv-16: the body's edit history; null without push access -> editors unknown -> fail closed)
 # [U] unverified — confirm in the pilot: no offline copy of GitHub's GraphQL schema is available in this
 # environment, so these names were NOT schema-verified at implementation (2026-11-03). A wrong name fails
 # the whole query -> GhError -> QueueUnavailable (fail-closed), so a mistake here is loud, never silent.
@@ -432,6 +818,7 @@ _REF_RE = re.compile(r"^(?:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#)?(\d+)$")
 # 30 assignees / 60 labels / 50 blockers / 20 linked PRs / 20 project items is UNREADABLE (-> QueueUnavailable,
 # `unverified`), never silently truncated. closedByPullRequestsReferences is covered the same way via its totalCount.
 _ISSUE_FIELDS = """number title repository{nameWithOwner} body url state stateReason author{login} editor{login} lastEditedAt
+userContentEdits(first:50){totalCount nodes{editor{login}}}
 assignees(first:30){totalCount nodes{login}} labels(first:60){totalCount nodes{name}}
 blockedBy(first:50){totalCount nodes{number state repository{nameWithOwner}}}
 blocking(first:50){totalCount nodes{number state repository{nameWithOwner}}}
@@ -592,6 +979,24 @@ def _nodes(node: dict, key: str) -> list:
     return [x for x in items if x]
 
 
+def _editors(node: dict):
+    """Logins of every account that edited the body (GraphQL `userContentEdits`), or None when the history is not
+    readable (absent, truncated, or an edit by an account that cannot be named) -- the caller then fails closed."""
+    blk = node.get("userContentEdits")
+    if not isinstance(blk, dict) or not isinstance(blk.get("nodes"), list):
+        return None
+    total = blk.get("totalCount")
+    if isinstance(total, int) and total > len(blk["nodes"]):
+        return None
+    out = []
+    for x in blk["nodes"]:
+        login = ((x or {}).get("editor") or {}).get("login") if isinstance(x, dict) else None
+        if not login:
+            return None
+        out.append(login)
+    return out
+
+
 def normalize(node: dict, repo: str, project_number: int | None) -> dict:
     """GraphQL issue node → the owner-aware record. Every field the ticket reader returned before is kept."""
     body = node.get("body") or ""
@@ -624,7 +1029,7 @@ def normalize(node: dict, repo: str, project_number: int | None) -> dict:
         "body_sha256": store.command_digest(body), "url": node.get("url") or "",
         "author": (node.get("author") or {}).get("login") or "",
         "last_edited_by": (node.get("editor") or {}).get("login") or None,
-        "last_edited_at": node.get("lastEditedAt") or None, "state": (node.get("state") or "").upper(),
+        "last_edited_at": node.get("lastEditedAt") or None, "editors": _editors(node), "state": (node.get("state") or "").upper(),
         "state_reason": (node.get("stateReason") or "").upper() or None, "repo": repo,
         "name_with_owner": store.norm_repo(nwo) if nwo else None, "name_with_owner_raw": nwo or None,
         "assignees": [a["login"] for a in _nodes(node, "assignees") if a.get("login")],
@@ -682,7 +1087,8 @@ def read_issue(run, repo: str, number: int, project_number: int | None = None, t
             except (GhError, ValueError):
                 return None
         ok, why = (True, "operator passed --trust-author") if trust_author else done_trust(
-            repo, rec["author"], rec.get("last_edited_by"), gh_json)
+            repo, rec["author"], rec.get("last_edited_by"), gh_json, editors=rec.get("editors"),
+            edited_at=rec.get("last_edited_at"))
         rec["done_trusted"], rec["done_reason"] = ok, why
         if ok:
             rec["done"] = store.redact(done)
@@ -834,14 +1240,16 @@ def select_next(run, root: Path, now: float) -> dict:
         """True when the issue declares a Done-means command whose author/editor is not trusted (never auto-run)."""
         if not i.get("_has_done"):
             return False
-        k = (i["repo"], i["author"], i.get("last_edited_by"))
+        k = (i["repo"], i["author"], i.get("last_edited_by"), tuple(i.get("editors") or ()) if i.get("editors") is not None else None,
+             bool(i.get("last_edited_at")))
         if k not in trust_cache:
             def gh_json(a):
                 try:
                     return json.loads(run(a))
                 except (GhError, ValueError):
                     return None
-            trust_cache[k] = done_trust(i["repo"], i["author"], i.get("last_edited_by"), gh_json)[0]
+            trust_cache[k] = done_trust(i["repo"], i["author"], i.get("last_edited_by"), gh_json,
+                                        editors=i.get("editors"), edited_at=i.get("last_edited_at"))[0]
         return not trust_cache[k]
 
     def skip(i, reason):
@@ -1136,6 +1544,8 @@ def cmd_read_issue(args: list[str], run) -> int:
         print(f"read-issue: {store.redact(str(e))}", file=sys.stderr)
         return 2
     rec = {k: v for k, v in rec.items() if not k.startswith("_")}
+    labels = [{"name": x} for x in (rec.get("labels") or [])]
+    rec.update(design_view(rec.get("body") or "", labels, root=root))   # gv-16: parsed sections + applicable rule ids
     if a.json:
         print(json.dumps(rec, indent=2))
     else:
@@ -1174,10 +1584,20 @@ def cmd_reconcile(args: list[str], run, now: float) -> int:
     root = project_root()
     claims = load_claims(root)
     beat: list[str] = []
-    try:   # B5: a reconcile is a heartbeat for every claim THIS session holds (never another session's)
-        beat = store.heartbeat_claims(root, _session_id(root, a.session_id, socket.gethostname()), now)
-    except store.ClaimsUnreadable as e:
-        print(f"reconcile: claims-unreadable - not heartbeating ({store.redact(str(e))})", file=sys.stderr)
+    hb_refused = None
+    ambient = store.current_session_id(root)
+    if a.session_id and a.session_id != ambient:      # an empty ambient id refuses too: nothing vouches for the flag
+        # gv-16: a reconcile heartbeats the claims of the session that RUNS it. `--session-id <other>` names another
+        # session: refreshing its heartbeat would keep a dead session's lease live, so no heartbeat is written (the
+        # verdicts are still computed and reported)
+        hb_refused = (f"--session-id {a.session_id} is not this session ({ambient or 'no ambient session id'}): no heartbeat was written; the "
+                      "verdicts below are still reported")
+        print(f"reconcile: {hb_refused}", file=sys.stderr)
+    else:
+        try:   # B5: a reconcile is a heartbeat for every claim THIS session holds (never another session's)
+            beat = store.heartbeat_claims(root, _session_id(root, a.session_id, socket.gethostname()), now)
+        except store.ClaimsUnreadable as e:
+            print(f"reconcile: claims-unreadable - not heartbeating ({store.redact(str(e))})", file=sys.stderr)
     results, cause = [], None
     cfg = login = None
     try:
@@ -1223,6 +1643,8 @@ def cmd_reconcile(args: list[str], run, now: float) -> int:
     out = {"results": results, "complete": cause is None, "pruned_claims": sorted(pruned)}
     if beat:
         out["heartbeat"] = sorted(beat)
+    if hb_refused:
+        out["heartbeat_refused"] = hb_refused
     if cause:
         out["cause"] = store.redact(cause)
     if a.json:

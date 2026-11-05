@@ -96,6 +96,11 @@ case "${1:-}" in
         # admits.
         exit "${GH_STUB_MERGE_EXIT:-0}"
         ;;
+      comment)
+        # foundry-merge-when-green.py's delivered-by record (gv-16, G2): `gh pr comment <pr> --body <text>`. Additive:
+        # the argv is journaled above, so a test reads the comment body from $GH_STUB_LOG.
+        exit "${GH_STUB_COMMENT_EXIT:-0}"
+        ;;
       list)
         # foundry-worktree-gc.py's own `gh pr list --head <branch> --state <merged|open> --json
         # number` query (branch-and-worktree-discipline, AC-BWD-2). Additive: every pre-existing

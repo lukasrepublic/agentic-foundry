@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import calendar
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -31,8 +32,12 @@ _BEARER = re.compile(r"(?i)\b(authorization:\s*bearer)\s+\S+")
 _GH_TOKEN = re.compile(r"\b(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b")
 
 
+_URL_USERINFO = re.compile(r"(//)[^@/\s]+@")   # `https://user:<token>@host/...` (the git-discipline hook's own pattern)
+
+
 def redact(s: str) -> str:
-    s = _SECRET_ASSIGN.sub(r"\1=<redacted>", s or "")
+    s = _URL_USERINFO.sub(r"\1", s or "")
+    s = _SECRET_ASSIGN.sub(r"\1=<redacted>", s)
     s = _BEARER.sub(r"\1 <redacted>", s)
     return _GH_TOKEN.sub("<redacted>", s)
 
@@ -247,6 +252,73 @@ def command_digest(cmd: str) -> str:
     return hashlib.sha256((cmd or "").encode("utf-8")).hexdigest()
 
 
+# ---- gv-16: the signed CI-allow lists --------------------------------------------------------------------------
+# `ci_allowed` (written by the ask-gated `ci-allow` verb) and `issue_paper_allowed` (a trusted issue author's list,
+# recorded by `start`) lift the paper guard's CI class. They live in <git-dir>/foundry-ticket.json, a file an agent
+# can edit by hand, so both are covered by an HMAC-SHA256 under a per-git-dir secret (<git-dir>/foundry-ticket.key,
+# mode 0600, created by those two verbs). The guard honours the lists only when the signature verifies; a hand
+# edit leaves the CI guard in force. This raises the bar from "edit one JSON field" to "read the key and sign";
+# it is a visibility control for the operator's own test pass, not a defence against an agent that reads the key.
+KEY_BASENAME = "foundry-ticket.key"
+SIG_FIELD = "lists_sig"
+
+
+def _lists_payload(doc: dict) -> bytes:
+    def lst(k):
+        v = doc.get(k)
+        return [str(x) for x in v] if isinstance(v, list) else []
+    return json.dumps({"v": 1, "issue": doc.get("issue"), "repo": str(doc.get("repo") or ""),
+                       "ci_allowed": lst("ci_allowed"), "issue_paper_allowed": lst("issue_paper_allowed")},
+                      sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _read_key(root: Path | None = None, create: bool = False) -> bytes | None:
+    p = _git_path(KEY_BASENAME, root)
+    if p is None:
+        return None
+    try:
+        got = p.read_bytes()
+        if got.strip():
+            return got.strip()
+    except OSError:
+        pass
+    if not create:
+        return None
+    new = os.urandom(32).hex().encode("ascii")
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(new + b"\n")
+        return new
+    except FileExistsError:
+        try:
+            return p.read_bytes().strip() or None
+        except OSError:
+            return None
+    except OSError:
+        return None
+
+
+def sign_ticket_lists(doc: dict, root: Path | None = None, create: bool = False) -> bool:
+    """Set doc[lists_sig] over the two CI-lifting lists. False (and no signature) when no key is available."""
+    key = _read_key(root, create=create)
+    if key is None:
+        doc.pop(SIG_FIELD, None)
+        return False
+    doc[SIG_FIELD] = hmac.new(key, _lists_payload(doc), hashlib.sha256).hexdigest()
+    return True
+
+
+def verify_ticket_lists(doc: dict, root: Path | None = None) -> bool:
+    """True only when the stored signature matches the lists under this git dir's key. Never creates a key."""
+    sig = doc.get(SIG_FIELD) if isinstance(doc, dict) else None
+    key = _read_key(root, create=False)
+    if not isinstance(sig, str) or key is None:
+        return False
+    return hmac.compare_digest(sig, hmac.new(key, _lists_payload(doc), hashlib.sha256).hexdigest())
+
+
 # ---- gv-11: claim leases (operating-model rule B5) ---------------------------------------------------------
 # A claim record is a LEASE: `heartbeat_at` is refreshed by `lead renew` and `reconcile`; a lease with no heartbeat
 # for `expires_after` (policy `claims.expires_after`, default 2h) is EXPIRED, and ONLY an expired lease can be taken
@@ -325,18 +397,30 @@ def heartbeat_claims(root: Path | None, session_id: str, now: float) -> list[str
 
 
 def _gate_root(cwd) -> Path:
-    env = os.environ.get("CLAUDE_PROJECT_DIR")
-    if env and Path(env).is_dir():
-        return Path(env).resolve()
+    """The workspace a push is judged in. The pushing cwd's git toplevel wins over CLAUDE_PROJECT_DIR when the two differ AND
+    it carries `.claude/foundry-project.json` (a worktree or a sibling workspace checkout has its own ticket and claims). A
+    toplevel with no project file (a product clone pushed from inside the workspace) is NOT the answer: the push is still
+    gated by the workspace's ticket, so CLAUDE_PROJECT_DIR wins. The toplevel is the fallback only when there is no
+    CLAUDE_PROJECT_DIR (gv-16)."""
+    top = None
     if cwd:
         try:
-            top = subprocess.run(["git", "-C", str(cwd), "rev-parse", "--show-toplevel"], capture_output=True,
-                                 text=True, timeout=10)
-            if top.returncode == 0 and top.stdout.strip():
-                return Path(top.stdout.strip()).resolve()
+            r = subprocess.run(["git", "-C", str(cwd), "rev-parse", "--show-toplevel"], capture_output=True,
+                               text=True, timeout=10)
+            if r.returncode == 0 and r.stdout.strip():
+                top = Path(r.stdout.strip()).resolve()
         except Exception:
             pass
-    return project_root()
+    env = os.environ.get("CLAUDE_PROJECT_DIR")
+    envp = Path(env).resolve() if env and Path(env).is_dir() else None
+    if top is not None and (top / ".claude" / "foundry-project.json").is_file():
+        # a toplevel whose project file declares no github_scope must not shadow a CLAUDE_PROJECT_DIR that does:
+        # "claims are not in use" holds only when NEITHER root declares one
+        if envp is None or envp == top or _team_scope(top) is not False or _team_scope(envp) is False:
+            return top
+    if envp is not None:
+        return envp
+    return top if top is not None else project_root()
 
 
 def _team_scope(root: Path):
@@ -430,6 +514,13 @@ def claim_gate(cwd=None, now: float | None = None, explicit: bool = False,
     if me and isinstance(tof, dict) and tof.get("session_id") == me and rec.get("session_id") != me:
         return False, (f"claim-required: this session's lease on {label} was taken over by session "
                        f"{rec.get('session_id')} at {tof.get('at')}; claim it again only once that lease expires")
+    holder = rec.get("session_id") if isinstance(rec, dict) else None
+    if holder and holder != me:
+        # gv-16: the gate asks "does THIS session hold the live lease", not "does any lease exist"
+        return False, (f"claim-required: the lease on {label} is held by session {holder}, not by this session"
+                       f"{' (' + me + ')' if me else ' (this session has no id yet)'}. Another session's claim is not yours to push "
+                       f"under; claim the issue from this session (`foundry-ticket.py claim {number}"
+                       f"{' --repo ' + repo if repo else ''}`) once that lease expires")
     st = lease_state(rec, now, expires)
     if st["state"] != "live":
         return False, (f"claim-required: the lease on {label} expired (no heartbeat for "

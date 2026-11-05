@@ -73,7 +73,7 @@ UNTOUCHED_STEPS = (1, 3, 5, 6, 7, 8, 9, 11, 14)   # gv-02: new step 10 (GitHub s
 # once this atom is in the merge base, comparing against that base is comparing text to itself, so
 # the standing anchor becomes this literal. A legitimate edit to any of the nine steps MUST update
 # it in the SAME reviewed diff — the MERGE_BASE_ENTRIES_DIGEST convention, applied here.
-UNTOUCHED_STEPS_DIGEST = "1c49731c39ceb8001bd17c0ce0c01c350204a8dfdfd311d9d20988046d56612e"
+UNTOUCHED_STEPS_DIGEST = "deedfe54bb9e64272f1e0c6bdbd73e68cb12b21898dab2d3583411477afc033e"  # gv-15: step 9 gains the governance-intake block (9a)
 
 BYPASS_TOKENS = ["--yes", "--dangerously", "bypassPermissions", "acceptEdits", "auto-approve", "allow rule"]
 # v2.0.0 (the delivery rebase): the hello-loop walks a throwaway TICKET, not a spec — the four stages
