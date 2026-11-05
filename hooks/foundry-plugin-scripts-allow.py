@@ -27,7 +27,7 @@ session's normal permission mode.
 ALSO NEVER ALLOWED SILENTLY (security review of #286) — the verbs the permission floor tiers `ask` because
 they write to GitHub or redirect writes: `foundry_migrate.py cutover`, `foundry_deck_events.py emit`,
 `foundry_inbox.py check|ack|schedule|resolve`, `foundry-ticket.py claim` and `ci-allow`,
-`foundry_governance.py render|baseline`, `foundry_research_note.py` (any invocation), `foundry_deck_resources.py --reset-oom-baseline|--from-json`, `foundry-env-hygiene.py mark-worktree|reap`, `foundry-deck-heavy` (runs a command), `foundry_usage.py bind|fallback-transcripts` and `ingest|attribute` when `--dataset` is named, and any
+`foundry_governance.py render|baseline|select|declare|apply|upgrade`, `foundry_research_note.py` (any invocation), `foundry_deck_resources.py --reset-oom-baseline|--from-json`, `foundry-env-hygiene.py mark-worktree|reap`, `foundry-deck-heavy` (runs a command), `foundry_usage.py bind|fallback-transcripts` and `ingest|attribute` when `--dataset` is named, and any
 abbreviation of `--trust-author`. The hook is the only silent-allow mechanism, so without this the `ask` rows
 would never be enforced.
 
@@ -65,7 +65,10 @@ _ASK_VERBS = {
     "foundry_deck_events.py": {"emit"},
     "foundry_inbox.py": {"check", "ack", "schedule", "resolve"},
     "foundry-ticket.py": {"claim", "ci-allow"},   # `ci-allow` lifts the CI-edit guard (gv-10): the operator's call
-    "foundry_governance.py": {"render", "baseline"},  # write governance/rendered/ and governance/local/baselines/
+    # render / baseline write governance/rendered/ and governance/local/baselines/; select / declare write the intake
+    # state; apply / upgrade write the lock, the adopter layer and installed CI snippets and, under --pr, push a branch
+    # and open a pull request (gv-15). discover, check, validate, load, applicable, exceptions and leak-check are read-only.
+    "foundry_governance.py": {"render", "baseline", "select", "declare", "apply", "upgrade"},
     "foundry_usage.py": {"bind", "fallback-transcripts"},  # the floor row is ask with or without --dataset
 }
 # Scripts the floor tiers `ask` as a whole because every invocation writes (gv-14: foundry_research_note.py writes

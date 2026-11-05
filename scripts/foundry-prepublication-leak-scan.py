@@ -1267,11 +1267,42 @@ def build_arg_parser():
         help="path to the recorded-bad-SHA file (default: <root>/.foundry/leak-scan/known-bad-shas.txt)",
     )
     ap.add_argument("--denylist", default=None, help="denylist path. The default resolves OUTSIDE this tree, from $CLAUDE_PROJECT_DIR/" + DENYLIST_WORKSPACE_RELPATH + " -- the list is not shipped in this repository.")
+    ap.add_argument("--governance-submission", action="store_true",
+                    help="gv-15: instead of the four-scope scan, check the files named by --files (an upstream submission) "
+                         "against the governance leak guard: governance/local/, <ORG>- rule ids, lock-marked adopter-owned paths, product literals")
+    ap.add_argument("--files", nargs="*", default=[], help="with --governance-submission: repo-relative paths under --root")
+    ap.add_argument("--literals", default=None, help="with --governance-submission: file of product literals, one per line")
     return ap
+
+
+def governance_submission_main(args):
+    """The governance leak guard over an upstream submission (design 5.6). The matcher is foundry_governance's
+    `leak_check_files`, which reuses foundry_blueprint's HOW/WHAT deny-list; it is resolved from THIS script's own
+    location (never from --root). Every outcome prints a sentinel on stdout; a finding names a path and a kind, never
+    the matched text."""
+    sys.path.insert(0, SELF_DIR)
+    import foundry_governance as g
+    try:
+        if not args.files:
+            raise g.Refused("no-files: name the submission's files with --files")
+        found = g.leak_check_files(g.Path(os.path.abspath(args.root)), args.files, g.read_literals(args.literals))
+    except g.Refused as exc:
+        print(f"refused: {exc}")
+        print("GOVERNANCE-SUBMISSION-REFUSED")
+        return 2
+    for f in found:
+        print(f)
+    if found:
+        print("GOVERNANCE-SUBMISSION-REFUSED")
+        return 1
+    print("GOVERNANCE-SUBMISSION-CLEAN")
+    return 0
 
 
 def main(argv=None):
     args = build_arg_parser().parse_args(argv)
+    if args.governance_submission:
+        return governance_submission_main(args)
     root = os.path.abspath(args.root)
     known_bad_shas_path = args.known_bad_shas or os.path.join(root, DEFAULT_KNOWN_BAD_SHAS_RELPATH)
     denylist_path = os.path.realpath(args.denylist) if args.denylist else default_denylist_path()

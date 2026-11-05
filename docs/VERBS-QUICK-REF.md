@@ -52,6 +52,7 @@ three verbs (`init`, `dispatch`, `merge-when-green`); see the `## Start here` ta
 | `/foundry:upgrade` | After a `claude plugin update`, reports whether your adopter config has drifted from the current shape or gone malformed |
 | `/foundry:post-upgrade` | After `npx update-agentic-workspace`, reads its report and walks the judgement half of the upgrade — grants into policy, `requires_capabilities` on unfrozen contracts, a truth pass over your own prose, branch gc, one PR |
 | `/foundry:relock` | Re-locks your **already-locked** stack profiles after a trusted profile-version advance, refusing a downgrade or an incompatible profile |
+| `/foundry:upstream-submit` | Before you send a change to the public framework repository, refuses any file under `governance/local/`, any rule id that is not `FG-`, any lock-marked adopter-owned path and any product literal |
 | `/foundry:deploy-status` | Reports the live deployment status of an infra-delivered environment |
 
 ## Infra-delivery lane

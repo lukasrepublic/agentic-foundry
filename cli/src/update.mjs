@@ -46,6 +46,7 @@ import {
 } from './pluginRefresh.mjs';
 import { runCleanupPhase } from './cleanup.mjs';
 import { loadPythonRequirements, ensurePythonDeps, renderPythonDepsRow } from './pythonDeps.mjs';
+import { runGovernanceUpgrade, renderGovernanceUpgradeRow, resolveInstallPath, hasGovernanceLock } from './governanceUpgrade.mjs';
 
 export { ALLOWED_CLAUDE_SUBCOMMANDS };
 
@@ -495,6 +496,8 @@ export async function runUpdate(argv, {
     // v1.18.2: python deps — the preview only probes (nothing installed before the first write).
     const pythonRequirements = loadPythonRequirements(pkgDir);
     previewLines.push(renderPythonDepsRow(ensurePythonDeps(pythonRequirements, { env: spawnEnv, python: spawnEnv.FOUNDRY_PYTHON || 'python3', dryRun: true }), pythonRequirements));
+    // gv-15: the governance upgrade runs after the plugin refresh when the workspace has a governance lock.
+    if (hasGovernanceLock(physicalRoot)) previewLines.push(renderGovernanceUpgradeRow(runGovernanceUpgrade({ cwd: physicalRoot, dryRun: true })));
 
     // ── AC-NPX-4/-5: one `[<effect>] <class> <target>` row per planned effect ───────────────────
     const effectRows = [];
@@ -684,6 +687,23 @@ export async function runUpdate(argv, {
     print(renderPythonDepsRow(pythonDeps, pythonRequirements));
     phases.push({ name: 'python-deps', verdict: pythonDeps.verdict, ...(pythonDeps.reason ? { reason: pythonDeps.reason } : {}) });
     afterPhase('python-deps');
+
+    // ── Phase 2c (gv-15): `governance upgrade --pr` from the freshly updated plugin, when a lock exists ──
+    // Not run (and no row printed) in a workspace without `.foundry/governance.lock`. The step opens a pull
+    // request and never merges; `/foundry:post-upgrade` reviews it. FOUNDRY_GOVERNANCE_PYTHON, then
+    // FOUNDRY_PYTHON, names another interpreter.
+    if (hasGovernanceLock(physicalRoot)) {
+      st.phase = 'governance-upgrade';
+      const gov = runGovernanceUpgrade({
+        cwd: physicalRoot, pluginRoot: resolveInstallPath(registryAfter, pluginKey, cwd),
+        python: spawnEnv.FOUNDRY_GOVERNANCE_PYTHON || spawnEnv.FOUNDRY_PYTHON || 'python3', env: spawnEnv,
+      });
+      if (gov.verdict === 'changed' || gov.verdict === 'attention') st.mutated = true;
+      print(renderGovernanceUpgradeRow(gov));
+      phases.push({ name: 'governance-upgrade', verdict: gov.verdict, ...(gov.reason ? { reason: gov.reason } : {}) });
+      st.governanceUpgrade = gov;
+      afterPhase('governance-upgrade');
+    }
 
     // ── Phase 3: cleanup (sibling atom; always previewed, only acts under --cleanup) ────────────
     st.phase = 'cleanup';
@@ -898,7 +918,8 @@ export async function runUpdate(argv, {
   const stoppedEarly = Boolean(st.error) || st.stopped;
   const anyDrifted = (st.filePlan || []).some((f) => f.action === 'drifted');
   const attention = diagnoses.some((d) => effectOf(d.code) === 'continue') || anyDrifted || st.gitignoreRefused
-    || Boolean(st.pythonDeps && st.pythonDeps.verdict === 'failed');
+    || Boolean(st.pythonDeps && st.pythonDeps.verdict === 'failed')
+    || Boolean(st.governanceUpgrade && ['failed', 'attention'].includes(st.governanceUpgrade.verdict));
   let outcome = stoppedEarly ? (mutated ? 'partial' : 'refused') : (attention ? 'attention-needed' : 'complete');
   let nextAction;
   let failure = null;

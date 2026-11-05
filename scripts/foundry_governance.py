@@ -1,29 +1,42 @@
 #!/usr/bin/env python3
-"""foundry_governance.py -- the governance core: load, validate, render, applicable, check, exceptions, baseline.
+"""foundry_governance.py -- the governance core: load, validate, render, applicable, check, exceptions, baseline,
+and (gv-15) the intake / upgrade verbs: discover, select, declare, apply, upgrade, leak-check.
 
 Rules ship as kits in the plugin (`governance/kits/<category>/`). An adopter adds a layer in
-`governance/local/` (own-prefix rules, overrides, exceptions, baselines). This script is pure local
-file work: no network, no subprocess.
+`governance/local/` (own-prefix rules, overrides, exceptions, baselines). The resolver verbs are pure local
+file work. The only subprocesses are local `git` (dirty-tree check, three-way merge, branch/commit/push) and,
+under `--pr`, one `gh pr create`; nothing else touches a network.
 
   foundry_governance.py [--project-dir DIR] [--plugin-root DIR] load [--json]
   foundry_governance.py ... validate
-  foundry_governance.py ... render
-  foundry_governance.py ... applicable --paths P [P ...] [--json]
+  foundry_governance.py ... render [--level N] [--surfaces a,b] [--from-lock]
+  foundry_governance.py ... applicable --paths P [P ...] [--json] [--level N] [--surfaces a,b] [--from-lock]
+  foundry_governance.py ... discover [--out FILE] [--summary]
+  foundry_governance.py ... select [--facts FILE] [--json] [--suggest ID] [--confirm ID]
+  foundry_governance.py ... declare --asvs-level N [--data-classification C ...] [--trust-boundary G ...] [--surfaces a,b]
+  foundry_governance.py ... apply [--pr] [--base BRANCH]
+  foundry_governance.py ... upgrade [--pr] [--base BRANCH]
+  foundry_governance.py ... leak-check --files F [F ...] [--literals FILE]
   foundry_governance.py ... check [--today YYYY-MM-DD]
   foundry_governance.py ... exceptions [--today YYYY-MM-DD]
   foundry_governance.py ... baseline --check NAME --findings FILE
 
-Exit 0 ok / 1 findings / 2 refused (invalid input or an override that is not allowed).
+Exit 0 ok / 1 findings / 2 refused (invalid input or an override that is not allowed) /
+3 decision needed (`select` without `--confirm`; nothing was written).
 """
 from __future__ import annotations
 
 import argparse
 import datetime
 import hashlib
+import importlib.util
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -404,6 +417,860 @@ def exception_report(rules: list, local: dict, today: datetime.date):
     return findings, skips
 
 
+# ------------------------------------------------------------ intake (gv-15) ---
+#
+# discover -> select -> declare -> apply -> baseline is the five-step intake; `upgrade` is the same step run again
+# against a newer plugin. Facts -> kit selection has no prior art as an inference, so selection is a DECLARED
+# signature table (each blueprint's `detect` block) plus a one-word human confirmation, never a guess.
+
+EXIT_DECISION = 3
+SURFACE_TAGS = ("ui", "api", "cli", "workflows", "mcp", "goal-agents")
+LOCK_REL = ".foundry/governance.lock"
+INTAKE_REL = ".foundry/governance-intake.json"
+BASE_REL = "governance/local/.kit-base"
+SKIP_DIRS = frozenset({".git", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache",
+                       ".ruff_cache", ".tox", ".terraform", ".worktrees", ".foundry", "dist", "build", "target"})
+MAX_FILES = 100000
+MAX_LISTED = 200
+# Ordered file-signal detectors. Globs use foundry_blueprint.glob_match: no "/" -> basename at any depth.
+DETECTORS = (
+    ("manifests", ("pyproject.toml", "setup.py", "setup.cfg", "requirements*.txt", "package.json", "Cargo.toml",
+                   "go.mod", "pom.xml", "build.gradle", "Gemfile", "composer.json", "tsconfig.json",
+                   ".claude-plugin/plugin.json", "hooks/hooks.json", "Chart.yaml", "dbt_project.yml",
+                   "asyncapi.yaml", "openapi.yaml")),
+    ("lockfiles", ("uv.lock", "poetry.lock", "Pipfile.lock", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
+                   "Cargo.lock", "go.sum", "Gemfile.lock", ".terraform.lock.hcl")),
+    ("ci", (".github/workflows/*.yml", ".github/workflows/*.yaml", ".gitlab-ci.yml", "Jenkinsfile",
+            ".circleci/config.yml", "azure-pipelines.yml")),
+    ("iac", ("*.tf", "*.tfvars", "Chart.yaml", "kustomization.yaml", "cdk.json", "Pulumi.yaml")),
+    ("containers", ("Dockerfile", "Dockerfile.*", "*.dockerfile", "docker-compose.yml", "docker-compose.yaml",
+                    "compose.yaml", "compose.yml")),
+)
+# Dependency-name globs that mark an authentication surface. A HINT for `declare`, never a decision.
+AUTH_PATTERNS = ("passlib", "authlib", "pyjwt", "python-jose", "oauthlib", "bcrypt", "argon2-cffi", "django-allauth",
+                 "fastapi-users", "flask-login", "jsonwebtoken", "passport", "passport-*", "next-auth", "@auth/*",
+                 "bcryptjs", "jose", "openid-client", "oidc-client*", "@okta/*", "@auth0/*", "auth0",
+                 "amazon-cognito-identity-js", "keycloak-js", "msal", "@azure/msal-*")
+PEP508_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
+
+
+def _bp():
+    import foundry_blueprint
+    return foundry_blueprint
+
+
+def _stack_profile(root: Path):
+    spec = importlib.util.spec_from_file_location("foundry_stack_profile_gv15",
+                                                  str(Path(__file__).resolve().parent / "foundry-stack-profile.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _canon(obj) -> str:
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"))
+
+
+def facts_digest(facts: dict) -> str:
+    core = {k: facts.get(k, []) for k in ("paths", "dependencies", "auth_libraries")}
+    return hashlib.sha256(_canon(core).encode("utf-8")).hexdigest()
+
+
+def _walk_tree(proj: Path):
+    if not proj.is_dir():
+        raise Refused(f"project-dir-not-found:{proj}")
+    paths, unreadable, truncated = [], [], False
+
+    def onerr(exc):
+        try:
+            unreadable.append(Path(exc.filename).relative_to(proj).as_posix())
+        except (TypeError, ValueError):
+            unreadable.append("<unknown>")
+
+    for dirpath, dirnames, filenames in os.walk(proj, topdown=True, onerror=onerr, followlinks=False):
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+        rel_dir = Path(dirpath).relative_to(proj).as_posix()
+        for fn in sorted(filenames):
+            paths.append(fn if rel_dir == "." else f"{rel_dir}/{fn}")
+            if len(paths) >= MAX_FILES:
+                truncated = True
+                break
+        if truncated:
+            break
+    return sorted(paths), sorted(set(unreadable)), truncated
+
+
+def _read_dependencies(proj: Path, paths: list):
+    """(names, problems): dependency names from manifests anywhere in the tree; `problems` names every manifest
+    that exists but could not be parsed (a could-not-look, never a silent empty)."""
+    names, problems = set(), []
+    bp = _bp()
+    for rel in paths:
+        base = rel.rsplit("/", 1)[-1]
+        try:
+            if base == "pyproject.toml":
+                try:
+                    import tomllib
+                except ImportError:
+                    problems.append(f"{rel}: tomllib unavailable")
+                    continue
+                doc = tomllib.loads((proj / rel).read_text(encoding="utf-8"))
+                specs = list((doc.get("project") or {}).get("dependencies") or [])
+                for grp in ((doc.get("project") or {}).get("optional-dependencies") or {}).values():
+                    specs += list(grp or [])
+                for grp in (doc.get("dependency-groups") or {}).values():
+                    specs += [x for x in (grp or []) if isinstance(x, str)]
+                specs += list((((doc.get("tool") or {}).get("poetry") or {}).get("dependencies") or {}).keys())
+                for sp in specs:
+                    m = PEP508_NAME.match(str(sp))
+                    if m:
+                        names.add(m.group(1).lower())
+            elif base == "package.json":
+                doc = json.loads((proj / rel).read_text(encoding="utf-8"))
+                if not isinstance(doc, dict):
+                    raise ValueError("not an object")
+                for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+                    names.update(str(n).lower() for n in (doc.get(key) or {}))
+            elif bp.glob_match("requirements*.txt", rel):
+                for line in (proj / rel).read_text(encoding="utf-8").splitlines():
+                    line = line.split("#", 1)[0].strip()
+                    if line and not line.startswith("-"):
+                        m = PEP508_NAME.match(line)
+                        if m:
+                            names.add(m.group(1).lower())
+        except (OSError, ValueError, UnicodeDecodeError, AttributeError, TypeError) as exc:
+            problems.append(f"{rel}: {type(exc).__name__}")
+    return sorted(names), problems
+
+
+def discover(proj: Path) -> dict:
+    """Ordered file-signal detectors over the tree -> facts. No LLM, no network. Every detector reports
+    found / not-found / could-not-look."""
+    import fnmatch
+    bp = _bp()
+    paths, unreadable, truncated = _walk_tree(proj)
+    deps, dep_problems = _read_dependencies(proj, paths)
+    auth = sorted(d for d in deps if any(fnmatch.fnmatchcase(d, pat) for pat in AUTH_PATTERNS))
+    tree_note = ([f"unreadable directory: {u}" for u in unreadable]
+                 + (["tree truncated at the file cap"] if truncated else []))
+    detectors = []
+    for name, pats in DETECTORS:
+        found = sorted({p for p in paths for g in pats if bp.glob_match(g, p)})
+        status = "found" if found else ("could-not-look" if tree_note else "not-found")
+        detectors.append({"name": name, "status": status, "found": found[:MAX_LISTED], "detail": tree_note})
+    dstat = "found" if deps else ("could-not-look" if (dep_problems or tree_note) else "not-found")
+    detectors.append({"name": "dependencies", "status": dstat, "found": deps[:MAX_LISTED],
+                      "detail": dep_problems + tree_note})
+    astat = "found" if auth else ("could-not-look" if (dep_problems or tree_note) else "not-found")
+    detectors.append({"name": "auth-libraries", "status": astat, "found": auth,
+                      "detail": dep_problems + tree_note})
+    return {"schema": 1, "paths": paths, "dependencies": deps, "auth_libraries": auth, "detectors": detectors}
+
+
+def _confined_out(proj: Path, arg: str) -> str:
+    """`arg` as a project-relative path (absolute allowed only when it is inside the project)."""
+    p = Path(arg)
+    full = (p if p.is_absolute() else proj / p).resolve()
+    try:
+        return full.relative_to(proj.resolve()).as_posix()
+    except ValueError:
+        raise Refused(f"output-outside-project:{arg}")
+
+
+def cmd_discover(args):
+    proj = project_dir(args.project_dir)
+    facts = discover(proj)
+    if args.out:
+        _write_text(proj, _confined_out(proj, args.out), json.dumps(facts, indent=2, sort_keys=True) + "\n")
+    if args.summary:
+        for d in facts["detectors"]:
+            print(f"{d['name']}: {d['status']}" + (f" ({', '.join(d['found'][:5])})" if d["found"] else ""))
+        return 0
+    print(json.dumps(facts, indent=2, sort_keys=True))
+    return 0
+
+
+# ---- small safe writers ---------------------------------------------------------------------------
+
+def _write_text(proj: Path, rel: str, text: str) -> bool:
+    """Write proj/rel (refusing a symlink or a path outside the project). True iff the content changed."""
+    parent = rel.rsplit("/", 1)[0] if "/" in rel else ""
+    base = safe_outdir(proj, parent) if parent else proj
+    target = base / rel.rsplit("/", 1)[-1]
+    if target.is_symlink():
+        raise Refused(f"output-is-symlink:{rel}")
+    if target.is_file() and target.read_text(encoding="utf-8", errors="surrogateescape") == text:
+        return False
+    tmp = target.with_name(target.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, target)
+    return True
+
+
+def _read_text(proj: Path, rel: str):
+    f = proj / rel
+    if f.is_symlink() or not f.is_file():
+        return None
+    return f.read_text(encoding="utf-8", errors="surrogateescape")
+
+
+# ---- intake state (machine-owned scratch between select / declare / apply) -------------------------
+
+def _read_intake(proj: Path):
+    raw = _read_text(proj, INTAKE_REL)
+    if raw is None:
+        return None
+    try:
+        doc = json.loads(raw)
+    except ValueError:
+        raise Refused("intake-state-malformed")
+    if not isinstance(doc, dict):
+        raise Refused("intake-state-malformed")
+    return doc
+
+
+def _write_intake(proj: Path, state: dict):
+    _write_text(proj, INTAKE_REL, json.dumps(state, indent=2, sort_keys=True) + "\n")
+
+
+# ---- select ---------------------------------------------------------------------------------------
+
+def load_blueprints(root: Path) -> list:
+    base = root / "packs" / "stack-profiles"
+    out = []
+    if base.is_dir():
+        for d in sorted(p for p in base.iterdir() if p.is_dir()):
+            f = d / "stack-profile.yaml"
+            if f.is_file():
+                doc = _load_yaml(f)
+                if isinstance(doc, dict) and doc.get("id") and isinstance(doc.get("detect"), dict):
+                    out.append(doc)
+    return out
+
+
+def _load_facts(args, proj: Path) -> dict:
+    if getattr(args, "facts", None):
+        try:
+            facts = json.loads(Path(args.facts).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raise Refused("facts-unreadable")
+        if not isinstance(facts, dict) or not isinstance(facts.get("paths", []), list) \
+                or not isinstance(facts.get("dependencies", []), list):
+            raise Refused("facts-malformed")
+        return facts
+    return discover(proj)
+
+
+def cmd_select(args):
+    root, proj = plugin_root(args.plugin_root), project_dir(args.project_dir)
+    facts = _load_facts(args, proj)
+    profiles = load_blueprints(root)
+    ids = [p["id"] for p in profiles]
+    for flag, val in (("confirm", args.confirm), ("suggest", args.suggest)):
+        if val is not None and val not in ids:
+            raise Refused(f"unknown-blueprint:{val}")
+    ranked = _bp().rank(profiles, facts)
+    above = [r for r in ranked if r["above_threshold"]]
+    if args.confirm:
+        row = next(r for r in ranked if r["id"] == args.confirm)
+        state = _read_intake(proj) or {}
+        state.update({"blueprint": args.confirm, "facts_sha256": facts_digest(facts),
+                      "selected_at": datetime.date.today().isoformat(), "source": "operator-confirmed"})
+        _write_intake(proj, state)
+        print(f"selected {args.confirm}"
+              + ("" if row["above_threshold"] else " (below its detection threshold: operator override)"))
+        return 0
+    if args.json:
+        print(json.dumps({"candidates": ranked, "above_threshold_count": len(above),
+                          "suggestion": args.suggest}, indent=2, sort_keys=True))
+        return EXIT_DECISION
+    print("blueprint candidates (ranked; declared detect signatures, not an inference):")
+    for i, r in enumerate(ranked, 1):
+        thr = "n/a" if r["threshold"] is None else f"{r['threshold']:.2f}"
+        print(f"{i}. {r['id']}  score {r['score']:.2f}  threshold {thr}  "
+              + ("ABOVE threshold" if r["above_threshold"] else "below threshold"))
+        for ev in r["evidence"]:
+            print(f"     + {ev['kind']} {ev['pattern']} (weight {ev['weight']}) matched {ev['matched_by']}")
+    if not above:
+        print("no candidate above threshold: nothing in this tree matches a shipped blueprint's signatures.")
+    if args.suggest:
+        print(f"SUGGESTION (labelled, unverified, not a selection): {args.suggest}")
+    print("decision needed: re-run with --confirm <blueprint-id> to select one. Nothing was written.")
+    return EXIT_DECISION
+
+
+# ---- declare --------------------------------------------------------------------------------------
+
+def parse_surfaces(text: str) -> list:
+    items = [x.strip() for x in str(text).split(",") if x.strip()]
+    bad = [x for x in items if x not in SURFACE_TAGS]
+    if bad:
+        raise Refused(f"unknown-surface:{bad[0]} (allowed: {', '.join(SURFACE_TAGS)})")
+    return sorted(set(items))
+
+
+def _blueprint_doc(root: Path, bp_id: str):
+    return next((p for p in load_blueprints(root) if p["id"] == bp_id), None)
+
+
+def cmd_declare(args):
+    root, proj = plugin_root(args.plugin_root), project_dir(args.project_dir)
+    if not 1 <= args.asvs_level <= 3:
+        raise Refused("asvs-level-out-of-range: 1-3")
+    state = _read_intake(proj) or {}
+    lock = _lenient_lock(proj)
+    prior = dict(state.get("declarations") or (lock or {}).get("declarations") or {})
+    classes = args.data_classification if args.data_classification is not None else prior.get("data_classification", [])
+    for c in classes:
+        if not CAT_RE.fullmatch(c):
+            raise Refused(f"bad-data-classification:{c}")
+    bounds = args.trust_boundary if args.trust_boundary is not None else prior.get("trust_boundaries", [])
+    for g in bounds:
+        if not PATH_RE.fullmatch(g):
+            raise Refused("bad-trust-boundary: characters outside the allowed glob set")
+    if args.surfaces is not None:
+        surfaces = parse_surfaces(args.surfaces)
+    elif "surfaces" in prior:
+        surfaces = prior["surfaces"]
+    else:
+        bp_id = state.get("blueprint") or ((lock or {}).get("blueprint") or {}).get("id")
+        doc = _blueprint_doc(root, bp_id) if bp_id else None
+        surfaces = sorted(doc.get("surfaces") or []) if doc else []
+    decl = {"asvs_level": args.asvs_level, "data_classification": sorted(set(classes)),
+            "trust_boundaries": list(bounds), "surfaces": surfaces}
+    state["declarations"] = decl
+    _write_intake(proj, state)
+    if lock is not None:
+        new = dict(lock)
+        new["declarations"] = decl
+        _check_lock(new)
+        _write_text(proj, LOCK_REL, _lock_text(new))
+        print("declarations written to the intake state and the lock")
+    else:
+        print("declarations written to the intake state")
+    try:
+        auth = discover(proj)["auth_libraries"]
+    except Refused:
+        auth = []
+    if auth:
+        print(f"hint: authentication libraries detected ({', '.join(auth[:5])}); consider asvs level 2 or 3 "
+              "and a --trust-boundary for the code that calls them (a heuristic, not a decision).")
+    return 0
+
+
+# ---- lock -----------------------------------------------------------------------------------------
+
+def _lenient_lock(proj: Path):
+    """The lock as a mapping, or None when absent. A malformed lock raises (callers that must not fail use
+    _try_lock)."""
+    lock = _read_lock(proj)
+    if lock is None:
+        return None
+    if not isinstance(lock, dict) or schema_errors(lock, "lock"):
+        raise Refused("lock-malformed")
+    return lock
+
+
+def _try_lock(proj: Path):
+    try:
+        return _lenient_lock(proj)
+    except Refused:
+        return None
+
+
+def _check_lock(lock: dict):
+    errs = schema_errors(lock, "lock")
+    if errs:
+        raise Refused("lock-invalid: " + "; ".join(errs))
+
+
+def _lock_text(lock: dict) -> str:
+    import yaml
+    return ("# Machine-owned by `foundry_governance.py apply|upgrade`. Do not edit; "
+            "adopter rules live in governance/local/.\n" + yaml.safe_dump(lock, sort_keys=False))
+
+
+def _plugin_version(root: Path):
+    f = root / ".claude-plugin" / "plugin.json"
+    try:
+        v = json.loads(f.read_text(encoding="utf-8")).get("version")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return v if isinstance(v, str) and v else None
+
+
+def _vt(version: str) -> tuple:
+    return tuple(int(x) for x in re.findall(r"\d+", str(version))[:3]) + (0,) * (3 - len(re.findall(r"\d+", str(version))[:3]))
+
+
+def build_lock(root: Path, kits: list, prior, bp_id: str, declarations: dict, facts_sha: str, today: str) -> dict:
+    doc = _blueprint_doc(root, bp_id)
+    if doc is None:
+        raise Refused(f"unknown-blueprint:{bp_id}")
+    try:
+        bid, bver, bsha = _stack_profile(root).blueprint_digest(bp_id, root=str(root), plugin_root=str(root))
+    except Exception as exc:  # noqa: BLE001 - any profile-resolution failure is a refusal naming the class
+        raise Refused(f"blueprint-unresolvable:{bp_id}:{type(exc).__name__}")
+    installed = {k["kit"]["kit"]: k for k in kits}
+    prior_levels = {k["id"]: k["level"] for k in (prior or {}).get("kits", [])}
+    entries = []
+    for kid, spec in sorted(((doc.get("governance") or {}).get("kits") or {}).items()):
+        if kid not in installed:
+            raise Refused(f"blueprint-kit-missing:{kid}")
+        entries.append({"id": kid, "version": installed[kid]["kit"]["version"], "sha256": installed[kid]["sha256"],
+                        "level": prior_levels.get(kid, int((spec or {}).get("level", 1)))})
+    lock = {"blueprint": {"id": bid, "version": str(bver), "sha256": bsha}, "kits": entries,
+            "declarations": declarations, "facts_sha256": facts_sha, "intake_at": today,
+            "plugin_version": _plugin_version(root) or "unknown"}
+    if prior and prior.get("intake_at"):
+        lock["intake_at"] = prior["intake_at"]          # intake happened once; upgrades do not re-date it
+    _check_lock(lock)
+    return lock
+
+
+# ---- level / surface filters ----------------------------------------------------------------------
+
+def filter_rules(rules: list, kits: list, *, level=None, surfaces=None, lock=None) -> list:
+    """Floor rules are never filtered out. A rule whose `applies_to.blueprints` names only surface tags is kept
+    only when one of those surfaces is declared; a blueprint id or `*` alongside keeps it."""
+    kit_of = {r["id"]: k["kit"]["kit"] for k in kits for r in k["rules"]}
+    locked = {k["id"]: k["level"] for k in (lock or {}).get("kits", [])} if lock else None
+    out = []
+    for r in rules:
+        if r.get("floor") is True:
+            out.append(r)
+            continue
+        if level is not None and r["level"] > level:
+            continue
+        if locked is not None and r["id"] in kit_of:
+            lv = locked.get(kit_of[r["id"]])
+            if lv is None or r["level"] > lv:
+                continue
+        if surfaces is not None:
+            bps = r["applies_to"]["blueprints"]
+            tags = [b for b in bps if b in SURFACE_TAGS]
+            if tags and len(tags) == len(bps) and not set(tags) & set(surfaces):
+                continue
+        out.append(r)
+    return out
+
+
+def _filter_args(args, proj: Path):
+    """(level, surfaces, lock) from --level / --surfaces / --from-lock."""
+    level = getattr(args, "level", None)
+    if level is not None and not 1 <= level <= 3:
+        raise Refused("level-out-of-range: 1-3")
+    surfaces = parse_surfaces(args.surfaces) if getattr(args, "surfaces", None) is not None else None
+    lock = None
+    if getattr(args, "from_lock", False):
+        lock = _lenient_lock(proj)
+        if lock is None:
+            raise Refused("no-governance-lock")
+        if surfaces is None:
+            surfaces = list(lock["declarations"]["surfaces"])
+    return level, surfaces, lock
+
+
+def _lock_rules(rules, kits, lock):
+    return filter_rules(rules, kits, surfaces=list(lock["declarations"]["surfaces"]), lock=lock)
+
+
+# ---- install / three-way --------------------------------------------------------------------------
+
+def snippet_plan(root: Path, kits: list, kit_ids) -> list:
+    """The kit CI / hook snippets to install: kit.yaml `checks` entries ending `.tmpl`.
+    X.yml.tmpl -> .github/workflows/X.yml ; X.sh.tmpl / X.py.tmpl -> .claude/hooks/X. Verbatim, no substitution."""
+    by = {k["kit"]["kit"]: k for k in kits}
+    plan, seen = [], {}
+    for kid in sorted(kit_ids):
+        k = by[kid]
+        kdir = (root / "governance" / "kits" / k["dir"]).resolve()
+        for rel in k["kit"].get("checks") or []:
+            if not isinstance(rel, str) or not rel.endswith(".tmpl"):
+                continue
+            src = (kdir / rel).resolve()
+            try:
+                src.relative_to(kdir)
+            except ValueError:
+                raise Refused(f"kit-path-escapes:{kid}:{rel}")
+            name = src.name[:-len(".tmpl")]
+            if name.endswith((".yml", ".yaml")):
+                dest = f".github/workflows/{name}"
+            elif name.endswith((".sh", ".py")):
+                dest = f".claude/hooks/{name}"
+            else:
+                continue
+            if dest in seen:
+                raise Refused(f"duplicate-snippet-destination:{dest}")
+            seen[dest] = kid
+            if not src.is_file():
+                raise Refused(f"kit-snippet-missing:{kid}:{rel}")
+            plan.append({"dest": dest, "kit": kid, "text": src.read_text(encoding="utf-8")})
+    return plan
+
+
+def _git(proj: Path, *argv):
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    try:
+        return subprocess.run(["git", "-C", str(proj), *argv], capture_output=True, text=True, env=env)
+    except FileNotFoundError:
+        raise Refused("git-not-found")
+
+
+def require_clean_tree(proj: Path):
+    r = _git(proj, "status", "--porcelain", "--untracked-files=no")
+    if r.returncode != 0:
+        raise Refused("not-a-git-repo: governance upgrade needs a git work tree")
+    if r.stdout.strip():
+        raise Refused("dirty-tree: commit or stash tracked changes first (nothing was changed)")
+
+
+def merge3(ours: str, base: str, theirs: str, theirs_label: str):
+    """(merged_text, conflicts) via `git merge-file` (local); inline conflict markers, never a clobber."""
+    with tempfile.TemporaryDirectory() as td:
+        paths = []
+        for name, text in (("ours", ours), ("base", base), ("theirs", theirs)):
+            p = Path(td) / name
+            p.write_bytes(text.encode("utf-8", "surrogateescape"))
+            paths.append(str(p))
+        try:
+            r = subprocess.run(["git", "merge-file", "-p", "-L", "adopter", "-L", "kit-base", "-L", theirs_label,
+                                *paths], capture_output=True)
+        except FileNotFoundError:
+            r = None
+    if r is not None and 0 <= r.returncode <= 127:
+        return r.stdout.decode("utf-8", "surrogateescape"), r.returncode
+    marked = f"<<<<<<< adopter\n{ours}=======\n{theirs}>>>>>>> {theirs_label}\n"
+    return marked, 1
+
+
+def install_file(proj: Path, dest: str, new: str, mode: str, label: str):
+    """(action, conflicts). apply never overwrites a differing file; upgrade three-way merges against the
+    snapshot of what the kit last installed (the "old kit version")."""
+    ours = _read_text(proj, dest)
+    base = _read_text(proj, f"{BASE_REL}/{dest}")
+    action, conflicts = "unchanged", 0
+    if ours is None:
+        if mode == "upgrade" and base is not None:
+            action = "adopter-removed"
+        else:
+            _write_text(proj, dest, new)
+            action = "created"
+    elif ours == new:
+        action = "unchanged"
+    elif mode == "apply":
+        action = "kept"
+        return action, 0                                    # keep the adopter file; no snapshot of a file we did not write
+    elif base is not None and ours == base:
+        _write_text(proj, dest, new)
+        action = "updated"
+    elif base is not None and base == new:
+        action = "kept"
+    else:
+        merged, conflicts = merge3(ours, base or "", new, label)
+        _write_text(proj, dest, merged)
+        action = "conflict" if conflicts else "merged"
+    _write_text(proj, f"{BASE_REL}/{dest}", new)
+    return action, conflicts
+
+
+def apply_migrations(proj: Path, kits: list, prior_lock: dict) -> list:
+    """Kit `migrations` newer than the locked kit version rename ids inside governance/local/**.yaml|json."""
+    locked = {k["id"]: k["version"] for k in prior_lock.get("kits", [])}
+    renames = {}
+    for k in kits:
+        kid = k["kit"]["kit"]
+        if kid not in locked:
+            continue
+        for m in k["kit"].get("migrations") or []:
+            if _vt(m["since"]) > _vt(locked[kid]) and _vt(m["since"]) <= _vt(k["kit"]["version"]):
+                renames[m["from_id"]] = m["to_id"]
+    touched = []
+    local = proj / "governance" / "local"
+    if renames and local.is_dir():
+        for f in sorted(local.rglob("*")):
+            if not f.is_file() or f.is_symlink() or f.suffix not in (".yaml", ".yml", ".json"):
+                continue
+            if BASE_REL.split("/", 2)[2] in f.relative_to(local).parts:
+                continue
+            text = f.read_text(encoding="utf-8")
+            new = text
+            for old, to in renames.items():
+                new = re.sub(r"(?<![A-Za-z0-9-])" + re.escape(old) + r"(?![A-Za-z0-9-])", to, new)
+            if new != text:
+                f.write_text(new, encoding="utf-8")
+                touched.append(f.relative_to(proj).as_posix())
+    return touched
+
+
+LOCAL_README = """# governance/local
+
+The adopter layer. The plugin never overwrites anything in this directory.
+
+- `rules.yaml` - your own rules (ids use your own prefix, never `FG-`) and `overrides:` of non-floor kit rules.
+- `exceptions.yaml` - time-boxed exceptions: `rule`, `scope`, `reason`, `owner`, `expires` (YYYY-MM-DD).
+- `baselines/` - existing violations frozen per check (`foundry_governance.py baseline`).
+- `adr/` - architecture decision records.
+- `.kit-base/` - machine-owned snapshots of the kit files last installed; the base of the three-way merge on upgrade.
+
+This directory is private to your workspace and is refused by the upstream leak guard.
+"""
+
+
+def scaffold_local(proj: Path) -> list:
+    made = []
+    for rel, text in (("governance/local/README.md", LOCAL_README),
+                      ("governance/local/exceptions.yaml", "exceptions: []\n"),
+                      ("governance/local/baselines/.gitkeep", ""),
+                      ("governance/local/adr/.gitkeep", "")):
+        if _read_text(proj, rel) is None:
+            _write_text(proj, rel, text)
+            made.append(rel)
+    return made
+
+
+def write_rendered(proj: Path, docs: dict) -> list:
+    out = safe_outdir(proj, "governance/rendered")
+    touched = []
+    for cat, text in docs.items():
+        target = out / f"{cat}.md"
+        if target.is_symlink():
+            raise Refused(f"output-is-symlink:governance/rendered/{cat}.md")
+        if not target.is_file() or target.read_text(encoding="utf-8") != text:
+            target.write_text(text, encoding="utf-8")
+            touched.append(f"governance/rendered/{cat}.md")
+    for stale in out.glob("*.md"):
+        if stale.stem not in docs and not stale.is_symlink() and \
+                is_generated(stale.read_text(encoding="utf-8", errors="replace")):
+            stale.unlink()
+            touched.append(f"governance/rendered/{stale.name}")
+    return touched
+
+
+# ---- stack-profile.lock absorbed (one-time migration) ---------------------------------------------
+
+def stack_lock_blueprint(root: Path, proj: Path):
+    """The shipped blueprint id the legacy .foundry/stack-profile.lock names, or None."""
+    raw = _read_text(proj, ".foundry/stack-profile.lock")
+    if raw is None:
+        return None
+    try:
+        doc = json.loads(raw)
+        ids = [p.get("id") for p in (doc.get("profiles") or []) if isinstance(p, dict)]
+    except (ValueError, AttributeError):
+        return None
+    shipped = {p["id"] for p in load_blueprints(root)}
+    return next((i for i in ids if i in shipped), None)
+
+
+# ---- pull request ---------------------------------------------------------------------------------
+
+def open_pr(proj: Path, branch: str, title: str, body: str, rels: list, base):
+    gh = shutil.which("gh")
+    if gh is None:
+        raise Refused("gh-not-found: install the GitHub CLI or run without --pr")
+    cur = _git(proj, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    if _git(proj, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}").returncode == 0:
+        raise Refused(f"branch-exists:{branch}: merge or delete it first")
+    steps = (("checkout", "-b", branch), ("add", "-f", "--", *rels), ("commit", "-q", "-m", title),
+             ("push", "-q", "-u", "origin", branch))
+    for st in steps:
+        r = _git(proj, *st)
+        if r.returncode != 0:
+            raise Refused(f"git-{st[0]}-failed: {(r.stderr or r.stdout).strip().splitlines()[-1:] or ['?']}")
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    r = subprocess.run([gh, "pr", "create", "--base", base or cur, "--head", branch, "--title", title, "--body", body],
+                       cwd=str(proj), capture_output=True, text=True, env=env)
+    _git(proj, "checkout", "-q", cur)
+    if r.returncode != 0:
+        raise Refused(f"gh-pr-create-failed: {(r.stderr or r.stdout).strip()[-200:]}")
+    print((r.stdout.strip().splitlines() or ["pull request opened"])[-1])
+
+
+def _pr_body(kind: str, lines: list, notes: list) -> str:
+    return "\n".join([f"Governance {kind} (generated by `foundry_governance.py {kind}`).", "", "Changes:"]
+                     + [f"- {x}" for x in lines] + ([""] + notes if notes else [])
+                     + ["", "Review with `/foundry:post-upgrade`. Conflict markers, if any, are inline in the files above."])
+
+
+# ---- apply / upgrade ------------------------------------------------------------------------------
+
+def _plan_and_write(args, mode: str):
+    root, proj, kits, local = _prepare(args)
+    today = datetime.date.today().isoformat()
+    prior = _lenient_lock(proj)
+    notes, changes, touched, conflicts = [], [], [], 0
+    state = _read_intake(proj) or {}
+    if mode == "upgrade":
+        if prior is None:
+            seeded = stack_lock_blueprint(root, proj)
+            if seeded is None:
+                raise Refused("no-governance-lock: run the intake first (select, declare, apply)")
+            notes.append(f"stack-profile.lock: absorbed (blueprint {seeded} carried into the governance lock)")
+        require_clean_tree(proj)
+    elif getattr(args, "pr", False):
+        require_clean_tree(proj)
+
+    bp_id = state.get("blueprint") or ((prior or {}).get("blueprint") or {}).get("id")
+    decl = state.get("declarations") or (prior or {}).get("declarations")
+    facts_sha = state.get("facts_sha256") or (prior or {}).get("facts_sha256")
+    if prior is None and not (state.get("blueprint")):
+        seeded = stack_lock_blueprint(root, proj)
+        if seeded is not None:
+            bp_id = seeded
+            if not any("absorbed" in n for n in notes):
+                notes.append(f"stack-profile.lock: absorbed (blueprint {seeded} carried into the governance lock; "
+                             "one-time migration)")
+            if decl is None:
+                doc = _blueprint_doc(root, seeded)
+                decl = {"asvs_level": 1, "data_classification": ["internal"], "trust_boundaries": [],
+                        "surfaces": sorted(doc.get("surfaces") or [])}
+                notes.append("declarations defaulted (asvs level 1, internal, no trust boundaries); "
+                             "run `declare` to set them")
+    if not bp_id:
+        raise Refused("intake-incomplete: run `select --confirm <blueprint-id>` first")
+    if decl is None:
+        raise Refused("declarations-missing: run `declare --asvs-level N` first")
+    if not facts_sha:
+        facts_sha = facts_digest(discover(proj))
+
+    if mode == "upgrade" and prior is not None:
+        migrated = apply_migrations(proj, kits, prior)
+        touched += migrated
+        changes += [f"{m}: migrated renamed rule ids" for m in migrated]
+        if migrated:                       # the adopter layer changed on disk: reload before validating
+            local = load_local(proj)
+
+    lock = build_lock(root, kits, prior, bp_id, decl, facts_sha, today)
+    plan = snippet_plan(root, kits, [k["id"] for k in lock["kits"]])
+    for item in plan:
+        action, c = install_file(proj, item["dest"], item["text"], mode, f"kit-{lock['plugin_version']}")
+        conflicts += 1 if c else 0
+        if action != "unchanged":
+            changes.append(f"{item['dest']}: {action}" + (f" ({c} conflict(s) - markers inline)" if c else ""))
+        if action in ("created", "updated", "merged", "conflict"):
+            touched.append(item["dest"])
+        touched.append(f"{BASE_REL}/{item['dest']}")
+    for rel in scaffold_local(proj):
+        changes.append(f"{rel}: created")
+        touched.append(rel)
+    if prior != lock:
+        _write_text(proj, LOCK_REL, _lock_text(lock))
+        changes.append(f"{LOCK_REL}: {'written' if prior is None else 'bumped'}")
+    touched.append(LOCK_REL)
+    rules = checked_effective(kits, local)
+    for rel in write_rendered(proj, render_docs(_lock_rules(rules, kits, lock))):
+        changes.append(f"{rel}: rendered")
+        touched.append(rel)
+    return proj, changes, touched, conflicts, notes
+
+
+def _finish(args, kind: str, proj, changes, touched, conflicts, notes, base_branch_suffix=""):
+    for n in notes:
+        print(n)
+    if not changes:
+        print(f"governance-{kind}: already current")
+        return 0
+    for c in changes:
+        print(f"  {c}")
+    print(f"governance-{kind}: {len(changes)} change(s)" + (f", {conflicts} file(s) with conflict markers" if conflicts else ""))
+    if getattr(args, "pr", False):
+        uniq = sorted({t for t in touched if (proj / t).exists()})
+        branch = "governance/intake" if kind == "apply" else f"governance/upgrade{base_branch_suffix}"
+        title = "Governance intake" if kind == "apply" else "Governance upgrade"
+        open_pr(proj, branch, title, _pr_body(kind, changes, notes), uniq, getattr(args, "base", None))
+    return 1 if conflicts else 0
+
+
+def cmd_apply(args):
+    proj, changes, touched, conflicts, notes = _plan_and_write(args, "apply")
+    return _finish(args, "apply", proj, changes, touched, conflicts, notes)
+
+
+def cmd_upgrade(args):
+    proj, changes, touched, conflicts, notes = _plan_and_write(args, "upgrade")
+    root = plugin_root(args.plugin_root)
+    return _finish(args, "upgrade", proj, changes, touched, conflicts, notes,
+                   base_branch_suffix="-" + (_plugin_version(root) or "next"))
+
+
+# ---- upstream leak guard (design 5.6) -------------------------------------------------------------
+
+ORG_ID_RE = re.compile(r"(?<![A-Za-z0-9-])([A-Z][A-Z0-9]{1,15})-[A-Z]{2,5}-[0-9]{3}(?![A-Za-z0-9])")
+ADOPTER_OWNED = ("governance/rendered/**", ".foundry/governance.lock", ".foundry/governance-intake.json")
+
+
+def leak_findings(files: dict, lock=None, literals=()) -> list:
+    """Findings (strings; the matched text is NEVER echoed) for a set of files bound for an upstream
+    submission. `files` maps a repo-relative path to its text, or None when it could not be read (a finding,
+    never a pass). Refuses: any governance/local/ path, any path the lock marks adopter-owned, any non-FG rule
+    id, and any product literal (foundry_blueprint's HOW/WHAT deny-list, generalised)."""
+    bp = _bp()
+    owned = list(ADOPTER_OWNED) + [g for g in (((lock or {}).get("declarations") or {}).get("trust_boundaries") or [])
+                                   if isinstance(g, str) and g]
+    extras = [r"(?<!\w)" + re.escape(x) + r"(?!\w)" for x in literals if isinstance(x, str) and x.strip()]
+    out = []
+    for path in sorted(files):
+        p = norm_path(path)
+        text = files[path]
+        if p == "governance/local" or p.startswith("governance/local/"):
+            out.append(f"governance-local-path:{p}")
+            continue
+        if any(glob_re(g).fullmatch(p) for g in owned):
+            out.append(f"adopter-owned-path:{p}")
+            continue
+        if text is None:
+            out.append(f"unreadable:{p}")
+            continue
+        for n, line in enumerate(text.splitlines(), 1):
+            for m in ORG_ID_RE.finditer(line):
+                if m.group(1) != "FG":
+                    out.append(f"private-rule-id:{p}:{n}")
+        base_hits = bp.guard_blueprint(text, {}, [])
+        if base_hits:
+            out.append(f"product-id-pattern:{p}")
+        if extras and len(bp.guard_blueprint(text, {}, [], deny_extra=extras)) > len(base_hits):
+            out.append(f"product-literal:{p}")
+    return out
+
+
+def leak_check_files(proj: Path, rels: list, literals=()) -> list:
+    files = {}
+    base = proj.resolve()
+    for rel in rels:
+        full = (proj / rel).resolve()
+        try:
+            full.relative_to(base)
+        except ValueError:
+            raise Refused(f"path-outside-project:{rel}")
+        key = full.relative_to(base).as_posix()
+        try:
+            files[key] = full.read_text(encoding="utf-8", errors="replace") if full.is_file() else None
+        except OSError:
+            files[key] = None
+    return leak_findings(files, lock=_try_lock(proj), literals=literals)
+
+
+def read_literals(path) -> list:
+    if not path:
+        return []
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        raise Refused("literals-unreadable")
+    return [x.strip() for x in lines if x.strip() and not x.lstrip().startswith("#")]
+
+
+def cmd_leak_check(args):
+    proj = project_dir(args.project_dir)
+    found = leak_check_files(proj, args.files, read_literals(args.literals))
+    for f in found:
+        print(f)
+    if not found:
+        print("leak-check-clean")
+    return 1 if found else 0
+
+
 # ----------------------------------------------------------------- verbs ---
 
 def cmd_load(args):
@@ -443,24 +1310,25 @@ def cmd_validate(args):
 
 def cmd_render(args):
     _, proj, kits, local = _prepare(args)
-    docs = render_docs(checked_effective(kits, local))
-    out = safe_outdir(proj, "governance/rendered")
-    for cat, text in docs.items():
-        target = out / f"{cat}.md"
-        if target.is_symlink():
-            raise Refused(f"output-is-symlink:governance/rendered/{cat}.md")
-        target.write_text(text, encoding="utf-8")
-    for stale in out.glob("*.md"):
-        if stale.stem not in docs and not stale.is_symlink() and \
-                is_generated(stale.read_text(encoding="utf-8", errors="replace")):
-            stale.unlink()
+    level, surfaces, lock = _filter_args(args, proj)
+    rules = filter_rules(checked_effective(kits, local), kits, level=level, surfaces=surfaces, lock=lock)
+    docs = render_docs(rules)
+    write_rendered(proj, docs)
     print(f"rendered {len(docs)} categories to governance/rendered/")
     return 0
 
 
 def cmd_applicable(args):
-    _, _, kits, local = _prepare(args)
-    ids = applicable(checked_effective(kits, local), args.paths)
+    _, proj, kits, local = _prepare(args)
+    level, surfaces, lock = _filter_args(args, proj)
+    rules = filter_rules(checked_effective(kits, local), kits, level=level, surfaces=surfaces, lock=lock)
+    held = _try_lock(proj)
+    extra = [g for g in (((held or {}).get("declarations") or {}).get("trust_boundaries") or [])
+             if isinstance(g, str) and PATH_RE.fullmatch(g)]
+    if extra:   # FG-SEC-032's security-review globs grow with the boundaries the adopter declared
+        rules = [dict(r, applies_to=dict(r["applies_to"], paths=list(r["applies_to"]["paths"]) + extra))
+                 if r["id"] == "FG-SEC-032" else r for r in rules]
+    ids = applicable(rules, args.paths)
     print(json.dumps(ids) if args.json else "\n".join(ids))
     return 0
 
@@ -470,8 +1338,32 @@ def _read_lock(proj: Path):
     return _load_yaml(f) if f.is_file() else None
 
 
+def _lock_drift(root: Path, lock: dict) -> list:
+    """Lock-vs-plugin drift beyond kit versions: the blueprint pack and the plugin's own version. Each check is
+    skipped when the plugin does not ship the thing it would compare (no packs/ tree, no plugin manifest)."""
+    findings = []
+    bp = lock.get("blueprint") or {}
+    if (root / "packs" / "stack-profiles").is_dir() and bp.get("id"):
+        if not (root / "packs" / "stack-profiles" / bp["id"] / "stack-profile.yaml").is_file():
+            findings.append(f"lock-blueprint-missing:{bp['id']}")
+        else:
+            try:
+                _, ver, sha = _stack_profile(root).blueprint_digest(bp["id"], root=str(root), plugin_root=str(root))
+            except Exception as exc:  # noqa: BLE001
+                findings.append(f"lock-blueprint-unresolvable:{bp['id']}:{type(exc).__name__}")
+            else:
+                if str(ver) != bp.get("version"):
+                    findings.append(f"lock-blueprint-drift:{bp['id']}: locked {bp.get('version')}, installed {ver}")
+                elif sha != bp.get("sha256"):
+                    findings.append(f"lock-blueprint-drift:{bp['id']}: content changed at version {ver}")
+    have = _plugin_version(root)
+    if have is not None and have != lock.get("plugin_version"):
+        findings.append(f"lock-plugin-version-drift: locked {lock.get('plugin_version')}, installed {have}")
+    return findings
+
+
 def cmd_check(args):
-    _, proj, kits, local = _prepare(args)
+    root, proj, kits, local = _prepare(args)
     rules = checked_effective(kits, local)
     findings, today = [], _today(args.today)
     lock = _read_lock(proj)
@@ -485,17 +1377,19 @@ def cmd_check(args):
                 findings.append(f"lock-kit-missing:{lk.get('id')}")
             elif have != lk.get("version"):
                 findings.append(f"lock-version-drift:{lk.get('id')}: locked {lk.get('version')}, installed {have}")
+        findings += _lock_drift(root, lock)
     rdir = proj / "governance" / "rendered"
     if rdir.is_dir() or lock is not None:
-        want = render_docs(rules)
         have_files = {p.stem: p for p in rdir.glob("*.md")} if rdir.is_dir() else {}
-        for cat, text in want.items():
-            p = have_files.get(cat)
-            if p is None or p.read_text(encoding="utf-8") != text:
-                findings.append(f"rendered-stale:{cat}")
-        for cat in have_files:
-            if cat not in want:
-                findings.append(f"rendered-stale:{cat}")
+        wants = [render_docs(rules)]
+        if lock is not None:     # `apply` / `render --from-lock` render at the locked levels and surfaces
+            wants.append(render_docs(_lock_rules(rules, kits, lock)))
+
+        def stale(want):
+            bad = [c for c, t in want.items() if c not in have_files or have_files[c].read_text(encoding="utf-8") != t]
+            return bad + [c for c in have_files if c not in want]
+        for cat in min((stale(w) for w in wants), key=len):
+            findings.append(f"rendered-stale:{cat}")
     ex_find, skips = exception_report(rules, local, today)
     findings += ex_find
     for s in skips:
@@ -551,20 +1445,49 @@ def main(argv=None) -> int:
     p = sub.add_parser("load")
     p.add_argument("--json", action="store_true")
     sub.add_parser("validate")
-    sub.add_parser("render")
+
+    def filters(p):
+        p.add_argument("--level", type=int, help="keep rules at this adoption level or lower (floor rules always stay)")
+        p.add_argument("--surfaces", help="comma list of declared surfaces: " + ", ".join(SURFACE_TAGS))
+        p.add_argument("--from-lock", action="store_true", help="use the lock's per-kit levels and declared surfaces")
+    p = sub.add_parser("render")
+    filters(p)
     p = sub.add_parser("applicable")
     p.add_argument("--paths", nargs="+", required=True)
     p.add_argument("--json", action="store_true")
+    filters(p)
     for name in ("check", "exceptions"):
         p = sub.add_parser(name)
         p.add_argument("--today")
     p = sub.add_parser("baseline")
     p.add_argument("--check", required=True)
     p.add_argument("--findings", required=True)
+    p = sub.add_parser("discover")
+    p.add_argument("--out")
+    p.add_argument("--summary", action="store_true")
+    p = sub.add_parser("select")
+    p.add_argument("--facts")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--suggest")
+    p.add_argument("--confirm")
+    p = sub.add_parser("declare")
+    p.add_argument("--asvs-level", type=int, required=True)
+    p.add_argument("--data-classification", action="append")
+    p.add_argument("--trust-boundary", action="append")
+    p.add_argument("--surfaces")
+    for name in ("apply", "upgrade"):
+        p = sub.add_parser(name)
+        p.add_argument("--pr", action="store_true", help="branch, commit, push and open a pull request")
+        p.add_argument("--base", help="the pull request's base branch (default: the current branch)")
+    p = sub.add_parser("leak-check")
+    p.add_argument("--files", nargs="+", required=True)
+    p.add_argument("--literals")
     args = ap.parse_args(argv)
     try:
         return {"load": cmd_load, "validate": cmd_validate, "render": cmd_render, "applicable": cmd_applicable,
-                "check": cmd_check, "exceptions": cmd_exceptions, "baseline": cmd_baseline}[args.verb](args)
+                "check": cmd_check, "exceptions": cmd_exceptions, "baseline": cmd_baseline,
+                "discover": cmd_discover, "select": cmd_select, "declare": cmd_declare, "apply": cmd_apply,
+                "upgrade": cmd_upgrade, "leak-check": cmd_leak_check}[args.verb](args)
     except Refused as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 2

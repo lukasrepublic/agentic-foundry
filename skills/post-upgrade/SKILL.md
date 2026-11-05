@@ -119,6 +119,15 @@ Print both lists, then carry on — they are the inventory the truth pass works 
    the lock. Any other `stack-profile-lock` finding goes under *For the operator*. Contracts that carry
    a frozen `authorized:` block are never touched here; a contract the new release needs changed is
    listed under "needs an operator re-authorization".
+3a. **Governance upgrade PR.** If the workspace has `.foundry/governance.lock`, the updater ran
+   `foundry_governance.py upgrade --pr` after the plugin refresh and opened a pull request on a
+   `governance/upgrade-*` branch (the update output has a `[governance-upgrade]` row). Review that PR; do not
+   regenerate it. Read the diff for: kit snippet changes in `.github/workflows/` and `.claude/hooks/`, a bumped
+   lock, `governance/rendered/`, and any renamed rule ids in `governance/local/`. A file with `<<<<<<< adopter`
+   markers is a three-way conflict between the adopter's edit and the new kit version: resolve it by hand, keep
+   the adopter's intent, and never take either side blindly. Report what changed; list unresolved conflicts under
+   *For the operator*. If the row says `failed` (a dirty tree, a missing `gh`, a rejected push), the cause is
+   in the row; fix it and run `foundry_governance.py upgrade --pr` again.
 4. **Truth pass.** Prose. The worklist is `adoption.instructions_pending` — each `{path, line, term}`
    entry is one place `CLAUDE.md`, `AGENTS.md`, `WORKFLOW.md` or a `.claude/*.md` file names retired
    machinery (the term list ships with the updater, in `retired-artifacts.json`). Work those lines
