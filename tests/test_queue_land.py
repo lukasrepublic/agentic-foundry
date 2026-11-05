@@ -89,6 +89,8 @@ class Env:
 
     def run(self, *args, pr="42"):
         extra = [] if "--local-green-cmd" in args else ["--local-green-cmd", "true"]
+        if "--message-log" not in args:  # the shipped log script now exists beside queue-land: default to the PR-comment path
+            extra += ["--message-log", str(self.repo / "no-such-message-log.py")]
         a = [sys.executable, str(SCRIPT), pr, "--repo-dir", str(self.repo), "--poll-sec", "0", "--read-gap-sec", "0",
              "--checks-timeout-min", "0.01", *extra, *args]
         p = subprocess.run(a, capture_output=True, text=True, env=self.env, cwd=str(self.repo), timeout=240)
