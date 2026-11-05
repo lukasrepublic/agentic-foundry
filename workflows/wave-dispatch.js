@@ -18,6 +18,14 @@ export const meta = {
 //   job_dir          string                absolute path of the deck job dir; notes go to <job_dir>/notes/<atom>.md
 //   worktree_root    string                absolute path; worktrees go to <worktree_root>/<repo|workspace>/<batch>
 //   repos            { [key]: absolutePath }  multi-repo path: the MAIN clone of each product repo (optional)
+//                    review gate: a brief with design_required: true starts only with design_verdict: 'clear' AND
+//                    ticket_verdict: 'clear' (the recorded results of step 0 and step 0b of /foundry:dispatch, run by the
+//                    deck BEFORE this call). Otherwise the atom is skipped with reason review-required. An atom with no
+//                    brief is skipped with reason no-brief: the deck leaves a parked atom out of `briefs`.
+//                    Other brief fields: issue_url (https ticket URL), surface ('app'|'infra'|'framework', default 'app').
+//   done_atoms       [atom] (optional)     atoms already finished in an earlier run: never started again
+//   resume           { [atom]: statePath } (optional) the state note of an atom that stopped at its cap: only that path
+//                                          goes into the continuing agent's brief
 //   concurrency      integer (optional)    builder cap from the machine check; the smaller of this and plan.max_concurrent wins
 //   merged_batches   [batchId]  (optional) batches already merged (skipped)
 //   running_batches  [batchId]  (optional) batches that a build agent already runs (skipped, and they hold a slot)
@@ -47,7 +55,7 @@ function oneLine(x, limit) {
 
 // The open wave and its startable batches. The barrier: a wave after the open one never starts, and the open
 // wave itself is refused (fail closed) when a lower wave still holds a batch that is neither held nor merged.
-function selectOpenWave(plan, mergedBatches, runningBatches) {
+function selectOpenWave(plan, mergedBatches, runningBatches, briefs) {
   const out = { wave: null, batches: [], skipped: [], refused: null }
   const waves = plan && Array.isArray(plan.waves) ? plan.waves : []
   const open = plan ? plan.open_wave : null
@@ -65,6 +73,12 @@ function selectOpenWave(plan, mergedBatches, runningBatches) {
       out.refused = `barrier: wave ${w.n} still holds an unmerged batch below the open wave ${open}`
       return out
     }
+    // A held batch below the open wave blocks it too: the plan carries no edges, so a dependent or path-overlapping
+    // batch cannot be told from an independent one. Fail closed until the hold is released or the batch merges.
+    if (w.n < open && (w.batches || []).some((b) => isLive(b) && isHeld(b))) {
+      out.refused = `barrier: wave ${w.n} holds a held batch below the open wave ${open}`
+      return out
+    }
   }
   out.wave = open
   const wave = waves.find((w) => w.n === open)
@@ -79,10 +93,19 @@ function selectOpenWave(plan, mergedBatches, runningBatches) {
     if (running.has(b.id)) { out.skipped.push({ id: b.id, reason: 'running' }); continue }
     if (isHeld(b)) { out.skipped.push({ id: b.id, reason: 'held' }); continue }
     const atoms = []
+    let parked = false
     for (const a of b.atoms || []) {
       if (!isSafeId(a)) { out.skipped.push({ id: String(a), reason: 'unsafe-atom-id' }); continue }
       if (seenAtoms.has(a)) { out.skipped.push({ id: a, reason: 'duplicate-atom' }); continue }
       seenAtoms.add(a)
+      if (parked) { out.skipped.push({ id: a, reason: 'behind-parked-atom' }); continue }
+      const gate = briefs ? reviewGate(briefs[a]) : null
+      if (gate) {
+        // atoms of a batch run in order and may depend on each other: the parked atom and everything behind it wait
+        out.skipped.push({ id: a, reason: gate })
+        parked = true
+        continue
+      }
       atoms.push(a)
     }
     if (atoms.length) out.batches.push({ id: b.id, atoms, total_float: Number.isInteger(b.total_float) ? b.total_float : 0 })
@@ -90,6 +113,13 @@ function selectOpenWave(plan, mergedBatches, runningBatches) {
   // critical path first: least total float, then id (stable and deterministic)
   out.batches.sort((x, y) => (x.total_float - y.total_float) || (x.id < y.id ? -1 : x.id > y.id ? 1 : 0))
   return out
+}
+
+// The review gate (step 0 design-reviewer, step 0b ticket-reviewer of /foundry:dispatch). Returns a skip reason or null.
+function reviewGate(brief) {
+  if (!brief || typeof brief !== 'object') return 'no-brief'
+  if (brief.design_required === true && !(brief.design_verdict === 'clear' && brief.ticket_verdict === 'clear')) return 'review-required'
+  return null
 }
 
 // min(N, M): M is the plan's max_concurrent, lowered by the caller's cap; running batches hold a slot.
@@ -104,8 +134,13 @@ function repoOf(brief) {
   return brief && typeof brief.repo === 'string' && brief.repo !== '' ? brief.repo : 'workspace'
 }
 
-function worktreePath(worktreeRoot, repo, batchId) {
-  return `${worktreeRoot.replace(/\/+$/, '')}/${repo}/${batchId}`
+function worktreePath(worktreeRoot, repo, programme, batchId) {
+  return `${worktreeRoot.replace(/\/+$/, '')}/${repo}/${programme}/${batchId}`
+}
+
+function engineerType(brief) {
+  const surface = brief && brief.surface
+  return surface === 'infra' || surface === 'framework' ? `foundry:${surface}-engineer` : 'foundry:app-engineer'
 }
 
 // Every brief carries Deliverable:, Done when:, the label build:<atom>, the 150-call state-note rule and the
@@ -119,9 +154,13 @@ function renderBrief(spec) {
     `Batch: ${spec.batch}`,
     `Repository: ${spec.repo}`,
     `Work only in the worktree: ${spec.worktree}`,
+    `Ticket: ${spec.issueUrl || '(none)'}`,
     `Branch: ${spec.branch} (create the worktree and the branch from the base if absent; an earlier agent of this batch may have made them)`,
     `Start from the main clone: ${spec.cloneRoot || '(session repository)'}`,
     `Stop rule: end after ${spec.maxCalls} tool calls by writing a state note of at most ${spec.noteTokens} tokens (branch, head sha, done, next step) to ${spec.notePath}, and return status stopped_at_cap.`,
+    spec.resumeNote ? `Resume: read only this state note and continue from it: ${spec.resumeNote}` : 'Resume: none (fresh start)',
+    'Learned rule: when you close the atom, post one comment on the ticket headed ## Learned: friction met, what worked, and distill candidates, one line each, at most ten lines in all.',
+    'Claim-check rule: read the ticket and its Done means from the Ticket URL, not from this brief. Return pointers only (status, branch, head_sha, pr_url, note_path), never a file body.',
     'CI rule: never wait on CI, the merge queue, a rollout or an observation window. Record what to check and when, then end. The next tick does the check.',
     'Scope rule: you do not merge, you do not authorize, you do not push to the base branch.',
   ]
@@ -175,8 +214,10 @@ const repos = A.repos && typeof A.repos === 'object' ? A.repos : {}
 const briefs = A.briefs && typeof A.briefs === 'object' ? A.briefs : {}
 const maxCalls = Number.isInteger(A.max_agent_calls) ? A.max_agent_calls : 150
 const noteTokens = Number.isInteger(A.note_max_tokens) ? A.note_max_tokens : 2000
+const doneAtoms = new Set(Array.isArray(A.done_atoms) ? A.done_atoms : [])
+const resume = A.resume && typeof A.resume === 'object' ? A.resume : {}
 
-const sel = selectOpenWave(A.plan, A.merged_batches, A.running_batches)
+const sel = selectOpenWave(A.plan, A.merged_batches, A.running_batches, briefs)
 if (sel.refused) {
   log(`foundry-wave-dispatch: nothing started: ${sel.refused}`)
   return { programme: A.programme, open_wave: sel.wave, refused: sel.refused, batches: [], deferred: [], skipped: sel.skipped }
@@ -200,26 +241,30 @@ async function runBatch(batch) {
   }
   const results = []
   for (const [repo, atoms] of byRepo) {
-    const worktree = worktreePath(A.worktree_root, repo, batch.id)
-    const branch = `dl/${batch.id}`
+    const worktree = worktreePath(A.worktree_root, repo, A.programme, batch.id)
+    const branch = `dl/${A.programme}/${batch.id}`
     const issues = atoms.map((a) => briefs[a] && briefs[a].issue).filter((n) => Number.isInteger(n))
-    for (let i = 0; i < atoms.length; i += 1) {
-      const atom = atoms[i]
+    const pending = atoms.filter((a) => !doneAtoms.has(a))
+    for (const a of atoms) if (doneAtoms.has(a)) results.push({ atom: a, repo, status: 'done', resumed_done: true })
+    for (let i = 0; i < pending.length; i += 1) {
+      const atom = pending[i]
       if (startedAtoms.has(atom)) { results.push({ atom, repo, status: 'failed', reason: 'duplicate build agent refused' }); continue }
       startedAtoms.add(atom)
-      const openPr = i === atoms.length - 1
+      const openPr = i === pending.length - 1
       const b = briefs[atom] || {}
       const prompt = renderBrief({
         atom, batch: batch.id, repo, worktree, branch, openPr,
         cloneRoot: repo === 'workspace' ? null : repos[repo],
         doneWhen: b.done_when, maxCalls, noteTokens,
+        issueUrl: typeof b.issue_url === 'string' && /^https:\/\/[A-Za-z0-9._\/#?=&%:-]{1,300}$/.test(b.issue_url) ? b.issue_url : '',
+        resumeNote: isSafePath(resume[atom]) ? resume[atom] : '',
         notePath: `${A.job_dir.replace(/\/+$/, '')}/notes/${atom}.md`,
         closes: issues.length ? 'Closes ' + issues.map((n) => '#' + n).join(', ') : '',
         builtFrom: repo !== 'workspace' && isSafeId(A.workspace_commit || '') ? `Built-from: workspace@${A.workspace_commit}` : '',
       })
       let raw
       try {
-        raw = await agent(prompt, { label: `build:${atom}`, phase: 'Build', model: 'sonnet', schema: BUILD_SCHEMA })
+        raw = await agent(prompt, { label: `build:${atom}`, phase: 'Build', model: 'sonnet', subagent_type: engineerType(b), schema: BUILD_SCHEMA })
       } catch (err) {
         raw = { status: 'failed', reason: String((err && err.message) || err) }
       }

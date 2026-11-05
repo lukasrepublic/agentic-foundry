@@ -78,7 +78,7 @@ def starts(out):
 
 def brief_fields(prompt):
     """Parse a brief into {field: value}; the brief is one `Field: value` per line."""
-    return dict(m.groups() for line in prompt.splitlines() if (m := re.match(r"^([A-Z][A-Za-z ]+): (.*)$", line)))
+    return dict(m.groups() for line in prompt.splitlines() if (m := re.match(r"^([A-Z][A-Za-z -]+): (.*)$", line)))
 
 
 # --- AC 1: min(N, M) at once, the rest as slots free ------------------------------------------
@@ -127,8 +127,8 @@ def test_one_agent_per_atom_and_one_worktree_per_batch(tmp_path):
     atoms = [e["atom"] for e in starts(out)]
     assert sorted(atoms) == ["a0", "a1", "a2"]                  # a0 once
     fields = {e["atom"]: brief_fields(e["prompt"]) for e in starts(out)}
-    assert fields["a0"]["Work only in the worktree"] == fields["a1"]["Work only in the worktree"] == "/wt/workspace/b0"
-    assert fields["a2"]["Work only in the worktree"] == "/wt/workspace/b1"
+    assert fields["a0"]["Work only in the worktree"] == fields["a1"]["Work only in the worktree"] == "/wt/workspace/p1/b0"
+    assert fields["a2"]["Work only in the worktree"] == "/wt/workspace/p1/b1"
     skipped = out["result"]["skipped"]
     assert {"id": "a0", "reason": "duplicate-atom"} in skipped
 
@@ -265,8 +265,8 @@ def test_multi_repo_batch_gets_a_worktree_and_pr_per_repo(tmp_path):
     args["briefs"]["a1"]["repo"] = "app"
     out = run_workflow(tmp_path, args)
     fields = {e["atom"]: brief_fields(e["prompt"]) for e in starts(out)}
-    assert fields["a0"]["Work only in the worktree"] == fields["a2"]["Work only in the worktree"] == "/wt/workspace/b0"
-    assert fields["a1"]["Work only in the worktree"] == "/wt/app/b0"
+    assert fields["a0"]["Work only in the worktree"] == fields["a2"]["Work only in the worktree"] == "/wt/workspace/p1/b0"
+    assert fields["a1"]["Work only in the worktree"] == "/wt/app/p1/b0"
     assert fields["a1"]["Start from the main clone"] == "/repos/app"
     assert fields["a1"]["PR rule"].startswith("open one PR") and "Built-from: workspace@abc1234" in fields["a1"]["PR rule"]
     assert "Built-from" not in fields["a2"]["PR rule"]
@@ -321,3 +321,128 @@ def test_deck_skills_and_policy_call_the_workflow(tmp_path):
         assert "workflows/wave-dispatch.js" in text, name
     b1 = om.render_tick_section(policy, "B1")
     assert "wave-dispatch" in b1
+
+
+# --- fix round: review gate, held propagation, resume, brief contract, collision --------------------
+def _plan_with_hold():
+    import sys
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import foundry_execution_plan as ep
+    corpus = {"project_id": "x", "atoms": [
+        {"id": "A", "node_id": "A", "blocked_by": [], "paths": ["p/a"], "labels": ["hold"], "state": "open"},
+        {"id": "B", "node_id": "B", "blocked_by": ["A"], "paths": ["p/a"], "labels": [], "state": "open"},
+        {"id": "C", "node_id": "C", "blocked_by": [], "paths": ["p/c"], "labels": [], "state": "open"}]}
+    return ep.build_plan("p1", corpus)
+
+
+def _args_from_plan(plan):
+    atoms = [a for w in plan["waves"] for b in w["batches"] for a in b["atoms"]]
+    return {"programme": "p1", "plan": plan, "briefs": {a: {"done_when": "ok"} for a in atoms},
+            "job_dir": "/jobs/p1", "worktree_root": "/wt"}
+
+
+def test_design_required_atom_needs_both_clear_verdicts(tmp_path):
+    base = make_args({"b0": ["a0"], "b1": ["a1"]})
+    base["briefs"]["a0"].update(design_required=True)
+    out = run_workflow(tmp_path, base)
+    assert [e["atom"] for e in starts(out)] == ["a1"]
+    assert {"id": "a0", "reason": "review-required"} in out["result"]["skipped"]
+    base["briefs"]["a0"].update(design_verdict="clear", ticket_verdict="park")
+    assert "a0" not in [e["atom"] for e in starts(run_workflow(tmp_path, base))]
+    base["briefs"]["a0"].update(ticket_verdict="clear")
+    assert sorted(e["atom"] for e in starts(run_workflow(tmp_path, base))) == ["a0", "a1"]
+
+
+def test_parked_atom_holds_back_the_atoms_behind_it(tmp_path):
+    args = make_args({"b0": ["a0", "a1", "a2"]})
+    args["briefs"]["a1"]["design_required"] = True
+    out = run_workflow(tmp_path, args)
+    assert [e["atom"] for e in starts(out)] == ["a0"]
+    assert {"id": "a2", "reason": "behind-parked-atom"} in out["result"]["skipped"]
+
+
+def test_atom_without_a_brief_is_not_started(tmp_path):
+    args = make_args({"b0": ["a0"], "b1": ["a1"]})
+    del args["briefs"]["a0"]
+    out = run_workflow(tmp_path, args)
+    assert [e["atom"] for e in starts(out)] == ["a1"]
+    assert {"id": "a0", "reason": "no-brief"} in out["result"]["skipped"]
+
+
+def test_dependent_of_a_held_batch_does_not_start(tmp_path):
+    plan = _plan_with_hold()
+    out = run_workflow(tmp_path, _args_from_plan(plan))
+    assert [e["atom"] for e in starts(out)] == ["C"]            # B waits behind held A; A itself is held
+    # a plan whose open_wave points past the held batch (stale or cached) must start nothing
+    plan2 = json.loads(json.dumps(plan))
+    plan2["open_wave"] = 2
+    plan2["waves"][0]["batches"] = [b for b in plan2["waves"][0]["batches"] if "A" in b["atoms"]]   # only the held batch is left below
+    assert any("B" in b["atoms"] for b in plan2["waves"][1]["batches"])
+    out2 = run_workflow(tmp_path, _args_from_plan(plan2))
+    assert starts(out2) == [] and out2["result"]["refused"].startswith("barrier:")
+
+
+def test_resume_skips_done_atoms_and_passes_only_the_note(tmp_path):
+    args = make_args({"b0": ["a0", "a1", "a2"]})
+    beh = {"a1": {"result": {"status": "stopped_at_cap", "note_path": "/jobs/p1/notes/a1.md"}}}
+    first = run_workflow(tmp_path, args, beh)
+    assert [e["atom"] for e in starts(first)] == ["a0", "a1"]
+    args["done_atoms"] = ["a0"]
+    args["resume"] = {"a1": "/jobs/p1/notes/a1.md"}
+    second = run_workflow(tmp_path, args)
+    assert [e["atom"] for e in starts(second)] == ["a1", "a2"]
+    f = {e["atom"]: brief_fields(e["prompt"]) for e in starts(second)}
+    assert f["a1"]["Resume"].endswith("/jobs/p1/notes/a1.md")
+    assert f["a2"]["Resume"].startswith("none")
+    assert "/notes/a0.md" not in "".join(e["prompt"] for e in starts(second))
+    assert second["result"]["batches"][0]["status"] == "review_ready"
+
+
+def test_resume_pr_opened_by_last_pending_atom(tmp_path):
+    args = make_args({"b0": ["a0", "a1"]})
+    args["done_atoms"] = ["a1"]
+    out = run_workflow(tmp_path, args)
+    assert [e["atom"] for e in starts(out)] == ["a0"]
+    assert brief_fields(starts(out)[0]["prompt"])["PR rule"].startswith("open one PR")
+
+
+def test_brief_has_learned_rule_ticket_pointer_and_engineer_type(tmp_path):
+    args = make_args({"b0": ["a0"], "b1": ["a1"], "b2": ["a2"]})
+    args["briefs"]["a0"]["issue_url"] = "https://github.com/o/r/issues/7"
+    args["briefs"]["a1"]["surface"] = "framework"
+    args["briefs"]["a2"]["surface"] = "infra"
+    out = run_workflow(tmp_path, args)
+    by = {e["atom"]: e for e in starts(out)}
+    f = brief_fields(by["a0"]["prompt"])
+    assert f["Ticket"] == "https://github.com/o/r/issues/7"
+    assert f["Learned rule"].startswith("when you close the atom, post one comment on the ticket headed ## Learned")
+    assert f["Claim-check rule"].startswith("read the ticket")
+    assert brief_fields(by["a1"]["prompt"])["Ticket"] == "(none)"
+    assert [by[a]["opts"]["subagent_type"] for a in ("a0", "a1", "a2")] == [
+        "foundry:app-engineer", "foundry:framework-engineer", "foundry:infra-engineer"]
+
+
+def test_programme_is_in_worktree_and_branch(tmp_path):
+    a1 = make_args({"b0": ["a0"]})
+    a2 = make_args({"b0": ["a0"]}); a2["programme"] = "p2"
+    f1 = brief_fields(starts(run_workflow(tmp_path, a1))[0]["prompt"])
+    f2 = brief_fields(starts(run_workflow(tmp_path, a2))[0]["prompt"])
+    assert f1["Work only in the worktree"] == "/wt/workspace/p1/b0" and f2["Work only in the worktree"] == "/wt/workspace/p2/b0"
+    assert f1["Branch"].startswith("dl/p1/b0 ") and f2["Branch"].startswith("dl/p2/b0 ")
+    bad = make_args({"b0": ["a0"]}); bad["programme"] = "p/../x"
+    assert run_workflow(tmp_path, bad)["result"]["refused"] == "bad-args"
+
+
+def test_b1_text_says_ready_batches():
+    import sys
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import foundry_operating_model as om
+    text = om.render_tick_section(om.load(ROOT / "tests"), "B1")
+    assert re.search(r"ready batches", text) and not re.search(r"ready clusters", text)
+
+
+def test_deck_texts_state_the_review_gate():
+    for rel in ("skills/command-deck/SKILL.md", "skills/command-deck/tick-prompt.template.md"):
+        text = (ROOT / rel).read_text()
+        para = next(p for p in text.split("\n\n") if "workflows/wave-dispatch.js" in p and "design_verdict" in p)
+        assert "step 0 (design-reviewer)" in para and "step 0b (ticket-reviewer)" in para and "out of `briefs`" in para

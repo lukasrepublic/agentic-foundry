@@ -134,11 +134,11 @@ A recurring driver is the native `/loop` + `/foundry:merge-when-green`.
 A programme with an execution plan (`/foundry:execution-plan`) fans out through ONE Workflow,
 `workflows/wave-dispatch.js` (dl-05), which the command deck calls in step 6. It takes the batches of the plan's
 `open_wave` and runs the smaller of the plan's `max_concurrent` and the builder cap at once. Each batch has its own
-worktree (`<worktree_root>/<repo>/<batch>`, branch `dl/<batch>`). Each atom gets one build agent, never two: the
+worktree (`<worktree_root>/<repo>/<programme>/<batch>`, branch `dl/<programme>/<batch>`). Each atom gets one build agent, never two: the
 agents of a batch run one after the other in its worktree, and the last agent of each repository opens the one PR
 of the batch (`Closes #a, #b`, plus a `Built-from:` trailer for a product repository). A product repository comes
 from the brief's `repo` key and the `repos` map (the path of its main clone); the multi-repo hand-off below still
-applies to each worker. The Workflow starts no batch of a later wave until the open wave has merged, ends at
+applies to each worker. The Workflow starts no design-required atom without recorded `clear` results from step 0 and step 0b (it skips it with reason `review-required`). It starts no batch of a later wave until the open wave has merged, ends at
 `review_ready` and never waits on CI. Its briefs carry `Deliverable:`, `Done when:`, the label `build:<atom>` and
 the rule to stop after 150 tool calls with a state note of at most 2,000 tokens in `<deck job dir>/notes/<atom>.md`.
 
