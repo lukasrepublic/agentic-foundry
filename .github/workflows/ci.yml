@@ -42,6 +42,28 @@ jobs:
       - name: Install (PyYAML/jsonschema for the gate scripts + the pytest dev requirements)
         run: |
           pip install -r requirements-dev.txt
+      # Kit policy-tool tests (conftest / opa / kyverno) used to SKIP here because none of the three was installed.
+      # Research timestamp 2026-11-05T05:00Z, read from each vendor's GitHub releases page (latest, non-prerelease):
+      #   conftest v0.71.1 (2026-10-06), opa v1.22.0 (2026-10-29), kyverno-cli v1.19.2 (2026-10-20).
+      # Each URL is a fixed release asset (no `latest`, no redirect to a moving tag) and each download is verified
+      # against the sha256 recorded here, which was cross-checked against the vendor's published checksums file.
+      # The kit suites were run green against exactly these three binaries. Upgrade = a reviewed edit of version + hash.
+      # When CI=true a missing tool FAILS those tests (tests/conftest.py) instead of skipping them.
+      - name: Install conftest, opa and kyverno (pinned, sha256-verified)
+        run: |
+          set -euo pipefail
+          tools="$(mktemp -d)"
+          bindir="$HOME/.local/bin"
+          mkdir -p "$bindir"
+          fetch() { curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$tools/$1" "$2"; echo "$3  $tools/$1" | sha256sum -c -; }
+          fetch conftest.tgz https://github.com/open-policy-agent/conftest/releases/download/v0.71.1/conftest_0.71.1_Linux_x86_64.tar.gz c3f6b2a753bd56e377a1e51a95ae3e057f926f2e9139f7d5b5dfbbaf810f7985
+          fetch opa https://github.com/open-policy-agent/opa/releases/download/v1.22.0/opa_linux_amd64_static 791790254c598a942eb140959bcec9a47f844535a632fd01d11d870ba2a47047
+          fetch kyverno.tgz https://github.com/kyverno/kyverno/releases/download/v1.19.2/kyverno-cli_v1.19.2_linux_x86_64.tar.gz 357eaf1df8bc24ddd5a73979fadeaae6a032e8710f11af264229756e4956bf4a
+          tar -xzf "$tools/conftest.tgz" -C "$bindir" conftest
+          tar -xzf "$tools/kyverno.tgz" -C "$bindir" kyverno
+          install -m 0755 "$tools/opa" "$bindir/opa"
+          echo "$bindir" >> "$GITHUB_PATH"
+          "$bindir/conftest" --version && "$bindir/opa" version | head -1 && "$bindir/kyverno" version | head -1
       - name: pytest suite (replaces the per-script --selftest step battery)
         # The denylist reaches the suite by CONTENT so AC-DOT-1(b) — "no proprietary term survives in
         # any tracked file" — actually runs here rather than skipping in the one place that gates a
