@@ -164,6 +164,8 @@ _WRITERS = [
     ("foundry_usage.py", "--dataset /d ingest /c"), ("foundry_usage.py", "--dat=/d attribute"),
     ("foundry_execution_plan.py", "plan prog --from-json c.json"),   # dl-04: the whole script asks
     ("foundry_execution_plan.py", "publish prog --project o/1"),
+    ("foundry_learned_distill.py", "propose prog --from-json c.json"),   # dl-10: the whole script asks
+    ("foundry_learned_distill.py", "collect prog --project o/1"),
     ("foundry_research_note.py", "--in s.json --slug x"),   # gv-14: every invocation writes under .foundry/
     ("foundry_deck_report.py", "--in t.json --append-cost /l"), ("foundry_deck_report.py", "--in t.json --append-c /l"),
     ("deck-cost-census.py", "--session-dir /s --append /l"), ("deck-cost-census.py", "--session-dir /s --app /l"),
