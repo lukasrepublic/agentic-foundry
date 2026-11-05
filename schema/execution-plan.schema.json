@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://foundry.dev/schema/execution-plan.schema.json",
+  "title": "Foundry execution plan",
+  "description": "execution-plan.yaml, written by /foundry:execution-plan to the planner ref plan/<programme>. A programme is an execution plan of waves; each wave holds batches of atoms. Deterministic: no timestamps.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["programme", "generated_from", "waves", "critical_path", "max_concurrent"],
+  "properties": {
+    "programme": {"type": "string", "minLength": 1},
+    "generated_from": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_ids", "corpus_sha256"],
+      "properties": {
+        "node_ids": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "corpus_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "heads": {"type": "object", "additionalProperties": {"type": "string"}}
+      }
+    },
+    "waves": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["n", "batches"],
+        "properties": {
+          "n": {"type": "integer", "minimum": 1},
+          "batches": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "atoms", "paths", "total_float"],
+              "properties": {
+                "id": {"type": "string", "minLength": 1},
+                "atoms": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+                "paths": {"type": "array", "items": {"type": "string"}},
+                "total_float": {"type": "integer", "minimum": 0}
+              }
+            }
+          }
+        }
+      }
+    },
+    "critical_path": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "held": {"type": "array", "items": {"type": "string"}, "description": "Atoms carrying the hold label; kept in the plan, excluded from the open wave."},
+    "open_wave": {"type": ["integer", "null"], "minimum": 1},
+    "max_concurrent": {"type": "integer", "minimum": 0, "description": "Batches in the open wave that carry no held atom."}
+  }
+}
