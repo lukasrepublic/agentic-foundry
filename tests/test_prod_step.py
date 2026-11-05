@@ -262,6 +262,127 @@ def test_the_skill_and_the_floor_say_never_to_persist_an_allow_for_prod_step():
         assert len(rows) == 1 and rows[0]["tier"] == "ask" and "NEVER persist an allow" in rows[0]["rationale"]
 
 
+# ---- PR #304 round 2: process groups, no ignored signals, the BEFORE-to-run window ------------------------------
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def test_a_signal_ends_the_whole_process_group_of_the_command(tmp_path):
+    _, clone = make_clone(tmp_path)
+    ready, pidfile = tmp_path / "ready", tmp_path / "grandchild.pid"
+    grand = "import time; time.sleep(120)"
+    child = ("import subprocess, sys, time; "
+             f"g = subprocess.Popen([sys.executable, '-c', {grand!r}]); "
+             f"open({str(pidfile)!r}, 'w').write(str(g.pid)); open({str(ready)!r}, 'w').write('1'); time.sleep(120)")
+    proc = subprocess.Popen([PY, str(CLI), "--repo", str(clone), "--remote", "origin", "--from", "s", "--what", "w",
+                             "--", PY, "-c", child],
+                            env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
+    for _ in range(100):
+        if ready.exists():
+            break
+        time.sleep(0.1)
+    assert ready.exists()
+    gpid = int(pidfile.read_text())
+    assert _alive(gpid)
+    proc.send_signal(signal.SIGTERM)
+    assert proc.wait(timeout=60) == 143
+    for _ in range(50):
+        if not _alive(gpid):
+            break
+        time.sleep(0.1)
+    assert not _alive(gpid)                       # the grandchild went with its group
+    assert [r["kind"] for r in records(clone)] == ["PROD-BEFORE", "STOP"]
+
+
+def test_cleanup_children_do_not_inherit_an_ignored_signal(tmp_path):
+    _, clone = make_clone(tmp_path)
+    ready, seen = tmp_path / "ready", tmp_path / "seen.txt"
+    child = f"import time; open({str(ready)!r}, 'w').write('1'); time.sleep(60)"
+    probe = ("import signal; open(%r, 'w').write(' '.join(str(signal.getsignal(s) != signal.SIG_IGN) "
+             "for s in (signal.SIGINT, signal.SIGTERM)))" % str(seen))
+    proc = subprocess.Popen([PY, str(CLI), "--repo", str(clone), "--remote", "origin", "--from", "s", "--what", "w",
+                             "--on-failure", f"{PY} -c \"{probe}\"", "--", PY, "-c", child],
+                            env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
+    for _ in range(100):
+        if ready.exists():
+            break
+        time.sleep(0.1)
+    proc.send_signal(signal.SIGINT)
+    assert proc.wait(timeout=60) == 130
+    assert seen.read_text() == "True True"
+
+
+def test_a_second_signal_during_cleanup_does_not_stop_the_stop_line(tmp_path, monkeypatch):
+    _, clone = make_clone(tmp_path)
+    calls = []
+
+    def runner(argv):
+        calls.append(argv)
+        if len(calls) == 1:
+            raise ps._Interrupted(signal.SIGTERM)
+        return 0, "ok"
+
+    rc = ps.run_step(["prog"], clone, "origin", "s", "all", "w", cleanups=["a b"], runner=runner)
+    assert rc == 143 and [r["kind"] for r in records(clone)] == ["PROD-BEFORE", "STOP"]
+
+
+def test_an_interrupt_right_after_the_before_post_still_posts_stop(tmp_path, monkeypatch):
+    _, clone = make_clone(tmp_path)
+    real, ran = ps._post, []
+
+    def post(ad, repo, remote, sender, to, kind, body, corr, kw):
+        rec = real(ad, repo, remote, sender, to, kind, body, corr, kw)
+        if kind == "PROD-BEFORE":
+            raise ps._Interrupted(signal.SIGTERM)       # lands in the window between the post and run()
+        return rec
+
+    monkeypatch.setattr(ps, "_post", post)
+    rc = ps.run_step(["prog"], clone, "origin", "s", "all", "w", runner=lambda argv: ran.append(argv) or (0, "ok"))
+    assert rc == 143 and ran == []                                  # the command never started
+    recs = records(clone)
+    assert [r["kind"] for r in recs] == ["PROD-BEFORE", "STOP"] and "signal 15" in recs[1]["body"]
+
+
+def test_an_interrupt_during_the_before_post_exits_143_and_does_not_run_the_command(tmp_path, monkeypatch):
+    _, clone = make_clone(tmp_path)
+    real, ran = ps._post, []
+
+    def post(ad, repo, remote, sender, to, kind, body, corr, kw):
+        if kind == "PROD-BEFORE":
+            raise ps._Interrupted(signal.SIGTERM)
+        return real(ad, repo, remote, sender, to, kind, body, corr, kw)
+
+    monkeypatch.setattr(ps, "_post", post)
+    rc = ps.run_step(["prog"], clone, "origin", "s", "all", "w", runner=lambda argv: ran.append(argv) or (0, "ok"))
+    assert rc == 143 and ran == []
+    # control: an ordinary failure of the BEFORE post is exit 1 and posts nothing
+    monkeypatch.setattr(ps, "_post", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
+    assert ps.run_step(["prog"], clone, "origin", "s", "all", "w", runner=lambda argv: (0, "ok")) == 1
+
+
+def test_an_interrupt_while_the_after_line_is_posted_still_ends_with_after_and_143(tmp_path, monkeypatch):
+    _, clone = make_clone(tmp_path)
+    real, hit = ps._post, []
+
+    def post(ad, repo, remote, sender, to, kind, body, corr, kw):
+        if kind == "PROD-AFTER" and not hit:
+            hit.append(1)
+            raise ps._Interrupted(signal.SIGTERM)
+        return real(ad, repo, remote, sender, to, kind, body, corr, kw)
+
+    monkeypatch.setattr(ps, "_post", post)
+    rc = ps.run_step(["prog"], clone, "origin", "s", "all", "w", runner=lambda argv: (0, "ok"))
+    assert rc == 143 and [r["kind"] for r in records(clone)] == ["PROD-BEFORE", "PROD-AFTER"]
+
+
+def test_git_children_of_the_posts_run_in_their_own_session():
+    assert ps._Adapter.new_session is True and ml.Adapter.new_session is False
+
+
 # ---- the plugin-scripts-allow hook (gv-13): reports are silent, anything that executes or writes asks ---------
 def _hook():
     import importlib.util

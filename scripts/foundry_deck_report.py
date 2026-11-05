@@ -91,9 +91,8 @@ def clean(value, limit=120):
     word, at most `limit` characters."""
     text = "".join(" " if c in "\r\n\t  " else c for c in str(value)
                    if c in "\r\n\t  " or unicodedata.category(c) not in ("Cc", "Cf", "Cs", "Co", "Cn"))
-    text = " ".join(text.split())
-    text = _WORD_RE.sub(MASK, text)
-    return text[:limit]
+    text = " ".join(text.split())[:limit]      # cut FIRST: a cut can end in the word ("...bus" + "iness"), so mask after it
+    return _WORD_RE.sub(MASK, text)
 
 
 def _item(raw, block, index):

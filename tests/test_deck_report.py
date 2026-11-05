@@ -206,6 +206,18 @@ def test_the_state_output_is_cleaned(proj):
     assert "\x1b" not in out.getvalue() and not dr._WORD_RE.search(out.getvalue())
 
 
+def test_a_cut_cannot_rebuild_the_retired_word(proj):
+    policy(proj, timezone="UTC", max_lines=20)
+    for sender in ("a" * 36 + " business as usual", "a" * 36 + " " + BANNED + "x", "a" * 36 + " " + BANNED + "iness"):
+        data = {"audit": {"findings": [{"rule": "sender-mismatch", "corr": "c", "kind": "STOP", "from": sender,
+                                        "before_from": "ok"}]}}
+        rc, out, err = run(proj, tick(message_log=data))
+        assert rc == 0, (sender, err)
+        assert not dr._WORD_RE.search(out)
+    assert dr.clean("a" * 36 + " business", 40) == "a" * 36 + " ***"       # cut first, mask after
+    assert dr.clean("a business", 40) == "a business"                      # control: a real word is untouched
+
+
 # ---- first line, timezone, ids -------------------------------------------------------------------------
 @pytest.fixture()
 def tz(monkeypatch):
@@ -496,6 +508,9 @@ def test_the_message_log_audit_reports_a_sender_mismatch_with_both_senders():
     # controls: the same sender is clean; imported comments (many authors) are exempt
     assert ml.audit_records([rec(1, "PROD-BEFORE", "s", "c1"), rec(2, "PROD-AFTER", "s", "c1")], 120, now) == []
     assert ml.audit_records([rec(1, "PROD-BEFORE", "a", "c1"), rec(2, "PROD-AFTER", "b", "c1", "issue-import")], 120, now) == []
+    for other in ("anything", "x-issue-import", True):          # only the exact import marker is exempt
+        f = ml.audit_records([rec(1, "PROD-BEFORE", "a", "c1"), rec(2, "PROD-AFTER", "b", "c1", other)], 120, now)
+        assert [x["rule"] for x in f] == ["sender-mismatch"], other
 
 
 def test_the_report_names_both_senders_of_a_mismatch(proj):

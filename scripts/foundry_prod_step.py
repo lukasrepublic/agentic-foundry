@@ -64,10 +64,22 @@ class _Interrupted(BaseException):
         self.signum = signum
 
 
-def _run(argv):
-    """-> (status, reason). Never raises for a command that cannot start. An interrupt ends the child first."""
+class _Adapter(_ml.Adapter):
+    new_session = True      # git children get their own process group, so a signal to us is not delivered to them
+
+
+def _killpg(pid, sig):
     try:
-        proc = subprocess.Popen(argv)
+        os.killpg(pid, sig)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def _run(argv):
+    """-> (status, reason). Never raises for a command that cannot start. The child runs in its own process group;
+    an interrupt ends the whole group (TERM, then KILL) before it is re-raised."""
+    try:
+        proc = subprocess.Popen(argv, start_new_session=True)
     except FileNotFoundError:
         return 127, "the command was not found"
     except PermissionError:
@@ -77,12 +89,13 @@ def _run(argv):
     try:
         rc = proc.wait()
     except BaseException:
-        proc.terminate()
+        _killpg(proc.pid, signal.SIGTERM)
         try:
             proc.wait(timeout=10)
         except Exception:  # noqa: BLE001
-            proc.kill()
-            proc.wait()
+            pass
+        _killpg(proc.pid, signal.SIGKILL)
+        proc.wait()
         raise
     st = _status_of(rc)
     if rc < 0:
@@ -98,18 +111,20 @@ def _post(ad, repo, remote, sender, to, kind, body, corr, kw):
 
 
 def _install_handlers():
-    """SIGINT and SIGTERM raise _Interrupted once; after that both are ignored so cleanup and the STOP line finish."""
-    saved = {}
+    """SIGINT and SIGTERM raise _Interrupted once. After that a "stopping" flag makes the handler return, so
+    cleanup and the STOP line finish; no signal is set to ignore, so children never inherit an ignored signal."""
+    saved, state = {}, {"stopping": False}
 
     def handler(signum, _frame):
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            signal.signal(sig, signal.SIG_IGN)
+        if state["stopping"]:
+            return
+        state["stopping"] = True
         raise _Interrupted(signum)
 
     try:
         for sig in (signal.SIGINT, signal.SIGTERM):
             saved[sig] = signal.signal(sig, handler)
-    except ValueError:      # not the main thread: no handlers, the finally block still posts STOP on an exception
+    except ValueError:      # not the main thread: no handlers, the except blocks below still post STOP
         return {}
     return saved
 
@@ -123,9 +138,9 @@ def _restore_handlers(saved):
 
 
 def run_step(command, repo, remote, sender, to, what, cleanups=(), adapter=None, sleep=None, runner=None):
-    """Returns the process exit status. Prints one line to stderr for every hard failure.
-    Once the BEFORE line is posted, exactly one of AFTER or STOP is always attempted, whatever happens."""
-    ad = adapter or _ml.Adapter()
+    """Returns the process exit status (128+N for every signal path). Prints one line to stderr for every hard
+    failure. Once the BEFORE post has started, a STOP line is always attempted unless the command succeeded."""
+    ad = adapter or _Adapter()
     kw = {"sleep": sleep} if sleep else {}
     run = runner or _run
     corr = "prod-" + _ml.new_ulid().lower()
@@ -133,42 +148,62 @@ def run_step(command, repo, remote, sender, to, what, cleanups=(), adapter=None,
     before = f"what: {what}\nprogram: {_clean(program, 80)}"
     saved = _install_handlers()
     try:
-        try:
-            _post(ad, repo, remote, sender, to, "PROD-BEFORE", before, corr, kw)
-        except BaseException as exc:  # noqa: BLE001 -- the before line is the floor: no line, no step
-            print(f"foundry_prod_step: the before line could not be posted, so the command was NOT run: "
-                  f"{type(exc).__name__}: {_ml.redact(str(exc))[:200]}", file=sys.stderr)
-            return 130 if isinstance(exc, _Interrupted) else 1
         status, reason = 1, "stopped before the command finished"
         try:
+            try:
+                _post(ad, repo, remote, sender, to, "PROD-BEFORE", before, corr, kw)
+            except _Interrupted:
+                raise
+            except BaseException as exc:  # noqa: BLE001 -- the before line is the floor: no line, no step
+                print(f"foundry_prod_step: the before line could not be posted, so the command was NOT run: "
+                      f"{type(exc).__name__}: {_ml.redact(str(exc))[:200]}", file=sys.stderr)
+                return 1
             status, reason = run(command)
-        except _Interrupted as exc:
+        except _Interrupted as exc:      # anywhere from the start of the BEFORE post to the end of the command
             status, reason = 128 + exc.signum, f"interrupted by signal {exc.signum}"
         except BaseException as exc:  # noqa: BLE001
             status, reason = 1, f"unexpected {type(exc).__name__} while running the command"
+        intr = status - 128 if reason.startswith("interrupted by signal") else None
+
+        def post_final(kind, body):
+            """-> (error or None, signal or None). A first signal that lands during the post: post again once (the
+            handler no longer raises)."""
+            sig = None
+            for _ in (1, 2):
+                try:
+                    _post(ad, repo, remote, sender, to, kind, body, corr, kw)
+                    return None, sig
+                except _Interrupted as e:
+                    sig = e.signum
+                except BaseException as exc:  # noqa: BLE001
+                    return exc, sig
+            return RuntimeError("interrupted twice"), sig
+
         if status == 0:
-            try:
-                _post(ad, repo, remote, sender, to, "PROD-AFTER", "outcome: ok\nstatus: 0", corr, kw)
-            except BaseException as exc:  # noqa: BLE001
+            err, sig = post_final("PROD-AFTER", "outcome: ok\nstatus: 0")
+            intr = intr or sig
+            if err is not None:
                 print(f"foundry_prod_step: the command succeeded but the after line could not be posted "
-                      f"(process miss, corr {corr}): {type(exc).__name__}: {_ml.redact(str(exc))[:200]}", file=sys.stderr)
-                return 1
-            return 0
+                      f"(process miss, corr {corr}): {type(err).__name__}: {_ml.redact(str(err))[:200]}", file=sys.stderr)
+                return 128 + intr if intr else 1
+            return 128 + intr if intr else 0
         failed = 0
         for text in cleanups:
             try:
                 cstatus, _ = run(shlex.split(text))
+            except _Interrupted as e:
+                intr, cstatus = intr or e.signum, 1
             except BaseException:  # noqa: BLE001 -- a cleanup that blows up is a failed cleanup, nothing more
                 cstatus = 1
             failed += 1 if cstatus != 0 else 0
         cleanup = "none" if not cleanups else ("ok" if not failed else f"failed ({failed} of {len(cleanups)} commands)")
         stop = f"reason: {reason}\nstatus: {status}\ncleanup: {cleanup}"
-        try:
-            _post(ad, repo, remote, sender, to, "STOP", stop, corr, kw)
-        except BaseException as exc:  # noqa: BLE001
+        err, sig = post_final("STOP", stop)
+        intr = intr or sig
+        if err is not None:
             print(f"foundry_prod_step: the STOP line could not be posted (process miss, corr {corr}): "
-                  f"{type(exc).__name__}: {_ml.redact(str(exc))[:200]}", file=sys.stderr)
-        return status if status != 0 else 1
+                  f"{type(err).__name__}: {_ml.redact(str(err))[:200]}", file=sys.stderr)
+        return 128 + intr if intr else (status if status != 0 else 1)
     finally:
         _restore_handlers(saved)
 

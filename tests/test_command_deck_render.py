@@ -304,19 +304,28 @@ def _floor_rows():
     return [(e["rule"], e["tier"]) for e in rows if "foundry_deck_report.py" in e["rule"] or "foundry_prod_step.py" in e["rule"]]
 
 
-def test_the_drift_corpus_has_single_prefix_rules_and_the_five_new_rows_in_the_full_floor_cases():
+CORPUS_FILE = ROOT / "tests" / "fixtures" / "floor-drift-corpus.json"
+
+
+def doubled_prefix_rows(cases):
+    return [(c["name"], e["rule"]) for c in cases for t in ("allow", "ask", "deny") for e in c["effective"][t]
+            if e["rule"].startswith("Bash(Bash(")]
+
+
+def test_the_real_drift_corpus_has_no_doubled_prefix_row():
+    import json
+    raw = CORPUS_FILE.read_text()
+    assert "Bash(Bash(" not in raw                                          # the file itself, byte for byte
+    assert doubled_prefix_rows(json.loads(raw)["cases"]) == []
+    # control: the same check fires on the old defect
+    bad = [{"name": "x", "effective": {"allow": [{"rule": "Bash(Bash(~/s/foundry_prod_step.py:*)"}], "ask": [], "deny": []}}]
+    assert doubled_prefix_rows(bad) == [("x", "Bash(Bash(~/s/foundry_prod_step.py:*)")]
+
+
+def test_the_five_new_floor_rows_are_in_the_full_floor_case_in_their_tier():
     new = _floor_rows()
     assert len(new) == 5 and sorted(t for _, t in new) == ["allow", "allow", "ask", "ask", "ask"]
-    for case in _corpus():
-        for tier in ("allow", "ask", "deny"):
-            for e in case["effective"][tier]:
-                assert not e["rule"].startswith("Bash(Bash("), (case["name"], e["rule"])
     full = {c["name"]: c for c in _corpus()}["full-floor-verbatim"]["effective"]
     for rule, tier in new:
         assert rule in [e["rule"] for e in full[tier]], rule
         assert rule not in [e["rule"] for e in full["ask" if tier == "allow" else "allow"]]
-
-
-def test_the_prefix_check_would_catch_the_old_defect():
-    bad = [{"rule": "Bash(Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_prod_step.py:*)"}]
-    assert any(e["rule"].startswith("Bash(Bash(") for e in bad)
