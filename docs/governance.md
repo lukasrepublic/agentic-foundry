@@ -121,7 +121,8 @@ the atom was built from that commit, or that the commit is the one the ticket wa
 the operator's own test pass is the practice that judges it. The lookup uses the secret `FOUNDRY_WORKSPACE_READ_TOKEN` (a
 fine-grained or App token with `contents: read` on the workspace only, ideally in a protected environment; the operator provisions
 it, and its value is never written to a file). If the secret is unset and the default job token cannot read the workspace repo, the
-lookup fails and the rule fails closed.
+lookup fails and the rule fails closed. The workflow file itself is editable by a same-repo pull request, so protect
+`.github/workflows/**` with CODEOWNERS plus required review, or a ruleset-required workflow.
 
 Two honest notes on that job:
 

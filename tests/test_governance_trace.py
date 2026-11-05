@@ -224,6 +224,7 @@ GOOD_SHA = "a" * 40
 OTHER_SHA = "c" * 40
 MISSING_SHA = "b" * 40
 FORK_SHA = "d" * 40
+UNMERGED_SHA = "9" * 40
 HEAD_SHA = "e" * 40
 TMPL = ROOT / "governance" / "kits" / "delivery" / "templates" / "governance-trace.yml.tmpl"
 
@@ -251,14 +252,15 @@ def _commit_reply(sha):
 
 @pytest.fixture
 def ws_gh(tmp_path, gh_path):
-    """GOOD and OTHER are on the workspace default branch (behind), FORK exists but is diverged, HEAD is the PR head commit of o/r (its JSON reply is the file $HEAD_JSON)."""
+    """GOOD and OTHER are on the workspace default branch (ahead/identical), FORK exists but is diverged, HEAD is the PR head commit of o/r (its JSON reply is the file $HEAD_JSON)."""
     g = gh_path / "gh"
     lines = ["#!/bin/sh", 'echo "$@" >> "$GH_LOG"', 'case "$*" in']
-    for sha in (GOOD_SHA, OTHER_SHA, FORK_SHA):
+    for sha in (GOOD_SHA, OTHER_SHA, FORK_SHA, UNMERGED_SHA):
         lines.append(f"  'api repos/o/ws/commits/{sha}') {_commit_reply(sha)};;")
     lines += [
         "  'api repos/o/ws') echo '{\"default_branch\": \"main\"}';;",
-        f"  'api repos/o/ws/compare/{GOOD_SHA}...main') echo '{{\"status\": \"behind\"}}';;",
+        f"  'api repos/o/ws/compare/{GOOD_SHA}...main') echo '{{\"status\": \"ahead\", \"behind_by\": 0}}';;",
+        f"  'api repos/o/ws/compare/{UNMERGED_SHA}...main') echo '{{\"status\": \"behind\"}}';;",
         f"  'api repos/o/ws/compare/{OTHER_SHA}...main') echo '{{\"status\": \"identical\"}}';;",
         f"  'api repos/o/ws/compare/{FORK_SHA}...main') echo '{{\"status\": \"diverged\"}}';;",
         "  *repos/o/ws/*) exit 1;;",
@@ -303,6 +305,21 @@ def test_built_from_unresolvable_sha_fails_closed(ws_proj, ws_gh, tmp_path):
 def test_built_from_sha_not_on_the_default_branch_fails(ws_proj, ws_gh, tmp_path):
     p, doc = run(ws_proj, tmp_path, pr_body=f"Ticket: #7\nBuilt-from: {FORK_SHA}\n")
     assert built_from(doc)["ok"] is False and "not an ancestor" in built_from(doc)["detail"]
+
+
+def test_built_from_a_behind_reply_fails(ws_proj, ws_gh, tmp_path):
+    """`behind` means the commit is ahead of the default branch (unmerged or fork-only): not an ancestor."""
+    p, doc = run(ws_proj, tmp_path, pr_body=f"Ticket: #7\nBuilt-from: {UNMERGED_SHA}\n")
+    assert built_from(doc)["ok"] is False and "not an ancestor" in built_from(doc)["detail"]
+
+
+def test_strip_quoted_nested_fence_indented_code_and_html_comment():
+    gt = load_gt()
+    body = (f"````\n```\nBuilt-from: {MISSING_SHA}\n```\nBuilt-from: {MISSING_SHA}\n````\n"   # the inner ``` does not close the outer
+            f"    Built-from: {MISSING_SHA}\n"                                                  # indented code block
+            f"<!-- Built-from: {MISSING_SHA}\n-->\nBuilt-from: {GOOD_SHA}\n")
+    assert gt._built_from_values(body) == [GOOD_SHA]
+    assert gt._built_from_values(f"<!-- Built-from: {GOOD_SHA}") == []                           # unterminated comment hides the rest
 
 
 def test_built_from_two_trailers_must_agree(ws_proj, ws_gh, tmp_path):
@@ -420,7 +437,8 @@ def test_the_tmpl_template_is_the_one_the_kit_lists():
     assert not (ROOT / "governance" / "kits" / "delivery" / "checks" / "governance-trace.yml.template").exists()
     assert "FOUNDRY_WORKSPACE_READ_TOKEN" in TMPL.read_text() and "FAILS CLOSED" in TMPL.read_text()
     text = TMPL.read_text()
-    assert "--json number,body > pr.json" in text and '--head-sha "${{ github.event.pull_request.head.sha }}"' in text
+    assert "--json number,body > pr.json" in text and '--head-sha "$HEAD_SHA"' in text
+    assert "HEAD_SHA: ${{ github.event.pull_request.head.sha }}" in text and "${{ github.event" not in text.split("run: >-")[1]
     assert "FOUNDRY_WORKSPACE_REPO: ${{ vars.FOUNDRY_WORKSPACE_REPO ||" in text
     assert "contents: read only" in text and "protected environment" in text
     assert "ref: <PLUGIN_REF>" in text                       # the placeholder an adopter must replace; the installer does not (a known kit gap)

@@ -27,8 +27,8 @@ It checks, and reports EVERY failing check (exit 1; exit 0 when all pass; exit 2
   built-from          (dl-07) a PR in a product repo that a workspace governs carries `Built-from: <40-hex workspace sha>` in
                       its body or head commit (the commit read from --head-sha), all trailers agreeing, outside code fences and `>` quotes; the sha
                       must exist in the workspace repo AND be an ancestor of its default branch. Armed by the FOUNDRY_WORKSPACE_REPO
-                      variable (OWNER/NAME; `unset` or absent means not set), else by the base ref's binding file. A set-but-empty or
-                      malformed variable, or an unreadable binding, fails. With neither source the rule skips with a named reason.
+                      variable (OWNER/NAME; `unset` or absent means not set), else by the base ref's binding file. On the CLI a
+                      set-but-empty or malformed variable, or an unreadable binding, fails (the CI template maps an empty one to `unset`). With neither source the rule skips with a named reason.
                       Workspace calls all go through `_workspace_gh`.
 
 The Design parser and the design-required class are the ticket verb's own (`scripts/foundry-ticket.py`), loaded from the
@@ -142,18 +142,21 @@ def _binding(base: Path):
 
 
 def _strip_quoted(text: str) -> str:
-    """Drop fenced code blocks and `>` quote lines: a trailer inside either is an example, not a claim."""
+    """Drop what is an example, not a claim: HTML comments, fenced code blocks (closed only by a run of the same character at
+    least as long as the opener), 4-space or tab indented code, and `>` quote lines."""
+    text = re.sub(r"<!--.*?(?:-->|\Z)", "", text or "", flags=re.S)
     out, fence = [], None
-    for ln in (text or "").splitlines():
-        t = ln.lstrip()
+    for ln in text.splitlines():
         if fence:
-            if t.startswith(fence):
+            m = re.fullmatch(r" {0,3}(" + re.escape(fence[0]) + r"{" + str(len(fence)) + r",})[ \t]*", ln)
+            if m:
                 fence = None
             continue
-        if t.startswith(("```", "~~~")):
-            fence = t[:3]
+        m = re.match(r" {0,3}(`{3,}|~{3,})", ln)
+        if m:
+            fence = m.group(1)
             continue
-        if t.startswith(">"):
+        if ln.startswith(("    ", "\t")) or ln.lstrip().startswith(">"):
             continue
         out.append(ln)
     return "\n".join(out)
@@ -183,14 +186,17 @@ def _verify_in_workspace(gh_json, ws: str, sha: str):
     if not re.fullmatch(r"[\w./-]+", branch):
         return False, f"the default branch of the workspace repo {ws} could not be read, so Built-from {sha} cannot be verified"
     cmp_doc = _workspace_gh(gh_json, ["api", f"repos/{ws}/compare/{sha}...{branch}"])
-    if not (isinstance(cmp_doc, dict) and cmp_doc.get("status") in ("behind", "identical")):
+    # compare/{sha}...{default}: `ahead` = the default branch is ahead of the sha (the sha is an ancestor); `behind`/`diverged` = it is not
+    if not (isinstance(cmp_doc, dict) and cmp_doc.get("status") in ("ahead", "identical")
+            and cmp_doc.get("behind_by", 0) == 0):
         return False, f"Built-from {sha} is not an ancestor of {ws}@{branch}"
     return True, f"Built-from {sha} is on {ws}@{branch}"
 
 
 def _built_from_finding(pr: dict, base: Path, repo, gh_json, workspace_repo=None, head_sha=None):
     """(ok, detail) for the built-from check. Armed by the FOUNDRY_WORKSPACE_REPO variable (passed as `workspace_repo`), else by the
-    base ref's binding file. A variable that is set but empty or malformed, or a binding that cannot be read, FAILS: never a skip."""
+    base ref's binding file. On the CLI a variable that is set but empty or malformed, or a binding that cannot be read, FAILS: never a skip.
+    (In CI the template maps an undefined or empty variable to `unset`, the skip path, before this function sees it.)"""
     if workspace_repo is not None and workspace_repo.strip() != WS_UNSET:
         ws = workspace_repo.strip().lower()
         if not SLUG_RE.fullmatch(ws):
@@ -205,6 +211,8 @@ def _built_from_finding(pr: dict, base: Path, repo, gh_json, workspace_repo=None
             return True, ("skipped: single-repo (FOUNDRY_WORKSPACE_REPO is not set and the base ref's binding does not name a workspace "
                           "that governs this repository), so no Built-from trailer is required")
     texts = [pr.get("body") or ""]
+    if not head_sha:
+        print("built-from: note: no --head-sha was given, so the head commit message is not read (the PR body only)", file=sys.stderr)
     if head_sha:
         if not SHA40_RE.fullmatch(head_sha):
             return False, "--head-sha is not a 40-character hex sha"

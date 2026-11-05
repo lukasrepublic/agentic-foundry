@@ -65,12 +65,14 @@ jobs:
           # When it is unset, `github.token` is used; if that cannot read the workspace repo, the lookup fails and the rule FAILS CLOSED.
           FOUNDRY_WORKSPACE_READ_TOKEN: ${{ secrets.FOUNDRY_WORKSPACE_READ_TOKEN }}
           # The repository (or organisation) variable FOUNDRY_WORKSPACE_REPO (OWNER/NAME) arms the built-from rule in a product repo.
-          # An undefined variable becomes the word `unset`, which skips the rule with a named reason; an empty or malformed value fails.
+          # An undefined variable becomes the word `unset`, which skips the rule with a named reason. The same expression maps an EMPTY variable to `unset`, so in CI an empty value
+          # skips too; only a malformed value fails here. (The CLI alone fails on an empty variable.)
           FOUNDRY_WORKSPACE_REPO: ${{ vars.FOUNDRY_WORKSPACE_REPO || 'unset' }}
           REPO: ${{ github.repository }}
           ACTOR: ${{ github.actor }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: >-
           python3 plugin/governance/kits/delivery/checks/governance-trace.py check
           --pr-json pr.json --files-json files.json --ticket-json ticket.json --repo "$REPO" --agent-login "$ACTOR"
-          --head-sha "${{ github.event.pull_request.head.sha }}"
+          --head-sha "$HEAD_SHA"
           --project-dir pr --base-dir base
