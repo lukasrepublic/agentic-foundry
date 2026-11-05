@@ -319,6 +319,58 @@ def verify_ticket_lists(doc: dict, root: Path | None = None) -> bool:
     return hmac.compare_digest(sig, hmac.new(key, _lists_payload(doc), hashlib.sha256).hexdigest())
 
 
+# ---- dl-03: the whole-ticket digest + the signed claim record ---------------------------------------------------
+# `claim` records a digest over the five ticket sections the build and the review read (Acceptance, Design,
+# Security, Surfaces, Done means): each section's text with whitespace normalised, then canonical JSON, then
+# sha256. The digest, its per-section parts and the Done-means digest are covered by an HMAC under the same
+# per-git-dir key as the CI-allow lists, so an edit of the local claims file is detected (`claim_sig`). Like the
+# lists, this is a visibility control for the operator's own test pass, not a defence against an agent that
+# reads the key.
+TICKET_SECTIONS = ("acceptance", "design", "security", "surfaces", "done_means")
+CLAIM_SIG_FIELD = "claim_sig"
+
+
+def normalize_section(text) -> str:
+    """Whitespace-normalised section text: lines stripped, runs of blanks collapsed, blank lines dropped."""
+    lines = (re.sub(r"[ \t\f\v]+", " ", ln).strip() for ln in str(text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"))
+    return "\n".join(ln for ln in lines if ln)
+
+
+def ticket_digests(texts: dict) -> tuple[str, dict]:
+    """(whole-ticket digest, {section: sha256}) from {section: raw text}. A missing section digests as empty."""
+    norm = {k: normalize_section((texts or {}).get(k)) for k in TICKET_SECTIONS}
+    whole = hashlib.sha256(json.dumps(norm, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+                           .encode("utf-8")).hexdigest()
+    return whole, {k: command_digest(v) for k, v in norm.items()}
+
+
+def _claim_payload(rec: dict) -> bytes:
+    secs = rec.get("ticket_sections")
+    secs = {str(k): str(v) for k, v in secs.items()} if isinstance(secs, dict) else {}
+    return json.dumps({"v": 1, "issue": str(rec.get("issue") or ""), "ticket_digest": str(rec.get("ticket_digest") or ""),
+                       "ticket_sections": secs, "done_digest": str(rec.get("done_digest") or "")},
+                      sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def sign_claim(rec: dict, root: Path | None = None, create: bool = False) -> bool:
+    """Set rec[claim_sig]. False (and no signature) when no key is available."""
+    key = _read_key(root, create=create)
+    if key is None:
+        rec.pop(CLAIM_SIG_FIELD, None)
+        return False
+    rec[CLAIM_SIG_FIELD] = hmac.new(key, _claim_payload(rec), hashlib.sha256).hexdigest()
+    return True
+
+
+def verify_claim(rec: dict, root: Path | None = None) -> bool:
+    """True only when the stored claim signature matches the record's digests under this git dir's key."""
+    sig = rec.get(CLAIM_SIG_FIELD) if isinstance(rec, dict) else None
+    key = _read_key(root, create=False)
+    if not isinstance(sig, str) or key is None:
+        return False
+    return hmac.compare_digest(sig, hmac.new(key, _claim_payload(rec), hashlib.sha256).hexdigest())
+
+
 # ---- gv-11: claim leases (operating-model rule B5) ---------------------------------------------------------
 # A claim record is a LEASE: `heartbeat_at` is refreshed by `lead renew` and `reconcile`; a lease with no heartbeat
 # for `expires_after` (policy `claims.expires_after`, default 2h) is EXPIRED, and ONLY an expired lease can be taken

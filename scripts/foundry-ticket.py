@@ -194,6 +194,20 @@ def _section(body: str, rx) -> str | None:
     return rest[: nxt.start()] if nxt else rest
 
 
+def ticket_section_texts(body: str) -> dict:
+    """The raw text of the five sections the whole-ticket digest covers (dl-03); "" for an absent one."""
+    body = (body or "").replace("\r\n", "\n").replace("\r", "\n")
+    out = {k: _section(body, rx) or "" for k, rx in (("acceptance", _ACCEPTANCE_H), ("design", _DESIGN_H),
+                                                     ("security", _SECURITY_H), ("surfaces", _SURFACES_H),
+                                                     ("done_means", _DONE_RE))}
+    return out
+
+
+def ticket_digest(body: str) -> tuple[str, dict]:
+    """(whole-ticket digest, per-section digests) over Acceptance + Design + Security + Surfaces + Done means."""
+    return store.ticket_digests(ticket_section_texts(body))
+
+
 def clean_component(raw: str) -> str:
     """A Design component or Scope entry as a root-relative POSIX path or glob; "" when unusable."""
     s = raw.strip().strip("`'\"").strip()
@@ -934,7 +948,7 @@ SKIP_REASONS = ("unassigned", "other-owner", "backlog", "blocked", "no-acceptanc
                 "done-means-untrusted")
 # Every `reason` a stop_dispatch verdict can carry (reconcile output + the `stop-dispatch:<reason>` skip in `next`).
 STOP_REASONS = ("reassigned", "cancelled", "duplicate", "withdrawn", "acceptance_changed",
-                "closed", "not_started", "unverified")
+                "ticket_changed", "claim_unverified", "closed", "not_started", "unverified")
 _PRIORITY_WORDS = {"critical": 0, "urgent": 0, "blocker": 0, "high": 1, "medium": 2, "normal": 2, "low": 3}
 _ACCEPT_RE = re.compile(r"^##+[ \t]*acceptance(?:[ \t]+criteria)?[ \t]*(?::[ \t]*)?$", re.I | re.M)
 _ITEM_RE = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\S", re.M)
@@ -1176,6 +1190,8 @@ def normalize(node: dict, repo: str, project_number: int | None) -> dict:
         "_has_acceptance": has_acceptance(body),
         # digest of the raw Done-means command (same value `read_issue` reports as done_digest), "" digest when none
         "done_digest": store.command_digest(parse_body(body)[0]), "_has_done": bool(parse_body(body)[0]),
+        # dl-03: the whole-ticket digest (five sections) + its per-section parts
+        "ticket_digest": ticket_digest(body)[0], "ticket_sections": ticket_digest(body)[1],
     }
 
 
@@ -1309,11 +1325,14 @@ def save_claim(root: Path, key: str, rec: dict) -> Path:
         raise
 
 
-def judge(issue: dict, login: str, claim: dict | None, withdrawn_by: tuple | None = None) -> dict:
+def judge(issue: dict, login: str, claim: dict | None, withdrawn_by: tuple | None = None,
+          root: Path | None = None) -> dict:
     """The reconcile verdict from CURRENT GitHub state alone. `authorized` ONLY for an open, assigned-to-operator
     issue in a started status (In progress / Review); anything else stops dispatch: `closed` (closed, or Project
     status Done), `cancelled`/`duplicate`, `reassigned`, `withdrawn`, `not_started` (Backlog, Ready, blocked,
-    no status, unknown status), `acceptance_changed`. A local claim supplies only the baseline body
+    no status, unknown status), `acceptance_changed`, `ticket_changed` (any of Acceptance/Design/Security/Surfaces/
+    Done means moved since the claim; `acceptance_changed` when only Acceptance did), `claim_unverified` (the signed
+    claim record fails HMAC verification). A local claim supplies only the baseline body
     hash to compare against — never an authorization. `withdrawn_by`: (True, actor) when history shows a
     return to Backlog after start."""
     key = store.claim_key(issue['repo'], issue['number'])
@@ -1331,6 +1350,21 @@ def judge(issue: dict, login: str, claim: dict | None, withdrawn_by: tuple | Non
         return {**base, "stop_dispatch": True, "reason": "closed"}
     if issue["status"] not in STARTED_STATUSES:       # Ready / blocked / none / unknown: nothing was started
         return {**base, "stop_dispatch": True, "reason": "not_started"}
+    if claim and claim.get("ticket_digest"):
+        # dl-03: a claim carrying a whole-ticket digest is judged on the five sections, not the raw body hash
+        if not store.verify_claim(claim, root):
+            return {**base, "stop_dispatch": True, "reason": "claim_unverified",
+                    "cause": f"the signed claim record for {key} fails verification; re-run `claim` to record a new one"}
+        moved = claim["ticket_digest"] != issue.get("ticket_digest")
+        done_moved = bool(claim.get("done_digest")) and claim["done_digest"] != issue.get("done_digest")
+        if moved or done_moved:
+            old, new = claim.get("ticket_sections") or {}, issue.get("ticket_sections") or {}
+            changed = [k for k in store.TICKET_SECTIONS if old.get(k) != new.get(k)]
+            if done_moved and "done_means" not in changed:
+                changed.append("done_means")
+            reason = "acceptance_changed" if changed == ["acceptance"] else "ticket_changed"
+            return {**base, "stop_dispatch": True, "reason": reason, "changed_sections": changed}
+        return {**base, "stop_dispatch": False, "reason": "authorized"}
     if claim and claim.get("body_sha256") and claim["body_sha256"] != issue["body_sha256"]:
         return {**base, "stop_dispatch": True, "reason": "acceptance_changed"}
     if claim and claim.get("done_digest") and claim["done_digest"] != issue.get("done_digest"):
@@ -1604,10 +1638,16 @@ def cmd_claim(args: list[str], run, now: float) -> int:
     prior = claims.get(key) or {}
     keep = bool(prior.get("body_sha256")) and not a.rebase_acceptance
     keep_done = keep and "done_digest" in prior
+    # dl-03: the ticket baseline follows the same keep/rebase rule as the body baseline, and a prior record whose
+    # signature fails is never kept (a hand-edited baseline is not adopted)
+    keep_ticket = keep and bool(prior.get("ticket_digest")) and isinstance(prior.get("ticket_sections"), dict) \
+        and store.verify_claim(prior, root)
     rec = {"issue": key, "number": number, "repo": repo, "operator": login,
            "body_sha256": prior["body_sha256"] if keep else vetted["body_sha256"],
            # the vetted Done-means: reconcile stops dispatch when the live digest differs from this one
            "done_digest": prior["done_digest"] if keep_done else vetted["done_digest"],
+           "ticket_digest": prior["ticket_digest"] if keep_ticket else vetted["ticket_digest"],
+           "ticket_sections": prior["ticket_sections"] if keep_ticket else vetted["ticket_sections"],
            "done_trusted": prior.get("done_trusted", False) if keep_done else (not has_done or vetted["done_trusted"]),
            "done_means": prior.get("done_means", "") if keep_done else vetted["done"],
            "done_trusted_by": "operator-flag" if (a.trust_author and has_done) else ("author" if has_done else None),
@@ -1616,6 +1656,7 @@ def cmd_claim(args: list[str], run, now: float) -> int:
            "session_id": sid, "heartbeat_at": _iso(now), "expires_after_s": expires_s}
     if pred_key is not None:
         rec["successor_of"] = pred_key
+    store.sign_claim(rec, root, create=True)
     taken_box: list = []
 
     class _LeaseHeld(Exception):
@@ -1688,6 +1729,7 @@ def cmd_read_issue(args: list[str], run) -> int:
         print(f"  done_trusted      : {str(rec['done_trusted']).lower()}"
               + (f" — {rec['done_reason']}" if rec["done_reason"] else ""))
         print(f"  done_digest       : {rec['done_digest']}")
+        print(f"  ticket_digest     : {rec['ticket_digest']}")
         print(f"  done means        : {rec['done'] or '(none, or withheld: not author-trusted)'}")
     return 0
 
