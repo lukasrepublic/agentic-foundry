@@ -26,12 +26,27 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-env-hygiene.py:*)",
       "tier": "allow",
-      "rationale": "status/reap over machine-scoped worker sandbox envs; confined to isolated per-worker state"
+      "rationale": "status/reap over machine-scoped worker sandbox envs; confined to isolated per-worker state. mark-worktree and every reap (label-scoped worktree and scratch removal, gv-12) are never silent: the plugin-scripts-allow hook leaves them to ask"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_blocker_check.py:*)",
+      "tier": "allow",
+      "rationale": "the blocker lint: reads one candidate-blockers JSON file (or stdin) and prints the blockers / next_tasks partition; writes nothing, no network (gv-14)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_operating_model.py:*)",
       "tier": "allow",
       "rationale": "status|validate|explain|render-tick-section only read .foundry/operating-model.yaml, the shipped schema and the .foundry/ operator style file (a regular .md or .txt file, at most 4 KiB); the script writes nothing (gv-03)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_merge_plan.py:*)",
+      "tier": "allow",
+      "rationale": "clusters ready items from two JSON arguments (inline JSON, or files confined to the project root) and prints a plan; reads the files it is given, writes nothing, no network; components are caller-supplied labels (gv-10)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_resources.py:*)",
+      "tier": "allow",
+      "rationale": "reads /proc/loadavg, /proc/meminfo, /proc/uptime, the boot id, cgroup memory limits, statvfs of / and --path, the kernel log (/dev/kmsg or journalctl -k) when readable, the OOM-baseline file and the policy file; prints a verdict. The two verbs that read a named file or write (--from-json, --reset-oom-baseline) are never silent: the plugin-scripts-allow hook leaves them to ask (gv-12)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-permissions-compile.py --check:*)",
@@ -189,6 +204,11 @@
       "rationale": "issues gh pr merge <pr> --squash once every check is green — a merge is a repo-state mutation, ask like foundry-authorize.py, never a self-grant"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_queue_land.py:*)",
+      "tier": "ask",
+      "rationale": "merges the base into the PR branch, pushes it, posts the record and enqueues the PR -- a repo-state mutation, ask like foundry-merge-when-green.py, never a self-grant (gv-10)"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-stack-profile.py --relock:*)",
       "tier": "ask",
       "rationale": "pinned ceremony (AC-PFM-3): re-writes the lock in place; leading flag verified prefix-keyable; the split tier with --validate/--load is safe ONLY because main() checks those flags before --relock — a combined invocation runs the earlier-checked verb (security review 2026-08-02)."
@@ -237,6 +257,16 @@
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_governance.py:*)",
       "tier": "ask",
       "rationale": "render writes governance/rendered/ and baseline writes governance/local/baselines/; load, validate, applicable, check and exceptions are read-only and run silently through the plugin-scripts-allow hook; no network"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-deck-heavy:*)",
+      "tier": "ask",
+      "rationale": "executes the command it is given under a host-sized flock slot, so it is never silent (gv-12)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_research_note.py:*)",
+      "tier": "ask",
+      "rationale": "WRITES .foundry/research/<date>-<slug>.md and, when the sources converge, .foundry/decisions/<date>-<slug>.md inside the project directory; no network, no subprocess (gv-14)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_brief.py:*)",
@@ -372,6 +402,11 @@
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py claim:*)",
       "tier": "ask",
       "rationale": "POSTs a structured `start` comment on a GitHub issue under the operator's identity (a content-creating write) and writes the git-dir claim record; refuses unassigned / other-owned issues and the WIP limit; never self-assigns (gn-08); refuses (typed `done-means-untrusted`) an issue whose Done-means command is not author-trusted unless the operator passes --trust-author (never auto-allowed by the plugin-scripts-allow hook)"
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py ci-allow:*)",
+      "tier": "ask",
+      "rationale": "lifts the CI-edit guard for one path on the active ticket (gv-10): the operator's call, so it asks; plain `allow` is refused for CI paths; its own verb so no `allow:*` row subsumes it"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-ticket.py reconcile:*)",

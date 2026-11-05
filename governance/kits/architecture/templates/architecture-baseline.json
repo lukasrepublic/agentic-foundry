@@ -1,0 +1,6 @@
+{
+  "check": "architecture-deps",
+  "findings": [
+    {"rule": "domain-not-to-interface", "from": "src/domain/order.ts", "to": "src/interface/http.ts"}
+  ]
+}

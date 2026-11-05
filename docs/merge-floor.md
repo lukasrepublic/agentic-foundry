@@ -112,10 +112,24 @@ happens — `/foundry:authorize` binding `spec_sha256` + `contract_sha256` — n
    command yourself outside the agent" sentence.
    - `gh pr merge --admin` (a server-side-check bypass) → **refused outright**, no
      network call.
-   - `gh pr merge --auto` (any merge method) → **admitted without a query** (v1.18): it hands
-     the merge to the platform, which merges only once the branch's **required** checks pass.
-     On a Tier B repo with no required checks the platform merges at once — there, `--auto` is
-     no stronger than the repo's own protection, so apply Tier A.
+   - **Clause (k): `gh pr merge --auto`** (any merge method) → admitted **only when both hold**
+     (the merge-primitives atom; this tightens the v1.18 rule that admitted it without a query). First, a live read of
+     the base branch names **at least one required status check**, by ruleset
+     (`gh api repos/{owner}/{repo}/rules/branches/{base}`) or by classic branch protection
+     (`repos/{owner}/{repo}/branches/{base}`, `.protection.required_status_checks`; an error there counts as none): `--auto` hands the merge to the platform, which waits only
+     for the checks the ruleset names, and with none it merges at once. Second, the same live
+     `gh pr checks` query as a plain merge is **all green at the current head**. Any other answer
+     — no required check, red or pending head, a query error, an unreadable reply, a PR whose
+     base or repo cannot be read — **refuses** (fail-closed). `--auto` now also needs the PR named
+     explicitly, like every other merge. **`--auto` can no longer be used to wait on pending checks**: the head must already be green. `--admin` is still refused first, and no force flag is
+     a `gh pr merge` flag at all (an unrecognised flag refuses).
+   - **Clause (l): never push to a queued PR.** A `git push` whose destination branch has an
+     open PR that is **in the merge queue** (`isInMergeQueue` / `mergeQueueEntry`, read live over
+     GraphQL, because `gh pr list --json` does not carry the queue fields) is **refused**: a push
+     moves the head the queue is testing. Dequeue first, push, enqueue again. A destination that
+     cannot be resolved is refused while any open PR is queued. Every query error refuses. A
+     remote that is a local path or a `file://` URL makes no query. Any other host `gh` is not configured for (an SSH alias, an unknown host) is refused as `remote-host-unresolvable`. The push remote is read with `git remote get-url --push`; `-o`, `--push-option`, `--receive-pack`, `--exec` and `--repo` values are skipped, and the user-less scp form `github.com:o/r.git` is understood. **`gh` must be installed and authenticated** for every push to a GitHub remote: with no `gh`, or a failing query, the push is refused. `--dry-run`
+     and tag-only pushes make no query. Clause (j) (local-green) is unchanged and runs first.
    - plain `gh pr merge` → admitted **only** after a live `gh pr checks` query returns
      all-green; a failing row, a pending row, a nonexistent PR, an API error, or an
      unrecognized verdict all **block**.
@@ -157,6 +171,41 @@ happens — `/foundry:authorize` binding `spec_sha256` + `contract_sha256` — n
    - The hook has **no in-session off-switch**. To act around it, a human runs the
      command themselves in their own terminal — which is exactly the boundary it exists
      to draw.
+
+### The `ci` class: never edit CI to make a PR pass
+
+4. **The paper guard's `ci` class** (`hooks/foundry-paper-guard.py`). A write to a CI path is
+   refused unless the active ticket names the path (or a parent directory) in `ci_allowed`, or in the
+   issue author's own `## Paper allowed` list recorded at `start`. The CLI-writable `paper_allowed` never
+   lifts a CI path, and `foundry-ticket.py allow <ci-path>` without `--ci` is refused
+   (`ci-path-needs-ci-flag`; the lift is the separate verb `ci-allow`). CI paths are the files under `.github/workflows/` and `.github/actions/`
+   (the rest of `.github/` is not gated); the other CI systems' files (`.gitlab-ci.yml`, `.circleci/**`,
+   `Jenkinsfile`, `azure-pipelines.yml`, `scripts/ci/**`, `ci/**`); any script under `scripts/`, `ci/` or
+   `tools/` that the repo's own workflows invoke (read live); test configs (`pyproject.toml`, `setup.cfg`,
+   `.coveragerc` at the root; `pytest.ini`, `tox.ini`, `conftest.py`, `jest|vitest|playwright.config.*` and
+   `karma.conf.*` anywhere; `Makefile`, `noxfile.py`, `.pre-commit-config.yaml`); `package.json` only when an
+   edit touches its `test`, `pretest` or `posttest` script; and quarantine lists (a file named
+   `quarantine*.json|yaml|yml`). With no ticket the write is refused. Code elsewhere is never gated. The
+   operator lifts it for one path with `foundry-ticket.py ci-allow <path>`. That verb is a
+   permission-floor `ask` row and the plugin scripts allow-hook never grants it silently, so it always asks.
+
+### Landing through a merge queue: `queue-land` and `merge-plan`
+
+5. **`scripts/foundry_queue_land.py <pr>`** (tier `ask`; it runs the PR branch's code locally, so it is for the operator's own PRs, never forks) is the one way to land a PR on a base whose
+   ruleset has a merge queue (`skills/merge-when-green` is its front). It reads the live ruleset
+   first, refuses a PR already in the queue (`dequeue-first`, before any push), merges the base into the PR branch (merge commit, plain push, only after the local-green runner passes), waits for the required
+   checks at the current head (a skipped check is not a pass), runs the tests that name a changed
+   shared catalogue and, per policy `merge.full_suite_on_branch`, the branch full suite, posts the
+   one-line record `PR | head | base merged at | catalogue tests | branch full suite | queued`
+   (shared message log when present, else a PR comment; an unfillable column refuses and is named),
+   enqueues with `gh pr merge --auto --squash`, reads the queue entry twice, and waits. A rejection
+   is classified from the failed log: own files → fix; outside the diff → evidence posted and one
+   re-queue; the same failure again → a quarantine request for the test's owner and no further
+   re-queue. The re-queue count lives in marker comments on the PR, trusted only from the authenticated login or `github_scope.operators`.
+6. **`scripts/foundry_merge_plan.py --ready <json> --paths <json>`** (tier `allow`, read-only)
+   clusters ready items that share a file or a caller-supplied component label (it reads only inline JSON or files inside the project root), lets an area's open un-queued PR take the
+   cluster's work, and orders clusters so a shared catalogue changes once per round. It prints one
+   report line, then the plan as JSON.
 
 ## What this floor does and does not claim
 

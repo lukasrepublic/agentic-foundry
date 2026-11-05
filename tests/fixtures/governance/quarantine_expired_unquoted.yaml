@@ -1,0 +1,6 @@
+quarantine:
+  - test: tests/test_a.py::test_x
+    owner: team-a
+    issue: ISSUE-1
+    entry: 2026-01-01
+    expiry: 2026-06-01

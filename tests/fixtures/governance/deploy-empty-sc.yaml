@@ -1,0 +1,10 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: demo}
+spec:
+  template:
+    spec:
+      containers:
+        - name: web
+          image: registry.example/web@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          securityContext: {}

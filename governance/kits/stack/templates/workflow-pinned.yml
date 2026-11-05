@@ -1,0 +1,23 @@
+# Researched 2026-11-04. Every external action is pinned to a full commit SHA, with the version in a comment.
+name: ci
+on: [pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Install conftest (pinned, checksum-verified)
+        # conftest v0.68.2, release and checksum verified 2026-11-04 against the upstream checksums.txt.
+        run: |
+          curl -fsSL -o conftest.tar.gz https://github.com/open-policy-agent/conftest/releases/download/v0.68.2/conftest_0.68.2_Linux_x86_64.tar.gz
+          echo "e8144c6d6d2ae0260b869caa60c7c262a1f95ac63ec1e5d2fb19be452d606347  conftest.tar.gz" | sha256sum -c -
+          tar -xzf conftest.tar.gz conftest
+      - name: Version pinning policy
+        # Copy governance/kits/stack/checks/pinning.rego from the plugin into the repository (for example
+        # to policy/pinning.rego) so CI can read it.
+        run: ./conftest test --policy policy --namespace governance.pinning .github/workflows
+      - run: echo "replace with the project's test command"

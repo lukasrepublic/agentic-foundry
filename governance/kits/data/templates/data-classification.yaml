@@ -1,0 +1,28 @@
+# Data classification scheme and handling matrix (FG-DATA-001). Fixed enum; do not add classes.
+classes: [public, internal, confidential, restricted]
+handling:
+  public:
+    storage: "any"
+    transport: "any"
+    access: "anyone"
+    retention_max_days: null
+  internal:
+    storage: "managed stores"
+    transport: "TLS"
+    access: "staff"
+    retention_max_days: 1095
+  confidential:
+    storage: "encrypted at rest"
+    transport: "TLS"
+    access: "named roles, audited"
+    retention_max_days: 730
+  restricted:
+    storage: "encrypted, key-separated"
+    transport: "TLS"
+    access: "named people, audited"
+    retention_max_days: 365
+stores:
+  - name: example-store
+    class: internal
+    retention_days: 365
+    personal_data: false

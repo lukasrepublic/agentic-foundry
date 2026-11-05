@@ -14,6 +14,12 @@ guess each time.
     foundry-merge-when-green.py <pr> [--timeout-min N] [--squash] [--poll-interval-sec N]
                                       [--no-checks-grace-min N] [--watch]
 
+THE SPLIT (gv-10): this CLI is the wait-then-merge path for a base with NO merge queue (its merge call is
+a plain squash merge of the PR). A base whose ruleset carries a merge queue is landed by
+`scripts/foundry_queue_land.py <pr>` instead (base merge, catalogue tests, the one-line record, the `--auto`
+enqueue, the queue entry read twice, rejection handling). `skills/merge-when-green` is the front for both:
+it reads the live ruleset and picks. This file's behaviour is unchanged by that split.
+
 Exit codes: 0 merged, 3 blocked (a failing check, a `skipped`/`neutral`/`cancelled` check
 conclusion -- each TERMINAL, never treated as "still waiting" since none becomes `pass` on its
 own, named in `reason` with remediation "re-run the workflow or make it a required context" -- or

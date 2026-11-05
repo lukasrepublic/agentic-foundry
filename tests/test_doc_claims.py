@@ -1502,8 +1502,8 @@ COVERED_CLAIMS = [
         "mutation_class": "remove-unit",
         # r1-followups charter (AC-RFU-3): the claim is a single round literal, the largest round
         # number that stays inside the test-count-band's [half-derived, derived] window. v2.0.0
-        # (the delivery rebase) deleted ~30 test modules, so it moved from "2000" to "1500".
-        "tokens": frozenset({"1500"}),
+        # (the delivery rebase) deleted ~30 test modules, so it moved from "2000" to "1500"; governance-2-0 (kits, policy, primitives) lifted the derived count past the band, so it moved to "2800".
+        "tokens": frozenset({"2800"}),
         "derive": _derive_test_count,
         "check": _check_test_count,
         "make_mutated": _mutate_test_count,

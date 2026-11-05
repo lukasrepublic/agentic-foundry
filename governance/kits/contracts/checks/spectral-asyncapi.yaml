@@ -1,0 +1,7 @@
+# Spectral ruleset for event descriptions. Researched 2026-11-04.
+# Run: spectral lint asyncapi.yaml --ruleset .spectral-asyncapi.yaml
+extends: ["spectral:asyncapi"]
+rules:
+  asyncapi-info-contact: warn
+  asyncapi-operation-operationId: error
+  asyncapi-channel-no-empty-parameter: error

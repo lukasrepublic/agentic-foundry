@@ -178,7 +178,21 @@ hook_comment_expectation:
   #      checkout main" && …`, `./x.sh; …`, `make …` and `git stash branch …` keep the push
   #      refused), and a remote configured as a mirror keeps it refused. Strictly narrower than 9.
   #      Corpus: tests/test_hooks_guards.py::test_v118_review_r1_*.
-  executable_content_sha256: 'a425192acca631864aadc4452d5ea6810d60b08e6669b6de633ffee9015c8401'  # v2.0.0 clause (j) local-green (ticket #269)
+  #  11. v2.0.0 clause (j) local-green (ticket #269): every push of commits needs <git-dir>/foundry-local-green
+  #      naming HEAD (written by scripts/foundry-test.sh); a non-draft `gh pr create` likewise. Admission-only,
+  #      after clause (a); opt-out `--local-green=off`. Corpus: tests/test_ticket_first.py.
+  #  12. gv-10 merge primitives (2026-11-04, security lane, PR #296, security-reviewed): clause (k) tightens the
+  #      auto-merge admission (AC-V118B-2) to "the base names a required status check, by ruleset or classic branch
+  #      protection, AND the live checks are green at the head", fail-closed; clause (l) refuses a `git push` whose
+  #      destination branch has a PR in the merge queue (GraphQL read), resolving the push remote with
+  #      `get-url --push`, skipping value-taking push flags, and refusing an unresolvable non-local host
+  #      (`remote-host-unresolvable`). Every other clause byte-identical. Corpus:
+  #      tests/test_git_discipline_queue.py, tests/test_hooks_guards.py::test_v118b2_*.
+  #  13. gv-10 round 2 (2026-11-04, security lane, PR #296): refusal text no longer carries URL userinfo
+  #      (`https://user:<token>@host` is stripped centrally in _redact), and clause (l) passes the push command's
+  #      inline `-c k=v` into the `get-url --push` probe, refusing a `-c url.*`/`remote.*` rewrite whose result is
+  #      neither local nor a host gh knows. Corpus: tests/test_git_discipline_queue.py (round 2 section).
+  executable_content_sha256: 'cf48708473b417a8c053cd292f7a7c6e0fc96a618226978c5469f40c9dc443a6'  # re-baselined for entry 13 (gv-10 round 2)
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
 operator_registry_shape:

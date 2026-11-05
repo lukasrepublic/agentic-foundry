@@ -1,0 +1,7 @@
+kit: stack
+version: 1.0.0
+category: stack
+rules: [FG-STK-001, FG-STK-002, FG-STK-003, FG-STK-004, FG-STK-005, FG-STK-006]
+checks: [checks/pinning.rego, checks/scorecard-mapping.md]
+templates: [templates/renovate.json, templates/version-matrix.md, templates/workflow-pinned.yml]
+migrations: []

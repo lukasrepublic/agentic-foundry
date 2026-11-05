@@ -1,0 +1,13 @@
+{
+  "paths": [
+    "pyproject.toml",
+    "uv.lock",
+    "dbt_project.yml",
+    "pipelines/daily.py",
+    "models/staging/orders.sql"
+  ],
+  "dependencies": [
+    "dagster",
+    "polars"
+  ]
+}

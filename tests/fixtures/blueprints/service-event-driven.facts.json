@@ -1,0 +1,13 @@
+{
+  "paths": [
+    "pyproject.toml",
+    "uv.lock",
+    "asyncapi.yaml",
+    "Dockerfile",
+    "src/app/consumers/orders.py"
+  ],
+  "dependencies": [
+    "aiokafka",
+    "pydantic"
+  ]
+}

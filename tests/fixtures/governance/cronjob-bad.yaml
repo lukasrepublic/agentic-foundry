@@ -1,0 +1,11 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata: {name: demo}
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: job
+              image: registry.example/job:1

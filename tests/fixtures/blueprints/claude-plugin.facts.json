@@ -1,0 +1,11 @@
+{
+  "paths": [
+    ".claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+    "hooks/hooks.json",
+    "skills/a/SKILL.md",
+    "skills/b/SKILL.md",
+    "pyproject.toml"
+  ],
+  "dependencies": []
+}

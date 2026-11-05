@@ -162,6 +162,7 @@ _WRITERS = [
     ("foundry_usage.py", "--dataset /d fallback-transcripts --cli-version 1"),
     ("foundry_usage.py", "--dat=/d fallback-transcripts --cli-version 1"),
     ("foundry_usage.py", "--dataset /d ingest /c"), ("foundry_usage.py", "--dat=/d attribute"),
+    ("foundry_research_note.py", "--in s.json --slug x"),   # gv-14: every invocation writes under .foundry/
 ]
 _READERS = [
     ("foundry_migrate.py", "inventory"), ("foundry_deck_events.py", "parse o/r#1 --as-of 2026-01-01T00:00:00Z"),
@@ -171,6 +172,7 @@ _READERS = [
     ("foundry_operating_model.py", "status"), ("foundry_operating_model.py", "validate"),
     ("foundry_operating_model.py", "explain deck.max_builders"), ("foundry_operating_model.py", "render-tick-section E2"),
     ("foundry_usage.py", "ingest /c"), ("foundry_usage.py", "attribute"), ("foundry_usage.py", "coverage"),
+    ("foundry_blocker_check.py", "--in x"),               # gv-14: read-only lint
 ]
 
 

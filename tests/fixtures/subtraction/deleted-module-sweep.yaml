@@ -45,7 +45,6 @@ token_set:
   - 'foundry[_-]command[_-]deck'
   - 'foundry[_-]wave[_-]plan'
   - 'foundry[_-]routine[_-]wake'
-  - 'foundry[_-]blocker[_-]check'
   - 'foundry[_-]manifest[_-]to[_-]tasklist'
   - 'foundry[_-]native[_-]todo'
   - 'foundry[_-]project[_-]sync'
@@ -157,7 +156,6 @@ absent_paths:
   - scripts/foundry_command_deck.py
   - scripts/foundry_command_deck_watch.py
   - scripts/foundry-routine-wake-prompt.py
-  - scripts/foundry_blocker_check.py
   - scripts/foundry-manifest-to-tasklist.py
   - scripts/foundry-native-todo-discipline.py
   - scripts/foundry-project-sync.py
