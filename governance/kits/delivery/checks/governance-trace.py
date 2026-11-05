@@ -147,19 +147,27 @@ def _declared_agent_logins(base: Path) -> list:
     return list(v) if isinstance(v, list) else []
 
 
-def _snippet_findings(base: Path, project: Path) -> list:
-    """`snippet-tampered:<path>` / `snippet-missing:<path>` for every installed snippet the BASE ref's lock hashes and the PR head
-    no longer matches (an edit of the file, an edit of the file together with the PR's own lock, or a deletion)."""
+def _snippet_findings(base: Path, project: Path):
+    """None when the BASE ref has no lock file at all (nothing to compare; the caller keeps the head's own findings). Otherwise
+    the list of `snippet-tampered:<path>` / `snippet-missing:<path>` for every installed snippet whose hash in the BASE lock the PR
+    head no longer matches (an edit of the file, an edit together with the PR's own lock, or a deletion). A base lock that exists but
+    cannot be read (bad YAML, no PyYAML, a malformed `snippets`) is a `lock-unreadable` finding, never "nothing to compare"."""
     import hashlib
+    lock_file = Path(base) / ".foundry" / "governance.lock"
+    if not lock_file.is_file():
+        return None
     try:
         import yaml
-        lock = yaml.safe_load((Path(base) / ".foundry" / "governance.lock").read_text(encoding="utf-8")) or {}
+        lock = yaml.safe_load(lock_file.read_text(encoding="utf-8")) or {}
         snippets = lock.get("snippets") or {}
-    except (OSError, ValueError, AttributeError, ImportError, Exception):  # noqa: BLE001 - no readable base lock: nothing to compare
-        return []
+        if not isinstance(snippets, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in snippets.items()):
+            raise ValueError("snippets is not a mapping of path to sha256")
+        items = sorted(snippets.items())
+    except Exception as exc:  # noqa: BLE001 - any failure to read the base lock is a finding
+        return [f"lock-unreadable:{type(exc).__name__}"]
     out = []
-    for dest, want in sorted(snippets.items()):
-        f = Path(project) / str(dest)
+    for dest, want in items:
+        f = Path(project) / dest
         if f.is_symlink() or (f.exists() and not f.is_file()):
             out.append(f"snippet-tampered:{dest}")
         elif not f.exists():
@@ -254,8 +262,9 @@ def run_checks(pr: dict, ticket: dict, project: Path, plugin: Path, today: str |
             lines = [f"refused: {e}"]
         # the head's own snippet findings compare with the head's own lock, which a PR can edit together with the snippet;
         # the judgement is made against the BASE ref's lock hashes below
-        lines = [ln for ln in lines if not ln.startswith("snippet-")]
-        lines += _snippet_findings(base, project)
+        from_base = _snippet_findings(base, project)
+        if from_base is not None:           # no lock in the base: the head's own snippet findings stand
+            lines = [ln for ln in lines if not ln.startswith("snippet-")] + from_base
         stale = [ln for ln in lines if ln.startswith(("rendered-stale", "lock-", "snippet-"))]
         exc = [ln for ln in lines if ln not in stale]
         add("rendered-fresh", not stale, "; ".join(stale) if stale else "governance/rendered/ matches the rules")
@@ -293,7 +302,11 @@ def main(argv=None) -> int:
         ticket = json.loads(Path(a.ticket_json).read_text(encoding="utf-8"))
         project = Path(a.project_dir or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve()
         files = json.loads(Path(a.files_json).read_text(encoding="utf-8")) if a.files_json else None
-        base = Path(a.base_dir).resolve() if a.base_dir else None
+        if not a.base_dir:
+            print("refused: --base-dir is required (a checkout of the PR's BASE ref); comparing the PR with its own lock and "
+                  "policy would let it vouch for itself", file=sys.stderr)
+            return 2
+        base = Path(a.base_dir).resolve()
         findings = run_checks(pr, ticket, project, _plugin_root(a.plugin_root), a.today, base=base, repo=a.repo, files=files,
                               agent_login=a.agent_login)
     except (OSError, ValueError) as e:

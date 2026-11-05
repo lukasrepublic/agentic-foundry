@@ -105,8 +105,10 @@ commit can change or remove earlier lines. The log is therefore **not tamper-evi
 audited or read with the current tip. It reports `history-rewritten` when `cursor..tip` removes a line under `messages/`, when a
 commit it saw is no longer an ancestor of the tip, and `cursor-commit-missing` when a cursor commit has been pruned from the clone
 (a finding of the same class). A rewrite pins the old cursor: the audit cursor is not advanced past a rewrite, so every later
-`audit` exits `3` until you have read the history and removed the cursor file (`git rev-parse --git-path
-foundry-message-audit-cursor`). `audit --no-advance` leaves the cursor where it is. The check sees only commits this clone has
+`audit` exits `3` until you have read the history and removed the cursor that names the missing or rewritten commit. Both kinds count:
+`audit` compares the audit cursor and every per-recipient read cursor in the git dir. Find them with
+`git rev-parse --git-path foundry-message-audit-cursor` (the audit cursor) and `git rev-parse --git-path foundry-message-cursor.x` (the directory of the
+read cursors, whose files are named `foundry-message-cursor.<recipient>[.<session>]`), then delete the file the finding's `since` commit came from. `audit --no-advance` leaves the cursor where it is. The check sees only commits this clone has
 already audited or read: a rewrite made before its first audit is not seen, and on an ephemeral CI runner, where the git dir is
 new every run, the cursor never exists and the check is a no-op. The git history of the branch always shows the change, and a
 reviewer can read it. Treat the log as a coordination record, not as evidence that would stand against a writer who wants to hide

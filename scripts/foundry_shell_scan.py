@@ -193,6 +193,17 @@ def _ansi_c_word(cmd: str, i: int):
     return None, None
 
 
+def _escaped(buf) -> bool:
+    """True when the characters gathered so far end in an ODD run of backslashes (the next character is escaped)."""
+    n = 0
+    for piece in reversed(buf):
+        for ch in reversed(piece):
+            if ch != "\\":
+                return n % 2 == 1
+            n += 1
+    return n % 2 == 1
+
+
 def _scan(cmd: str, emit_words: bool):
     """The single shared scan loop. If `emit_words` is False, returns only the heredoc region
     list (used for classification/neutralize). If True, also returns the full top-level Word
@@ -221,7 +232,7 @@ def _scan(cmd: str, emit_words: bool):
     # resets on an actual word boundary (whitespace/separator/newline) or at start of input.
     token_started = False
     word_quoted = False       # the current word had any quoting
-    redir_mark = -1           # len(buf) right after an UNQUOTED `<` or `>` was appended (so `>&` / `<&` can be kept whole)
+    word_is_redir = False     # the current word began with an UNQUOTED redirection operator (its operand may be quoted)
 
     def cur_kind() -> str:
         if sub_stack:
@@ -229,10 +240,10 @@ def _scan(cmd: str, emit_words: bool):
         return "word"
 
     def flush_word():
-        nonlocal buf, cur_other_consumer, token_started, word_quoted, redir_mark
+        nonlocal buf, cur_other_consumer, token_started, word_quoted, word_is_redir
         if buf:
             text = "".join(buf)
-            if word_quoted:
+            if word_quoted and not word_is_redir:
                 text = _Q(text)
             if not sub_stack and _FD_DUP_RE.match(text):
                 cur_other_consumer = True
@@ -241,7 +252,7 @@ def _scan(cmd: str, emit_words: bool):
         buf = []
         token_started = False
         word_quoted = False
-        redir_mark = -1
+        word_is_redir = False
 
     while i < n:
         ch = cmd[i]
@@ -426,12 +437,23 @@ def _scan(cmd: str, emit_words: bool):
             cur_other_consumer = False
             continue
 
-        if not sub_stack and ch == "&" and ((buf and redir_mark == len(buf)) or (not buf and not token_started and cmd[i + 1:i + 2] == ">")):
-            # gv-20: `2>&1`, `>&file`, `<&3` and `&>file` are ONE redirection word, not a redirection plus a `&` separator
-            buf.append(ch)
+        # gv-20: a redirection operator is ONE word with its fd prefix and its glued operand: `2>&1`, `>&f`, `<&3`, `&>f`, `&>>f`, `>|f`,
+        # `>>f`, `<f`, `<>f`. An UNQUOTED operator ends the word before it (`x>f` is `x` and `>f`); an escaped (`\>`) or quoted one
+        # is an ordinary character. The word is marked as a redirection even when its operand is quoted (`>"f"`).
+        if not sub_stack and ((ch in "<>" and not (cmd[i + 1:i + 2] == "(") and not _escaped(buf))
+                              or (ch == "&" and cmd[i + 1:i + 2] == ">")):
+            if buf and not (word_quoted is False and "".join(buf).isdigit() and ch != "&"):
+                flush_word()
+            if ch == "&":
+                op = "&>>" if cmd[i:i + 3] == "&>>" else "&>"
+            elif ch == ">":
+                op = ">>" if cmd[i:i + 2] == ">>" else (">|" if cmd[i:i + 2] == ">|" else (">&" if cmd[i:i + 2] == ">&" else ">"))
+            else:
+                op = "<<<" if cmd[i:i + 3] == "<<<" else ("<>" if cmd[i:i + 2] == "<>" else ("<&" if cmd[i:i + 2] == "<&" else "<"))
+            buf.append(op)
+            word_is_redir = True
             token_started = True
-            redir_mark = -1
-            i += 1
+            i += len(op)
             continue
 
         if not sub_stack and ch in ";&|":
@@ -468,7 +490,6 @@ def _scan(cmd: str, emit_words: bool):
 
         buf.append(ch)
         token_started = True
-        redir_mark = len(buf) if (ch in "<>" and not sub_stack) else -1
         i += 1
 
     flush_word()

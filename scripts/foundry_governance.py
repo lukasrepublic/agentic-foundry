@@ -1386,10 +1386,11 @@ def _plan_and_write(args, mode: str):
             cur = proj / item["dest"]
             if cur.is_file() and not cur.is_symlink():
                 snippets[item["dest"]] = hashlib.sha256(cur.read_bytes()).hexdigest()
+    plan_dests = {item["dest"] for item in plan}
     for dest, sha in ((prior or {}).get("snippets") or {}).items():
         # a snippet this run did not write (`kept`, or a merge conflict) keeps the hash the lock already had, so a re-run never
         # clears a tamper record; only an upgrade that finds the adopter removed the file drops its entry
-        if dest not in snippets and dest not in removed_dests:
+        if dest in plan_dests and dest not in snippets and dest not in removed_dests:   # a deselected kit's snippet is not carried
             snippets[dest] = sha
     if snippets or (prior or {}).get("snippets"):
         lock["snippets"] = snippets

@@ -419,7 +419,7 @@ def test_item5_control_admitted_without_a_claim(team, cmd):
 import hashlib  # noqa: E402
 import test_governance_intake as gi  # noqa: E402
 import foundry_governance as gov  # noqa: E402
-from test_governance_upgrade import adopted_repo, make_plugin_copy, run as urun, WF  # noqa: E402
+from test_governance_upgrade import adopted_repo, make_plugin_copy, run as urun, WF, git  # noqa: E402
 import shutil  # noqa: E402
 
 
@@ -793,14 +793,20 @@ PAPER_R1_REFUSED = [
     "cd tests && cd .. && rm .github/workflows/ci.yml",
     "(cd x && true); sed -i s/a/b/ .github/workflows/ci.yml",
     "cd $(git rev-parse --show-toplevel) && sed -i s/a/b/ .github/workflows/ci.yml",       # unresolvable base: payload cwd
+    "cd .github/workflows; echo x > notes.md",           # a successful cd persists across `;` ...
+    "cd .github/workflows; sed -i s/a/b/ ci.yml",
+    "cd .github/workflows\nsed -i s/a/b/ ci.yml",        # ... a newline ...
+    "cd .github/workflows || sed -i s/a/b/ ci.yml",       # ... `||` ...
+    "cd .github/workflows &&(sed -i s/a/b/ ci.yml)",      # ... and a combined token
+    "(cd /tmp) && sed -i x .github/workflows/ci.yml",
     "cd docs && sed -i s/a/b/ .github/workflows/ci.yml",                                     # a relative target also hits from the cwd
 ]
 PAPER_R1_ADMITTED = [
     "cd docs && echo x > notes.md",
-    "cd .github/workflows; echo x > notes.md",       # the base is not carried across `;`
     "rm -rf node_modules",
     "rm -rf .venv",
     "(cd docs && true); echo x > docs/ok.md",
+    "cd .github/workflows | echo x > notes.md",          # a pipe side runs in its own subshell: the base ends
 ]
 
 
@@ -873,3 +879,121 @@ def test_round1_every_hook_the_pass_changed_is_digest_pinned():
     for name, want in pins.items():
         got = hashlib.sha256(exec_content(ROOT / "hooks" / name).encode("utf-8")).hexdigest()
         assert got == want, f"hooks/{name} executable content changed: re-baseline gv20_hook_pins with a log line"
+
+
+# ------------------------------------------------------------------------------------------ round 2
+ROUND2_REFUSED = [
+    f"rm -rf {SCR}/x&>/dev/null /home/u/proj",
+    f"rm -rf {SCR}/x&>>/dev/null /home/u/proj",
+    f"rm -rf {SCR}/x >| /dev/null /home/u/proj",
+    f"rm -rf {SCR}/x>|/dev/null /home/u/proj",
+    ">''&rm -rf /home/u/proj",
+    "echo \\>&rm -rf /home/u/proj",
+    f">\"f\" rm -rf /home/u/proj",
+    "cat evil.py | python3 -v",
+    "cat evil.js | node -r ./x.js",
+    "cat evil.rb | ruby -r lib",
+    "node -r ./x.js -e 'a'",
+    "deno eval 'x'",
+    "cat e.pl | perl -I lib",
+]
+ROUND2_ADMITTED = [
+    f"rm -rf {SCR}/x 2>\"$LOG\"",
+    f"rm -rf {SCR}/x 2>'/dev/null'",
+    f">\"f\" rm -rf {SCR}/x",
+    f"rm -rf {SCR}/x&>/dev/null",
+    f"rm -rf {SCR}/x >| /dev/null",
+    f"rm -rf {SCR}/x 2>&1 >/dev/null",
+    "python3 -V",
+    "python3 --version",
+    "node -r ./x.js app.js",
+    "ruby -r lib script.rb",
+    "perl -I lib script.pl",
+]
+
+
+@pytest.mark.parametrize("cmd", ROUND2_REFUSED)
+def test_round2_shape_refused(cmd):
+    r = shape(cmd)
+    assert r.returncode == 2, (cmd, r.stdout, r.stderr)
+
+
+@pytest.mark.parametrize("cmd", ROUND2_ADMITTED)
+def test_round2_shape_control_admitted(cmd):
+    r = shape(cmd)
+    assert r.returncode == 0, (cmd, r.stdout, r.stderr)
+
+
+def test_round2_tokenizer_operators_end_the_word_and_only_a_quoted_operator_is_a_literal():
+    import foundry_shell_scan as fss
+    cmds = lambda c: [(i.cmd, list(i.args)) for i in fss.invocations(c)]          # noqa: E731
+    assert cmds("rm a&>f b") == [("rm", ["a", "&>f", "b"])]
+    assert cmds("rm a>|f b") == [("rm", ["a", ">|f", "b"])]
+    assert cmds("echo x >''&rm y") == [("echo", ["x", ">"]), ("rm", ["y"])]
+    assert cmds("echo \\>&rm y") == [("echo", ["\\>"]), ("rm", ["y"])]
+    assert cmds('rm 2>"$L" x') == [("rm", ["2>$L", "x"])]
+    args = fss.invocations('rm ">" x')[0].args
+    assert fss.redirect_operand(args[0]) is None                                   # an operator that was itself quoted
+    assert fss.redirect_operand(fss.invocations('rm >"f" x')[0].args[0]) == "f"      # an unquoted operator, quoted operand
+
+
+def test_round2_secret_guard_judges_a_tar_operand_against_the_cwd_and_every_dash_C():
+    def go(cmd):
+        return subprocess.run([sys.executable, str(SECRET)], input=json.dumps({"tool_input": {"command": cmd}, "cwd": "/home/u/proj/sub"}),
+                              capture_output=True, text=True).returncode
+    assert go("tar -cf /tmp/x ../../.ssh -C /tmp/a/b/c") == 2
+    assert go("tar -cf /tmp/x -C/home/u/.ssh .") == 2
+    assert go("tar -czC ~/.ssh -f /tmp/x .") == 2
+    assert go("tar --dir=/home/u/.aws -cf /tmp/x credentials") == 2
+    assert go("tar --directory=/home/u/.aws -cf /tmp/x .") == 2
+    assert go("tar -C /tmp/w -czf /tmp/x.tgz .") == 0
+
+
+def _gt():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("gtrace2", ROOT / "governance" / "kits" / "delivery" / "checks" / "governance-trace.py")
+    gt = importlib.util.module_from_spec(spec)
+    old, sys.dont_write_bytecode = sys.dont_write_bytecode, True
+    try:
+        spec.loader.exec_module(gt)
+    finally:
+        sys.dont_write_bytecode = old
+    return gt
+
+
+def test_round2_trace_an_unreadable_or_odd_base_lock_is_a_finding_and_no_lock_is_none(tmp_path):
+    gt = _gt()
+    base, head = tmp_path / "base", tmp_path / "head"
+    (base / ".foundry").mkdir(parents=True)
+    head.mkdir()
+    assert gt._snippet_findings(base, head) is None                                        # no lock at all: nothing to compare
+    (base / ".foundry" / "governance.lock").write_text("{not: [yaml")
+    assert gt._snippet_findings(base, head)[0].startswith("lock-unreadable")
+    (base / ".foundry" / "governance.lock").write_text("snippets: [1, 2]\n")
+    assert gt._snippet_findings(base, head)[0].startswith("lock-unreadable")
+    (base / ".foundry" / "governance.lock").write_text("snippets: {a.yml: " + "0" * 64 + "}\n")
+    assert gt._snippet_findings(base, head) == ["snippet-missing:a.yml"]                   # control: a readable lock compares
+
+
+def test_round2_trace_cli_requires_a_base_dir_and_keeps_the_heads_findings_without_a_base_lock(tmp_path):
+    pr, ticket = tmp_path / "pr.json", tmp_path / "t.json"
+    pr.write_text(json.dumps({"number": 3, "body": "Closes #7", "files": []}))
+    ticket.write_text(json.dumps({"number": 7, "body": "x", "labels": [], "author": {"login": "a"}}))
+    check = ROOT / "governance" / "kits" / "delivery" / "checks" / "governance-trace.py"
+    r = subprocess.run([sys.executable, "-B", str(check), "check", "--pr-json", str(pr), "--ticket-json", str(ticket),
+                        "--project-dir", str(tmp_path), "--plugin-root", str(ROOT)], capture_output=True, text=True)
+    assert r.returncode == 2 and "--base-dir is required" in r.stderr
+
+
+def test_round2_a_deselected_kits_snippet_is_not_carried_in_the_lock(tmp_path):
+    plugin = make_plugin_copy(tmp_path)
+    proj = adopted_repo(tmp_path, plugin)
+    yaml_ = __import__("yaml")
+    lockp = proj / ".foundry" / "governance.lock"
+    doc = yaml_.safe_load(lockp.read_text())
+    doc["snippets"]["zz-gone.yml"] = "1" * 64                                              # a dest no installed kit ships any more
+    lockp.write_text(yaml_.safe_dump(doc, sort_keys=False))
+    git(proj, "commit", "-q", "-am", "stale entry")
+    assert "snippet-missing:zz-gone.yml" in urun(proj, "check", plugin=plugin)[1]
+    urun(proj, "upgrade", plugin=plugin)
+    assert "zz-gone.yml" not in yaml_.safe_load(lockp.read_text()).get("snippets", {})

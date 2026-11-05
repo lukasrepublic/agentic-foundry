@@ -290,6 +290,34 @@ def _leading_dash(args, takes):
 _EVAL_INTERPRETERS = {"perl", "ruby", "node", "nodejs", "php", "lua", "bun", "deno"}
 _EVAL_FLAGS = {"--eval", "--print", "--exec"}
 _VERSION_FLAGS = {"-v", "-V", "--version", "-version"}
+_PY_VERSION_FLAGS = {"-V", "-VV", "--version"}
+# options that take the NEXT word as a value (so it is not the script operand), per interpreter
+_INTERP_TAKES = {
+    "node": {"-r", "--require", "--import", "--loader", "--experimental-loader", "-C", "--conditions"},
+    "nodejs": {"-r", "--require", "--import", "--loader", "--experimental-loader", "-C", "--conditions"},
+    "ruby": {"-r", "-I", "-C", "-E", "--encoding"},
+    "perl": {"-I", "-M", "-m", "-C"},
+    "lua": {"-l"},
+    "php": {"-d", "-c", "-f"},
+}
+
+
+def _interpreter_args(cmd, args):
+    """-> (the interpreter's option words, its script operand or None). Option VALUES are not script operands."""
+    takes = _INTERP_TAKES.get(cmd, set())
+    flags, script, k = [], None, 0
+    while k < len(args):
+        a = args[k]
+        if a == "--":
+            script = args[k + 1] if k + 1 < len(args) else None
+            break
+        if a.startswith("-") and a != "-":
+            flags.append(a)
+            k += 2 if a in takes else 1
+            continue
+        script = a
+        break
+    return flags, script
 
 
 def _leading_options(args):
@@ -327,19 +355,21 @@ def _check_packed(inv, depth, cwd, root, strict_mode):
         payload = _payload_after_c(args, _PY_C, _PY_TAKES)
         if payload is not None:
             _judge_payload(cmd + " -c", payload, depth, cwd, root, strict_mode, python=True)
-        elif args and all(a in _VERSION_FLAGS for a in args) and len(args) == 1:
-            return                       # `python3 -V`
+        elif len(args) == 1 and args[0] in _PY_VERSION_FLAGS:
+            return                       # `python3 -V`, `-VV`, `--version`: nothing to run (`-v` is VERBOSE and runs stdin)
         elif not [a for a in scan.strip_redirects(list(args)) if not a.startswith("-")] and "-m" not in args and "--version" not in args:
             raise Refuse("`%s` with no script operand (it reads the script from stdin, e.g. `cat s.py | %s`)" % (cmd, cmd), SHAPE_PACKED)
     elif cmd in _EVAL_INTERPRETERS:
-        lead = _leading_options(args)
+        flags, script = _interpreter_args(cmd, scan.strip_redirects(list(args)))
         if len(args) == 1 and args[0] in _VERSION_FLAGS:
             return                       # `node --version`, `perl -v`, `ruby -v`: no script, nothing to judge
+        if cmd == "deno" and args[:1] == ["eval"]:
+            raise Refuse("`deno eval` (an inline script)", SHAPE_PACKED)
         eval_short = r"-[A-Za-z]*[eEp][A-Za-z]*" if cmd in ("perl", "node", "nodejs", "bun") else r"-[A-Za-z]*[eE][A-Za-z]*"
-        if any(a in _EVAL_FLAGS for a in lead) or \
-                any(re.fullmatch(eval_short, a) for a in lead if not a.startswith("--")) or (cmd == "php" and "-r" in lead):
+        if any(f in _EVAL_FLAGS for f in flags) or any(re.fullmatch(eval_short, f) for f in flags if not f.startswith("--")) \
+                or (cmd == "php" and "-r" in flags):
             raise Refuse("`%s` with an inline script (-e/-E/--eval/-p)" % cmd, SHAPE_PACKED)
-        if not [a for a in scan.strip_redirects(list(args)) if not a.startswith("-")]:
+        if script is None:
             raise Refuse("`%s` with no script operand (it reads the script from stdin)" % cmd, SHAPE_PACKED)
 
 

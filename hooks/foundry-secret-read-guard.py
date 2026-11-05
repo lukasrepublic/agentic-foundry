@@ -414,12 +414,22 @@ def check_invocation(inv, cwd, verbs, matchers, depth=0):
                 return v
     # roots: a reader pointed at one, a `<` redirect from one, an interpreter's inline text naming one
     reads = cmd in READERS
-    if cmd == "tar":                              # gv-20: operands are relative to `-C DIR` / `--directory DIR`
+    bases = [cwd]                                 # directories a relative operand may be read from
+    if cmd == "tar":                              # gv-20: tar applies `-C DIR` in order, so an operand may sit under the cwd OR any -C
+        chain = cwd
         for k, a in enumerate(args):
-            d = args[k + 1] if a in ("-C", "--directory") and k + 1 < len(args) else (
-                a.split("=", 1)[1] if a.startswith("--directory=") else None)
+            d = None
+            if a in ("-C", "--directory", "--dir") and k + 1 < len(args):
+                d = args[k + 1]
+            elif a.startswith(("--directory=", "--dir=")):
+                d = a.split("=", 1)[1]
+            elif a.startswith("-C") and len(a) > 2:
+                d = a[2:]                                             # attached: -C/home/u
+            elif a.startswith("-") and not a.startswith("--") and "C" in a[1:] and k + 1 < len(args):
+                d = args[k + 1]                                       # bundled: -czC ~/.ssh
             if d:
-                cwd = _expand(d, cwd)
+                chain = _expand(d, chain)
+                bases += [_expand(d, cwd), chain]
     if cmd in ("curl", "wget"):
         reads = any(a.split("=", 1)[0] in _UPLOAD_FLAGS or a.startswith("-d@") for a in args) or \
             any("@" in a for a in args)
@@ -444,13 +454,13 @@ def check_invocation(inv, cwd, verbs, matchers, depth=0):
             operands = [a.split("=", 1)[1] for a in args if a.startswith("if=")]
         if _recursive_read(cmd, args):
             for w in operands:
-                if _whole_home(w, cwd):
+                if any(_whole_home(w, bs) for bs in bases):
                     return Verdict("whole-home recursive read by %s" % cmd,
                                    "`%s` reads %s recursively, which holds the no-print roots" % (cmd, w))
         for w in operands:
             if "{" in w and "}" in w and ("," in w or ".." in w):
                 return Verdict("brace expansion in %s path" % cmd, "`%s` path %s uses brace expansion" % (cmd, w))
-            root = _touches_root(w, cwd, matchers)
+            root = next((r for r in (_touches_root(w, bs, matchers) for bs in bases) if r), None)
             if root:
                 return Verdict("%s of no-print root %s" % (cmd, root), "`%s` reads %s" % (cmd, w))
     if INTERPRETERS.match(cmd):

@@ -358,34 +358,52 @@ def _bash_write_targets(command: str) -> list:
             return
         if verb in ("sed", "gsed", "perl") and any(re.fullmatch(r"-[A-Za-z]*i[A-Za-z0-9._]*", f) or f.startswith("--in-place")
                                                   for f in flags):
-            [emit(p, "file", [], False) for p in pos]     # the script text never resolves to a CI path; the files do
+            for p in pos:                                 # the script text never resolves to a CI path; the files do
+                emit(p, "file", [], False)
         elif verb in _FILE_VERBS:
-            [emit(p, "file", [], False) for p in pos]
+            for p in pos:
+                emit(p, "file", [], False)
         elif verb in _REMOVE_VERBS:
-            [emit(p, "remove", [], rec) for p in pos]
+            for p in pos:
+                emit(p, "remove", [], rec)
         elif verb in _DEST_VERBS and verb != "rsync" and _target_directory(rest)[0] is not None:
             tdir, srcs = _target_directory(rest)
             emit(tdir, "dest", srcs, rec)
             if verb == "mv":
-                [emit(p, "remove", [], True) for p in srcs]
+                for p in srcs:
+                    emit(p, "remove", [], True)
         elif verb in _DEST_VERBS and pos:
             emit(pos[-1], "dest", pos[:-1], rec or verb == "rsync")
             if verb == "mv":
-                [emit(p, "remove", [], True) for p in pos[:-1]]
+                for p in pos[:-1]:
+                    emit(p, "remove", [], True)
         elif verb == "dd":
-            [emit(a.split("=", 1)[1], "file", [], False) for a in rest if a.startswith("of=")]
+            for a in rest:
+                if a.startswith("of="):
+                    emit(a.split("=", 1)[1], "file", [], False)
 
     i = 0
     while i < len(toks):
         t = toks[i]
         if t and set(t) <= set(";&|()"):                 # a command separator
             finish()
-            if t == "(":
-                stack.append(cur[0])                      # a subshell: its `cd` ends at the `)`
-            elif t == ")":
-                cur[0] = stack.pop() if stack else ""
-            elif t != "&&":
-                cur[0] = ""                              # `;`, `||`, `|`, `&`, newline: the `cd` base is not carried
+            # A successful `cd` persists across `;`, newline, `&&` and `||`, so the base is carried over all of them (judging against
+            # it AND the cwd is fail-closed). It ends at a pipe (each side runs in its own subshell), a lone `&` (background)
+            # and the `)` that closes a subshell. A token may combine operators (`&&(`): read it one operator at a time.
+            k = 0
+            while k < len(t):
+                two = t[k:k + 2]
+                if two in ("&&", "||"):
+                    k += 2
+                    continue
+                c = t[k]
+                if c == "(":
+                    stack.append(cur[0])
+                elif c == ")":
+                    cur[0] = stack.pop() if stack else ""
+                elif c in "|&":
+                    cur[0] = ""
+                k += 1
         elif t and set(t) <= set("<>&|") and (">" in t or "<" in t):   # a redirect operator: its operand is the next word
             tgt = toks[i + 1] if i + 1 < len(toks) else ""
             if ">" in t and tgt and not tgt.isdigit() and not tgt.startswith("&"):

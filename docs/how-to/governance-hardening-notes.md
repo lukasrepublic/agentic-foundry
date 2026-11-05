@@ -27,4 +27,5 @@ has a test in `tests/test_hardening_gv20.py`. The operator's own test pass stays
 - `rm -rf .` from a large root depends on the walk cap (a fixed file count, `node_modules`, `.venv` and `.git` skipped): past the cap the rest is not looked at.
 - Clause (m) does not model GraphQL `createPullRequest`, `gh` aliases, or `-F draft=true -F draft=false` (the last field wins server-side; the hook reads the first).
 - `governance-trace` compares installed snippets with the BASE ref's lock hashes, so a pull request that legitimately upgrades a kit snippet fails `rendered-fresh` until the base lock carries the new hash.
+- A snippet whose hand edit `apply` kept reports `snippet-tampered` until `upgrade` re-baselines it; that is intended. A snippet whose kit is deselected is no longer carried in the lock.
 - The hooks run without `-I`; the harness starts them, so the shebang line is not changed here.

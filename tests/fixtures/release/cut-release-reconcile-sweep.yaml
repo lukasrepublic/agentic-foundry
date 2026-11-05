@@ -209,10 +209,13 @@ hook_comment_expectation:
 #   1. gv-20 (2026-11-05, security lane): paper guard (cd tracking, -t, recursive copies, rm -rf trees, worktree/nested CI),
 #      shell-shape (redirect forms, ANSI/locale quoting, packed interpreters, delete verbs, own-session scratch), secret-read
 #      guard (option-tolerant verbs, dd if=, whole-home reads, tar -C, /proc/*/environ), plugin-scripts-allow (env remote ask).
+#   2. gv-20 round 2 (2026-11-05): paper guard keeps a successful `cd` across `;`, newline, `||`, `&&` (ends at a pipe, a lone `&`, `)`);
+#      shell-shape: python `-V` only as a version flag, per-interpreter option values, `deno eval`; secret-read guard: tar operands
+#      judged against the cwd and every -C.
 gv20_hook_pins:
-  foundry-paper-guard.py: '9e8abf6394b8db64b96fcf32db05f0bebe71180f5f2393b0134cbf4a80df6f2f'
-  foundry-shell-shape.py: 'a6f7f7e0aac1c65a2423d2518e7c8617fb79cf259af7f7a54161e7f2766627dc'
-  foundry-secret-read-guard.py: '1450101d43eacb76b99a8b9abc4ffdfb9158c29ecc9d7ced27f8463367a5457a'
+  foundry-paper-guard.py: '3eb3a8c3f10e673c3f127b327dad0b6059035c16f9c75c1b59f6db2d88c807a2'
+  foundry-shell-shape.py: 'b3049334cb4dfa3e6e217180ccfd4788a2355cf011759cb936c99d88cd5c393e'
+  foundry-secret-read-guard.py: 'be53579c7f8b431fb9b949408f76aa4e553285fc8338c8da6a1739d6ffaf57de'
   foundry-plugin-scripts-allow.py: '2d2e3ff27e8ba1430767f87616e780f406101f390424f4abdc3194d2a3d5e7f3'
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
