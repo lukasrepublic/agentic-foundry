@@ -53,7 +53,7 @@ The "Acts through" column says how far the key reaches. Read it before you rely 
 | `deck.max_agent_calls` | tunable | `150` | S5 | script | section S5 of the tick prompt (`render-tick-section S5`); every dispatch brief |
 | `deck.max_wait_s` | tunable | `60` | S5 | script | section S5 of the tick prompt |
 | `deck.note_max_tokens` | tunable | `2000` | S5 | script | section S5 of the tick prompt |
-| `deck.stall_after_ticks` | tunable | `3` | S5 | script | `scripts/deck-cost-census.py --stall-check`; the `cost-without-progress` stall class in `scripts/foundry_blocker_check.py` |
+| `deck.stall_after_ticks` | tunable | `3` | S5 | script | `scripts/deck-cost-census.py --stall-check` (the flag `--stall-after` overrides it; it must be one or more) and the `cost-without-progress` stall class in `scripts/foundry_blocker_check.py`, which wants exactly this many ordered log lines |
 | `deck.heavy_slots` | tunable | `auto` | B2 | script | `scripts/foundry_deck_resources.py`, `scripts/foundry-deck-heavy` |
 | `deck.resource_check` | floor | `true` | B2 | const floor | `scripts/foundry_deck_resources.py`, run first in every tick |
 | `deck.workflow_size_source` | floor | `"smallest"` | B8 | const floor | section B8 of the tick prompt (`resolve_workflow_size` in `scripts/foundry_operating_model.py`) |
@@ -159,3 +159,15 @@ and paste the output between the two marker comments.
 
 An `UNMAPPED` row would mean a rule with no acceptance criterion. The script exits non-zero in that case, so the gap is
 visible to whoever runs it.
+
+## The cost census (S5)
+
+`scripts/deck-cost-census.py` prints `agents started N | longest agent C calls | items closed K`. The report renderer
+puts the same line last, as a trailer that does not count toward `report.max_lines`, and `--append-cost <log>` (with
+`--ci-pending` for a tick with a deck PR in the merge queue or CI pending) appends it to `cost-reports.log`. A
+ci-pending line is skipped by the stall rule: it neither counts nor resets the run.
+
+`--prs FILE` is JSON: a list of items, or an object `{"merged": [...], "authorized": [...]}`. An item is an ISO date-time
+string or an object with one of `mergedAt`, `authorizedAt`, `at`, `merged_at`, `authorized_at`. With `--repo` (which
+needs `--branch-prefix`) merged PRs come from `gh` and authorized atoms only from the `authorized` list of `--prs`.
+The plugin-scripts-allow hook asks on `--append`, `--repo` and `--prs`; the plain census and `--stall-check` stay silent.

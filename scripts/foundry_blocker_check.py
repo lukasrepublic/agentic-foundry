@@ -298,29 +298,40 @@ def validate_candidate(candidate) -> list[str]:
 
 
 # S5 rule 8: a deck stall class. It is not an operator-only claim, so it has its own shape: {stall_class, evidence}
-# with `evidence` = the last `deck.stall_after_ticks` cost-log lines (default 3), all counted (no ci-pending tag),
-# each with N > 0 and K = 0. A valid one is reported as a blocker; an invalid one is demoted with its reason.
+# with `evidence` = the last `deck.stall_after_ticks` cost-log lines (policy; default 3), consecutive and in order
+# (stamps never decrease), all counted (no ci-pending tag), each with N > 0 and K = 0. The line grammar is the
+# ONE in foundry_deck_report.py. A valid one is reported as a blocker; an invalid one is demoted with its reason.
 _STALL_CLASSES = ("cost-without-progress",)
-_COST_LOG_LINE = re.compile(
-    r"^\S+ agents started (\d+) \| longest agent (\d+) calls \| items closed (\d+)( ci-pending)?$")
 
 
 def _stall_errors(candidate) -> list[str]:
+    if _HERE_DIR not in sys.path:
+        sys.path.insert(0, _HERE_DIR)
+    import foundry_deck_report as dr
     errs: list[str] = []
     unknown = sorted(set(candidate) - {"stall_class", "evidence", "claim"})
     if unknown:
         errs.append(f"unknown field(s) {unknown!r} on a stall candidate")
+    try:
+        need = dr.stall_ticks()
+    except Exception as exc:  # noqa: BLE001 - a broken policy file must not become a silent default
+        raise BlockerCheckError(f"cannot read deck.stall_after_ticks: {type(exc).__name__}")
     ev = candidate.get("evidence")
-    if not isinstance(ev, list) or len(ev) < 3:
-        return errs + ["stall evidence must be a list of at least 3 cost-log lines"]
+    if not isinstance(ev, list) or len(ev) != need:
+        return errs + [f"stall evidence must be exactly {need} cost-log lines (deck.stall_after_ticks)"]
+    stamps = []
     for i, line in enumerate(ev):
-        m = _COST_LOG_LINE.match(line) if isinstance(line, str) else None
-        if not m:
+        row = dr.parse_log_line(line) if isinstance(line, str) else None
+        if not row:
             errs.append(f"evidence[{i}] is not a cost-log line")
-        elif m.group(4):
+        elif row[4]:
             errs.append(f"evidence[{i}] is ci-pending and does not count")
-        elif int(m.group(1)) == 0 or int(m.group(3)) != 0:
+        elif row[1] == 0 or row[3] != 0:
             errs.append(f"evidence[{i}] does not have N > 0 and K = 0")
+        else:
+            stamps.append(row[0])
+    if not errs and stamps != sorted(stamps):
+        errs.append("evidence lines are not in order (stamps decrease)")
     return errs
 
 

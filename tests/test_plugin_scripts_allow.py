@@ -163,6 +163,9 @@ _WRITERS = [
     ("foundry_usage.py", "--dat=/d fallback-transcripts --cli-version 1"),
     ("foundry_usage.py", "--dataset /d ingest /c"), ("foundry_usage.py", "--dat=/d attribute"),
     ("foundry_research_note.py", "--in s.json --slug x"),   # gv-14: every invocation writes under .foundry/
+    ("deck-cost-census.py", "--session-dir /s --append /l"), ("deck-cost-census.py", "--session-dir /s --app /l"),
+    ("deck-cost-census.py", "--session-dir /s --repo o/r --branch-prefix dl/"),
+    ("deck-cost-census.py", "--session-dir /s --prs /p.json"), ("deck-cost-census.py", "--session-dir /s --pr=/p.json"),
 ]
 _READERS = [
     ("foundry_migrate.py", "inventory"), ("foundry_deck_events.py", "parse o/r#1 --as-of 2026-01-01T00:00:00Z"),
@@ -175,6 +178,8 @@ _READERS = [
     ("foundry_blocker_check.py", "--in x"),               # gv-14: read-only lint
     ("foundry_om_trace.py", "--charters x"),              # gv-16: read-only traceability table
     ("foundry_ci_budget_lint.py", "x.yml"),               # gv-16: read-only CI budget lint
+    ("deck-cost-census.py", "--session-dir /s --since 2026-01-01T00:00:00Z"),   # dl-14: read-only census
+    ("deck-cost-census.py", "--stall-check /l"),                                # dl-14: read-only log check
 ]
 
 

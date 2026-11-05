@@ -62,7 +62,9 @@ def run(proj, t, *extra):
 
 
 def lines(text):
-    return text.rstrip("\n").split("\n")
+    """The report lines that count toward max_lines: the S5 cost line is a trailer and is left out."""
+    out = text.rstrip("\n").split("\n")
+    return out[:-1] if out and out[-1].startswith("agents started ") else out
 
 
 def is_heading(line, title):
@@ -96,17 +98,17 @@ def test_an_empty_block_is_one_line(proj):
 
 
 def test_every_line_counts_toward_max_lines_headings_included(proj):
-    policy(proj, timezone="UTC", max_lines=7)
+    policy(proj, timezone="UTC", max_lines=6)
     rc, out, _ = run(proj, tick(building=[], ledger=[]))
-    assert rc == 0 and len(lines(out)) == 6        # first line + cost line + four one-line blocks
+    assert rc == 0 and len(lines(out)) == 5        # first line + four one-line blocks
     rc, out, _ = run(proj, tick(building=[], ledger=["one"]))
-    assert rc == 0 and len(lines(out)) == 7        # exactly at the limit
+    assert rc == 0 and len(lines(out)) == 6        # exactly at the limit
     rc, out, err = run(proj, tick(building=[], ledger=["one", "two"]))
-    assert rc == 2 and out == "" and "too-many-lines:8>max_lines=7" in err
+    assert rc == 2 and out == "" and "too-many-lines:7>max_lines=6" in err
 
 
 def test_the_output_never_exceeds_max_lines(proj):
-    for n in (7, 8, 12):
+    for n in (6, 8, 12):
         policy(proj, timezone="UTC", max_lines=n)
         rc, out, _ = run(proj, tick(ledger=[]))
         assert rc == 0 and len(lines(out)) <= n
@@ -179,7 +181,7 @@ def test_control_and_format_characters_are_stripped_from_every_field(proj):
     rc, out, _ = run(proj, t)
     assert rc == 0
     assert all(c not in out for c in ("\x1b", "‮", "​"))
-    assert len(lines(out)) == out.count("\n")                      # no embedded line break forged a line
+    assert len(out.rstrip("\n").split("\n")) == out.count("\n")                      # no embedded line break forged a line
 
 
 def test_long_fields_are_cut(proj):
@@ -437,7 +439,7 @@ def needs(out):
 
 
 def test_five_or_more_findings_at_the_default_max_lines_render(proj):
-    rc, out, err = run(proj, tick(building=[], ledger=[], message_log={"audit": {"findings": findings(7)}}))
+    rc, out, err = run(proj, tick(ledger=[], message_log={"audit": {"findings": findings(7)}}))
     ls = lines(out)
     assert rc == 0, err
     assert len(ls) <= DEFAULT_MAX
@@ -462,10 +464,10 @@ def test_findings_fit_whatever_room_is_left_and_never_overflow(proj, max_lines, 
 
 
 def test_with_no_room_the_summary_rides_on_the_needs_you_heading(proj):
-    policy(proj, timezone="UTC", max_lines=7)
+    policy(proj, timezone="UTC", max_lines=6)
     rc, out, _ = run(proj, tick(building=[], ledger=["one"], message_log={"audit": {"findings": findings(4)}}))
     ls = lines(out)
-    assert rc == 0 and len(ls) == 7
+    assert rc == 0 and len(ls) == 6
     assert any(l.startswith("Needs you (4 process findings, 0 malformed records - see audit)") for l in ls)
 
 
@@ -476,7 +478,7 @@ def test_the_lead_s_own_overflow_still_refuses_with_findings_present(proj):
 
 
 def test_one_finding_is_shown_as_itself(proj):
-    rc, out, _ = run(proj, tick(ledger=[], message_log={"audit": {"findings": findings(1)}}))
+    rc, out, _ = run(proj, tick(message_log={"audit": {"findings": findings(1)}}))
     n = needs(out)
     assert rc == 0 and len(n) == 1 and "missing-corr" in n[0] and "reason:" in n[0]
 
@@ -588,3 +590,11 @@ def test_a_broken_policy_is_a_named_refusal(proj):
 
 def test_the_script_source_has_no_retired_token():
     assert ("c" + "t" + "x") not in SCRIPT.read_text().lower()
+
+
+def test_a_default_size_report_plus_the_cost_line_renders(proj):
+    rc, out, err = run(proj, tick())
+    assert rc == 0, err
+    ls = out.rstrip("\n").split("\n")
+    assert ls[-1] == "agents started 1 | longest agent 20 calls | items closed 2"
+    assert len(ls) - 1 <= DEFAULT_MAX and len(ls) == len(lines(out)) + 1

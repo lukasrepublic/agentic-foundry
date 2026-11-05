@@ -1,5 +1,6 @@
 """dl-14: the S5 cost census, policy keys, tick section, cost line and the cost-without-progress stall class."""
 import importlib.util
+import os
 import io
 import json
 import subprocess
@@ -25,12 +26,14 @@ TEMPLATE = Path(__file__).resolve().parent.parent / "skills" / "command-deck" / 
 LINE = "agents started 2 | longest agent 40 calls | items closed 3"
 
 
-def _agent(path, ts, calls):
+def _agent(path, ts, calls, mtime=None):
     recs = [{"timestamp": ts, "message": {"role": "user", "content": "go"}}]
     for _ in range(calls):
         recs.append({"timestamp": ts, "message": {"role": "assistant",
                                                   "content": [{"type": "text", "text": "x"}, {"type": "tool_use", "name": "Bash"}]}})
     path.write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+    t = census.parse_ts(mtime or ts).timestamp()
+    os.utime(path, (t, t))
 
 
 @pytest.fixture()
@@ -96,11 +99,11 @@ def test_progress_breaks_the_run(tmp_path):
     assert census.main(["--stall-check", str(_log(tmp_path, [STALLED, PROGRESS, STALLED, STALLED]))]) == 0
 
 
-def test_a_ci_pending_line_resets_the_run(tmp_path):
+def test_a_ci_pending_line_is_skipped_not_reset(tmp_path):
     rows = [STALLED, STALLED + " ci-pending", STALLED]
-    assert census.main(["--stall-check", str(_log(tmp_path, rows))]) == 0
-    assert census.main(["--stall-check", str(_log(tmp_path, rows + [STALLED]))]) == 0
-    assert census.main(["--stall-check", str(_log(tmp_path, rows + [STALLED] * 3))]) == 3
+    assert census.main(["--stall-check", str(_log(tmp_path, rows))]) == 0            # only 2 counted lines
+    assert census.main(["--stall-check", str(_log(tmp_path, rows + [STALLED]))]) == 3  # 3 counted, the pending one skipped
+    assert census.main(["--stall-check", str(_log(tmp_path, [STALLED, STALLED, PROGRESS + " ci-pending", STALLED]))]) == 3
 
 
 def test_zero_agents_is_not_a_stall(tmp_path):
@@ -221,3 +224,118 @@ def test_cost_without_progress_is_accepted_with_three_log_lines():
 def test_a_bad_stall_candidate_is_demoted(cand):
     out = bc.partition([cand])
     assert out["blockers"] == [] and len(out["next_tasks"]) == 1
+
+
+# --- round 2 ---------------------------------------------------------------------------------------
+def test_stall_after_must_be_at_least_one(tmp_path, capsys):
+    for bad in ("0", "-2"):
+        assert census.main(["--stall-check", str(_log(tmp_path, [STALLED] * 3)), "--stall-after", bad]) == 2
+
+
+def test_stall_after_defaults_to_the_policy(tmp_path, monkeypatch):
+    proj = tmp_path / "p"
+    (proj / ".foundry").mkdir(parents=True)
+    (proj / ".foundry" / "operating-model.yaml").write_text("deck:\n  stall_after_ticks: 2\n")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+    assert census.main(["--stall-check", str(_log(tmp_path, [STALLED] * 2))]) == 3
+    assert census.main(["--stall-check", str(_log(tmp_path, [STALLED] * 1))]) == 0
+
+
+def test_the_log_regex_rejects_a_trailing_newline():
+    assert dr.parse_log_line("2026-11-05T10:00:00Z " + STALLED) is not None
+    assert dr.parse_log_line("2026-11-05T10:00:00Z " + STALLED + "\n") is None
+    assert dr.COST_LINE_RE.fullmatch(LINE + "\n") is None
+
+
+def test_one_implementation_of_the_log_logic():
+    assert not hasattr(census, "stall") and not hasattr(census, "_LOG_RE")
+    assert not hasattr(bc, "_COST_LOG_LINE")
+
+
+def test_census_refuses_a_session_dir_without_agent_dirs(tmp_path, capsys):
+    (tmp_path / "other.jsonl").write_text("{}\n")
+    assert census.main(["--session-dir", str(tmp_path)]) == 2
+
+
+def test_census_skips_symlinks(session, tmp_path):
+    root, prs = session
+    (tmp_path / "elsewhere.jsonl").write_text("{}\n")
+    _agent(tmp_path / "real.jsonl", "2026-11-05T10:31:00Z", 999)
+    os.symlink(tmp_path / "real.jsonl", root / "subagents" / "agent-link.jsonl")
+    n, c = census.count_agents(str(root), census.parse_ts("2026-11-05T10:00:00Z"))
+    assert (n, c) == (2, 40)
+
+
+def test_a_long_agent_spanning_ticks_shows_in_c(tmp_path):
+    d = tmp_path / "subagents"
+    d.mkdir()
+    _agent(d / "agent-long.jsonl", "2026-11-05T08:00:00Z", 300, mtime="2026-11-05T10:20:00Z")   # started before, active since
+    _agent(d / "agent-new.jsonl", "2026-11-05T10:30:00Z", 5)
+    assert census.count_agents(str(tmp_path), census.parse_ts("2026-11-05T10:00:00Z")) == (1, 300)
+
+
+@pytest.mark.parametrize("body", ['"x"', '{"merged": "nope"}', '{"merged": [1]}', '[1, 2]', '{"authorized": {"a": 1}}', 'not json'])
+def test_malformed_prs_exit_2_without_a_traceback(tmp_path, body):
+    (tmp_path / "subagents").mkdir()
+    f = tmp_path / "p.json"
+    f.write_text(body)
+    r = subprocess.run([sys.executable, str(CENSUS), "--session-dir", str(tmp_path), "--prs", str(f)],
+                       capture_output=True, text=True)
+    assert r.returncode == 2 and "Traceback" not in r.stderr
+
+
+def test_append_to_an_unwritable_log_exits_2(session, tmp_path):
+    root, _ = session
+    assert census.main(["--session-dir", str(root), "--append", str(tmp_path / "no" / "such" / "log")]) == 2
+
+
+def test_repo_needs_a_branch_prefix(session):
+    root, _ = session
+    assert census.main(["--session-dir", str(root), "--repo", "o/r"]) == 2
+
+
+def test_repo_counts_only_the_branch_prefix_and_authorized_comes_from_prs(session, monkeypatch, capsys):
+    root, prs = session
+    rows = [{"mergedAt": "2026-11-05T10:40:00Z", "headRefName": "dl/dl-1"},
+            {"mergedAt": "2026-11-05T10:41:00Z", "headRefName": "other/x"}]
+    seen = {}
+
+    def fake(repo, prefix, since=None):
+        seen.update(repo=repo, prefix=prefix)
+        return [r for r in rows if r["headRefName"].startswith(prefix)]
+    monkeypatch.setattr(census, "gh_merged", fake)
+    assert census.main(["--session-dir", str(root), "--since", "2026-11-05T10:00:00Z", "--repo", "o/r",
+                        "--branch-prefix", "dl/", "--prs", str(prs)]) == 0
+    assert capsys.readouterr().out.strip().endswith("items closed 2")     # 1 gh PR + 1 authorized atom from --prs
+    assert seen == {"repo": "o/r", "prefix": "dl/"}
+
+
+def test_report_ci_pending_tag_and_skip(tmp_path):
+    log = tmp_path / "cost-reports.log"
+    assert _run(tmp_path, _tick(cost={"agents_started": 1, "longest_agent_calls": 1, "items_closed": 0}),
+                "--append-cost", str(log), "--ci-pending")[0] == 0
+    assert log.read_text().rstrip("\n").endswith(" ci-pending")
+
+
+def test_the_cost_line_is_a_trailer_outside_max_lines(tmp_path):
+    (tmp_path / ".foundry").mkdir(exist_ok=True)
+    import yaml
+    (tmp_path / ".foundry" / "operating-model.yaml").write_text(yaml.safe_dump({"report": {"max_lines": 6, "timezone": "UTC"}}))
+    rc, out, err = _run(tmp_path, _tick(ledger=["one"]))
+    assert rc == 0, err
+    ls = out.rstrip("\n").split("\n")
+    assert ls[-1] == LINE and len(ls) == 6 + 1
+
+
+def test_blocker_evidence_must_match_the_policy_count_and_order(tmp_path, monkeypatch):
+    proj = tmp_path / "p"
+    (proj / ".foundry").mkdir(parents=True)
+    (proj / ".foundry" / "operating-model.yaml").write_text("deck:\n  stall_after_ticks: 4\n")
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(proj))
+    assert bc.partition([_stall([STALLED] * 3)])["blockers"] == []
+    assert len(bc.partition([_stall([STALLED] * 4)])["blockers"]) == 1
+    rev = _stall([STALLED] * 3)
+    rev["evidence"] = list(reversed(rev["evidence"]))
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR")
+    assert bc.partition([rev])["blockers"] == []
+    assert bc.partition([_stall([STALLED] * 3, evidence=_stall([STALLED] * 3)["evidence"][:2] + [_stall([STALLED] * 3)["evidence"][2] + "\n"])])["blockers"] == []
