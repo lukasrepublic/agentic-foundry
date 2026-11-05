@@ -26,6 +26,12 @@ core-plugin `skills/` bundle leak) so a lock either verb writes always resolves 
 stay separate operations so `--lock` never silently re-points an adopter's existing lock and
 `relock` never silently creates one that was never adopted.
 
+> **Governance lock.** The blueprint choice now also lives in `.foundry/governance.lock`; the first
+> `foundry_governance.py apply|upgrade` on a workspace with a stack-profile lock carries the lock's blueprint
+> into the governance lock (a one-time migration). Blueprint and kit drift against the plugin is reported by
+> `foundry_governance.py check` and brought current by `foundry_governance.py upgrade --pr`. This verb keeps
+> re-pinning the stack-profile lock for `/foundry:verify` and the doctor.
+
 ## When to trigger
 
 - `/foundry:doctor` shows the `stack-profile-lock` ADVISORY `lock behind the profile version this

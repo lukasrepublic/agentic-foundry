@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "_comment": "The classification table the updater's preview reads (feat-foundry-adoption-npx-upgrade-2-0, AC-NPX-4/-6): every workspace path a run touches is exactly one of framework-owned, project-customization or retained-history. A path no pattern matches is project-customization. Patterns are workspace-relative; `*` stays inside one path segment, `**` crosses segments. Framework-owned is checked first, so a declared managed path under specs/ (the two README seeds) is framework-owned. Every retired-artifact catalogue entry is ALSO framework-owned; the updater adds those from retired-artifacts.json at run time, so they are not repeated here.",
+  "_comment": "gv-15: `.foundry/governance.lock` (machine-owned by `governance upgrade`) and `governance/local/**` (the adopter layer) are retained-history, the updater's never-overwrite set. The classification table the updater's preview reads (feat-foundry-adoption-npx-upgrade-2-0, AC-NPX-4/-6): every workspace path a run touches is exactly one of framework-owned, project-customization or retained-history. A path no pattern matches is project-customization. Patterns are workspace-relative; `*` stays inside one path segment, `**` crosses segments. Framework-owned is checked first, so a declared managed path under specs/ (the two README seeds) is framework-owned. Every retired-artifact catalogue entry is ALSO framework-owned; the updater adds those from retired-artifacts.json at run time, so they are not repeated here.",
   "default_class": "project-customization",
   "classes": {
     "framework-owned": [
@@ -23,6 +23,8 @@
       ".foundry/releases/**",
       ".foundry/authorized/**",
       ".foundry/decisions/**",
+      ".foundry/governance.lock",
+      "governance/local/**",
       "**/acceptance-contract.yaml"
     ]
   }

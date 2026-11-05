@@ -56,6 +56,33 @@ downstream pipeline.
    `main`. `context/branch-discipline.md` is the rule set and the platform's branch protection is the
    merge gate; nothing here checks a PR's base.
 
+## `intake existing` — governance intake of a codebase that already exists
+
+The same five steps `/foundry:init` runs (design 5.5): discover, select, declare, apply, baseline. Brownfield
+onboarding is by pull request, never by regeneration: `apply --pr` writes `.foundry/governance.lock`, scaffolds
+`governance/local/`, installs the selected kits' CI snippets and opens one PR for the operator to review. The
+same verbs run again as `upgrade` when the plugin advances (the updater runs it; `/foundry:post-upgrade`
+reviews the PR).
+
+1. **Discover.** `foundry_governance.py discover --summary` - ordered file-signal detectors over manifests,
+   lockfiles, CI, IaC, containers, dependency names and authentication libraries. Each detector says `found`,
+   `not-found` or `could-not-look`; report a `could-not-look` to the operator, never read it as absent.
+2. **Select.** `foundry_governance.py select` prints the ranked blueprints with evidence and exits 3
+   (decision needed) without writing anything. Ask the operator for ONE word, then
+   `select --confirm <blueprint-id>`. Selection is a declared signature table, not an inference: there is no
+   prior art for facts to kits by judgement, so do not present an LLM proposal as the answer
+   (`--suggest <id>` prints it labelled as a suggestion).
+3. **Declare.** `declare --asvs-level N --data-classification <class> --trust-boundary '<glob>' --surfaces <list>`
+   (surfaces: `ui`, `api`, `cli`, `workflows`, `mcp`, `goal-agents`). Ask; do not invent. An authentication
+   library hint is printed as a hint only.
+4. **Apply.** `apply --pr` (a dirty tracked tree is refused; running it twice changes nothing).
+5. **Baseline.** For each check that already fails today, freeze the findings so only new violations fail:
+   `baseline --check <name> --findings <file>`.
+
+Every verb prints what it did and exits 0 ok, 1 findings, 2 refused, 3 decision needed. Never edit the lock or
+`governance/rendered/` by hand; the adopter layer is `governance/local/`. Full walkthrough:
+`docs/how-to/governance-intake-and-upgrade.md`.
+
 ## Lane routing (the game test)
 
 Route every atom by **Beck's game test** — most work is "the plumbing game" (low stakes, cheap

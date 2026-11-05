@@ -892,7 +892,7 @@ def test_the_cli_never_spawns_claude_or_writes_home_claude(tmp_path):
     # made through an alias. Resolving the local binding names first means a rename cannot walk a
     # spawn out of this guard's view; it also pins the imported SURFACE, so `spawn`/`exec`/`execSync`
     # (shell-bearing, or stream-shaped) cannot be introduced without this assertion being revisited.
-    UPDATE_PATH = {"update.mjs", "pluginRefresh.mjs", "cleanup.mjs", "pythonDeps.mjs"}
+    UPDATE_PATH = {"update.mjs", "pluginRefresh.mjs", "cleanup.mjs", "pythonDeps.mjs", "governanceUpgrade.mjs"}
     ALLOWED_CP_IMPORTS = {"execFileSync", "execFile"}
     create_spawns, update_spawns = [], []
     for f in _iter_mjs_files(CLI_DIR / "src"):
@@ -955,6 +955,13 @@ def test_the_cli_never_spawns_claude_or_writes_home_claude(tmp_path):
     py_src = (CLI_DIR / "src" / "pythonDeps.mjs").read_text()
     assert "claude" not in re.sub(r"//.*", "", py_src).replace("Claude", ""), "pythonDeps.mjs must never reach claude"
     update_spawns = [(f, a) for f, a in update_spawns if f.name != "pythonDeps.mjs"]
+    # gv-15: the governance step spawns the interpreter from exactly one site (runPython in governanceUpgrade.mjs),
+    # whose only caller passes the fixed `<plugin>/scripts/foundry_governance.py --project-dir <cwd> upgrade --pr` argv.
+    gov_spawns = [(f, a) for f, a in update_spawns if f.name == "governanceUpgrade.mjs"]
+    assert [a for _, a in gov_spawns] == ["python"], f"governanceUpgrade.mjs spawns outside runPython: {gov_spawns}"
+    gov_src = (CLI_DIR / "src" / "governanceUpgrade.mjs").read_text()
+    assert "claude" not in re.sub(r"//.*", "", gov_src).replace("Claude", ""), "governanceUpgrade.mjs must never reach claude"
+    update_spawns = [(f, a) for f, a in update_spawns if f.name != "governanceUpgrade.mjs"]
     assert [f.name for f, _ in update_spawns] == ["pluginRefresh.mjs"], (
         f"the claude spawn must live in exactly one update-path module, found: "
         f"{[f.name for f, _ in update_spawns]}"

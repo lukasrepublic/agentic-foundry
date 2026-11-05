@@ -3,46 +3,121 @@
   "$id": "https://github.com/lukasrepublic/agentic-foundry/schema/governance-lock.schema.json",
   "title": "Governance lock (.foundry/governance.lock) - machine-owned",
   "type": "object",
-  "required": ["blueprint", "kits", "declarations", "facts_sha256", "intake_at", "plugin_version"],
+  "required": [
+    "blueprint",
+    "kits",
+    "declarations",
+    "facts_sha256",
+    "intake_at",
+    "plugin_version"
+  ],
   "additionalProperties": false,
   "properties": {
     "blueprint": {
       "type": "object",
-      "required": ["id", "version", "sha256"],
+      "required": [
+        "id",
+        "version",
+        "sha256"
+      ],
       "additionalProperties": false,
       "properties": {
-        "id": {"type": "string", "minLength": 1},
-        "version": {"type": "string"},
-        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "version": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
       }
     },
     "kits": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["id", "version", "sha256", "level"],
+        "required": [
+          "id",
+          "version",
+          "sha256",
+          "level"
+        ],
         "additionalProperties": false,
         "properties": {
-          "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
-          "version": {"type": "string"},
-          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-          "level": {"type": "integer", "minimum": 1, "maximum": 3}
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$"
+          },
+          "version": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "level": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3
+          }
         }
       }
     },
     "declarations": {
-      "type": "object",
-      "required": ["asvs_level", "data_classification", "trust_boundaries", "surfaces"],
-      "additionalProperties": false,
-      "properties": {
-        "asvs_level": {"type": "integer", "minimum": 1, "maximum": 3},
-        "data_classification": {"type": "array", "items": {"type": "string"}},
-        "trust_boundaries": {"type": "array", "items": {"type": "string"}},
-        "surfaces": {"type": "array", "items": {"type": "string"}}
-      }
+      "oneOf": [
+        {
+          "const": "pending",
+          "description": "Absorbed from a legacy stack-profile lock; the operator has not declared yet (`declare`)."
+        },
+        {
+          "type": "object",
+          "required": [
+            "asvs_level",
+            "data_classification",
+            "trust_boundaries",
+            "surfaces"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "asvs_level": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3
+            },
+            "data_classification": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "trust_boundaries": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "surfaces": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
     },
-    "facts_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "intake_at": {"type": "string"},
-    "plugin_version": {"type": "string"}
+    "facts_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "intake_at": {
+      "type": "string"
+    },
+    "plugin_version": {
+      "type": "string"
+    }
   }
 }

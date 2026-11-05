@@ -194,6 +194,41 @@ standalone plugin repo) so the gates are live + fail-closed.
 
    If the operator selects no profile, skip this block entirely and move on — do not run `--lock`
    with an empty/placeholder id.
+
+   **Step 9a. Governance intake (the same five steps `/foundry:intake existing` runs).** The governance lock
+   `.foundry/governance.lock` replaces the stack-profile lock as the place the blueprint choice lives; a
+   workspace that already has a stack-profile lock is migrated once by `apply` (the lock's blueprint is carried
+   into the governance lock). Run, in order, from the repository root, and let the operator answer each decision:
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_governance.py" discover --summary      # 1. what is in the tree
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_governance.py" select                  # 2. ranked blueprints, exit 3 = decision needed
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_governance.py" select --confirm <id>   #    one word from the operator
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_governance.py" declare --asvs-level <1|2|3> \
+       --data-classification <class> --trust-boundary '<glob>' [--surfaces cli,api]       # 3. the declarations
+   (git remote get-url origin >/dev/null 2>&1 && command -v gh >/dev/null 2>&1) \
+     && python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_governance.py" apply --pr          # 4. lock + governance/local/ + CI snippets, by PR
+   ```
+
+   Step 4 opens the pull request directly when both a remote named `origin` and the GitHub CLI exist (a
+   `--pr` run also commits files an earlier local run already wrote). Otherwise write locally so the operator
+   reads the diff:
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_governance.py" apply
+   ```
+
+   With no `origin` or no `gh` (the second block), print "commit the diff on a branch and open the pull request yourself" and stop
+   there; do not retry with `--pr`. Then freeze today's violations (step 5):
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_governance.py" baseline --check <name> --findings <file>
+   ```
+
+   Never pick the blueprint for the operator: `select` ranks declared signatures and prints evidence; an LLM
+   proposal may be shown only as a labelled suggestion (`select --suggest <id>`). Never edit
+   `.foundry/governance.lock` by hand, and never put anything private in an upstream submission
+   (`/foundry:upstream-submit`). See `docs/how-to/governance-intake-and-upgrade.md`.
 10. **GitHub scope (required).** Write `github_scope` into `.claude/foundry-project.json`:
    `{"owner": "<login or org>", "planning_repo": "<repo>", "operators": {"<login>": {}}}` (optional
    `project_number`). There is one operating mode and a solo developer is a team of one, so everyone sets it
