@@ -234,6 +234,7 @@ def test_r2_lifecycle_hooks_are_not_tools(env, hook, lead):
 # Rows that were already `ask` in the floor but not enforced by the hook when this ratchet was added (dl-04). Frozen:
 # the test fails for any NEW ask row the hook would silently allow. Shrink this set, never grow it.
 _PRE_EXISTING_UNENFORCED = {
+    "deck-cost-census.py",   # dl-14: asks only for --append/--repo/--prs in the hook code; the plain census stays silent by design
     "foundry-permissions-compile.py --write",
     "foundry_usage.py --dataset",
     "foundry-authorize.py",
@@ -251,13 +252,13 @@ _PRE_EXISTING_UNENFORCED = {
     "foundry_migrate.py",
     "foundry_governance.py",
     "foundry_deck_events.py",
-    "foundry-ticket.py done",
 }
 
 
 def test_every_ask_floor_row_naming_a_script_is_enforced_by_the_hook():
     """Structural (third recurrence of this class): each floor row tiered `ask` that names scripts/<x> must be
-    matched by _ASK_SCRIPTS (whole script), _ASK_VERBS (the row's verb) or EXECUTES_INPUT, else it is silently allowed."""
+    matched by _ASK_SCRIPTS (whole script), _ASK_VERBS (the row's verb), EXECUTES_INPUT or _TICKET_EXECUTING, else it
+    is silently allowed. The frozen exemption set may only shrink: every entry must still be a real, still-unenforced row."""
     import importlib.util
     import re
     spec = importlib.util.spec_from_file_location("psa_hook", HOOK)
@@ -265,21 +266,26 @@ def test_every_ask_floor_row_naming_a_script_is_enforced_by_the_hook():
     spec.loader.exec_module(hook)
     with open(os.path.join(REPO_ROOT, "docs", "permission-floor.json"), encoding="utf-8") as f:
         entries = json.load(f)["entries"]
-    rows = [e["rule"] for e in entries if e.get("tier") == "ask"]
-    checked, missing = 0, []
+    rows = [e["rule"] for e in entries if e.get("tier") == "ask" and "/scripts/" in e["rule"]]
+    checked, missing, still_unenforced = 0, [], set()
     for rule in rows:
         m = re.search(r"/scripts/([^/\s):]+?)(?:\s+([^):]*?))?:\*\)$", rule)
-        if not m:
-            continue
+        assert m, f"an ask row naming /scripts/ has a shape the scan cannot read: {rule}"
         script, rest = m.group(1), (m.group(2) or "").strip()
         checked += 1
-        if (script + (" " + rest if rest else "")) in _PRE_EXISTING_UNENFORCED:
-            continue
-        if script in hook._ASK_SCRIPTS or script in hook.EXECUTES_INPUT:
-            continue
         verb = rest.split()[0] if rest else None
-        if verb and verb in hook._ASK_VERBS.get(script, set()):
-            continue
-        missing.append(rule)
-    assert checked >= 5, "the structural scan matched too few floor rows to prove anything"
+        enforced = (script in hook._ASK_SCRIPTS or script in hook.EXECUTES_INPUT
+                    or bool(verb and verb in hook._ASK_VERBS.get(script, set()))
+                    or (script == "foundry-ticket.py" and verb in hook._TICKET_EXECUTING))
+        key = script + (" " + rest if rest else "")
+        if enforced:
+            assert key not in _PRE_EXISTING_UNENFORCED, f"{key!r} is now enforced: remove it from _PRE_EXISTING_UNENFORCED"
+        elif key in _PRE_EXISTING_UNENFORCED:
+            still_unenforced.add(key)
+        else:
+            missing.append(rule)
+    assert checked == len(rows) >= 5, "the structural scan did not cover every ask row naming /scripts/"
+    assert len(_PRE_EXISTING_UNENFORCED) <= 18, "the exemption set may only shrink"
+    assert still_unenforced == _PRE_EXISTING_UNENFORCED, (
+        f"exemptions that no longer name an unenforced ask row: {sorted(_PRE_EXISTING_UNENFORCED - still_unenforced)}")
     assert not missing, f"ask floor rows the hook would silently allow: {missing}"

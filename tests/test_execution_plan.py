@@ -466,10 +466,7 @@ def test_a_field_failure_leaves_the_planner_ref_unpublished(repos, tmp_path, mon
     monkeypatch.setattr(ep, "gh_graphql", flaky)
     monkeypatch.chdir(work)
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
-    c = ep.fetch_corpus("o", 7)
-    f = tmp_path / "c.json"
-    f.write_text(json.dumps(c))
-    assert ep.main(["publish", "prog", "--from-json", str(f)]) == 2
+    assert ep.main(["publish", "prog", "--project", "o/7"]) == 2
     assert subprocess.run(["git", "-C", str(bare), "rev-parse", "--verify", "-q", "refs/heads/plan/prog"],
                           capture_output=True).returncode != 0
     assert _git(work, "for-each-ref", "refs/foundry") == ""          # no leftover private ref
@@ -511,3 +508,24 @@ def test_publish_from_json_without_a_project_says_fields_were_skipped(repos, tmp
     f.write_text(json.dumps(DIAMOND))
     r = cli("publish", "prog", "--from-json", str(f), cwd=work, root=tmp_path)
     assert r.returncode == 0 and "Project fields skipped (no --project)" in r.stdout
+
+
+def test_publish_from_json_never_mutates_a_project_without_project_flag(repos, tmp_path, monkeypatch, capsys):
+    work, bare = repos
+    calls = []
+    monkeypatch.setattr(ep, "gh_graphql", _fake_graphql(calls))
+    c = ep.fetch_corpus("o", 7)            # carries project_id and item_ids
+    calls.clear()
+    f = tmp_path / "c.json"
+    f.write_text(json.dumps(c))
+    monkeypatch.chdir(work)
+    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+    assert ep.main(["publish", "prog", "--from-json", str(f)]) == 0
+    assert calls == [] and "Project fields skipped (no --project)" in capsys.readouterr().out
+
+
+def test_a_field_without_a_data_type_is_refused():
+    c = {"project_id": "P", "fields": [{"id": "F", "name": "wave", "dataType": None}],
+         "atoms": [atom("A")]}
+    with pytest.raises(ep.PlanError, match="wave"):
+        ep.project(ep.build_plan("p", c), c)

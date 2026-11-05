@@ -335,7 +335,7 @@ def project(plan: dict, corpus: dict) -> int:
     existing = {f["name"]: f for f in corpus.get("fields") or []}
     for name, dtype in _FIELD_TYPES:
         got = existing.get(name)
-        if got is not None and got.get("dataType") not in (None, dtype):
+        if got is not None and got.get("dataType") != dtype:
             raise PlanError(f"Project field {name!r} exists with type {got.get('dataType')}, not {dtype}; refusing to use it")
     fields = {n: f["id"] for n, f in existing.items()}
     made = set()
@@ -466,7 +466,8 @@ def main(argv=None) -> int:
             sys.stdout.write(text)
             return 0
         counted = []
-        has_project = bool(corpus.get("project_id"))
+        # Only an explicit --project may mutate a Project: a corpus file never carries that authority.
+        has_project = bool(a.project) and bool(corpus.get("project_id"))
         sha = publish_ref(os.getcwd(), a.remote, a.programme, text,
                           before_push=(lambda: counted.append(project(plan, corpus))) if has_project else None)
         msg = f"published plan/{a.programme} at {sha}; "
