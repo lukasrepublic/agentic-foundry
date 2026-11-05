@@ -33,14 +33,12 @@ def test_item1_explicit_login_registered_operator_passes_actor_refused(monkeypat
     assert ok is False and "agent itself" in why
 
 
-@pytest.mark.parametrize("bad", ["-bad", "a b", "x;y", "", "a/b", "ünï"])
+@pytest.mark.parametrize("bad", ["-bad", "a b", "x;y", "a/b", "ünï", "bot[bot", "a[bot]x"])
 def test_item1_agent_login_pattern_validated(bad, monkeypatch):
     live = lambda a: {"permission": "write"}      # noqa: E731
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
-    if bad == "":
-        pytest.skip("empty is 'no login' and refuses under CI (covered above)")
     ok, why = ft.author_trusted("o/r", "carol", live, operators=("carol",), agent_login=bad)
-    assert ok is False and "not a valid GitHub login" in why
+    assert ok is False and "not a valid GitHub login" in why and "[A-Za-z0-9]" in why        # the error names the pattern
 
 
 def test_item1_trace_compares_declared_agent_login_from_base_with_actor_as_addition(tmp_path):
@@ -419,10 +417,10 @@ def test_item5_control_admitted_without_a_claim(team, cmd):
 
 # ------------------------------------------------------------------------------------------ 6 governance lock + leak guard
 import hashlib  # noqa: E402
-from pathlib import Path  # noqa: E402
 import test_governance_intake as gi  # noqa: E402
 import foundry_governance as gov  # noqa: E402
 from test_governance_upgrade import adopted_repo, make_plugin_copy, run as urun, WF  # noqa: E402
+import shutil  # noqa: E402
 
 
 def test_item6_a_hand_edited_snippet_is_reported_tampered(tmp_path):
@@ -534,11 +532,9 @@ def test_item7_control_git_calls_carry_the_neutralising_flags(tmp_path, mlenv, m
     seen = []
     real = ml.subprocess.run
     monkeypatch.setattr(ml.subprocess, "run", lambda argv, *a, **k: (seen.append(list(argv)), real(argv, *a, **k))[1])
-    first = ml_post(w, "all")["id"]
+    ml_post(w, "all")
     ad = ml.Adapter()
     tip = ml.fetch_tip(ad, w, "origin")
-    cursor = tmp_path / "c"
-    (w / ".git" / "foundry-message-cursor.me-x").write_text("0" * 7 + "\n")        # not used; the explicit since below is
     ml_post(w, "all")
     ml.read(ad, w, "origin", "all", since=tip, advance=False)
     fetches = [a for a in seen if "fetch" in a]
@@ -713,3 +709,163 @@ def test_round1_tokenizer_keeps_a_redirection_in_one_word_and_marks_quoting():
     assert [i.cmd for i in fss.invocations("echo '>'&rm x")] == ["echo", "rm"]          # a quoted > does not glue the &
     assert fss.redirect_operand(fss.invocations("rm '>' x")[0].args[0]) is None         # quoted: a literal
     assert [(i.cmd, i.args) for i in fss.invocations('$"rm" -rf /x')] == [("rm", ["-rf", "/x"])]
+
+
+# ------------------------------------------------------------------------------------------ round 1: Risks
+def test_round1_agent_login_accepts_an_app_bot_suffix(monkeypatch):
+    live = lambda a: {"permission": "read"}      # noqa: E731
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    for bot in ("dependabot[bot]", "github-actions[bot]"):
+        assert ft.author_trusted("o/r", "alice", live, operators=("alice",), agent_login=bot)[0] is True
+        ok, why = ft.author_trusted("o/r", bot, live, operators=(bot,), agent_login=bot)
+        assert ok is False and "agent itself" in why
+
+
+def test_round1_a_receivepack_in_the_repo_config_is_overridden_on_push(tmp_path, mlenv, monkeypatch):
+    remote = ml_remote(tmp_path)
+    w = ml_clone(tmp_path, remote, "w")
+    marker = tmp_path / "ran"
+    evil = tmp_path / "evil.sh"
+    evil.write_text(f"#!/bin/sh\ntouch {marker}\nexec git-receive-pack \"$@\"\n")
+    evil.chmod(0o755)
+    mgit(w, "config", "remote.origin.receivepack", str(evil))
+    mgit(w, "config", "push.gpgSign", "true")
+    seen = []
+    real = ml.subprocess.run
+    monkeypatch.setattr(ml.subprocess, "run", lambda argv, *a, **k: (seen.append(list(argv)), real(argv, *a, **k))[1])
+    ml_post(w, "all")
+    pushes = [a for a in seen if "push" in a]
+    assert pushes and all("--receive-pack=git-receive-pack" in a and "push.gpgSign=false" in a and "core.gitProxy=" in a for a in pushes)
+    assert not marker.exists()
+
+
+def test_round1_the_allow_hook_asks_on_the_repo_environment_too(monkeypatch):
+    hook, root = tml._hook(), os.path.realpath(ROOT)
+    script = os.path.join(root, "scripts", "foundry_message_log.py")
+    monkeypatch.delenv("FOUNDRY_MESSAGE_REPO", raising=False)
+    assert hook.allowed(f"python3 {script} audit", root) is True
+    monkeypatch.setenv("FOUNDRY_MESSAGE_REPO", "/tmp/elsewhere")
+    assert hook.allowed(f"python3 {script} audit", root) is False
+
+
+def test_round1_audit_no_advance_leaves_the_cursor_and_a_pruned_cursor_commit_is_reported(tmp_path, mlenv):
+    remote = ml_remote(tmp_path)
+    w = ml_clone(tmp_path, remote, "w")
+    ml_post(w, "all")
+    ad = ml.Adapter()
+    ml.audit(ad, w, "origin", open_minutes=120, advance=False)
+    cur = ml._audit_cursor_path(ad, w)
+    assert not cur.exists()                                                                # --no-advance writes nothing
+    ml.audit(ad, w, "origin", open_minutes=120)
+    assert cur.exists()
+    cur.write_text("a" * 40 + "\n")                                                         # a commit this clone does not hold
+    res = ml.audit(ad, w, "origin", open_minutes=120)
+    assert [f["rule"] for f in res["findings"] if f["rule"] == "cursor-commit-missing"] == ["cursor-commit-missing"]
+    assert cur.read_text().strip() == "a" * 40                                              # pinned, not advanced
+    # CLI: --no-advance is accepted
+    assert ml.build_parser().parse_args(["audit", "--no-advance"]).no_advance is True
+
+
+def test_round1_malformed_production_lines_are_capped_too_and_the_marker_survives_read(tmp_path, mlenv):
+    remote = ml_remote(tmp_path)
+    w = ml_clone(tmp_path, remote, "w")
+    ml_post(w, "all")
+    for n in range(ml.MAX_MALFORMED + 20):
+        tml._plant_raw(w, json.dumps({"to": "all", "kind": "PROD-BEFORE", "n": n}))
+    ad = ml.Adapter()
+    tip = ml.fetch_tip(ad, w, "origin")
+    recs, bad = ml.replay(ad, w, tip)
+    assert len(bad) <= ml.MAX_MALFORMED + 1 and bad[-1]["reason"].startswith("malformed-truncated") and bad[-1]["prod_truncated"] is True
+    res = ml.read(ad, w, "origin", "me", advance=False)
+    assert len(res["malformed"]) <= ml.MAX_MALFORMED and res["malformed"][-1]["reason"].startswith("malformed-truncated")
+    audit = ml.audit(ad, w, "origin", open_minutes=120, advance=False)
+    assert sum(1 for f in audit["findings"] if f["rule"] == "malformed-prod-record") >= ml.MAX_MALFORMED + 1
+
+
+def test_round1_secret_guard_resolves_tar_operands_against_dash_C():
+    assert secret("tar -C ~/.ssh -czf /tmp/x.tgz .").returncode == 2
+    assert secret("tar --directory=/home/someone/.aws -cf /tmp/x.tar credentials").returncode == 2
+    assert secret("tar -C /tmp/work -czf /tmp/x.tgz .").returncode == 0                      # control
+
+
+PAPER_R1_REFUSED = [
+    "cd .github/workflows && sed -i s/a/b/ ci.yml",
+    "cd tests && cd .. && rm .github/workflows/ci.yml",
+    "(cd x && true); sed -i s/a/b/ .github/workflows/ci.yml",
+    "cd $(git rev-parse --show-toplevel) && sed -i s/a/b/ .github/workflows/ci.yml",       # unresolvable base: payload cwd
+    "cd docs && sed -i s/a/b/ .github/workflows/ci.yml",                                     # a relative target also hits from the cwd
+]
+PAPER_R1_ADMITTED = [
+    "cd docs && echo x > notes.md",
+    "cd .github/workflows; echo x > notes.md",       # the base is not carried across `;`
+    "rm -rf node_modules",
+    "rm -rf .venv",
+    "(cd docs && true); echo x > docs/ok.md",
+]
+
+
+@pytest.fixture
+def prepo2(prepo):
+    for d in ("node_modules/pkg", ".venv/lib"):
+        (prepo / d).mkdir(parents=True, exist_ok=True)
+    (prepo / "node_modules" / "pkg" / "jest.config.js").write_text("x")
+    (prepo / ".venv" / "lib" / "conftest.py").write_text("x")
+    return prepo
+
+
+@pytest.mark.parametrize("cmd", PAPER_R1_REFUSED)
+def test_round1_paper_refused(prepo2, cmd):
+    r = bash(prepo2, cmd)
+    assert r.returncode == 2, (cmd, r.stdout, r.stderr)
+
+
+@pytest.mark.parametrize("cmd", PAPER_R1_ADMITTED)
+def test_round1_paper_control_admitted(prepo2, cmd):
+    r = bash(prepo2, cmd)
+    assert r.returncode == 0, (cmd, r.stdout, r.stderr)
+
+
+def test_round1_governance_kept_snippet_keeps_its_hash_and_a_missing_one_is_reported(tmp_path):
+    plugin = make_plugin_copy(tmp_path)
+    proj = adopted_repo(tmp_path, plugin)
+    lockp = proj / ".foundry" / "governance.lock"
+    yaml_ = __import__("yaml")
+    first = yaml_.safe_load(lockp.read_text())["snippets"][WF]
+    (proj / WF).write_text((proj / WF).read_text() + "# hand edit\n")
+    assert urun(proj, "check", plugin=plugin)[1].count(f"snippet-tampered:{WF}") == 1
+    rc, out, _ = urun(proj, "apply", plugin=plugin)                                         # apply KEEPS the edited file ...
+    assert yaml_.safe_load(lockp.read_text())["snippets"][WF] == first                      # ... and the lock still names the old hash
+    assert f"snippet-tampered:{WF}" in urun(proj, "check", plugin=plugin)[1]
+    (proj / WF).unlink()
+    assert f"snippet-missing:{WF}" in urun(proj, "check", plugin=plugin)[1]
+
+
+def test_round1_governance_trace_compares_with_the_base_lock(tmp_path):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("gtrace", ROOT / "governance" / "kits" / "delivery" / "checks" / "governance-trace.py")
+    gt = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gt)
+    plugin = make_plugin_copy(tmp_path)
+    base = adopted_repo(tmp_path, plugin)
+    head = tmp_path / "head"
+    shutil.copytree(base, head)
+    assert gt._snippet_findings(base, head) == []                                            # control
+    (head / WF).write_text((head / WF).read_text() + "# pr edit\n")
+    new = hashlib.sha256((head / WF).read_bytes()).hexdigest()
+    lock = (head / ".foundry" / "governance.lock")
+    lock.write_text(lock.read_text().replace(__import__("yaml").safe_load(lock.read_text())["snippets"][WF], new))
+    assert urun(head, "check", plugin=plugin)[1].count("snippet-") == 0                      # the PR's own lock agrees with its edit ...
+    assert gt._snippet_findings(base, head) == [f"snippet-tampered:{WF}"]                    # ... the base lock does not
+    (head / WF).unlink()
+    assert gt._snippet_findings(base, head) == [f"snippet-missing:{WF}"]
+
+
+def test_round1_every_hook_the_pass_changed_is_digest_pinned():
+    import hashlib
+    from test_cut_release_reconcile import FIXTURE, exec_content
+    pins = FIXTURE["gv20_hook_pins"]
+    assert set(pins) == {"foundry-paper-guard.py", "foundry-shell-shape.py", "foundry-secret-read-guard.py",
+                         "foundry-plugin-scripts-allow.py"}
+    for name, want in pins.items():
+        got = hashlib.sha256(exec_content(ROOT / "hooks" / name).encode("utf-8")).hexdigest()
+        assert got == want, f"hooks/{name} executable content changed: re-baseline gv20_hook_pins with a log line"

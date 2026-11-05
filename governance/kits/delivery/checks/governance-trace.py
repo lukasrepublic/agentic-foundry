@@ -147,6 +147,28 @@ def _declared_agent_logins(base: Path) -> list:
     return list(v) if isinstance(v, list) else []
 
 
+def _snippet_findings(base: Path, project: Path) -> list:
+    """`snippet-tampered:<path>` / `snippet-missing:<path>` for every installed snippet the BASE ref's lock hashes and the PR head
+    no longer matches (an edit of the file, an edit of the file together with the PR's own lock, or a deletion)."""
+    import hashlib
+    try:
+        import yaml
+        lock = yaml.safe_load((Path(base) / ".foundry" / "governance.lock").read_text(encoding="utf-8")) or {}
+        snippets = lock.get("snippets") or {}
+    except (OSError, ValueError, AttributeError, ImportError, Exception):  # noqa: BLE001 - no readable base lock: nothing to compare
+        return []
+    out = []
+    for dest, want in sorted(snippets.items()):
+        f = Path(project) / str(dest)
+        if f.is_symlink() or (f.exists() and not f.is_file()):
+            out.append(f"snippet-tampered:{dest}")
+        elif not f.exists():
+            out.append(f"snippet-missing:{dest}")
+        elif hashlib.sha256(f.read_bytes()).hexdigest() != want:
+            out.append(f"snippet-tampered:{dest}")
+    return out
+
+
 def run_checks(pr: dict, ticket: dict, project: Path, plugin: Path, today: str | None, base: Path | None = None,
                gh_json=None, repo: str | None = None, files: list | None = None, agent_login: str | None = None) -> list:
     ft = _load_ticket_module(plugin)
@@ -230,7 +252,11 @@ def run_checks(pr: dict, ticket: dict, project: Path, plugin: Path, today: str |
             lines = [ln for ln in buf.getvalue().splitlines() if ln and not ln.startswith("governance-check-ok") and "SKIP exception" not in ln]
         except gm.Refused as e:
             lines = [f"refused: {e}"]
-        stale = [ln for ln in lines if ln.startswith(("rendered-stale", "lock-", "snippet-tampered"))]
+        # the head's own snippet findings compare with the head's own lock, which a PR can edit together with the snippet;
+        # the judgement is made against the BASE ref's lock hashes below
+        lines = [ln for ln in lines if not ln.startswith("snippet-")]
+        lines += _snippet_findings(base, project)
+        stale = [ln for ln in lines if ln.startswith(("rendered-stale", "lock-", "snippet-"))]
         exc = [ln for ln in lines if ln not in stale]
         add("rendered-fresh", not stale, "; ".join(stale) if stale else "governance/rendered/ matches the rules")
         add("exceptions-live", not exc, "; ".join(exc) if exc else "no exception has expired")

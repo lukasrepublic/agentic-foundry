@@ -203,6 +203,18 @@ hook_comment_expectation:
   #      tests/test_hardening_gv20.py (item 5).
   executable_content_sha256: '346141c13131b9de292190dfd7d58e5145a0cbdf33ebf5f51f106d82dfce0a82'  # re-baselined for entry 15 (gv-20)
 
+# gv-20 hook pins: sha256 of the EXECUTABLE CONTENT (full-line comments stripped, shebang kept; same function as the
+# git-discipline row above) of every other hook the hardening pass changed. Re-baselining is the documented response to a
+# real, reviewed change, with a log line here: this row still fails on any later unreviewed edit.
+#   1. gv-20 (2026-11-05, security lane): paper guard (cd tracking, -t, recursive copies, rm -rf trees, worktree/nested CI),
+#      shell-shape (redirect forms, ANSI/locale quoting, packed interpreters, delete verbs, own-session scratch), secret-read
+#      guard (option-tolerant verbs, dd if=, whole-home reads, tar -C, /proc/*/environ), plugin-scripts-allow (env remote ask).
+gv20_hook_pins:
+  foundry-paper-guard.py: '9e8abf6394b8db64b96fcf32db05f0bebe71180f5f2393b0134cbf4a80df6f2f'
+  foundry-shell-shape.py: 'a6f7f7e0aac1c65a2423d2518e7c8617fb79cf259af7f7a54161e7f2766627dc'
+  foundry-secret-read-guard.py: '1450101d43eacb76b99a8b9abc4ffdfb9158c29ecc9d7ced27f8463367a5457a'
+  foundry-plugin-scripts-allow.py: '2d2e3ff27e8ba1430767f87616e780f406101f390424f4abdc3194d2a3d5e7f3'
+
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
 operator_registry_shape:
   schema_version_type: int

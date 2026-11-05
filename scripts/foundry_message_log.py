@@ -105,7 +105,7 @@ class Adapter:
         full_env["LC_ALL"] = "C"  # stable git messages ("couldn't find remote ref")
         full_env["GIT_ALLOW_PROTOCOL"] = "file:git:ssh:http:https"  # never the ext:: transport, whatever the caller set
         # neutralise commands an untrusted repo's config could run (hooks, fsmonitor, ssh wrapper, ext transport)
-        extra = ["-c", "credential.helper="]          # gv-20: no credential helper from an untrusted config runs on a read
+        extra = ["-c", "credential.helper=", "-c", "push.gpgSign=false", "-c", "core.gitProxy="]          # gv-20: no credential helper from an untrusted config runs on a read
         if EOO in args and args[0] in ("fetch", "push", "ls-remote"):
             name = args[args.index(EOO) + 1] if args.index(EOO) + 1 < len(args) else ""
             if name and not name.startswith("-"):     # the named remote's helper programs are the stock ones, whatever the config says
@@ -285,9 +285,17 @@ def parse_lines(text):
     record is always listed, because `audit` turns it into a finding."""
     recs, bad, dropped = [], [], 0
 
+    prod_n = 0
+
     def add(entry):
-        nonlocal dropped
-        if len(bad) < MAX_MALFORMED or entry["kind"] in PROD_KINDS:
+        nonlocal dropped, prod_n
+        if entry["kind"] in PROD_KINDS:        # production records have their own budget: audit turns each into a finding
+            prod_n += 1
+            if prod_n <= MAX_MALFORMED:
+                bad.append(entry)
+            else:
+                dropped += 1
+        elif len(bad) - min(prod_n, MAX_MALFORMED) < MAX_MALFORMED:
             bad.append(entry)
         else:
             dropped += 1
@@ -314,7 +322,8 @@ def parse_lines(text):
             continue
         recs.append(obj)
     if dropped:
-        bad.append({"reason": f"malformed-truncated: {dropped} further malformed line(s) not listed", "line": "", "kind": None})
+        bad.append({"reason": f"malformed-truncated: {dropped} further malformed line(s) not listed", "line": "", "kind": None,
+                    "prod_truncated": prod_n > MAX_MALFORMED})
     return recs, bad
 
 
@@ -436,6 +445,15 @@ def _cursor_path(ad, repo, session, me):
     return p if p.is_absolute() else Path(repo) / p
 
 
+def _cap_keep_marker(bad, cap):
+    """At most `cap` entries; the truncation marker (if any) survives the cut."""
+    if len(bad) <= cap:
+        return bad
+    marker = [b for b in bad if str(b.get("reason", "")).startswith("malformed-truncated")]
+    rest = [b for b in bad if b not in marker]
+    return rest[:cap - len(marker)] + marker
+
+
 def read(ad, repo, remote, me, since=None, kinds=None, session=None, advance=True):
     tip = fetch_tip(ad, repo, remote)
     if tip is None:
@@ -478,7 +496,7 @@ def read(ad, repo, remote, me, since=None, kinds=None, session=None, advance=Tru
         tmp = cpath.with_name(cpath.name + f".{os.getpid()}.tmp")
         tmp.write_text(tip + "\n", encoding="utf-8")
         os.replace(tmp, cpath)
-    bad = [b for b in bad if b.get("to") in (None, me, "all")][:MAX_MALFORMED]       # a line addressed to someone else is not mine to see
+    bad = _cap_keep_marker([b for b in bad if b.get("to") in (None, me, "all")], MAX_MALFORMED)   # not addressed to me: not mine to see
     res = {"notice": NOTICE, "tip": tip, "since": since, "records": out, "malformed": bad}
     if truncated:
         res["truncated"] = f"{truncated} older record(s) not shown (newest {MAX_READ_RECORDS} kept)"
@@ -549,7 +567,9 @@ def history_findings(ad, repo, tip, cursors):
     out = []
     for c in cursors:
         if ad.git(["cat-file", "-e", c + "^{commit}"], repo).returncode != 0:
-            continue                       # a cursor this clone no longer holds says nothing
+            out.append({"rule": "cursor-commit-missing", "since": c[:12],
+                        "reason": "a commit this clone saw the log at is gone from it (pruned, or the history was rewritten)"})
+            continue
         if c == tip:
             continue
         if ad.git(["merge-base", "--is-ancestor", EOO, c, tip], repo).returncode != 0:
@@ -578,16 +598,16 @@ def audit(ad, repo, remote, open_minutes=None, now=None, advance=True):
     if tip:
         acur = _audit_cursor_path(ad, repo)
         findings += history_findings(ad, repo, tip, _known_cursors(ad, repo, acur))
-        if advance and not any(f["rule"] == "history-rewritten" for f in findings):
+        if advance and not any(f["rule"] in ("history-rewritten", "cursor-commit-missing") for f in findings):
             acur.parent.mkdir(parents=True, exist_ok=True)           # a rewrite keeps the old cursor so the next audit still sees it
             tmp = acur.with_name(acur.name + f".{os.getpid()}.tmp")
             tmp.write_text(tip + "\n", encoding="utf-8")
             os.replace(tmp, acur)
     for b in bad:  # a production record that fails lint (e.g. no corr) is a violation, not noise
-        if b["kind"] in ("PROD-BEFORE", "PROD-AFTER", "STOP"):
+        if b["kind"] in ("PROD-BEFORE", "PROD-AFTER", "STOP") or b.get("prod_truncated"):
             findings.append({"rule": "malformed-prod-record", "kind": b["kind"], "reason": b["reason"]})
     return {"tip": tip, "records": len(recs), "open_minutes": open_minutes, "findings": findings,
-            "malformed": bad[:MAX_MALFORMED + 1]}
+            "malformed": _cap_keep_marker(bad, MAX_MALFORMED + 1)}
 
 
 _TO_RE = re.compile(r"^\s*TO:\s*([^\s,;]+)", re.MULTILINE)

@@ -1362,7 +1362,7 @@ def _plan_and_write(args, mode: str):
             local = load_local(proj)
     rules = checked_effective(kits, local)
 
-    written_dests = set()
+    written_dests, removed_dests = set(), set()
     for item in plan:
         action, c = install_file(proj, item["dest"], item["text"], mode, f"kit-{lock['plugin_version']}")
         if c:
@@ -1374,6 +1374,8 @@ def _plan_and_write(args, mode: str):
         if action in ("created", "updated", "merged", "unchanged"):
             touched.append(item["dest"])
             written_dests.add(item["dest"])
+        elif action == "adopter-removed":
+            removed_dests.add(item["dest"])
         touched.append(f"{BASE_REL}/{item['dest']}")
     for rel in scaffold_local(proj):
         changes.append(f"{rel}: created")
@@ -1384,6 +1386,11 @@ def _plan_and_write(args, mode: str):
             cur = proj / item["dest"]
             if cur.is_file() and not cur.is_symlink():
                 snippets[item["dest"]] = hashlib.sha256(cur.read_bytes()).hexdigest()
+    for dest, sha in ((prior or {}).get("snippets") or {}).items():
+        # a snippet this run did not write (`kept`, or a merge conflict) keeps the hash the lock already had, so a re-run never
+        # clears a tamper record; only an upgrade that finds the adopter removed the file drops its entry
+        if dest not in snippets and dest not in removed_dests:
+            snippets[dest] = sha
     if snippets or (prior or {}).get("snippets"):
         lock["snippets"] = snippets
         _check_lock(lock)
@@ -1729,7 +1736,9 @@ def cmd_check(args):
         findings += _lock_drift(root, lock)
         for dest, want in sorted((lock.get("snippets") or {}).items()):
             f = proj / dest
-            if f.is_symlink() or (f.exists() and (not f.is_file() or hashlib.sha256(f.read_bytes()).hexdigest() != want)):
+            if not f.exists() and not f.is_symlink():
+                findings.append(f"snippet-missing:{dest}")
+            elif f.is_symlink() or not f.is_file() or hashlib.sha256(f.read_bytes()).hexdigest() != want:
                 findings.append(f"snippet-tampered:{dest}")
         if lock.get("declarations") == PENDING:
             findings.append("declarations-pending: run `foundry_governance.py declare --asvs-level N`")

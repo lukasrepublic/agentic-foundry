@@ -325,12 +325,18 @@ def _bash_write_targets(command: str) -> list:
         toks = list(lex)
     except ValueError:
         toks = command.split()
-    out, words, cur = [], [], [""]
+    out, words, cur, stack = [], [], [""], []
 
     def jn(p):
         if cur[0] and p and not p.startswith(("/", "~")):
             return os.path.join(cur[0], p)
         return p
+
+    def emit(path, kind, srcs, rec):
+        """A relative target is judged against the `cd` base AND the payload cwd (either hitting CI refuses)."""
+        out.append((jn(path), kind, [jn(x) for x in srcs], rec))
+        if cur[0] and path and not path.startswith(("/", "~")):
+            out.append((path, kind, list(srcs), rec))
 
     def finish():
         args = list(words)
@@ -347,36 +353,43 @@ def _bash_write_targets(command: str) -> list:
             if not pos:
                 cur[0] = "~"
             elif pos[0] != "-":
-                cur[0] = jn(pos[0])
+                new = jn(pos[0])
+                cur[0] = "" if ("$" in new or "`" in new) else new     # unresolvable: fall back to the payload cwd, never admit
             return
         if verb in ("sed", "gsed", "perl") and any(re.fullmatch(r"-[A-Za-z]*i[A-Za-z0-9._]*", f) or f.startswith("--in-place")
                                                   for f in flags):
-            out.extend((jn(p), "file", [], False) for p in pos)     # the script text never resolves to a CI path; the files do
+            [emit(p, "file", [], False) for p in pos]     # the script text never resolves to a CI path; the files do
         elif verb in _FILE_VERBS:
-            out.extend((jn(p), "file", [], False) for p in pos)
+            [emit(p, "file", [], False) for p in pos]
         elif verb in _REMOVE_VERBS:
-            out.extend((jn(p), "remove", [], rec) for p in pos)
+            [emit(p, "remove", [], rec) for p in pos]
         elif verb in _DEST_VERBS and verb != "rsync" and _target_directory(rest)[0] is not None:
             tdir, srcs = _target_directory(rest)
-            out.append((jn(tdir), "dest", [jn(x) for x in srcs], rec))
+            emit(tdir, "dest", srcs, rec)
             if verb == "mv":
-                out.extend((jn(p), "remove", [], True) for p in srcs)
+                [emit(p, "remove", [], True) for p in srcs]
         elif verb in _DEST_VERBS and pos:
-            out.append((jn(pos[-1]), "dest", [jn(x) for x in pos[:-1]], rec or verb == "rsync"))
+            emit(pos[-1], "dest", pos[:-1], rec or verb == "rsync")
             if verb == "mv":
-                out.extend((jn(p), "remove", [], True) for p in pos[:-1])
+                [emit(p, "remove", [], True) for p in pos[:-1]]
         elif verb == "dd":
-            out.extend((jn(a.split("=", 1)[1]), "file", [], False) for a in rest if a.startswith("of="))
+            [emit(a.split("=", 1)[1], "file", [], False) for a in rest if a.startswith("of=")]
 
     i = 0
     while i < len(toks):
         t = toks[i]
         if t and set(t) <= set(";&|()"):                 # a command separator
             finish()
+            if t == "(":
+                stack.append(cur[0])                      # a subshell: its `cd` ends at the `)`
+            elif t == ")":
+                cur[0] = stack.pop() if stack else ""
+            elif t != "&&":
+                cur[0] = ""                              # `;`, `||`, `|`, `&`, newline: the `cd` base is not carried
         elif t and set(t) <= set("<>&|") and (">" in t or "<" in t):   # a redirect operator: its operand is the next word
             tgt = toks[i + 1] if i + 1 < len(toks) else ""
             if ">" in t and tgt and not tgt.isdigit() and not tgt.startswith("&"):
-                out.append((jn(tgt), "file", [], False))
+                emit(tgt, "file", [], False)
             i += 1
         elif t.isdigit() and i + 1 < len(toks) and set(toks[i + 1]) <= set("<>&") and ">" in toks[i + 1]:
             pass                                         # the fd number of `2>file`
@@ -408,7 +421,7 @@ def _tree_files(top: Path, cap: int = 20000):
     """Root-relative-agnostic walk of `top` (a directory): yields file paths below it, pruning .git and node_modules, capped."""
     n = 0
     for dp, dns, fns in os.walk(top):
-        dns[:] = [d for d in dns if d not in (".git", "node_modules", ".venv")]
+        dns[:] = [d for d in dns if d not in _PRUNE_DIRS]
         for f in fns:
             n += 1
             if n > cap:
@@ -416,7 +429,15 @@ def _tree_files(top: Path, cap: int = 20000):
             yield Path(dp) / f
 
 
+_PRUNE_DIRS = ("node_modules", ".venv", ".git")
+
+
 def _dir_holds_ci(directory: Path, root: Path) -> bool:
+    try:
+        if any(part in _PRUNE_DIRS for part in directory.relative_to(root).parts):
+            return False                          # removing node_modules / .venv / .git itself is not a CI edit
+    except ValueError:
+        pass
     for f in _tree_files(directory):
         try:
             if _is_ci(f.relative_to(root), root, {}) and f.name != "package.json":

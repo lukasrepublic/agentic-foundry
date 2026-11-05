@@ -414,6 +414,12 @@ def check_invocation(inv, cwd, verbs, matchers, depth=0):
                 return v
     # roots: a reader pointed at one, a `<` redirect from one, an interpreter's inline text naming one
     reads = cmd in READERS
+    if cmd == "tar":                              # gv-20: operands are relative to `-C DIR` / `--directory DIR`
+        for k, a in enumerate(args):
+            d = args[k + 1] if a in ("-C", "--directory") and k + 1 < len(args) else (
+                a.split("=", 1)[1] if a.startswith("--directory=") else None)
+            if d:
+                cwd = _expand(d, cwd)
     if cmd in ("curl", "wget"):
         reads = any(a.split("=", 1)[0] in _UPLOAD_FLAGS or a.startswith("-d@") for a in args) or \
             any("@" in a for a in args)

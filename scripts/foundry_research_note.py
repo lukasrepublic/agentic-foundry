@@ -257,8 +257,11 @@ def write_all(raw, slug, project_dir, date=None, run_id=None):
     # ruling marker); the same check guards the `ruled` write and the `escalate` removal (gv-20)
     if os.path.lexists(ruling_path):
         try:
-            with open(ruling_path, encoding="utf-8") as f:
-                ours = f.readline().startswith(f"# Ruling — {slug}")
+            if os.path.islink(ruling_path):
+                ours = False                    # decided BEFORE the open: a link is never read through
+            else:
+                with open(ruling_path, encoding="utf-8") as f:
+                    ours = f.readline().startswith(f"# Ruling — {slug}")
         except OSError:
             ours = False
         if not ours or os.path.islink(ruling_path):

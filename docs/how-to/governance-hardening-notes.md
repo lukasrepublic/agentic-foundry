@@ -21,4 +21,10 @@ has a test in `tests/test_hardening_gv20.py`. The operator's own test pass stays
 
 - The history check sees only commits this clone has already audited or read; a rewrite made before the first audit is not seen.
 - `ls-remote` failing is still read as "branch absent" by `--pr`.
+- The audit cursor lives in the git dir. On an ephemeral CI runner the git dir is new every run, so the append-only check is a no-op there.
+- The shell-shape scratch fallback assumes the session id is the directory name above `scratchpad/`; with a different layout set `CLAUDE_SCRATCHPAD`.
+- Any shell write to `package.json` is treated as CI (a diff cannot be taken); `ci-allow` lifts it.
+- `rm -rf .` from a large root depends on the walk cap (a fixed file count, `node_modules`, `.venv` and `.git` skipped): past the cap the rest is not looked at.
+- Clause (m) does not model GraphQL `createPullRequest`, `gh` aliases, or `-F draft=true -F draft=false` (the last field wins server-side; the hook reads the first).
+- `governance-trace` compares installed snippets with the BASE ref's lock hashes, so a pull request that legitimately upgrades a kit snippet fails `rendered-fresh` until the base lock carries the new hash.
 - The hooks run without `-I`; the harness starts them, so the shebang line is not changed here.

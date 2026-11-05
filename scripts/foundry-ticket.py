@@ -462,7 +462,8 @@ def trusted_operator_logins(root: Path | None = None) -> set:
     return out
 
 
-_LOGIN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*")
+_LOGIN_PATTERN = r"[A-Za-z0-9][A-Za-z0-9-]*(?:\[bot\])?"      # GitHub logins, plus an App's `[bot]` suffix
+_LOGIN_RE = re.compile(_LOGIN_PATTERN)
 
 
 def _agent_logins(v):
@@ -491,7 +492,7 @@ def author_trusted(repo: str | None, login: str, gh_json=_gh_json, operators=Non
     # GITHUB_ACTIONS=true with no explicit login the check REFUSES; the carve-out exists only through the explicit argument.
     mes = _agent_logins(agent_login)
     if mes is None:
-        return False, "identity lookup failed (the agent login is not a valid GitHub login), so the issue author cannot be vetted"
+        return False, "identity lookup failed (the agent login is not a valid GitHub login: it must match " + _LOGIN_PATTERN + "), so the issue author cannot be vetted"
     if not mes:
         if os.environ.get("GITHUB_ACTIONS") == "true":
             return False, ("identity lookup failed (running under CI with no explicit --agent-login; the self-identity rule is "
