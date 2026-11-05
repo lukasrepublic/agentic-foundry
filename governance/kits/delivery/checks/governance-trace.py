@@ -134,6 +134,19 @@ def _within(path: str, components: list, gv: dict, ft) -> bool:
     return False
 
 
+def _declared_agent_logins(base: Path) -> list:
+    """`github_scope.agent_login` (a string or a list of strings) from the BASE ref's project file; [] when absent/unreadable.
+    Malformed entries are kept so author_trusted fails closed on them rather than silently dropping them."""
+    try:
+        gs = json.loads((Path(base) / ".claude" / "foundry-project.json").read_text(encoding="utf-8")).get("github_scope") or {}
+        v = gs.get("agent_login")
+    except (OSError, ValueError, AttributeError):
+        return []
+    if isinstance(v, str):
+        return [v]
+    return list(v) if isinstance(v, list) else []
+
+
 def run_checks(pr: dict, ticket: dict, project: Path, plugin: Path, today: str | None, base: Path | None = None,
                gh_json=None, repo: str | None = None, files: list | None = None, agent_login: str | None = None) -> list:
     ft = _load_ticket_module(plugin)
@@ -160,8 +173,11 @@ def run_checks(pr: dict, ticket: dict, project: Path, plugin: Path, today: str |
     # the ticket author must be trusted: a Design from an untrusted account is not a Design
     login = ((ticket or {}).get("author") or {}).get("login") or ""
     # the author is vetted against the PR's own repository, never against the repo a ref names (that repo is the PR author's choice)
+    # gv-20: the agent accounts are the one DECLARED on the base ref (github_scope.agent_login) plus the workflow actor as an
+    # addition -- never the actor alone (github.actor varies with the event that triggered the run).
+    accounts = _declared_agent_logins(base) + ([agent_login] if agent_login else [])
     ok_a, why_a = ft.author_trusted(repo, login, gh_json, operators=ft.trusted_operator_logins(base),
-                                    agent_login=agent_login)
+                                    agent_login=accounts or None)
     add("ticket-author", ok_a, why_a)
     body = (ticket or {}).get("body") or ""
     gv = ft.governance_context(base)               # policy, lock, boundaries and rules from the BASE ref

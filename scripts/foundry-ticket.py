@@ -462,6 +462,22 @@ def trusted_operator_logins(root: Path | None = None) -> set:
     return out
 
 
+_LOGIN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*")
+
+
+def _agent_logins(v):
+    """None -> []; a login or iterable of logins -> the list; None when ANY entry is not a valid login (fail closed)."""
+    if v is None or v == "":
+        return []
+    items = [v] if isinstance(v, str) else list(v)
+    out = []
+    for x in items:
+        if not isinstance(x, str) or not _LOGIN_RE.fullmatch(x):
+            return None
+        out.append(x)
+    return out
+
+
 def author_trusted(repo: str | None, login: str, gh_json=_gh_json, operators=None, agent_login=None) -> tuple[bool, str]:
     """True when `login` is a registered operator (`trusted_operator_logins`), or has write/maintain/admin on `repo`.
     The authenticated gh user is never trusted for being the authenticated user (it is the agent itself, gv-16): it
@@ -469,17 +485,22 @@ def author_trusted(repo: str | None, login: str, gh_json=_gh_json, operators=Non
     if not login:
         return False, "issue author unknown"
     ops = trusted_operator_logins() if operators is None else {str(x).lower() for x in operators}
-    # Who is "the agent itself"? An explicit `agent_login` (CI passes the workflow's actor: `github.token` is an App installation
-    # token, so `gh api user` answers 403 there). Under GITHUB_ACTIONS=true with no explicit login the self-identity branch is
-    # skipped. Everywhere else the authenticated gh user is the agent, and a failed lookup fails closed.
-    if agent_login:
-        me = str(agent_login)
-    elif os.environ.get("GITHUB_ACTIONS") == "true":
-        me = ""
-    else:
+    # Who is "the agent itself"? An explicit `agent_login` (str, or a list of accounts: governance-trace passes the declared
+    # `github_scope.agent_login` of the BASE ref plus the workflow actor; `github.token` is an App installation token, so
+    # `gh api user` answers 403 there). gv-20: an environment variable never switches the self-identity rule off. Under
+    # GITHUB_ACTIONS=true with no explicit login the check REFUSES; the carve-out exists only through the explicit argument.
+    mes = _agent_logins(agent_login)
+    if mes is None:
+        return False, "identity lookup failed (the agent login is not a valid GitHub login), so the issue author cannot be vetted"
+    if not mes:
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            return False, ("identity lookup failed (running under CI with no explicit --agent-login; the self-identity rule is "
+                           "never skipped on an environment variable), so the issue author cannot be vetted")
         me = (gh_json(["api", "user"]) or {}).get("login")
         if not me:
             return False, "identity lookup failed (`gh api user` returned no login), so the issue author cannot be vetted"
+        mes = [str(me)]
+    me = login if login.lower() in {m.lower() for m in mes} else ""
     if me and me.lower() == login.lower():
         # Checked FIRST: the authenticated gh login is the agent's own identity. Even when it is also a registered operator
         # its self-authored or self-edited body is not vouched for by that fact (a shared identity makes the guarantee
