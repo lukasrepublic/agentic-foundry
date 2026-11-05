@@ -103,7 +103,7 @@ def test_upgrade_preserves_a_non_overlapping_adopter_edit_and_takes_the_kit_chan
     assert {k["id"]: k["version"] for k in lock["kits"]}["security"] == "1.0.1"
 
 
-def test_upgrade_surfaces_a_conflict_marker_and_never_clobbers_an_overlapping_edit(tmp_path):
+def test_upgrade_never_writes_conflict_markers_into_a_ci_file_it_leaves_the_kit_version_beside_it(tmp_path):
     plugin = make_plugin_copy(tmp_path)
     proj = adopted_repo(tmp_path, plugin)
     wf = proj / WF
@@ -111,10 +111,63 @@ def test_upgrade_surfaces_a_conflict_marker_and_never_clobbers_an_overlapping_ed
     git(proj, "commit", "-q", "-am", "adopter edit")
     advance_kit(plugin, "security", "1.0.1", WF_KIT, lambda t: t.replace("name: secret-scan", "name: kit-renamed-scan", 1))
     rc, out, _ = run(proj, "upgrade", plugin=plugin)
-    assert rc == 1 and "conflict" in out
-    text = wf.read_text()
-    assert "<<<<<<<" in text and ">>>>>>>" in text
-    assert "our-secret-scan" in text and "kit-renamed-scan" in text          # both sides survive: nothing clobbered
+    assert rc == 1 and "GOVERNANCE-UPGRADE-CONFLICTS" in out and f"{WF}.kit-new" in out
+    assert "<<<<<<<" not in wf.read_text() and "our-secret-scan" in wf.read_text()        # the adopter file is untouched
+    assert "kit-renamed-scan" in (proj / f"{WF}.kit-new").read_text()
+    git(proj, "add", "-A")
+    git(proj, "commit", "-q", "-m", "conflict state")
+    rc, out, _ = run(proj, "upgrade", plugin=plugin)                                      # still reported until resolved
+    assert rc == 1 and f"{WF}.kit-new" in out
+    (proj / f"{WF}.kit-new").unlink()
+    git(proj, "add", "-A")
+    git(proj, "commit", "-q", "-m", "resolved")
+    assert run(proj, "upgrade", plugin=plugin)[0] == 0
+
+
+def _brownfield(tmp_path):
+    """The adopter already had a workflow with the kit's name; `apply` keeps it."""
+    plugin = make_plugin_copy(tmp_path)
+    proj = tmp_path / "r"
+    proj.mkdir()
+    (proj / "pyproject.toml").write_text('[project]\nname = "x"\nversion = "0.0.1"\ndependencies = ["typer"]\n')
+    kit_text = (plugin / WF_KIT).read_text()
+    mine = "# adopter header: our own conventions\n" + kit_text + "# adopter trailer\n"
+    (proj / WF).parent.mkdir(parents=True)
+    (proj / WF).write_text(mine)
+    git(proj, "init", "-q", "-b", "main")
+    git(proj, "add", "-A")
+    git(proj, "commit", "-q", "-m", "init")
+    assert run(proj, "select", "--confirm", "cli-tool", plugin=plugin)[0] == 0
+    assert run(proj, "declare", "--asvs-level", "2", plugin=plugin)[0] == 0
+    rc, out, _ = run(proj, "apply", plugin=plugin)
+    assert rc == 0 and "kept" in out and (proj / WF).read_text() == mine
+    git(proj, "add", "-A", "-f")
+    git(proj, "commit", "-q", "-m", "adopt")
+    return plugin, proj, mine
+
+
+def test_brownfield_kept_file_is_not_a_whole_file_conflict_when_the_kit_is_unchanged(tmp_path):
+    plugin, proj, mine = _brownfield(tmp_path)
+    advance_kit(plugin, "security", "1.0.1")                       # version bump only: the snippet is unchanged
+    rc, out, _ = run(proj, "upgrade", plugin=plugin)
+    assert rc == 0 and (proj / WF).read_text() == mine and not (proj / f"{WF}.kit-new").exists()
+
+
+def test_brownfield_kept_file_gets_a_true_three_way_merge_when_the_kit_changes(tmp_path):
+    plugin, proj, mine = _brownfield(tmp_path)
+    advance_kit(plugin, "security", "1.0.1", WF_KIT, lambda t: t + "# kit 1.0.1 trailer line\n")
+    rc, out, _ = run(proj, "upgrade", plugin=plugin)
+    text = (proj / WF).read_text()
+    # the adopter's trailer and the kit's new line touch the same end-of-file hunk: that hunk, only, conflicts
+    assert rc == 1 and f"{WF}.kit-new" in out and text == mine
+
+
+def test_brownfield_kit_change_away_from_the_adopters_edits_merges_cleanly(tmp_path):
+    plugin, proj, mine = _brownfield(tmp_path)
+    advance_kit(plugin, "security", "1.0.1", WF_KIT, lambda t: t.replace("name: secret-scan", "name: secret-scan-v2", 1))
+    rc, _, _ = run(proj, "upgrade", plugin=plugin)
+    text = (proj / WF).read_text()
+    assert rc == 0 and "secret-scan-v2" in text and text.startswith("# adopter header") and text.endswith("# adopter trailer\n")
 
 
 def test_upgrade_with_an_untouched_file_takes_the_new_kit_version_cleanly(tmp_path):  # control
@@ -247,8 +300,10 @@ def test_leak_check_verb_refuses_and_passes(tmp_path):
 
 def _scan(tmp_path, *files, extra=()):
     script = ROOT / "scripts" / "foundry-prepublication-leak-scan.py"
+    lits = tmp_path.parent / (tmp_path.name + "-literals.txt")
+    lits.write_text("Zorblax\n")                                  # a literal source is mandatory: no source, no CLEAN
     return subprocess.run([sys.executable, str(script), "--governance-submission", "--root", str(tmp_path),
-                           "--files", *files, *extra], capture_output=True, text=True)
+                           "--literals", str(lits), "--files", *files, *extra], capture_output=True, text=True)
 
 
 def test_prepublication_leak_scan_refuses_a_planted_private_id_and_passes_an_fg_rule(tmp_path):
@@ -327,3 +382,127 @@ def test_docs_exist_and_are_linked_from_the_how_to_set():
     for needle in ("discover", "select", "declare", "apply", "baseline", "upgrade", "/foundry:post-upgrade",
                    "--confirm", "governance/local", "never"):
         assert needle in text, needle
+
+
+# ================================================================ review round 1 ===
+
+def test_migrations_do_not_follow_a_symlink_out_of_the_repository(tmp_path):
+    plugin = make_plugin_copy(tmp_path)
+    proj = adopted_repo(tmp_path, plugin)
+    rules = yaml.safe_load((plugin / "governance" / "kits" / "security" / "rules.yaml").read_text())["rules"]
+    target = next(r["id"] for r in rules if not r["floor"] and r["exception"]["allowed"])
+    outside = tmp_path / "outside.yaml"
+    outside.write_text("exceptions:\n- rule: FG-SEC-900\n")
+    (proj / "governance" / "local" / "linked.yaml").symlink_to(outside)
+    git(proj, "add", "-A", "-f")
+    git(proj, "commit", "-q", "-m", "symlink")
+    kit = plugin / "governance" / "kits" / "security" / "kit.yaml"
+    doc = yaml.safe_load(kit.read_text())
+    doc["version"] = "1.0.1"
+    doc["migrations"] = [{"from_id": "FG-SEC-900", "to_id": target, "since": "1.0.1"}]
+    kit.write_text(yaml.safe_dump(doc, sort_keys=False))
+    (proj / "governance" / "local" / "exceptions.yaml").write_text("exceptions:\n- rule: FG-SEC-900\n")
+    git(proj, "commit", "-q", "-am", "old id")
+    assert run(proj, "upgrade", plugin=plugin)[0] == 0
+    assert outside.read_text() == "exceptions:\n- rule: FG-SEC-900\n"                  # untouched through the link
+    assert target in (proj / "governance" / "local" / "exceptions.yaml").read_text()   # control: a real file is migrated
+
+
+def test_a_refused_upgrade_leaves_no_rename_behind(tmp_path):
+    plugin = make_plugin_copy(tmp_path)
+    proj = adopted_repo(tmp_path, plugin)
+    rules = yaml.safe_load((plugin / "governance" / "kits" / "security" / "rules.yaml").read_text())["rules"]
+    target = next(r["id"] for r in rules if not r["floor"] and r["exception"]["allowed"])
+    kit = plugin / "governance" / "kits" / "security" / "kit.yaml"
+    doc = yaml.safe_load(kit.read_text())
+    doc["version"] = "1.0.1"
+    doc["migrations"] = [{"from_id": "FG-SEC-900", "to_id": target, "since": "1.0.1"}]
+    kit.write_text(yaml.safe_dump(doc, sort_keys=False))
+    ex = proj / "governance" / "local" / "exceptions.yaml"
+    ex.write_text("exceptions:\n- rule: FG-SEC-900\n")
+    git(proj, "commit", "-q", "-am", "old id")
+    shutil.rmtree(plugin / "governance" / "kits" / "delivery")           # the blueprint now names a kit the plugin lacks
+    rc, _, err = run(proj, "upgrade", plugin=plugin)
+    assert rc == 2 and "blueprint-kit-missing" in err
+    assert ex.read_text() == "exceptions:\n- rule: FG-SEC-900\n"
+    assert git(proj, "status", "--porcelain", "--untracked-files=no").strip() == ""
+
+
+def test_a_plugin_version_bump_alone_is_not_a_change(tmp_path):
+    plugin = make_plugin_copy(tmp_path)
+    proj = adopted_repo(tmp_path, plugin)
+    pj = plugin / ".claude-plugin" / "plugin.json"
+    doc = json.loads(pj.read_text())
+    doc["version"] = "9.9.9"
+    pj.write_text(json.dumps(doc))
+    rc, out, _ = run(proj, "upgrade", plugin=plugin)
+    assert rc == 0 and "already current" in out and git(proj, "status", "--porcelain").strip() == ""
+
+
+def test_the_updater_pr_branch_open_is_reported_as_a_skip(tmp_path, monkeypatch):
+    log = gh_shim(tmp_path, monkeypatch)
+    bare = tmp_path / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    plugin = make_plugin_copy(tmp_path)
+    proj = adopted_repo(tmp_path, plugin)
+    git(proj, "remote", "add", "origin", str(bare))
+    git(proj, "push", "-q", "origin", "main")
+    for k, v in (("NAME", "t"), ("EMAIL", "t@example.invalid")):
+        monkeypatch.setenv(f"GIT_AUTHOR_{k}", v)
+        monkeypatch.setenv(f"GIT_COMMITTER_{k}", v)
+    advance_kit(plugin, "security", "1.0.1", WF_KIT, lambda t: t + "# kit 1.0.1 trailer\n")
+    assert run(proj, "upgrade", "--pr", "--base", "main", plugin=plugin)[0] == 0
+    rc, out, _ = run(proj, "upgrade", "--pr", "--base", "main", plugin=plugin)
+    assert rc == 0 and "upgrade PR open: governance/upgrade-" in out
+    assert len(log.read_text().splitlines()) == 1
+
+
+# ---- leak guard hardening ----
+
+def test_leak_guard_catches_normalised_embedded_and_cased_private_ids():
+    for text in ("see-ACME-SEC-001", "FG-ACME-SEC-001", "acme-sec-001", "\uff21\uff23\uff2d\uff25-SEC-001",
+                 "AC\u200bME-SEC-001", "ACME\u2011SEC-001".replace("\u2011", "-")):
+        assert gov.leak_findings({"a.md": text + "\n"}), text
+    assert gov.leak_findings({"a.md": "FG-SEC-006 and fg-sec-006\n"}) == []            # control: upstream ids pass
+
+
+def test_leak_guard_compares_governance_local_casefolded():
+    assert gov.leak_findings({"Governance/LOCAL/x.yaml": "a: 1\n"})
+    assert gov.leak_findings({"governance/loc\u200bal/x.yaml": "a: 1\n"})
+
+
+def test_the_submission_scan_resolves_the_denylist_and_refuses_without_a_literal_source(tmp_path):
+    script = ROOT / "scripts" / "foundry-prepublication-leak-scan.py"
+    (tmp_path / "a.md").write_text("shipped for Zorblax customers\n")
+    deny = tmp_path / "deny.txt"
+    deny.write_text("# private\nZorblax\n")
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
+    base = [sys.executable, str(script), "--governance-submission", "--root", str(tmp_path), "--files", "a.md"]
+    r = subprocess.run(base + ["--denylist", str(deny)], capture_output=True, text=True, env=env)
+    assert r.returncode == 1 and "product-literal:a.md" in r.stdout and "Zorblax" not in r.stdout
+    r = subprocess.run(base, capture_output=True, text=True, env=env)
+    assert r.returncode == 2 and "GOVERNANCE-SUBMISSION-REFUSED" in r.stdout and "GOVERNANCE-SUBMISSION-CLEAN" not in r.stdout
+    (tmp_path / "b.md").write_text("fine\n")
+    ok = [sys.executable, str(script), "--governance-submission", "--root", str(tmp_path), "--files", "b.md",
+          "--denylist", str(deny)]
+    assert subprocess.run(ok, capture_output=True, text=True, env=env).returncode == 0
+
+
+def test_hook_asks_when_discover_names_an_output_file():
+    hook = _hook()
+    script = ROOT / "scripts" / "foundry_governance.py"
+    assert hook.allowed(f"python3 {script} discover --summary", str(ROOT))
+    assert not hook.allowed(f"python3 {script} discover --out .foundry/f.json", str(ROOT))
+    assert not hook.allowed(f"python3 {script} discover --out=.claude/settings.json", str(ROOT))
+
+
+def test_the_runtime_gitignore_reincludes_the_governance_lock():
+    for rel in ("scripts/foundry-runtime.gitignore", "cli/templates/gitignore.tmpl"):
+        assert "!/.foundry/governance.lock" in (ROOT / rel).read_text(), rel
+
+
+def test_init_step_9a_applies_locally_and_opens_a_pr_only_when_origin_and_gh_exist():
+    text = (ROOT / "skills" / "init" / "SKILL.md").read_text()
+    block = text[text.index("Step 9a."):text.index("10. **GitHub scope")]
+    assert "git remote get-url origin" in block and "command -v gh" in block and "apply --pr" in block
+    assert "foundry_governance.py\" apply  " in block

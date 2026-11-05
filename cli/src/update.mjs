@@ -58,11 +58,12 @@ const SEPARATELY_RECONCILED = new Set(['.claude/settings.json', '.gitignore']);
  * QUESTION_TABLE, which is denied to the sibling cleanup atom and whose flag set is derived from
  * the wizard's prompts, not this command's. `--cleanup` is the cleanup atom's own opt-in. */
 export function parseUpdateArgv(argv) {
-  const values = { cleanup: false, help: false, dryRun: false, legacyMaintenance: false };
+  const values = { cleanup: false, help: false, dryRun: false, legacyMaintenance: false, pr: false };
   for (const tok of argv) {
     if (tok === '--cleanup') values.cleanup = true;
     else if (tok === '--legacy-maintenance') values.legacyMaintenance = true;
     else if (tok === '--dry-run') values.dryRun = true;
+    else if (tok === '--pr') values.pr = true;
     else if (tok === '--help') values.help = true;
     else throw new RefusalError(`unknown flag: ${tok}`, tok);
   }
@@ -180,7 +181,7 @@ export async function runUpdate(argv, {
 
   if (flags.help) {
     print([
-      'Usage: update-agentic-workspace [--dry-run] [--cleanup] [--legacy-maintenance] [--help]',
+      'Usage: update-agentic-workspace [--dry-run] [--cleanup] [--legacy-maintenance] [--pr] [--help]',
       '',
       '  --cleanup   Also quarantine retired workspace artifacts (moved, never deleted, under',
       '              .foundry/retired/<run-id>/ with their restore path recorded) and remove a stale',
@@ -190,6 +191,8 @@ export async function runUpdate(argv, {
       '              Also append the empty "## Amendments" section to old specs and true up release',
       '              manifests. Edits retained history, so it runs only with this flag AND while no',
       '              cutover record exists at .foundry/migration/authority.yaml. Off by default.',
+      '  --pr        With a governance lock, let `governance upgrade` branch, push and open its pull request',
+      '              (also UPDATE_AGENTIC_WORKSPACE_PR=1). Without it the upgrade is written to the working tree only.',
       '  --dry-run   Plan and print everything; write nothing and run no claude command.',
       '              Exits 1 if a pre-flight stop check fires, 2 if a pre-flight continue check fires',
       '              or the plan holds a drifted managed file or a refused .gitignore block, else 0.',
@@ -497,7 +500,9 @@ export async function runUpdate(argv, {
     const pythonRequirements = loadPythonRequirements(pkgDir);
     previewLines.push(renderPythonDepsRow(ensurePythonDeps(pythonRequirements, { env: spawnEnv, python: spawnEnv.FOUNDRY_PYTHON || 'python3', dryRun: true }), pythonRequirements));
     // gv-15: the governance upgrade runs after the plugin refresh when the workspace has a governance lock.
-    if (hasGovernanceLock(physicalRoot)) previewLines.push(renderGovernanceUpgradeRow(runGovernanceUpgrade({ cwd: physicalRoot, dryRun: true })));
+    // A pull request is opened only on explicit opt-in (--pr or UPDATE_AGENTIC_WORKSPACE_PR=1).
+    const governancePr = flags.pr || spawnEnv.UPDATE_AGENTIC_WORKSPACE_PR === '1';
+    if (hasGovernanceLock(physicalRoot)) previewLines.push(renderGovernanceUpgradeRow(runGovernanceUpgrade({ cwd: physicalRoot, dryRun: true, pr: governancePr })));
 
     // ── AC-NPX-4/-5: one `[<effect>] <class> <target>` row per planned effect ───────────────────
     const effectRows = [];
@@ -696,7 +701,7 @@ export async function runUpdate(argv, {
       st.phase = 'governance-upgrade';
       const gov = runGovernanceUpgrade({
         cwd: physicalRoot, pluginRoot: resolveInstallPath(registryAfter, pluginKey, cwd),
-        python: spawnEnv.FOUNDRY_GOVERNANCE_PYTHON || spawnEnv.FOUNDRY_PYTHON || 'python3', env: spawnEnv,
+        python: spawnEnv.FOUNDRY_GOVERNANCE_PYTHON || spawnEnv.FOUNDRY_PYTHON || 'python3', env: spawnEnv, pr: governancePr,
       });
       if (gov.verdict === 'changed' || gov.verdict === 'attention') st.mutated = true;
       print(renderGovernanceUpgradeRow(gov));

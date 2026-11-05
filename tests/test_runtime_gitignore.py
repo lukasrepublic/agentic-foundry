@@ -31,6 +31,7 @@ DESIGNED_TRACKED_SET = [
     ".foundry/README.md",
     ".foundry/build-provenance.yaml",
     ".foundry/stack-profile.lock",
+    ".foundry/governance.lock",
     ".foundry/releases/",
     ".foundry/decisions/",
     ".foundry/permissions.yaml",

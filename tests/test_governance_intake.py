@@ -312,6 +312,7 @@ def test_apply_opens_a_pull_request_by_branch_push_and_gh(tmp_path, monkeypatch)
 def test_apply_pr_refuses_a_dirty_tree_and_calls_nothing(tmp_path, monkeypatch):
     log = gh_shim(tmp_path, monkeypatch)
     proj = make_repo(tmp_path / "r")
+    git(proj, "remote", "add", "origin", str(tmp_path / "x.git"))
     intake(proj)
     (proj / "pyproject.toml").write_text((proj / "pyproject.toml").read_text() + "\n# edit\n")
     rc, _, err = run(proj, "apply", "--pr")
@@ -377,7 +378,7 @@ def test_check_is_clean_straight_after_apply_and_flags_each_drift(tmp_path):
     rc, out, _ = run(proj, "check", plugin=plugin)
     assert rc == 1
     assert "lock-blueprint-drift:cli-tool" in out and "lock-version-drift:delivery" in out
-    assert "lock-plugin-version-drift" in out
+    assert "lock-plugin-version-drift" not in out                         # provenance only: never a finding by itself
 
 
 # ------------------------------------- amendment: --level / --surfaces filters ---
@@ -477,3 +478,163 @@ def test_dogfood_the_plugin_tree_selects_claude_plugin_first(tmp_path):
     assert rc == 3
     doc = json.loads(out)
     assert doc["candidates"][0]["id"] == "claude-plugin" and doc["candidates"][0]["above_threshold"]
+
+
+# ================================================================ review round 1 ===
+
+def test_write_text_never_follows_a_planted_temp_symlink(tmp_path):
+    proj, outside = tmp_path / "p", tmp_path / "outside.txt"
+    proj.mkdir()
+    outside.write_text("untouched")
+    (proj / "x.yml.tmp").symlink_to(outside)
+    assert gov._write_text(proj, "x.yml", "new: 1\n") is True
+    assert outside.read_text() == "untouched" and (proj / "x.yml").read_text() == "new: 1\n"
+    assert (proj / "x.yml.tmp").is_symlink()                              # the planted link is left alone
+    assert gov._write_text(proj, "x.yml", "new: 1\n") is False            # control: identical content is a no-op
+
+
+def _remote(tmp_path, monkeypatch, name="remote.git"):
+    bare = tmp_path / name
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    for k, v in (("NAME", "t"), ("EMAIL", "t@example.invalid")):
+        monkeypatch.setenv(f"GIT_AUTHOR_{k}", v)
+        monkeypatch.setenv(f"GIT_COMMITTER_{k}", v)
+    return bare
+
+
+def test_a_failed_push_restores_the_branch_and_the_tree_and_a_rerun_retries(tmp_path, monkeypatch):
+    log = gh_shim(tmp_path, monkeypatch)
+    _remote(tmp_path, monkeypatch)
+    proj = make_repo(tmp_path / "r")
+    git(proj, "remote", "add", "origin", str(tmp_path / "does-not-exist.git"))
+    intake(proj)
+    before = snapshot(proj)
+    rc, _, err = run(proj, "apply", "--pr", "--base", "main")
+    assert rc == 2 and "git-push-failed" in err
+    assert git(proj, "rev-parse", "--abbrev-ref", "HEAD").strip() == "main"
+    assert git(proj, "status", "--porcelain", "--untracked-files=no").strip() == ""
+    assert "governance/intake" not in git(proj, "branch", "--list")
+    assert snapshot(proj) == before and not log.exists()                  # nothing left behind, gh never reached
+    good = tmp_path / "good.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(good)], check=True)
+    git(proj, "remote", "set-url", "origin", str(good))
+    rc, out, err = run(proj, "apply", "--pr", "--base", "main")
+    assert rc == 0 and "already current" not in out, err                 # the rerun retries
+
+
+def test_pr_preflight_checks_gh_and_origin_before_writing_anything(tmp_path, monkeypatch):
+    proj = make_repo(tmp_path / "r")
+    intake(proj)
+    before = snapshot(proj)
+    rc, _, err = run(proj, "apply", "--pr")                                # no origin
+    assert rc == 2 and "no-origin" in err and snapshot(proj) == before
+    git(proj, "remote", "add", "origin", str(tmp_path / "x.git"))
+    monkeypatch.setattr(gov.shutil, "which", lambda name: None)
+    rc, _, err = run(proj, "apply", "--pr")
+    assert rc == 2 and "gh-not-found" in err and snapshot(proj) == before
+    assert git(proj, "rev-parse", "--abbrev-ref", "HEAD").strip() == "main"
+
+
+def test_a_failed_gh_restores_the_original_branch(tmp_path, monkeypatch):
+    bindir = tmp_path / "shim-bin"
+    bindir.mkdir()
+    (bindir / "gh").write_text("#!/bin/sh\necho 'boom https://u:hunter2@example.invalid/x' >&2\nexit 1\n")
+    (bindir / "gh").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
+    bare = _remote(tmp_path, monkeypatch)
+    proj = make_repo(tmp_path / "r")
+    git(proj, "remote", "add", "origin", str(bare))
+    git(proj, "push", "-q", "origin", "main")
+    intake(proj)
+    rc, out, err = run(proj, "apply", "--pr", "--base", "main")
+    assert rc == 2 and "hunter2" not in out + err and "***@" in err         # credentials in git/gh stderr are redacted
+    assert git(proj, "rev-parse", "--abbrev-ref", "HEAD").strip() == "main"
+    assert not (proj / ".foundry" / "governance.lock").exists()
+
+
+def test_the_pr_is_opened_from_the_branch_and_head_is_restored(tmp_path, monkeypatch):
+    log = gh_shim(tmp_path, monkeypatch)
+    bare = _remote(tmp_path, monkeypatch)
+    proj = make_repo(tmp_path / "r")
+    git(proj, "remote", "add", "origin", str(bare))
+    git(proj, "push", "-q", "origin", "main")
+    intake(proj)
+    assert run(proj, "apply", "--pr", "--base", "main")[0] == 0
+    call = json.loads(log.read_text().splitlines()[0])
+    assert call[call.index("--head") + 1] == "governance/intake"
+    assert git(proj, "rev-parse", "--abbrev-ref", "HEAD").strip() == "main"
+
+
+def test_pr_never_force_adds_an_adopters_gitignored_layer_but_does_add_the_lock(tmp_path, monkeypatch):
+    gh_shim(tmp_path, monkeypatch)
+    bare = _remote(tmp_path, monkeypatch)
+    proj = make_repo(tmp_path / "r")
+    (proj / ".gitignore").write_text(".foundry/*\ngovernance/local/\n")
+    git(proj, "add", ".gitignore")
+    git(proj, "commit", "-q", "-m", "ignore")
+    git(proj, "remote", "add", "origin", str(bare))
+    git(proj, "push", "-q", "origin", "main")
+    intake(proj)
+    assert run(proj, "apply", "--pr", "--base", "main")[0] == 0
+    files = git(proj, "show", "--name-only", "--format=", "governance/intake").split()
+    assert ".foundry/governance.lock" in files
+    assert not [f for f in files if f.startswith("governance/local/")]
+
+
+def test_a_second_run_while_the_pr_branch_exists_is_a_skip_not_a_failure(tmp_path, monkeypatch):
+    gh_shim(tmp_path, monkeypatch)
+    bare = _remote(tmp_path, monkeypatch)
+    proj = make_repo(tmp_path / "r")
+    git(proj, "remote", "add", "origin", str(bare))
+    git(proj, "push", "-q", "origin", "main")
+    intake(proj)
+    assert run(proj, "apply", "--pr", "--base", "main")[0] == 0
+    rc, out, _ = run(proj, "apply", "--pr", "--base", "main")
+    assert rc == 0 and "PR open: governance/intake" in out
+
+
+def test_discover_out_is_confined_to_the_runtime_directory(tmp_path):
+    proj = make_repo(tmp_path / "r")
+    (proj / ".claude").mkdir()
+    (proj / ".claude" / "settings.json").write_text("{}")
+    rc, _, err = run(proj, "discover", "--out", ".claude/settings.json")
+    assert rc == 2 and "output-outside-runtime-dir" in err and (proj / ".claude" / "settings.json").read_text() == "{}"
+    assert run(proj, "discover", "--out", ".foundry/facts.json")[0] == 0
+    assert json.loads((proj / ".foundry" / "facts.json").read_text())["schema"] == 1
+
+
+def test_discover_skips_symlinks_and_never_reads_a_huge_manifest(tmp_path):
+    proj = tmp_path / "t"
+    proj.mkdir()
+    secret = tmp_path / "outside.json"
+    secret.write_text(json.dumps({"dependencies": {"leaked-dep": "1"}}))
+    (proj / "package.json").symlink_to(secret)
+    facts = json.loads(run(proj, "discover")[1])
+    assert "package.json" not in facts["paths"] and "leaked-dep" not in facts["dependencies"]
+    (proj / "package.json").unlink()
+    (proj / "package.json").write_text('{"dependencies": {"a": "1"}, "pad": "' + "x" * (gov.MAX_READ_BYTES + 10) + '"}')
+    facts = json.loads(run(proj, "discover")[1])
+    by = {d["name"]: d for d in facts["detectors"]}
+    assert by["dependencies"]["status"] == "could-not-look" and facts["dependencies"] == []
+
+
+def test_ecosystems_without_a_dependency_parser_report_could_not_look_not_not_found(tmp_path):
+    for manifest in ("go.mod", "Cargo.toml", "Gemfile"):
+        proj = tmp_path / manifest.replace(".", "_")
+        proj.mkdir()
+        (proj / manifest).write_text("")
+        by = {d["name"]: d for d in json.loads(run(proj, "discover")[1])["detectors"]}
+        assert by["dependencies"]["status"] == "could-not-look", manifest
+        assert by["auth-libraries"]["status"] == "could-not-look", manifest
+
+
+def test_the_lock_schema_pins_the_blueprint_id_and_check_refuses_a_traversal_id(tmp_path):
+    proj = tmp_path / "p"
+    (proj / ".foundry").mkdir(parents=True)
+    sha = "a" * 64
+    (proj / ".foundry" / "governance.lock").write_text(yaml.safe_dump(
+        {"blueprint": {"id": "../../etc", "version": "1", "sha256": sha}, "kits": [],
+         "declarations": {"asvs_level": 1, "data_classification": [], "trust_boundaries": [], "surfaces": []},
+         "facts_sha256": sha, "intake_at": "d", "plugin_version": "1"}))
+    rc, _, err = run(proj, "check")
+    assert rc == 2 and "lock-malformed" in err

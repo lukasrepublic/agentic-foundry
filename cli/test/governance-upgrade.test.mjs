@@ -63,14 +63,46 @@ test('no governance lock: the step is skipped and the script is never spawned', 
   assert.ok(!fs.existsSync(log));
 });
 
-test('with a lock: runs `upgrade --pr` against the workspace and names /foundry:post-upgrade', () => {
+test('with a lock: runs `upgrade` locally, passes --plugin-root, and names /foundry:post-upgrade', () => {
   const cwd = workspaceWithLock();
   const { root, log } = stubPlugin({ stdout: 'governance-upgrade: 2 files changed' });
   const r = runGovernanceUpgrade({ cwd, pluginRoot: root });
   assert.equal(r.verdict, 'changed');
   const argv = JSON.parse(fs.readFileSync(log, 'utf-8'));
-  assert.deepEqual(argv.slice(1), ['--project-dir', cwd, 'upgrade', '--pr']);
+  assert.deepEqual(argv.slice(1), ['--project-dir', cwd, '--plugin-root', root, 'upgrade']);   // no --pr without opt-in
   assert.match(renderGovernanceUpgradeRow(r), /\/foundry:post-upgrade/);
+  assert.match(renderGovernanceUpgradeRow(r), /working tree only/);
+});
+
+test('--pr is passed only on explicit opt-in', () => {
+  const cwd = workspaceWithLock();
+  const { root, log } = stubPlugin({ stdout: 'governance-upgrade: 2 files changed' });
+  const r = runGovernanceUpgrade({ cwd, pluginRoot: root, pr: true });
+  assert.deepEqual(JSON.parse(fs.readFileSync(log, 'utf-8')).slice(1), ['--project-dir', cwd, '--plugin-root', root, 'upgrade', '--pr']);
+  assert.doesNotMatch(renderGovernanceUpgradeRow(r), /working tree only/);
+});
+
+test('a legacy stack-profile lock alone is enough to run the step (the script absorbs it)', () => {
+  const cwd = scratch('gov-ws-');
+  fs.mkdirSync(path.join(cwd, '.foundry'), { recursive: true });
+  fs.writeFileSync(path.join(cwd, '.foundry', 'stack-profile.lock'), '{}');
+  const { root, log } = stubPlugin({ stdout: 'governance-upgrade: 1 change(s)' });
+  assert.equal(runGovernanceUpgrade({ cwd, pluginRoot: root }).verdict, 'changed');
+  assert.ok(fs.existsSync(log));
+});
+
+test('an open upgrade PR is a skip, not a failure', () => {
+  const cwd = workspaceWithLock();
+  const { root } = stubPlugin({ stdout: 'upgrade PR open: governance/upgrade-2.0.1 (merge or delete that branch, then run again)' });
+  const r = runGovernanceUpgrade({ cwd, pluginRoot: root, pr: true });
+  assert.equal(r.verdict, 'skipped');
+  assert.match(r.reason, /upgrade PR open: governance\/upgrade-2\.0\.1/);
+});
+
+test('exit 1 without the conflict sentinel (a traceback) is a failure, not "conflicts marked"', () => {
+  const cwd = workspaceWithLock();
+  const { root } = stubPlugin({ code: 1, stdout: 'Traceback (most recent call last):' });
+  assert.equal(runGovernanceUpgrade({ cwd, pluginRoot: root }).verdict, 'failed');
 });
 
 test('an already-current lock is reported as such and does not ask for a review', () => {
@@ -81,10 +113,10 @@ test('an already-current lock is reported as such and does not ask for a review'
   assert.doesNotMatch(renderGovernanceUpgradeRow(r), /post-upgrade/);
 });
 
-test('exit 1 (conflict markers left) is attention, exit 2 (refused) is failed; both name the review skill', () => {
+test('exit 1 with the conflict sentinel is attention, exit 2 (refused) is failed; both name the review skill', () => {
   for (const [code, verdict] of [[1, 'attention'], [2, 'failed']]) {
     const cwd = workspaceWithLock();
-    const { root } = stubPlugin({ code, stdout: 'governance-upgrade: stopped' });
+    const { root } = stubPlugin({ code, stdout: 'GOVERNANCE-UPGRADE-CONFLICTS .github/workflows/a.yml.kit-new' });
     const r = runGovernanceUpgrade({ cwd, pluginRoot: root });
     assert.equal(r.verdict, verdict);
     assert.match(renderGovernanceUpgradeRow(r), /\/foundry:post-upgrade/);
@@ -151,13 +183,21 @@ function updateFixture({ withLock, scriptStdout, scriptCode = 0 }) {
   return { cwd, configDir, log };
 }
 
-async function update(fx, argv = []) {
+test('update --pr and UPDATE_AGENTIC_WORKSPACE_PR=1 both opt in to the pull request', async () => {
+  for (const mode of ['flag', 'env']) {
+    const fx = updateFixture({ withLock: true, scriptStdout: 'governance-upgrade: 3 files changed' });
+    await update(fx, mode === 'flag' ? ['--pr'] : [], mode === 'env' ? { UPDATE_AGENTIC_WORKSPACE_PR: '1' } : {});
+    assert.ok(JSON.parse(fs.readFileSync(fx.log, 'utf-8')).includes('--pr'), mode);
+  }
+});
+
+async function update(fx, argv = [], extraEnv = {}) {
   const stubDir = scratch('claude-stub-');
   installClaudeStub(stubDir);
   const chunks = [];
   const env = {
     ...process.env, PATH: `${stubDir}${path.delimiter}${process.env.PATH || ''}`,
-    FOUNDRY_PYTHON: '/nonexistent/python3', FOUNDRY_GOVERNANCE_PYTHON: 'python3',
+    FOUNDRY_PYTHON: '/nonexistent/python3', FOUNDRY_GOVERNANCE_PYTHON: 'python3', ...extraEnv,
   };
   const res = await runUpdate(argv, { cwd: fx.cwd, configDir: fx.configDir, homeDir: os.homedir(), pkgDir: CLI_DIR, output: { write: (s) => chunks.push(s) }, spawnEnv: env });
   return { res, text: chunks.join('') };
@@ -167,7 +207,9 @@ test('update runs `governance upgrade` after the plugin refresh and names /found
   const fx = updateFixture({ withLock: true, scriptStdout: 'governance-upgrade: 3 files changed' });
   const { text } = await update(fx);
   const argv = JSON.parse(fs.readFileSync(fx.log, 'utf-8'));
-  assert.deepEqual(argv.slice(1), ['--project-dir', fs.realpathSync(fx.cwd), 'upgrade', '--pr']);
+  assert.deepEqual(argv.slice(1, 4), ['--project-dir', fs.realpathSync(fx.cwd), '--plugin-root']);
+  assert.equal(argv[5], 'upgrade');
+  assert.ok(!argv.includes('--pr'), 'no pull request without the opt-in');
   const summary = text.slice(text.indexOf('Summary:'));
   const iPlugin = summary.indexOf('[plugin-update]');
   const iGov = summary.indexOf('[governance-upgrade]');

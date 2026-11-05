@@ -11,7 +11,7 @@
       "required": ["id", "version", "sha256"],
       "additionalProperties": false,
       "properties": {
-        "id": {"type": "string", "minLength": 1},
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
         "version": {"type": "string"},
         "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
       }

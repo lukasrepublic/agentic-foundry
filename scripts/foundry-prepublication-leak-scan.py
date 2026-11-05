@@ -83,6 +83,7 @@ DESIGNED_TRACKED_SET = frozenset(
         ".foundry/README.md",
         ".foundry/build-provenance.yaml",
         ".foundry/stack-profile.lock",
+        ".foundry/governance.lock",
         ".foundry/releases/",
         ".foundry/decisions/",
         ".foundry/permissions.yaml",
@@ -1285,7 +1286,18 @@ def governance_submission_main(args):
     try:
         if not args.files:
             raise g.Refused("no-files: name the submission's files with --files")
-        found = g.leak_check_files(g.Path(os.path.abspath(args.root)), args.files, g.read_literals(args.literals))
+        # the product-literal source: the existing out-of-tree denylist (same resolution as the four-scope scan)
+        # plus an optional --literals file. With no source at all the scan REFUSES: it cannot say "clean".
+        literals = g.read_literals(args.literals)
+        deny = os.path.realpath(args.denylist) if args.denylist else default_denylist_path()
+        if deny:
+            try:
+                literals += list(_load_shared_module().load_denylist(deny))
+            except Exception as exc:  # noqa: BLE001
+                raise g.Refused(f"denylist-unusable:{type(exc).__name__}")
+        if not literals:
+            raise g.Refused("no-literal-source: pass --denylist (or set CLAUDE_PROJECT_DIR) so product literals can be checked")
+        found = g.leak_check_files(g.Path(os.path.abspath(args.root)), args.files, literals)
     except g.Refused as exc:
         print(f"refused: {exc}")
         print("GOVERNANCE-SUBMISSION-REFUSED")

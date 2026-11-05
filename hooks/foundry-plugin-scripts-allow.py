@@ -136,6 +136,8 @@ def allowed(command, root):
         return False
     if name in EXECUTES_INPUT or name in LIFECYCLE_HOOKS:
         return False
+    if name == "foundry_governance.py" and "discover" in argv[1:] and _names_option(argv[1:], "--out"):
+        return False   # gv-15: `discover --out` writes a file; the verb is otherwise read-only, so only that shape asks
     if name == "foundry_deck_resources.py" and (_names_option(argv[1:], "--reset-oom-baseline")
                                                 or _names_option(argv[1:], "--from-json")):
         return False   # the one write this script has, and the fixture-file read (gv-12): both ask

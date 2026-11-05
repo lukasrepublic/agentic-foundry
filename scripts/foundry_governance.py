@@ -34,9 +34,11 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
+import unicodedata
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -431,6 +433,7 @@ BASE_REL = "governance/local/.kit-base"
 SKIP_DIRS = frozenset({".git", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache",
                        ".ruff_cache", ".tox", ".terraform", ".worktrees", ".foundry", "dist", "build", "target"})
 MAX_FILES = 100000
+MAX_READ_BYTES = 1 << 20          # no manifest larger than this is read (could-not-look instead)
 MAX_LISTED = 200
 # Ordered file-signal detectors. Globs use foundry_blueprint.glob_match: no "/" -> basename at any depth.
 DETECTORS = (
@@ -491,6 +494,12 @@ def _walk_tree(proj: Path):
         dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
         rel_dir = Path(dirpath).relative_to(proj).as_posix()
         for fn in sorted(filenames):
+            try:
+                if not stat.S_ISREG(os.lstat(os.path.join(dirpath, fn)).st_mode):
+                    continue                      # symlinks, sockets, devices: never listed, never read
+            except OSError:
+                unreadable.append(fn if rel_dir == "." else f"{rel_dir}/{fn}")
+                continue
             paths.append(fn if rel_dir == "." else f"{rel_dir}/{fn}")
             if len(paths) >= MAX_FILES:
                 truncated = True
@@ -498,6 +507,24 @@ def _walk_tree(proj: Path):
         if truncated:
             break
     return sorted(paths), sorted(set(unreadable)), truncated
+
+
+UNPARSED_MANIFESTS = ("go.mod", "Cargo.toml", "Gemfile", "pom.xml", "build.gradle", "build.gradle.kts", "composer.json",
+                      "setup.py", "setup.cfg", "Pipfile", "mix.exs")
+
+
+def _bounded_read(path: Path) -> str:
+    """The file's text, refusing a non-regular file, a symlink, or one larger than MAX_READ_BYTES (OSError)."""
+    st = os.lstat(path)
+    if not stat.S_ISREG(st.st_mode):
+        raise OSError("not a regular file")
+    if st.st_size > MAX_READ_BYTES:
+        raise OSError("larger than the read cap")
+    with open(path, "rb") as fh:
+        raw = fh.read(MAX_READ_BYTES + 1)
+    if len(raw) > MAX_READ_BYTES:
+        raise OSError("larger than the read cap")
+    return raw.decode("utf-8")
 
 
 def _read_dependencies(proj: Path, paths: list):
@@ -514,7 +541,7 @@ def _read_dependencies(proj: Path, paths: list):
                 except ImportError:
                     problems.append(f"{rel}: tomllib unavailable")
                     continue
-                doc = tomllib.loads((proj / rel).read_text(encoding="utf-8"))
+                doc = tomllib.loads(_bounded_read(proj / rel))
                 specs = list((doc.get("project") or {}).get("dependencies") or [])
                 for grp in ((doc.get("project") or {}).get("optional-dependencies") or {}).values():
                     specs += list(grp or [])
@@ -526,20 +553,22 @@ def _read_dependencies(proj: Path, paths: list):
                     if m:
                         names.add(m.group(1).lower())
             elif base == "package.json":
-                doc = json.loads((proj / rel).read_text(encoding="utf-8"))
+                doc = json.loads(_bounded_read(proj / rel))
                 if not isinstance(doc, dict):
                     raise ValueError("not an object")
                 for key in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
                     names.update(str(n).lower() for n in (doc.get(key) or {}))
             elif bp.glob_match("requirements*.txt", rel):
-                for line in (proj / rel).read_text(encoding="utf-8").splitlines():
+                for line in _bounded_read(proj / rel).splitlines():
                     line = line.split("#", 1)[0].strip()
                     if line and not line.startswith("-"):
                         m = PEP508_NAME.match(line)
                         if m:
                             names.add(m.group(1).lower())
+            elif base in UNPARSED_MANIFESTS:
+                problems.append(f"{rel}: no dependency parser for this ecosystem")
         except (OSError, ValueError, UnicodeDecodeError, AttributeError, TypeError) as exc:
-            problems.append(f"{rel}: {type(exc).__name__}")
+            problems.append(f"{rel}: {type(exc).__name__}: {exc}" if isinstance(exc, OSError) else f"{rel}: {type(exc).__name__}")
     return sorted(names), problems
 
 
@@ -572,9 +601,12 @@ def _confined_out(proj: Path, arg: str) -> str:
     p = Path(arg)
     full = (p if p.is_absolute() else proj / p).resolve()
     try:
-        return full.relative_to(proj.resolve()).as_posix()
+        rel = full.relative_to(proj.resolve()).as_posix()
     except ValueError:
         raise Refused(f"output-outside-project:{arg}")
+    if not rel.startswith(".foundry/"):
+        raise Refused(f"output-outside-runtime-dir:{arg} (discover writes only under .foundry/)")
+    return rel
 
 
 def cmd_discover(args):
@@ -592,8 +624,46 @@ def cmd_discover(args):
 
 # ---- small safe writers ---------------------------------------------------------------------------
 
+class _Journal:
+    """Remembers what every write is about to replace, so a verb that fails part-way restores the tree."""
+
+    def __init__(self):
+        self.items, self.seen = [], set()
+
+    def record(self, proj: Path, rel: str):
+        if (str(proj), rel) in self.seen:
+            return
+        self.seen.add((str(proj), rel))
+        f = proj / rel
+        odd = f.is_symlink() or (f.exists() and not f.is_file())
+        self.items.append((proj, rel, f.read_bytes() if (f.is_file() and not odd) else None, odd))
+
+    def rollback(self):
+        for proj, rel, prev, odd in reversed(self.items):
+            f = proj / rel
+            try:
+                if odd:
+                    continue
+                if prev is None:
+                    if f.is_file() and not f.is_symlink():
+                        f.unlink()
+                else:
+                    f.write_bytes(prev)
+            except OSError:
+                pass
+
+
+_JOURNAL = None
+
+
+def _jrec(proj: Path, rel: str):
+    if _JOURNAL is not None:
+        _JOURNAL.record(proj, rel)
+
+
 def _write_text(proj: Path, rel: str, text: str) -> bool:
-    """Write proj/rel (refusing a symlink or a path outside the project). True iff the content changed."""
+    """Write proj/rel (refusing a symlink or a path outside the project). True iff the content changed.
+    The temporary file is created exclusively (mkstemp: O_EXCL, never a followed link), fsynced, then renamed."""
     parent = rel.rsplit("/", 1)[0] if "/" in rel else ""
     base = safe_outdir(proj, parent) if parent else proj
     target = base / rel.rsplit("/", 1)[-1]
@@ -601,9 +671,22 @@ def _write_text(proj: Path, rel: str, text: str) -> bool:
         raise Refused(f"output-is-symlink:{rel}")
     if target.is_file() and target.read_text(encoding="utf-8", errors="surrogateescape") == text:
         return False
-    tmp = target.with_name(target.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, target)
+    _jrec(proj, rel)
+    mode = stat.S_IMODE(target.stat().st_mode) if target.is_file() else 0o644
+    fd, tmp = tempfile.mkstemp(dir=str(base), prefix=target.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape", newline="") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, mode)
+        os.replace(tmp, target)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     return True
 
 
@@ -945,37 +1028,47 @@ def merge3(ours: str, base: str, theirs: str, theirs_label: str):
 
 
 def install_file(proj: Path, dest: str, new: str, mode: str, label: str):
-    """(action, conflicts). apply never overwrites a differing file; upgrade three-way merges against the
-    snapshot of what the kit last installed (the "old kit version")."""
+    """(action, conflicts). `apply` never overwrites a differing file (it keeps it and records the kit snippet as
+    the snapshot, so a later upgrade has a true base). `upgrade` three-way merges against that snapshot. A merge
+    that conflicts NEVER puts markers into the file: the adopter's file stays as is and the kit version is left
+    beside it as `<dest>.kit-new`, which stays reported until the adopter deletes it."""
     ours = _read_text(proj, dest)
-    base = _read_text(proj, f"{BASE_REL}/{dest}")
-    action, conflicts = "unchanged", 0
+    base_rel = f"{BASE_REL}/{dest}"
+    base = _read_text(proj, base_rel)
+    kit_new = f"{dest}.kit-new"
+    pending = _read_text(proj, kit_new) is not None
     if ours is None:
         if mode == "upgrade" and base is not None:
-            action = "adopter-removed"
-        else:
-            _write_text(proj, dest, new)
-            action = "created"
-    elif ours == new:
-        action = "unchanged"
-    elif mode == "apply":
-        action = "kept"
-        return action, 0                                    # keep the adopter file; no snapshot of a file we did not write
-    elif base is not None and ours == base:
+            _write_text(proj, base_rel, new)
+            return "adopter-removed", 0
         _write_text(proj, dest, new)
-        action = "updated"
-    elif base is not None and base == new:
-        action = "kept"
-    else:
-        merged, conflicts = merge3(ours, base or "", new, label)
-        _write_text(proj, dest, merged)
-        action = "conflict" if conflicts else "merged"
-    _write_text(proj, f"{BASE_REL}/{dest}", new)
-    return action, conflicts
+        _write_text(proj, base_rel, new)
+        return "created", 0
+    if ours == new:
+        _write_text(proj, base_rel, new)
+        return "unchanged", 0
+    if mode == "apply":
+        if base is None:
+            _write_text(proj, base_rel, new)      # the snapshot of what the kit ships, not of the adopter's file
+        return "kept", 0
+    if base is not None and ours == base:
+        _write_text(proj, dest, new)
+        _write_text(proj, base_rel, new)
+        return "updated", 0
+    if base is not None and base == new:
+        return ("conflict", 1) if pending else ("kept", 0)
+    merged, conflicts = merge3(ours, base or "", new, label)
+    _write_text(proj, base_rel, new)
+    if conflicts:
+        _write_text(proj, kit_new, new)
+        return "conflict", 1
+    _write_text(proj, dest, merged)
+    return "merged", 0
 
 
 def apply_migrations(proj: Path, kits: list, prior_lock: dict) -> list:
-    """Kit `migrations` newer than the locked kit version rename ids inside governance/local/**.yaml|json."""
+    """Kit `migrations` newer than the locked kit version rename ids inside governance/local/**.yaml|json.
+    Every path component is checked for symlinks and the resolved file must stay inside the repository."""
     locked = {k["id"]: k["version"] for k in prior_lock.get("kits", [])}
     renames = {}
     for k in kits:
@@ -987,19 +1080,33 @@ def apply_migrations(proj: Path, kits: list, prior_lock: dict) -> list:
                 renames[m["from_id"]] = m["to_id"]
     touched = []
     local = proj / "governance" / "local"
-    if renames and local.is_dir():
+    real_proj = proj.resolve()
+    if renames and local.is_dir() and not local.is_symlink():
         for f in sorted(local.rglob("*")):
-            if not f.is_file() or f.is_symlink() or f.suffix not in (".yaml", ".yml", ".json"):
+            if f.suffix not in (".yaml", ".yml", ".json"):
                 continue
-            if BASE_REL.split("/", 2)[2] in f.relative_to(local).parts:
+            rel = f.relative_to(proj)
+            if ".kit-base" in rel.parts:
+                continue
+            cur, linked = proj, False
+            for part in rel.parts:
+                cur = cur / part
+                if cur.is_symlink():
+                    linked = True
+                    break
+            if linked or not f.is_file():
+                continue
+            try:
+                f.resolve().relative_to(real_proj)
+            except ValueError:
                 continue
             text = f.read_text(encoding="utf-8")
             new = text
             for old, to in renames.items():
                 new = re.sub(r"(?<![A-Za-z0-9-])" + re.escape(old) + r"(?![A-Za-z0-9-])", to, new)
             if new != text:
-                f.write_text(new, encoding="utf-8")
-                touched.append(f.relative_to(proj).as_posix())
+                _write_text(proj, rel.as_posix(), new)
+                touched.append(rel.as_posix())
     return touched
 
 
@@ -1037,11 +1144,13 @@ def write_rendered(proj: Path, docs: dict) -> list:
         if target.is_symlink():
             raise Refused(f"output-is-symlink:governance/rendered/{cat}.md")
         if not target.is_file() or target.read_text(encoding="utf-8") != text:
+            _jrec(proj, f"governance/rendered/{cat}.md")
             target.write_text(text, encoding="utf-8")
             touched.append(f"governance/rendered/{cat}.md")
     for stale in out.glob("*.md"):
         if stale.stem not in docs and not stale.is_symlink() and \
                 is_generated(stale.read_text(encoding="utf-8", errors="replace")):
+            _jrec(proj, f"governance/rendered/{stale.name}")
             stale.unlink()
             touched.append(f"governance/rendered/{stale.name}")
     return touched
@@ -1065,48 +1174,70 @@ def stack_lock_blueprint(root: Path, proj: Path):
 
 # ---- pull request ---------------------------------------------------------------------------------
 
-def open_pr(proj: Path, branch: str, title: str, body: str, rels: list, base):
-    gh = shutil.which("gh")
-    if gh is None:
+CRED_RE = re.compile(r"(\b[A-Za-z][A-Za-z0-9+.-]*://)[^/@\s]+@")
+
+
+def _redact(text) -> str:
+    """Hide `scheme://user:secret@` in any text that carries git / gh output."""
+    return CRED_RE.sub(r"\1***@", str(text))
+
+
+def _tail(r) -> str:
+    out = (r.stderr or r.stdout or "").strip().splitlines()
+    return _redact(out[-1] if out else "no output")[:300]
+
+
+def pr_preflight(proj: Path, branch: str):
+    """Everything a pull request needs, checked BEFORE anything is written: origin, gh, a clean tree, a branch
+    name. Returns (original_branch, branch_already_exists)."""
+    r = _git(proj, "remote", "get-url", "origin")
+    if r.returncode != 0 or not r.stdout.strip():
+        raise Refused("no-origin: --pr needs a remote named origin (run without --pr to review the diff locally)")
+    if shutil.which("gh") is None:
         raise Refused("gh-not-found: install the GitHub CLI or run without --pr")
+    require_clean_tree(proj)
     cur = _git(proj, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-    if _git(proj, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}").returncode == 0:
-        raise Refused(f"branch-exists:{branch}: merge or delete it first")
-    steps = (("checkout", "-b", branch), ("add", "-f", "--", *rels), ("commit", "-q", "-m", title),
-             ("push", "-q", "-u", "origin", branch))
-    for st in steps:
-        r = _git(proj, *st)
+    if not cur or cur == "HEAD":
+        raise Refused("detached-head: check out a branch before using --pr")
+    exists = _git(proj, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}").returncode == 0
+    return cur, exists
+
+
+def _stage(proj: Path, rels: list) -> list:
+    """Stage what the run wrote. Only the lock may be force-added; any other gitignored path is left alone (an
+    adopter's ignored layer is never pushed). A removed path stages its deletion. Returns the skipped paths."""
+    skipped = []
+    for rel in rels:
+        if (proj / rel).exists() or (proj / rel).is_symlink():
+            ignored = _git(proj, "check-ignore", "-q", "--", rel).returncode == 0
+            if ignored and rel != LOCK_REL:
+                skipped.append(rel)
+                continue
+            r = _git(proj, "add", *(["-f"] if rel == LOCK_REL else []), "--", rel)
+        else:
+            r = _git(proj, "rm", "-q", "--cached", "--ignore-unmatch", "--", rel)
         if r.returncode != 0:
-            raise Refused(f"git-{st[0]}-failed: {(r.stderr or r.stdout).strip().splitlines()[-1:] or ['?']}")
-    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
-    r = subprocess.run([gh, "pr", "create", "--base", base or cur, "--head", branch, "--title", title, "--body", body],
-                       cwd=str(proj), capture_output=True, text=True, env=env)
-    _git(proj, "checkout", "-q", cur)
-    if r.returncode != 0:
-        raise Refused(f"gh-pr-create-failed: {(r.stderr or r.stdout).strip()[-200:]}")
-    print((r.stdout.strip().splitlines() or ["pull request opened"])[-1])
+            raise Refused(f"git-add-failed: {_tail(r)}")
+    return skipped
 
 
 def _pr_body(kind: str, lines: list, notes: list) -> str:
     return "\n".join([f"Governance {kind} (generated by `foundry_governance.py {kind}`).", "", "Changes:"]
                      + [f"- {x}" for x in lines] + ([""] + notes if notes else [])
-                     + ["", "Review with `/foundry:post-upgrade`. Conflict markers, if any, are inline in the files above."])
+                     + ["", "Review with `/foundry:post-upgrade`."])
 
-
-# ---- apply / upgrade ------------------------------------------------------------------------------
 
 def _plan_and_write(args, mode: str):
     root, proj, kits, local = _prepare(args)
     today = datetime.date.today().isoformat()
     prior = _lenient_lock(proj)
-    notes, changes, touched, conflicts = [], [], [], 0
+    notes, changes, touched, conflicts = [], [], [], []
     state = _read_intake(proj) or {}
     if mode == "upgrade":
         if prior is None:
             seeded = stack_lock_blueprint(root, proj)
             if seeded is None:
                 raise Refused("no-governance-lock: run the intake first (select, declare, apply)")
-            notes.append(f"stack-profile.lock: absorbed (blueprint {seeded} carried into the governance lock)")
         require_clean_tree(proj)
     elif getattr(args, "pr", False):
         require_clean_tree(proj)
@@ -1118,9 +1249,8 @@ def _plan_and_write(args, mode: str):
         seeded = stack_lock_blueprint(root, proj)
         if seeded is not None:
             bp_id = seeded
-            if not any("absorbed" in n for n in notes):
-                notes.append(f"stack-profile.lock: absorbed (blueprint {seeded} carried into the governance lock; "
-                             "one-time migration)")
+            notes.append(f"stack-profile.lock: absorbed (blueprint {seeded} carried into the governance lock; "
+                         "one-time migration)")
             if decl is None:
                 doc = _blueprint_doc(root, seeded)
                 decl = {"asvs_level": 1, "data_classification": ["internal"], "trust_boundaries": [],
@@ -1134,102 +1264,165 @@ def _plan_and_write(args, mode: str):
     if not facts_sha:
         facts_sha = facts_digest(discover(proj))
 
+    # validate everything that can refuse BEFORE the first write
+    lock = build_lock(root, kits, prior, bp_id, decl, facts_sha, today)
+    plan = snippet_plan(root, kits, [k["id"] for k in lock["kits"]])
+
     if mode == "upgrade" and prior is not None:
         migrated = apply_migrations(proj, kits, prior)
         touched += migrated
         changes += [f"{m}: migrated renamed rule ids" for m in migrated]
         if migrated:                       # the adopter layer changed on disk: reload before validating
             local = load_local(proj)
+    rules = checked_effective(kits, local)
 
-    lock = build_lock(root, kits, prior, bp_id, decl, facts_sha, today)
-    plan = snippet_plan(root, kits, [k["id"] for k in lock["kits"]])
     for item in plan:
         action, c = install_file(proj, item["dest"], item["text"], mode, f"kit-{lock['plugin_version']}")
-        conflicts += 1 if c else 0
+        if c:
+            conflicts.append(item["dest"])
+            touched.append(f"{item['dest']}.kit-new")
         if action != "unchanged":
-            changes.append(f"{item['dest']}: {action}" + (f" ({c} conflict(s) - markers inline)" if c else ""))
-        if action in ("created", "updated", "merged", "conflict"):
+            changes.append(f"{item['dest']}: {action}"
+                           + (f" (kit version left at {item['dest']}.kit-new; the file is untouched)" if c else ""))
+        if action in ("created", "updated", "merged"):
             touched.append(item["dest"])
         touched.append(f"{BASE_REL}/{item['dest']}")
     for rel in scaffold_local(proj):
         changes.append(f"{rel}: created")
         touched.append(rel)
     if prior != lock:
-        _write_text(proj, LOCK_REL, _lock_text(lock))
-        changes.append(f"{LOCK_REL}: {'written' if prior is None else 'bumped'}")
+        only_version = prior is not None and ({k: v for k, v in prior.items() if k != "plugin_version"}
+                                              == {k: v for k, v in lock.items() if k != "plugin_version"})
+        if not (only_version and not changes):      # a plugin_version bump alone is provenance, not a change
+            _write_text(proj, LOCK_REL, _lock_text(lock))
+            changes.append(f"{LOCK_REL}: {'written' if prior is None else 'bumped'}")
     touched.append(LOCK_REL)
-    rules = checked_effective(kits, local)
     for rel in write_rendered(proj, render_docs(_lock_rules(rules, kits, lock))):
         changes.append(f"{rel}: rendered")
         touched.append(rel)
     return proj, changes, touched, conflicts, notes
 
 
-def _finish(args, kind: str, proj, changes, touched, conflicts, notes, base_branch_suffix=""):
-    for n in notes:
-        print(n)
-    if not changes:
-        print(f"governance-{kind}: already current")
-        return 0
-    for c in changes:
-        print(f"  {c}")
-    print(f"governance-{kind}: {len(changes)} change(s)" + (f", {conflicts} file(s) with conflict markers" if conflicts else ""))
-    if getattr(args, "pr", False):
-        uniq = sorted({t for t in touched if (proj / t).exists()})
-        branch = "governance/intake" if kind == "apply" else f"governance/upgrade{base_branch_suffix}"
-        title = "Governance intake" if kind == "apply" else "Governance upgrade"
-        open_pr(proj, branch, title, _pr_body(kind, changes, notes), uniq, getattr(args, "base", None))
-    return 1 if conflicts else 0
+def _run_verb(args, mode: str) -> int:
+    global _JOURNAL
+    kind = "apply" if mode == "apply" else "upgrade"
+    root, proj = plugin_root(args.plugin_root), project_dir(args.project_dir)
+    use_pr, base_branch, branch, cur = bool(getattr(args, "pr", False)), getattr(args, "base", None), None, None
+    if use_pr:
+        branch = "governance/intake" if kind == "apply" else f"governance/upgrade-{_plugin_version(root) or 'next'}"
+        cur, exists = pr_preflight(proj, branch)
+        if exists:
+            print(f"{kind} PR open: {branch} (merge or delete that branch, then run again)")
+            return 0
+    _JOURNAL, switched = _Journal(), False
+    try:
+        if use_pr:
+            r = _git(proj, "checkout", "-q", "-b", branch)
+            if r.returncode != 0:
+                raise Refused(f"git-checkout-failed: {_tail(r)}")
+            switched = True
+        proj, changes, touched, conflicts, notes = _plan_and_write(args, mode)
+        for n in notes:
+            print(n)
+        if not changes and not conflicts:
+            print(f"governance-{kind}: already current")
+            if switched:
+                _git(proj, "checkout", "-q", cur)
+                _git(proj, "branch", "-D", branch)
+            return 0
+        for c in changes:
+            print(f"  {c}")
+        print(f"governance-{kind}: {len(changes)} change(s)")
+        if conflicts:
+            for c in conflicts:
+                notes.append(f"CONFLICT {c}: the kit changed this file and so did you; the kit version is {c}.kit-new "
+                             "(merge it by hand, then delete the .kit-new file)")
+            print("GOVERNANCE-UPGRADE-CONFLICTS " + " ".join(f"{c}.kit-new" for c in conflicts))
+        if use_pr:
+            uniq = sorted({t for t in touched if (proj / t).exists() or (proj / t).is_symlink() or t.startswith("governance/rendered/")})
+            skipped = _stage(proj, uniq)
+            if skipped:
+                notes.append("not committed (gitignored, left in the working tree): " + ", ".join(skipped))
+            title = "Governance intake" if kind == "apply" else "Governance upgrade"
+            if _git(proj, "diff", "--cached", "--quiet").returncode == 0:
+                raise Refused("nothing-to-commit: every changed path is gitignored")
+            for st in (("commit", "-q", "-m", title), ("push", "-q", "-u", "origin", branch)):
+                r = _git(proj, *st)
+                if r.returncode != 0:
+                    raise Refused(f"git-{st[0]}-failed: {_tail(r)}")
+            gh = shutil.which("gh")
+            r = subprocess.run([gh, "pr", "create", "--base", base_branch or cur, "--head", branch, "--title", title,
+                                "--body", _pr_body(kind, changes, notes)],
+                               cwd=str(proj), capture_output=True, text=True, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+            if r.returncode != 0:
+                raise Refused(f"gh-pr-create-failed: {_tail(r)}")
+            print(_redact((r.stdout.strip().splitlines() or ["pull request opened"])[-1]))
+            _git(proj, "checkout", "-q", cur)
+            switched = False
+        return 1 if conflicts else 0
+    except BaseException:
+        if switched:
+            _git(proj, "checkout", "-q", "-f", cur)
+            _git(proj, "branch", "-D", branch)
+        _JOURNAL.rollback()
+        raise
+    finally:
+        _JOURNAL = None
 
 
 def cmd_apply(args):
-    proj, changes, touched, conflicts, notes = _plan_and_write(args, "apply")
-    return _finish(args, "apply", proj, changes, touched, conflicts, notes)
+    return _run_verb(args, "apply")
 
 
 def cmd_upgrade(args):
-    proj, changes, touched, conflicts, notes = _plan_and_write(args, "upgrade")
-    root = plugin_root(args.plugin_root)
-    return _finish(args, "upgrade", proj, changes, touched, conflicts, notes,
-                   base_branch_suffix="-" + (_plugin_version(root) or "next"))
+    return _run_verb(args, "upgrade")
 
 
 # ---- upstream leak guard (design 5.6) -------------------------------------------------------------
 
-ORG_ID_RE = re.compile(r"(?<![A-Za-z0-9-])([A-Z][A-Z0-9]{1,15})-[A-Z]{2,5}-[0-9]{3}(?![A-Za-z0-9])")
+ORG_ID_RE = re.compile(r"(?<![a-z0-9])([a-z][a-z0-9]{1,15})-[a-z]{2,5}-[0-9]{3}(?![a-z0-9])")   # run on casefolded text
 ADOPTER_OWNED = ("governance/rendered/**", ".foundry/governance.lock", ".foundry/governance-intake.json")
+
+
+def _fold(text: str) -> str:
+    """NFKC-normalise, drop format (Cf) characters, casefold: what a human reads, not what bytes were typed."""
+    t = unicodedata.normalize("NFKC", text)
+    return "".join(ch for ch in t if unicodedata.category(ch) != "Cf").casefold()
 
 
 def leak_findings(files: dict, lock=None, literals=()) -> list:
     """Findings (strings; the matched text is NEVER echoed) for a set of files bound for an upstream
     submission. `files` maps a repo-relative path to its text, or None when it could not be read (a finding,
     never a pass). Refuses: any governance/local/ path, any path the lock marks adopter-owned, any non-FG rule
-    id, and any product literal (foundry_blueprint's HOW/WHAT deny-list, generalised)."""
+    id (found after Unicode normalisation, so a homoglyph or a zero-width split does not hide one), and any
+    product literal (foundry_blueprint's HOW/WHAT deny-list, generalised)."""
     bp = _bp()
-    owned = list(ADOPTER_OWNED) + [g for g in (((lock or {}).get("declarations") or {}).get("trust_boundaries") or [])
-                                   if isinstance(g, str) and g]
-    extras = [r"(?<!\w)" + re.escape(x) + r"(?!\w)" for x in literals if isinstance(x, str) and x.strip()]
+    owned = [_fold(g) for g in ADOPTER_OWNED] + [
+        _fold(g) for g in (((lock or {}).get("declarations") or {}).get("trust_boundaries") or [])
+        if isinstance(g, str) and g]
+    extras = [r"(?<!\w)" + re.escape(_fold(x)) + r"(?!\w)" for x in literals if isinstance(x, str) and x.strip()]
     out = []
     for path in sorted(files):
         p = norm_path(path)
+        pf = _fold(p)
         text = files[path]
-        if p == "governance/local" or p.startswith("governance/local/"):
+        if pf == "governance/local" or pf.startswith("governance/local/"):
             out.append(f"governance-local-path:{p}")
             continue
-        if any(glob_re(g).fullmatch(p) for g in owned):
+        if any(glob_re(g).fullmatch(pf) for g in owned):
             out.append(f"adopter-owned-path:{p}")
             continue
         if text is None:
             out.append(f"unreadable:{p}")
             continue
         for n, line in enumerate(text.splitlines(), 1):
-            for m in ORG_ID_RE.finditer(line):
-                if m.group(1) != "FG":
+            for m in ORG_ID_RE.finditer(_fold(line)):
+                if m.group(1) != "fg":
                     out.append(f"private-rule-id:{p}:{n}")
         base_hits = bp.guard_blueprint(text, {}, [])
         if base_hits:
             out.append(f"product-id-pattern:{p}")
-        if extras and len(bp.guard_blueprint(text, {}, [], deny_extra=extras)) > len(base_hits):
+        if extras and bp.guard_blueprint(_fold(text), {}, [], deny_extra=extras)[len(bp.guard_blueprint(_fold(text), {}, [])):]:
             out.append(f"product-literal:{p}")
     return out
 
@@ -1356,10 +1549,7 @@ def _lock_drift(root: Path, lock: dict) -> list:
                     findings.append(f"lock-blueprint-drift:{bp['id']}: locked {bp.get('version')}, installed {ver}")
                 elif sha != bp.get("sha256"):
                     findings.append(f"lock-blueprint-drift:{bp['id']}: content changed at version {ver}")
-    have = _plugin_version(root)
-    if have is not None and have != lock.get("plugin_version"):
-        findings.append(f"lock-plugin-version-drift: locked {lock.get('plugin_version')}, installed {have}")
-    return findings
+    return findings          # lock.plugin_version is provenance only: a bump alone is never a finding
 
 
 def cmd_check(args):
@@ -1489,10 +1679,10 @@ def main(argv=None) -> int:
                 "discover": cmd_discover, "select": cmd_select, "declare": cmd_declare, "apply": cmd_apply,
                 "upgrade": cmd_upgrade, "leak-check": cmd_leak_check}[args.verb](args)
     except Refused as exc:
-        print(f"refused: {exc}", file=sys.stderr)
+        print(f"refused: {_redact(exc)}", file=sys.stderr)
         return 2
     except ValueError as exc:  # bad --today
-        print(f"refused: {exc}", file=sys.stderr)
+        print(f"refused: {_redact(exc)}", file=sys.stderr)
         return 2
 
 

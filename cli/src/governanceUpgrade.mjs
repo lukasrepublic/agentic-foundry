@@ -12,6 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { scopeRecordsFor } from './pluginRefresh.mjs';
 
 export const GOVERNANCE_LOCK_REL = '.foundry/governance.lock';
+export const STACK_LOCK_REL = '.foundry/stack-profile.lock';
 const SCRIPT_REL = path.join('scripts', 'foundry_governance.py');
 const REVIEW = '/foundry:post-upgrade';
 
@@ -25,9 +26,15 @@ export function resolveInstallPath(registry, pluginKey, cwd) {
   return hit && typeof hit.installPath === 'string' && hit.installPath.trim() ? hit.installPath : null;
 }
 
-export function hasGovernanceLock(cwd) {
-  const st = fs.lstatSync(path.join(cwd, GOVERNANCE_LOCK_REL), { throwIfNoEntry: false });
+const isFile = (cwd, rel) => {
+  const st = fs.lstatSync(path.join(cwd, rel), { throwIfNoEntry: false });
   return Boolean(st && st.isFile());
+};
+
+/** The step applies when the workspace has a governance lock, or only the legacy stack-profile lock (which the
+ * script absorbs once into a governance lock). */
+export function hasGovernanceLock(cwd) {
+  return isFile(cwd, GOVERNANCE_LOCK_REL) || isFile(cwd, STACK_LOCK_REL);
 }
 
 /** A spawnSync-shaped result; never throws. */
@@ -45,23 +52,29 @@ function runPython(python, argv, opts) {
  *   skipped | would run | already current | changed | attention (exit 1: conflict markers left) | failed.
  * Never throws: a missing plugin root or an unrunnable python is `failed`, never a silent pass.
  */
-export function runGovernanceUpgrade({ cwd, pluginRoot, python = 'python3', env = process.env, dryRun = false }) {
+export function runGovernanceUpgrade({ cwd, pluginRoot, python = 'python3', env = process.env, dryRun = false, pr = false }) {
   if (!hasGovernanceLock(cwd)) return { verdict: 'skipped', reason: 'no governance lock in this workspace' };
-  if (dryRun) return { verdict: 'would run', detail: 'foundry_governance.py upgrade --pr after the plugin refresh' };
+  if (dryRun) return { verdict: 'would run', detail: `foundry_governance.py upgrade${pr ? ' --pr' : ''} after the plugin refresh` };
   if (!pluginRoot || !fs.existsSync(path.join(pluginRoot, SCRIPT_REL))) {
+    if (!isFile(cwd, GOVERNANCE_LOCK_REL)) return { verdict: 'skipped', reason: 'legacy stack-profile lock only, and the installed plugin directory is unknown' };
     return { verdict: 'failed', reason: 'the installed plugin has no scripts/foundry_governance.py (cannot find its install directory)' };
   }
   // Never run python with the workspace as cwd: -m / -c would put it first on sys.path. The script takes the
   // project explicitly. PYTHONSAFEPATH (3.11+) keeps the script directory off sys.path ahead of the stdlib.
-  const argv = [path.join(pluginRoot, SCRIPT_REL), '--project-dir', cwd, 'upgrade', '--pr'];
+  const argv = [path.join(pluginRoot, SCRIPT_REL), '--project-dir', cwd, '--plugin-root', pluginRoot, 'upgrade', ...(pr ? ['--pr'] : [])];
   const r = runPython(python, argv, { env: { ...env, PYTHONSAFEPATH: '1' }, cwd: os.tmpdir(), encoding: 'utf-8', timeout: 600000 });
   if (r.error) return { verdict: 'failed', reason: `${python} not runnable (${r.error.code || r.error.message})` };
   const lines = `${r.stdout}\n${r.stderr}`.split('\n').map((l) => l.trim()).filter(Boolean);
   const tail = lines.slice(-1)[0] || `exit ${r.status}`;
+  const open = /upgrade PR open: (\S+)/.exec(r.stdout);
+  if (r.status === 0 && open) return { verdict: 'skipped', reason: `upgrade PR open: ${open[1]}` };
   if (r.status === 0) {
-    return /already current/.test(r.stdout) ? { verdict: 'already current' } : { verdict: 'changed', detail: tail };
+    return /already current/.test(r.stdout) ? { verdict: 'already current' } : { verdict: 'changed', detail: tail, pr };
   }
-  if (r.status === 1) return { verdict: 'attention', reason: 'merge conflicts are marked inline in the pull request', detail: tail };
+  // Only the script's own conflict sentinel means "conflicts left for review". Any other nonzero exit - a refusal,
+  // or an uncaught exception, which also exits 1 - is a failure and is reported with its last line.
+  const conflicts = /GOVERNANCE-UPGRADE-CONFLICTS (.*)/.exec(r.stdout);
+  if (r.status === 1 && conflicts) return { verdict: 'attention', reason: `kit changes need a manual merge: ${conflicts[1]}`, detail: tail };
   return { verdict: 'failed', reason: tail };
 }
 
@@ -72,7 +85,9 @@ export function renderGovernanceUpgradeRow(result) {
     case 'skipped': return `  [skipped] ${subject}: ${result.reason}`;
     case 'would run': return `  [would run] ${subject}: ${result.detail}`;
     case 'already current': return `  [ok] ${subject}: governance lock is current with the installed plugin`;
-    case 'changed': return `  [changed] ${subject}: ${result.detail} — review the pull request with ${REVIEW}`;
+    case 'changed': return result.pr
+      ? `  [changed] ${subject}: ${result.detail} — review the pull request with ${REVIEW}`
+      : `  [changed] ${subject}: ${result.detail} — written to the working tree only (no pull request: rerun with --pr or UPDATE_AGENTIC_WORKSPACE_PR=1); open it via ${REVIEW}`;
     case 'attention': return `  [attention] ${subject}: ${result.reason} — resolve them with ${REVIEW}`;
     default: return `  [failed] ${subject}: ${result.reason} — fix the cause, rerun the updater, then ${REVIEW}`;
   }
