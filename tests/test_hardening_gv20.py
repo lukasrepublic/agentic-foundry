@@ -634,3 +634,31 @@ def test_item8_control_an_own_ruling_is_rewritten_by_a_ruled_rerun(tmp_path):
     first = rn.write_all(sweep_with(), "again", str(tmp_path), RN_DATE)
     second = rn.write_all(sweep_with(), "again", str(tmp_path), RN_DATE)
     assert first["status"] == second["status"] == "ruled" and Path(second["ruling"]).is_file()
+
+
+# ------------------------------------------------------------------------------------------ amendment: chat mirror escaping
+import shutil as _shutil  # noqa: E402
+
+
+@pytest.mark.skipif(_shutil.which("jq") is None, reason="jq is not installed")
+def test_chat_mirror_jq_filter_neutralises_mentions_and_link_markup(tmp_path):
+    text = (ROOT / "cli" / "templates" / "workflows" / "message-log-chat-mirror.yml").read_text()
+    start = text.index("jq -rR --argjson since")
+    prog = text[text.index("'", start) + 1:text.index("' |", start)]
+    lines = [
+        {"kind": "PROD-BEFORE", "corr": "c1", "from": "ops <!channel>", "time": "2026-11-04T10:00:00Z",
+         "body": "@channel @here @everyone deploy <!here> <@U123> <https://evil.example|click> & done\nnext"},
+        {"kind": "PROD-AFTER", "corr": "c2", "from": "plain", "time": "2026-11-04T10:01:00Z", "body": "all good"},
+        {"kind": "FINDING", "corr": "c3", "from": "x", "time": "2026-11-04T10:02:00Z", "body": "not mirrored"},
+    ]
+    f = tmp_path / "m.jsonl"
+    f.write_text("".join(json.dumps(x) + "\n" for x in lines) + "not json\n")
+    r = subprocess.run(["jq", "-rR", "--argjson", "since", "0", prog, str(f)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    out = r.stdout.splitlines()
+    assert len(out) == 2 and out[0].startswith("PROD-BEFORE c1 from ops &lt;!channel&gt;")
+    first = out[0]
+    for bad in ("@", "<", ">"):
+        assert bad not in first, (bad, first)
+    assert "(at)channel" in first and "&lt;https://evil.example|click&gt;" in first and "&amp; done next" in first
+    assert out[1] == "PROD-AFTER c2 from plain: all good"                                  # control: plain text is unchanged

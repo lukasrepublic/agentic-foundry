@@ -38,6 +38,7 @@ Four kinds of page, four kinds of question. Start where your question lives:
 - [Enable agent teams](how-to/agent-teams.md)
 - [Never read a secret value](how-to/secrets-never-read.md) — rule D1: verify by metadata only; the secret-read guard, its add-only policy lists, and why only an IAM-level boundary prevents the read
 - [Run the plugin's native evals](how-to/plugin-evals.md)
+- [Governance hardening notes](how-to/governance-hardening-notes.md) — what the hardening pass closed, and which controls are boundaries and which are visibility controls
 
 ## Reference — look it up
 

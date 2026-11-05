@@ -47,11 +47,15 @@ jobs:
           if [ -z "${CHAT_WEBHOOK_URL}" ]; then echo "MESSAGE_LOG_CHAT_WEBHOOK is not set" >&2; exit 1; fi
           [ -d messages ] || exit 0
           since=$(( $(date -u +%s) - 960 ))
+          # `.from` and `.body` are written by other sessions: neutralise chat markup before it reaches the webhook
+          # (`&` `<` `>` become entities, which defeats <!channel>, <@U123> and <url|text>; `@` becomes (at), which defeats a
+          # plain-text @channel / @here / @everyone on chats that parse mentions from text).
           cat messages/*.jsonl | jq -rR --argjson since "${since}" '
+            def esc: tostring | gsub("&"; "&amp;") | gsub("<"; "&lt;") | gsub(">"; "&gt;") | gsub("@"; "(at)");
             (fromjson? // empty)
             | select(type == "object" and (.kind == "PROD-BEFORE" or .kind == "PROD-AFTER"))
             | select(try ((.time[0:19] + "Z" | fromdateiso8601) >= $since) catch false)
-            | "\(.kind) \(.corr // "-") from \(.from): \((.body | tostring)[0:300] | gsub("\n"; " "))"' |
+            | "\(.kind) \((.corr // "-") | esc) from \((.from // "-") | esc): \((.body | esc)[0:300] | gsub("\n"; " "))"' |
           while IFS= read -r line; do
             jq -n --arg text "${line}" '{text: $text}' |
               curl --fail --silent --show-error --max-time 20 -H 'Content-Type: application/json' -d @- "${CHAT_WEBHOOK_URL}"
