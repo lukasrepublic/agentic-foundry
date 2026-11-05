@@ -125,7 +125,6 @@ _EXPECTED_TOKEN_SET = [
     'foundry[_-]command[_-]deck',
     'foundry[_-]wave[_-]plan',
     'foundry[_-]routine[_-]wake',
-    'foundry[_-]message[_-]kind',
     'foundry[_-]blocker[_-]check',
     'foundry[_-]manifest[_-]to[_-]tasklist',
     'foundry[_-]native[_-]todo',
