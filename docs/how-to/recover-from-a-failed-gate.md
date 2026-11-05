@@ -40,6 +40,12 @@ Run the `security-reviewer` agent against the current diff, then apply the
 `security-reviewed:<head12>-<base8>` label the check prints. Pushing a new commit invalidates the
 old label by design.
 
+With no Block in the full round, label the head once the full round is clean on that head. With Blocks, label only after the delta review is clean on the current head.
+A new head after the last review (a merge of the base, a rebase, a conflict resolution) gets a delta review of the commits since the reviewed head. It does not count against the one-delta budget, and the label moves only after that review is clean.
+The delta review covers every line of every fix commit, including new files, flags and floor rows outside the Blocks' locators. A new defect there is graded on its own severity and can be a Block. A filed Risk that a fix commit makes worse is a new finding.
+A new Block from the delta review gets ONE narrow follow-up by the builder, scoped to that Block. The deck session verifies the follow-up diff and runs the tests itself, with no second reviewer agent, and records that in the PR's state note. If the follow-up does not close it, or a further new Block appears, park the PR with the Block as its reason for the operator.
+Risks are filed and not re-reviewed.
+
 ## 5. The merge was refused
 
 See the same section in [troubleshooting.md](../troubleshooting.md#the-merge-was-refused) —
