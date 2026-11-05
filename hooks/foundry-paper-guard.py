@@ -326,6 +326,7 @@ def _bash_write_targets(command: str) -> list:
     except ValueError:
         toks = command.split()
     out, words, cur, stack = [], [], [""], []
+    seg = [""]            # the base in force when the current pipeline began (both sides of a `|` / `&` inherit it)
 
     def jn(p):
         if cur[0] and p and not p.startswith(("/", "~")):
@@ -349,12 +350,15 @@ def _bash_write_targets(command: str) -> list:
         pos = [a for a in rest if not a.startswith("-")]
         flags = [a for a in rest if a.startswith("-")]
         rec = _is_recursive(flags)
-        if verb in ("cd", "pushd"):
+        if verb in ("cd", "pushd", "popd"):
+            if verb == "popd" or "-" in rest:
+                return            # `cd -` / `popd`: the new directory is unknown. Keep the previous base and judge against the cwd too
             if not pos:
                 cur[0] = "~"
-            elif pos[0] != "-":
+            else:
                 new = jn(pos[0])
-                cur[0] = "" if ("$" in new or "`" in new) else new     # unresolvable: fall back to the payload cwd, never admit
+                if not ("$" in new or "`" in new):         # `cd $VAR` / `cd $(…)`: unknown, same fail-closed handling
+                    cur[0] = new
             return
         if verb in ("sed", "gsed", "perl") and any(re.fullmatch(r"-[A-Za-z]*i[A-Za-z0-9._]*", f) or f.startswith("--in-place")
                                                   for f in flags):
@@ -394,15 +398,20 @@ def _bash_write_targets(command: str) -> list:
             while k < len(t):
                 two = t[k:k + 2]
                 if two in ("&&", "||"):
+                    seg[0] = cur[0]
                     k += 2
                     continue
                 c = t[k]
                 if c == "(":
                     stack.append(cur[0])
+                    seg[0] = cur[0]
                 elif c == ")":
                     cur[0] = stack.pop() if stack else ""
+                    seg[0] = cur[0]
                 elif c in "|&":
-                    cur[0] = ""
+                    cur[0] = seg[0]       # the `cd` itself ran in a subshell, but a cd made BEFORE the pipeline is inherited
+                else:
+                    seg[0] = cur[0]       # `;` starts a new pipeline with whatever base the cd left
                 k += 1
         elif t and set(t) <= set("<>&|") and (">" in t or "<" in t):   # a redirect operator: its operand is the next word
             tgt = toks[i + 1] if i + 1 < len(toks) else ""

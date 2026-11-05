@@ -799,6 +799,11 @@ PAPER_R1_REFUSED = [
     "cd .github/workflows || sed -i s/a/b/ ci.yml",       # ... `||` ...
     "cd .github/workflows &&(sed -i s/a/b/ ci.yml)",      # ... and a combined token
     "(cd /tmp) && sed -i x .github/workflows/ci.yml",
+    "cd .github/workflows && echo x | tee ci.yml",       # both sides of a pipe inherit a cd made before it
+    "cd .github/workflows; cat t | envsubst > ci.yml",
+    "cd .github/workflows; true & sed -i x ci.yml",
+    "cd .github/workflows; cd -; sed -i x ci.yml",         # `cd -` keeps the previous base (never `~`)
+    "cd .github/workflows; popd; sed -i x ci.yml",
     "cd docs && sed -i s/a/b/ .github/workflows/ci.yml",                                     # a relative target also hits from the cwd
 ]
 PAPER_R1_ADMITTED = [
@@ -806,7 +811,8 @@ PAPER_R1_ADMITTED = [
     "rm -rf node_modules",
     "rm -rf .venv",
     "(cd docs && true); echo x > docs/ok.md",
-    "cd .github/workflows | echo x > notes.md",          # a pipe side runs in its own subshell: the base ends
+    "cd .github/workflows | echo x > notes.md",          # the cd itself is in the pipe's subshell: the base ends
+    "cd tests; cd - ; echo x > docs/ok.md",              # `cd -` is unknown: judged from the previous base and the cwd
 ]
 
 
@@ -896,6 +902,15 @@ ROUND2_REFUSED = [
     "node -r ./x.js -e 'a'",
     "deno eval 'x'",
     "cat e.pl | perl -I lib",
+    "cat e.js | node -",
+    "cat e.rb | ruby -",
+    "cat e.pl | perl -",
+    "cat e.lua | lua -",
+    "node -r ./x.js -",
+    "node --eval='1' app.js",
+    "node --print=1 app.js",
+    "cat e.py | python3 -W ignore",
+    "cat e.py | python3 -X dev",
 ]
 ROUND2_ADMITTED = [
     f"rm -rf {SCR}/x 2>\"$LOG\"",
@@ -909,6 +924,8 @@ ROUND2_ADMITTED = [
     "node -r ./x.js app.js",
     "ruby -r lib script.rb",
     "perl -I lib script.pl",
+    "python3 -W ignore script.py",
+    "python3 -m pytest -q",
 ]
 
 
@@ -946,6 +963,7 @@ def test_round2_secret_guard_judges_a_tar_operand_against_the_cwd_and_every_dash
     assert go("tar -czC ~/.ssh -f /tmp/x .") == 2
     assert go("tar --dir=/home/u/.aws -cf /tmp/x credentials") == 2
     assert go("tar --directory=/home/u/.aws -cf /tmp/x .") == 2
+    assert go("tar -czf /tmp/x.tgz -zC/home/u/.ssh .") == 2
     assert go("tar -C /tmp/w -czf /tmp/x.tgz .") == 0
 
 

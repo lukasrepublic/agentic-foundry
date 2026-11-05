@@ -212,10 +212,13 @@ hook_comment_expectation:
 #   2. gv-20 round 2 (2026-11-05): paper guard keeps a successful `cd` across `;`, newline, `||`, `&&` (ends at a pipe, a lone `&`, `)`);
 #      shell-shape: python `-V` only as a version flag, per-interpreter option values, `deno eval`; secret-read guard: tar operands
 #      judged against the cwd and every -C.
+#   3. gv-20 round 3 (2026-11-05): shell-shape refuses a bare `-` script operand and `--eval=`/`--print=` forms and applies the
+#      value-aware operand parse to python; paper guard restores the pre-pipeline base at `|`/`&` and treats `cd -`/`popd`/`cd $VAR`
+#      as unknown (previous base kept); secret-read guard reads a bundled `-zC<dir>` value.
 gv20_hook_pins:
-  foundry-paper-guard.py: '3eb3a8c3f10e673c3f127b327dad0b6059035c16f9c75c1b59f6db2d88c807a2'
-  foundry-shell-shape.py: 'b3049334cb4dfa3e6e217180ccfd4788a2355cf011759cb936c99d88cd5c393e'
-  foundry-secret-read-guard.py: 'be53579c7f8b431fb9b949408f76aa4e553285fc8338c8da6a1739d6ffaf57de'
+  foundry-paper-guard.py: 'e8d53c711e40e9869f3b2076c04e8474f7e4dff240b1e5b0f653596961aae88d'
+  foundry-shell-shape.py: 'de6722ba044b0029040a28b075227317bb0cd988da803c794de426ad414acc60'
+  foundry-secret-read-guard.py: 'dbaac7eb5fe017c3088afdc6ca138886ad68211dd369dfe16a113472715a48be'
   foundry-plugin-scripts-allow.py: '2d2e3ff27e8ba1430767f87616e780f406101f390424f4abdc3194d2a3d5e7f3'
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.

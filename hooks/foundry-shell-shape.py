@@ -302,9 +302,9 @@ _INTERP_TAKES = {
 }
 
 
-def _interpreter_args(cmd, args):
+def _interpreter_args(cmd, args, takes=None):
     """-> (the interpreter's option words, its script operand or None). Option VALUES are not script operands."""
-    takes = _INTERP_TAKES.get(cmd, set())
+    takes = _INTERP_TAKES.get(cmd, set()) if takes is None else takes
     flags, script, k = [], None, 0
     while k < len(args):
         a = args[k]
@@ -357,8 +357,10 @@ def _check_packed(inv, depth, cwd, root, strict_mode):
             _judge_payload(cmd + " -c", payload, depth, cwd, root, strict_mode, python=True)
         elif len(args) == 1 and args[0] in _PY_VERSION_FLAGS:
             return                       # `python3 -V`, `-VV`, `--version`: nothing to run (`-v` is VERBOSE and runs stdin)
-        elif not [a for a in scan.strip_redirects(list(args)) if not a.startswith("-")] and "-m" not in args and "--version" not in args:
-            raise Refuse("`%s` with no script operand (it reads the script from stdin, e.g. `cat s.py | %s`)" % (cmd, cmd), SHAPE_PACKED)
+        else:
+            pflags, pscript = _interpreter_args(cmd, scan.strip_redirects(list(args)), _PY_TAKES | {"-m"})
+            if pscript in (None, "-") and "-m" not in pflags and "--version" not in pflags:
+                raise Refuse("`%s` with no script operand (it reads the script from stdin, e.g. `cat s.py | %s`)" % (cmd, cmd), SHAPE_PACKED)
     elif cmd in _EVAL_INTERPRETERS:
         flags, script = _interpreter_args(cmd, scan.strip_redirects(list(args)))
         if len(args) == 1 and args[0] in _VERSION_FLAGS:
@@ -366,10 +368,10 @@ def _check_packed(inv, depth, cwd, root, strict_mode):
         if cmd == "deno" and args[:1] == ["eval"]:
             raise Refuse("`deno eval` (an inline script)", SHAPE_PACKED)
         eval_short = r"-[A-Za-z]*[eEp][A-Za-z]*" if cmd in ("perl", "node", "nodejs", "bun") else r"-[A-Za-z]*[eE][A-Za-z]*"
-        if any(f in _EVAL_FLAGS for f in flags) or any(re.fullmatch(eval_short, f) for f in flags if not f.startswith("--")) \
+        if any(f in _EVAL_FLAGS or f.split("=", 1)[0] in _EVAL_FLAGS for f in flags) or any(re.fullmatch(eval_short, f) for f in flags if not f.startswith("--")) \
                 or (cmd == "php" and "-r" in flags):
             raise Refuse("`%s` with an inline script (-e/-E/--eval/-p)" % cmd, SHAPE_PACKED)
-        if script is None:
+        if script in (None, "-"):
             raise Refuse("`%s` with no script operand (it reads the script from stdin)" % cmd, SHAPE_PACKED)
 
 

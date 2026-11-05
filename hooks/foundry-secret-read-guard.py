@@ -425,8 +425,9 @@ def check_invocation(inv, cwd, verbs, matchers, depth=0):
                 d = a.split("=", 1)[1]
             elif a.startswith("-C") and len(a) > 2:
                 d = a[2:]                                             # attached: -C/home/u
-            elif a.startswith("-") and not a.startswith("--") and "C" in a[1:] and k + 1 < len(args):
-                d = args[k + 1]                                       # bundled: -czC ~/.ssh
+            elif a.startswith("-") and not a.startswith("--") and "C" in a[1:]:
+                rest_of_bundle = a[a.index("C", 1) + 1:]
+                d = rest_of_bundle or (args[k + 1] if k + 1 < len(args) else None)      # bundled: -zC/home/u/.ssh  or  -czC ~/.ssh
             if d:
                 chain = _expand(d, chain)
                 bases += [_expand(d, cwd), chain]
