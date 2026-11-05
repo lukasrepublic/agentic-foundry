@@ -10,9 +10,9 @@ Rules B2, F1–F4 of the port prompt. Grounding: runner admission control, Ryuk-
 - Hygiene: `scripts/foundry-env-hygiene.py` gains worktree + scratch-output scope under the project label; `hooks/foundry-env-reap.sh` gains a SubagentStop entry point (wired by gv-11) that sweeps orphans; F3 "push every head" and F4 "no shared stash, diffs to files" are brief text gv-01's renderer carries (this atom supplies the text file `context/brief-hygiene.md`).
 
 ## Acceptance criteria
-- AC-OM-6 WHEN readings are injected from a low-memory fixture, THE SYSTEM SHALL return RED; a healthy fixture SHALL return GREEN; AMBER SHALL reduce `max_builders_effective` by the policy step.
+- AC-OM-6 WHEN readings are injected from a low-memory fixture, THE SYSTEM SHALL return RED; a healthy fixture SHALL return GREEN; AMBER SHALL reduce `max_builders_effective` by the policy step. (rule B2)
 - WHEN `heavy_slots` is 2 and three wrapped commands start, the third SHALL wait and the wait SHALL be reported.
-- WHEN a SubagentStop event names a project label, the reaper SHALL remove only resources carrying that label (control: a foreign label survives).
+- WHEN a SubagentStop event names a project label, the reaper SHALL remove only resources carrying that label (control: a foreign label survives). (rules F1, F2, F3, F4)
 
 ## Done when
 - test:tests/test_deck_resources.py

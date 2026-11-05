@@ -11,9 +11,9 @@ Rules A1–A4 of `intake/governance-2-0/operating-model-port-prompt.txt`; port p
 - `scripts/foundry_merge_plan.py --ready <json> --paths <json>`: clusters ready items by overlapping files/components across tickets; adds work for an area to that area's open un-queued PR; orders clusters so a shared catalogue changes once per round; one report line.
 
 ## Acceptance criteria
-- AC-OM-4 WHEN `gh pr merge --admin`, a force flag, or `gh pr merge --auto` without a required check on the base is attempted, the hook SHALL refuse; a normal push to an un-queued PR SHALL be admitted (control); a push to a queued PR SHALL be refused.
+- AC-OM-4 WHEN `gh pr merge --admin`, a force flag, or `gh pr merge --auto` without a required check on the base is attempted, the hook SHALL refuse; a normal push to an un-queued PR SHALL be admitted (control); a push to a queued PR SHALL be refused. (rule A2)
 - WHEN a queue rejection's failing log names a file outside the diff, `queue-land` SHALL re-queue exactly once and record the evidence; a second identical failure SHALL emit a quarantine request and SHALL NOT re-queue.
-- WHEN any record-line column is unknown, `queue-land` SHALL refuse to enqueue naming the column.
+- WHEN any record-line column is unknown, `queue-land` SHALL refuse to enqueue naming the column. (rule A3)
 - WHEN `.github/workflows/ci.yml` is edited without `ci_allowed`, the paper guard SHALL refuse; with it, admit.
 - WHEN `merge-plan` is given two items touching one catalogue file, THE SYSTEM SHALL put them in one cluster and state it in one line.
 

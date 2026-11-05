@@ -126,22 +126,49 @@ def test_an_amendment_row_with_a_new_ac_maps_the_rule_it_adds(tmp_path):
 
 
 # The CURRENT charters, copied (the retired-token line of gv-01 reworded). The deck runs the trace over the workspace's own
-# charters directory; this copy keeps the repository's test self-contained. These rules still have no acceptance criterion in
-# any charter: the run exits 1 naming them, which is the point of the tool. When a charter gains the AC, remove the rule here.
+# charters directory; this copy keeps the repository's test self-contained. Refresh it when a charter changes, and regenerate the
+# table in docs/operating-model-policy.md (the test below fails until you do).
 REAL = ROOT / "tests" / "fixtures" / "om-trace" / "charters"
-KNOWN_UNMAPPED_IN_REAL_CHARTERS = {"A2", "A3", "A4", "B2", "B3", "B4", "B5", "B6", "B10", "C2", "C3", "D1", "D3", "E3", "F1", "F2",
-                                   "F3", "F4", "G1", "G2", "G3"}
+POLICY_PAGE = ROOT / "docs" / "operating-model-policy.md"
+TABLE_BEGIN, TABLE_END = "<!-- om-trace:begin -->", "<!-- om-trace:end -->"
 
 
 def test_the_trace_over_a_copy_of_the_real_charters():
     p = run(REAL, "--json")
     doc = json.loads(p.stdout)
-    assert p.returncode == 1
+    assert p.returncode == 0 and doc["unmapped"] == []
     assert [r["rule"] for r in doc["rules"]] == list(om.RULE_IDS)
-    assert set(doc["unmapped"]) == KNOWN_UNMAPPED_IN_REAL_CHARTERS
     b7 = next(r for r in doc["rules"] if r["rule"] == "B7")["maps"]
     assert b7 and b7[0]["charter"].startswith("gv-13") and b7[0]["ac"].startswith("Amendment")          # the New AC row
-    assert len(doc["charters"]) == 19
+    assert len(doc["charters"]) == 20
+
+
+def test_markdown_prints_the_table_alone(tmp_path):
+    d = write_full(tmp_path / "ch")
+    p = run(d, "--markdown")
+    assert p.returncode == 0
+    assert p.stdout.rstrip("\n") == om.render_markdown(om.trace(d))
+    assert "| A1 | Coarse-grained PRs and a merge plan every tick | `gv-01-a` | `AC-OM-1` |" in p.stdout
+    assert all(line.startswith("|") for line in p.stdout.splitlines())    # a table and nothing else
+    assert run(d, "--markdown", "--json").returncode == 2                 # one format at a time
+    d2 = tmp_path / "partial"
+    d2.mkdir()
+    (d2 / "gv-01.md").write_text("# C\n\n## Acceptance criteria\n- WHEN x, THE SYSTEM SHALL y (rule G2).\n")
+    q = run(d2, "--markdown")
+    assert q.returncode == 1 and "| A1 | Coarse-grained PRs and a merge plan every tick | UNMAPPED | - |" in q.stdout
+
+
+def test_the_committed_policy_page_carries_the_regenerated_table():
+    """CI regenerates the traceability table from the charter copy and fails when the committed page differs."""
+    page = POLICY_PAGE.read_text(encoding="utf-8")
+    assert page.count(TABLE_BEGIN) == 1 and page.count(TABLE_END) == 1
+    committed = page.split(TABLE_BEGIN, 1)[1].split(TABLE_END, 1)[0].strip("\n")
+    fresh = run(REAL, "--markdown")
+    assert fresh.returncode == 0
+    assert committed == fresh.stdout.strip("\n"), (
+        "docs/operating-model-policy.md is stale: regenerate with "
+        "`python3 scripts/foundry_om_trace.py --charters tests/fixtures/om-trace/charters --markdown` "
+        "and paste it between the om-trace markers")
 
 
 def test_a_charter_without_acceptance_criteria_maps_nothing(tmp_path):
