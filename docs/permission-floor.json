@@ -274,6 +274,36 @@
       "rationale": "renders the brief preamble to stdout from local governance files; writes nothing, no network"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_message_log.py post:*)",
+      "tier": "ask",
+      "rationale": "appends one record to the foundry/messages branch and pushes it to the git remote under the operator's identity (a remote write); never forces, retries only a lost race (gv-09 shared message log)."
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_message_log.py import:*)",
+      "tier": "ask",
+      "rationale": "one-time migration: lists an issue's comments through `gh` and then pushes records to the foundry/messages branch (a GitHub read plus a remote write; gv-09)."
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_message_log.py read:*)",
+      "tier": "allow",
+      "rationale": "single-branch fetch of foundry/messages, then a local query; writes only the per-recipient cursor file inside the git dir and the private fetched refs under refs/foundry (gv-09)."
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_message_log.py audit:*)",
+      "tier": "allow",
+      "rationale": "single-branch fetch, then a read-only replay query over the log; reports pairing violations; its only writes are the private fetched refs under refs/foundry (gv-09)."
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_message_log.py ruleset-template:*)",
+      "tier": "allow",
+      "rationale": "prints a branch-ruleset JSON document; touches no repository and no network (gv-09)."
+    },
+    {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_message_kind.py:*)",
+      "tier": "allow",
+      "rationale": "pure lint of one record JSON read from --in; prints a verdict, writes nothing (gv-09)."
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_events.py:*)",
       "tier": "ask",
       "rationale": "`emit` posts a structured comment on a GitHub issue under the operator's identity (a content-creating write); `parse` is read-only. One rule for the script: the write verb decides the tier (gn-04 deck events)."
