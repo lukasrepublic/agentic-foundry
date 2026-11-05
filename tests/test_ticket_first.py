@@ -341,34 +341,6 @@ def test_hooks_json_wires_the_three_entry_points():
     assert any("fork" in (e.get("matcher") or "") for e in h["SessionStart"])
 
 
-# --- cut-release cadence --------------------------------------------------------------------
-
-def test_release_cadence_refuses_within_30_days_unless_hotfix(tmp_path):
-    import datetime as dt
-    spec = importlib.util.spec_from_file_location("fcr", SCRIPTS / "foundry-cut-release.py")
-    fcr = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(fcr)
-    root = _repo(tmp_path)
-    _git(root, "tag", "-a", "v1.0.0", "-m", "v1.0.0")
-    ok, detail = fcr.release_cadence(str(root), "1.1.0")
-    assert not ok and "cadence floor is 30 days" in detail
-    later = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=31)
-    ok, _ = fcr.release_cadence(str(root), "1.1.0", now=later)
-    assert ok
-    r = fcr.cut_release(str(root), "1.1.0", acceptance_fn=lambda tree: {"verdict": "pass"},
-                        er_state_fn=lambda ers, repo=None: {}, suite_runner=lambda t: (0, "", ""))
-    assert r["state"] == "refused" and r["stage"] == "cadence"
-    (tmp_path / "u").mkdir()
-    untagged = _repo(tmp_path / "u")
-    assert fcr.release_cadence(str(untagged), "1.0.0")[0]
-    # the tag of the version being cut is ignored (a re-run must not refuse itself); a lightweight
-    # tag counts; a non-release tag (no v<digits>) is ignored
-    _git(root, "tag", "v1.1.0")
-    _git(root, "tag", "staging-20261007")
-    ok, detail = fcr.release_cadence(str(root), "1.1.0")
-    assert not ok and "v1.0.0" in detail
-
-
 # --- security follow-up of #286: the vetted Done-means digest is enforced where the command EXECUTES ------
 
 def _start_world(tmp_path, monkeypatch, body_cmd, editor, claim_cmd="true", author="alice", trusted=("alice",)):

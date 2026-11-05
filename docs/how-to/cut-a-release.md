@@ -23,6 +23,14 @@ data** — it never tags, never pushes, never closes issues itself. You execute 
                               5. gh issue close … (review each first)
 ```
 
+## When to cut
+
+A release follows programme readiness and the operator's judgement. There is no minimum time between
+releases. One cut can combine several programmes and the ad-hoc tickets merged since the previous tag.
+The cut-release playbook prints the release notes: one line per programme and a count of the other PRs
+since the previous tag. It uses the close-out draft Release for `HEAD` as input when one exists. You
+run the version tag and the publish yourself.
+
 ## Steps
 
 1. **Prep** — pick the version (yours to pick; there is no inference), then:
