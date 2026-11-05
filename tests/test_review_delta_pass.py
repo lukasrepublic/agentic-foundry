@@ -52,7 +52,7 @@ def test_dispatch_review_rounds_step_carries_the_rule():
     step = _flat(_dispatch_steps()["4b"])
     for needle in ("ONE full review round", "no delta review", "ONE fresh-context delta review",
                    "only the fix commits and those Blocks", "filed item", "left out of the delta brief",
-                   "only after the delta pass is clean on the current head",
+                   "label only after the delta review is clean on the current head",
                    "at most one review agent per PR", "without polling CI"):
         assert needle in step, needle
 
@@ -92,7 +92,7 @@ def test_reviewers_keep_baseline_and_write_scope_markers():
 
 
 def test_security_label_only_after_delta_in_reviewer_and_howto():
-    assert "applied only after the delta pass is clean" in _flat(_h2(SECR)["Review rounds, the label and CI"])
+    assert "label only after the delta review is clean on the current head" in _flat(_h2(SECR)["Review rounds, the label and CI"])
     sec = _flat(_h2(GATE)["4. The `security-path-base` check failed"])
     assert "delta review" in sec and "clean on the current head" in sec
 
@@ -114,3 +114,52 @@ def test_no_banned_vocabulary_in_new_text():
         low = path.read_text().lower()
         for w in ("cluster", "tracking issue"):
             assert w not in low, (path, w)
+
+
+# Table-driven: every rule must be stated, in the same words, in every affected document.
+RULES = {
+    "label-path": ("With no Block in the full round, label the head once the full round is clean on that head.",
+                   "With Blocks, label only after the delta review is clean on the current head."),
+    "new-head": ("A new head after the last review (a merge of the base, a rebase, a conflict resolution) gets a delta review of the commits since the reviewed head.",
+                 "It does not count against the one-delta budget, and the label moves only after that review is clean."),
+    "delta-scope": ("The delta review covers every line of every fix commit, including new files, flags and floor rows outside the Blocks' locators.",
+                    "A new defect there is graded on its own severity and can be a Block.",
+                    "A filed Risk that a fix commit makes worse is a new finding."),
+    "new-block": ("A new Block from the delta review gets ONE narrow follow-up by the builder, scoped to that Block.",
+                  "The deck session verifies the follow-up diff and runs the tests itself, with no second reviewer agent, and records that in the PR's state note.",
+                  "park the PR with the Block as its reason for the operator."),
+}
+
+
+def _rule_docs():
+    return {
+        "dispatch 4b": _dispatch_steps()["4b"],
+        "merge-when-green": _h2(MWG)["Review rounds before the merge (decision 5)"],
+        "pr-reviewer": _h2(PRR)["Review rounds and CI"],
+        "security-reviewer": _h2(SECR)["Review rounds, the label and CI"],
+        "how-to": _h2(GATE)["4. The `security-path-base` check failed"],
+    }
+
+
+def test_each_rule_is_stated_in_every_document():
+    for doc, text in _rule_docs().items():
+        flat = _flat(text)
+        for rule, phrases in RULES.items():
+            for ph in phrases:
+                assert ph in flat, (doc, rule, ph)
+
+
+def test_new_findings_in_fix_commits_are_not_capped_at_risk():
+    assert "is filed, not a Block" not in _flat(PRR.read_text())
+
+
+def test_step_0b_parks_on_block_in_protected_sections():
+    step = _flat(_dispatch_steps()["0b"])
+    assert "A Block located in `## Done means` or `## Paper allowed`, which the fix round may not edit, parks the atom at once." in step
+
+
+def test_step_5_and_mwg_bound_waits_to_60_seconds():
+    assert "no agent waits on CI for more than 60 seconds" in _flat(_dispatch_steps()["5"])
+    assert "runs in the deck session" in _flat(_dispatch_steps()["5"])
+    proc = _flat(_h2(MWG)["Procedure"])
+    assert "1. **Run the CLI directly for a short wait of at most 60 seconds**" in proc

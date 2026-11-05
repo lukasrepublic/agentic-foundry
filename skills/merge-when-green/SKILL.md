@@ -68,14 +68,16 @@ The merge floor is unchanged. Review before it follows one exit rule:
 1. **One full review round** per PR. At most one review agent per PR runs at a time.
 2. **No Block in the round** means no delta review runs.
 3. **Blocks in the round** mean one fresh-context delta review. Its brief names only the fix commits and those Blocks.
+   The delta review covers every line of every fix commit, including new files, flags and floor rows outside the Blocks' locators. A new defect there is graded on its own severity and can be a Block. A filed Risk that a fix commit makes worse is a new finding.
+   A new Block from the delta review gets ONE narrow follow-up by the builder, scoped to that Block. The deck session verifies the follow-up diff and runs the tests itself, with no second reviewer agent, and records that in the PR's state note. If the follow-up does not close it, or a further new Block appears, park the PR with the Block as its reason for the operator.
 4. **Risks** are recorded as filed items and left out of the delta brief. They are not re-litigated.
-5. **Security label.** On a security-touching PR, apply `security-reviewed:<head12>-<base8>` only after the delta
-   review is clean on the current head. A new push invalidates the label.
+5. **Security label.** On a security-touching PR, apply `security-reviewed:<head12>-<base8>` as follows. With no Block in the full round, label the head once the full round is clean on that head. With Blocks, label only after the delta review is clean on the current head.
+   A new head after the last review (a merge of the base, a rebase, a conflict resolution) gets a delta review of the commits since the reviewed head. It does not count against the one-delta budget, and the label moves only after that review is clean. A new push invalidates the label.
 6. **No reviewer waits on CI.** A reviewer ends and records what to check and when. This skill runs in the deck session.
 
 ## Procedure
 
-1. **Run the CLI directly for a short wait**, or **arm a native `Monitor` in `--watch` mode** for
+1. **Run the CLI directly for a short wait of at most 60 seconds**, or **arm a native `Monitor` in `--watch` mode** for
    anything that might outlast a single turn:
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-merge-when-green.py" <pr> --watch
