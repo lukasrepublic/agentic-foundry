@@ -40,6 +40,9 @@ Run the `security-reviewer` agent against the current diff, then apply the
 `security-reviewed:<head12>-<base8>` label the check prints. Pushing a new commit invalidates the
 old label by design.
 
+If the PR had Blocks, the label waits for the delta review: one fresh-context pass over the fix commits and those
+Blocks only. Apply the label after that pass is clean on the current head. Risks are filed and not re-reviewed.
+
 ## 5. The merge was refused
 
 See the same section in [troubleshooting.md](../troubleshooting.md#the-merge-was-refused) —

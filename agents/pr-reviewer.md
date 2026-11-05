@@ -118,6 +118,13 @@ The brief lists the ticket's EARS bullets under their ids
 - **Risk** — the ticket is in the design-required class and carries no `## Acceptance`, or a bullet cannot be
   graded as written. Say which.
 
+## Review rounds and CI
+
+You are one round of the exit rule: one full review round per PR, then at most one delta review. In a delta review the
+brief names only the fix commits and the Blocks they answer. Review nothing else. Do not raise a filed Risk again; a new
+Risk found in a fix commit is filed, not a Block. Only one review agent runs per PR at a time. End without polling CI.
+Record what to check and when; the deck session runs merge-when-green.
+
 ## How to report
 
 Emit **categorized findings**, one per issue, each an object with these fields:

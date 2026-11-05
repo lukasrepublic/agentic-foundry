@@ -61,6 +61,18 @@ where no check ever reported at all.
   touches auth/secrets/custody paths; CI's `security-path-base` check needs the `security-reviewed`
   label before this CLI's merge can go green.
 
+## Review rounds before the merge (decision 5)
+
+The merge floor is unchanged. Review before it follows one exit rule:
+
+1. **One full review round** per PR. At most one review agent per PR runs at a time.
+2. **No Block in the round** means no delta review runs.
+3. **Blocks in the round** mean one fresh-context delta review. Its brief names only the fix commits and those Blocks.
+4. **Risks** are recorded as filed items and left out of the delta brief. They are not re-litigated.
+5. **Security label.** On a security-touching PR, apply `security-reviewed:<head12>-<base8>` only after the delta
+   review is clean on the current head. A new push invalidates the label.
+6. **No reviewer waits on CI.** A reviewer ends and records what to check and when. This skill runs in the deck session.
+
 ## Procedure
 
 1. **Run the CLI directly for a short wait**, or **arm a native `Monitor` in `--watch` mode** for
