@@ -15,6 +15,7 @@ __pycache__/
 !/.foundry/README.md
 !/.foundry/build-provenance.yaml
 !/.foundry/stack-profile.lock
+!/.foundry/governance.lock
 # The workspace's RECORD lives here too: any earlier release manifests, decision
 # records, and the operator's standing-grants policy (ER #169) -- committed, never runtime.
 !/.foundry/releases/

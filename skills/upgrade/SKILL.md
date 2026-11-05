@@ -27,6 +27,12 @@ Until now nothing recorded what was written, and neither file had a schema — s
 *"is it valid?"* were both unanswerable. `/foundry:doctor` only checks that the registry **resolves**; a
 registry whose entries are missing every field but the key still passes.
 
+## Governance upgrade (not this skill)
+
+Kit and blueprint upgrades are a different mechanism: `npx update-agentic-workspace` runs
+`foundry_governance.py upgrade --pr` after the plugin refresh when `.foundry/governance.lock` exists, and
+`/foundry:post-upgrade` reviews the resulting pull request. This skill only reports adopter-config drift.
+
 ## Procedure
 
 1. **Report drift + validity** (read-only — writes nothing, including the baseline):

@@ -256,7 +256,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_governance.py:*)",
       "tier": "ask",
-      "rationale": "render writes governance/rendered/ and baseline writes governance/local/baselines/; load, validate, applicable, check and exceptions are read-only and run silently through the plugin-scripts-allow hook; no network"
+      "rationale": "render writes governance/rendered/ and baseline writes governance/local/baselines/; select and declare write the intake state; apply and upgrade write the lock, governance/local/ and installed CI snippets and, under --pr, push a branch and open a pull request through gh (the hook keeps all of these on ask); discover, load, validate, applicable, check, exceptions and leak-check are read-only and run silently through the plugin-scripts-allow hook, except that discover --out writes a file and so asks; no other network"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry-deck-heavy:*)",
