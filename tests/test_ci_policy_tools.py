@@ -58,19 +58,42 @@ def _install_step():
     return steps, hits[0]
 
 
+PINS = {   # the single place the expected pins are written: tool -> (version, release URL, sha256)
+    "conftest": ("0.71.1", "https://github.com/open-policy-agent/conftest/releases/download/v0.71.1/conftest_0.71.1_Linux_x86_64.tar.gz",
+                 "c3f6b2a753bd56e377a1e51a95ae3e057f926f2e9139f7d5b5dfbbaf810f7985"),
+    "opa": ("1.22.0", "https://github.com/open-policy-agent/opa/releases/download/v1.22.0/opa_linux_amd64_static",
+            "791790254c598a942eb140959bcec9a47f844535a632fd01d11d870ba2a47047"),
+    "kyverno": ("1.19.2", "https://github.com/kyverno/kyverno/releases/download/v1.19.2/kyverno-cli_v1.19.2_linux_x86_64.tar.gz",
+                "357eaf1df8bc24ddd5a73979fadeaae6a032e8710f11af264229756e4956bf4a"),
+}
+
+
+def _fetches():
+    script = (ROOT / "scripts" / "ci-install-policy-tools.sh").read_text(encoding="utf-8")
+    return [m.groups() for m in re.finditer(r"(?m)^fetch (\S+) (https://\S+) ([0-9a-f]{64})$", script)]
+
+
 def test_ci_installs_the_three_tools_pinned_and_verified_before_the_suite():
     steps, step = _install_step()
     names = [s.get("name", "") for s in steps]
     assert names.index(step["name"]) < names.index(next(n for n in names if n.startswith("pytest suite")))
     assert step["run"].strip() == "bash scripts/ci-install-policy-tools.sh"
-    run = (ROOT / "scripts" / "ci-install-policy-tools.sh").read_text(encoding="utf-8")
-    urls = re.findall(r"https://github\.com/[\w./-]+", run)
-    assert len(urls) == 3, urls
-    for u in urls:
-        assert "/releases/download/v" in u and "latest" not in u
-    hashes = re.findall(r"\b[0-9a-f]{64}\b", run)
-    assert len(hashes) == 3 and len(set(hashes)) == 3
-    assert "sha256sum -c" in run and "set -euo pipefail" in run
+    script = (ROOT / "scripts" / "ci-install-policy-tools.sh").read_text(encoding="utf-8")
+    assert "sha256sum -c" in script and "set -euo pipefail" in script
+    # each (URL, sha256) pair, together, exactly as pinned; nothing else is fetched
+    assert sorted((url, sha) for _, url, sha in _fetches()) == sorted((u, h) for _, u, h in PINS.values())
+    assert len(re.findall(r"(?m)^\s*(?:fetch|curl)\b", script.replace("fetch() {", ""))) == 3 + 1   # three fetch calls + the one curl in fetch()
+    for tool, (ver, url, _) in PINS.items():
+        assert f"/download/v{ver}/" in url and "latest" not in url
+
+
+def test_the_versions_named_in_the_ci_comment_match_the_script():
+    text = CI.read_text(encoding="utf-8")
+    named = dict(re.findall(r"(conftest|opa|kyverno)(?:-cli)? v(\d+\.\d+\.\d+) \(20", text))
+    assert named == {tool: ver for tool, (ver, _, _) in PINS.items()}
+    for _, url, _ in _fetches():
+        tool = "kyverno" if "/kyverno/" in url else ("opa" if "/opa/" in url else "conftest")
+        assert f"/download/v{named[tool]}/" in url
 
 
 def test_the_pins_carry_a_research_timestamp():

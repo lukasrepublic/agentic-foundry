@@ -64,7 +64,8 @@ facts_sha256: ebaa8dd408818eae5ae1d53d2db4ac0cf61c5d63fe1a1247ba926fe8562a5037
 intake_at: '2026-11-04'
 plugin_version: 1.18.5
 snippets:
-  .github/workflows/ci-gitleaks.yml: 42aa5cee3dc3cca28e137003cc879125fdad30c1853a5366e634412887bbdfec
+  .github/workflows/ci-gitleaks.yml: 7a5ffc691d476b68a9a12961fdbc5a3fd671562919f58f7afa3ee4bceda0bb67
   .github/workflows/ci-semgrep.yml: 1288d0a192d393b959d823bd5419e92f9b4b152e3013b83d64f030d49569cd31
   .github/workflows/ci-release-attest.yml: 18a6a02f13427bb3d1a0d3f63f8ec0147682992c9fb953befa93709d193dca9f
-  .github/workflows/ci-scorecard.yml: af631742a298f9d5c2fd0990450217b484558ede755102714eb04549e87e8233
+  .github/workflows/ci-scorecard.yml: 1ae1fbd0a2b56878a16b44e9d22011bd2372b8dcf2d6f235451ddf71b220e913
+  .github/workflows/governance-trace.yml: 189784564fb3a11d4600e500126c9935aae956c49063c5cbf8bbf80e5eafff0d

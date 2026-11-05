@@ -630,4 +630,6 @@ def test_brief_renderer_follows_the_policy_file(tmp_path):
                                          ("messaging", "machine_channel: git-log"), ("messaging", "people_channel: issue-per-topic")])
 def test_keys_removed_in_gv19_are_refused_as_unknown(tmp_path, section, key):
     rc, out, _ = _cli(_ws(tmp_path, f"{section}:\n  {key}\n"), "validate")
-    assert rc == 2 and "unknown-key:" in out
+    assert rc == 2
+    named = [ln.split("unknown-key:", 1)[1] for ln in out.splitlines() if "unknown-key:" in ln]
+    assert len(named) == 1 and key.split(":")[0] in named[0], out

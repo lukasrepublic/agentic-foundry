@@ -37,3 +37,19 @@ written from a pre-release template that still has one gets `unknown-key:` (exit
   keys; the tests that pinned them now pin the removal (`unknown-key:`).
 - The "Acts through" table in `tests/test_governance_docs.py` lists exactly the keys the schema carries.
 - Reverting a decision means adding a consumer first, then the key.
+
+## Addendum: kit gaps the dogfood run found
+
+These are recorded here because the same dogfood pass produced them; they are not policy-key decisions.
+
+- **Installed snippets are edited by the adopter, and the lock holds the hash of the kit text.** The plugin tuned the installed
+  gitleaks and scorecard workflows (a pinned scanner version, a narrower gate), so their lock hashes were re-written to the new
+  file bytes by hand. This is the known kit gap: there is no verb that re-baselines a deliberate snippet edit. The next
+  `upgrade` merges three-way against the untouched `governance/local/.kit-base/` copy, as designed.
+- **The delivery kit's trace workflow is not installed by `apply`.** `governance-trace.yml.template` is neither a `.tmpl` file nor
+  listed in the kit's `checks`, so intake never places it. It was installed by hand with the plugin ref filled in and recorded in
+  the lock. An `upgrade` does not carry a snippet that is not in the kit plan, so the lock entry must be re-added until the
+  kit lists the workflow.
+- **Raw scanner runs do not read baselines.** `check` honours `governance/local/baselines/`; the kit's semgrep workflow runs
+  `semgrep scan --error` and does not. A baselined finding therefore also needs an inline `nosemgrep` with a reason, or CI is red
+  while `check` is green.

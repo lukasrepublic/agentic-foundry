@@ -175,7 +175,7 @@ def parse_failure(log: str) -> dict:
         for m in _FILE.finditer(line):
             files.add(m.group(1).lstrip("./") if m.group(1).startswith("./") else m.group(1))
     basis = sorted(i.split(" - ")[0] for i in ids) or sorted(files)
-    sig = hashlib.sha1("\n".join(basis).encode("utf-8")).hexdigest()[:12] if basis else None
+    sig = hashlib.sha256("\n".join(basis).encode("utf-8")).hexdigest()[:12] if basis else None
     return {"ids": sorted(ids), "files": sorted(files), "signature": sig}
 
 

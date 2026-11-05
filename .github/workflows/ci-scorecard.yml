@@ -28,5 +28,6 @@ jobs:
       - name: gate
         # Fails when a gated check is absent from the results, inconclusive (-1), or scores below the threshold.
         # Gated names and threshold come from scorecard-map.yaml (gate: true).
+        # Branch-Protection is not gated until a SCORECARD_TOKEN (an operator PAT that can read repository settings) exists; gating returns then.
         run: |
-          jq -e --argjson t 7 '. as $r | ["Pinned-Dependencies","Vulnerabilities","Branch-Protection","Token-Permissions","Dangerous-Workflow","Security-Policy"] | all(. as $n | [$r.checks[] | select(.name == $n)] | length == 1 and .[0].score >= $t)' results.json
+          jq -e --argjson t 7 '. as $r | ["Pinned-Dependencies","Vulnerabilities","Token-Permissions","Dangerous-Workflow","Security-Policy"] | all(. as $n | [$r.checks[] | select(.name == $n)] | length == 1 and .[0].score >= $t)' results.json

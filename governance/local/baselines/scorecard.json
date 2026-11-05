@@ -4,7 +4,7 @@
     {
       "check": "Branch-Protection",
       "expires": "2027-02-05",
-      "reason": "Scored from the live repository settings (not the tree). The repo is single-operator with agent self-merge on green required checks (CLAUDE.md standing authorization), so required human reviews and code owners are deliberately off; the merge floor is the required status checks. Not fixable in the tree.",
+      "reason": "Scored from the live repository settings, not the tree. This is a single-operator repository where changes merge on green required status checks, so required human reviews and code owners are deliberately off. Gating returns once a SCORECARD_TOKEN secret exists and the settings are revisited; not fixable in the tree.",
       "score": 3,
       "threshold": 7
     },

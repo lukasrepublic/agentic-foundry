@@ -22,7 +22,6 @@ ROOT = Path(__file__).resolve().parents[1]
 GOV = ROOT / "scripts" / "foundry_governance.py"
 LOCK = ROOT / ".foundry" / "governance.lock"
 LOCAL = ROOT / "governance" / "local"
-ORG_ID = re.compile(r"\b<ORG>-")
 
 
 def _gov(*args):
@@ -45,18 +44,22 @@ def test_check_exits_zero_at_the_head():
     assert [ln for ln in p.stdout.splitlines() if ln.strip() and ln.strip() != "governance-check-ok"] == []
 
 
-def test_local_layer_carries_no_adopter_rule_ids():
+def test_local_layer_holds_scaffold_files_only():
+    """upstream's private layer is empty by construction: nothing but the scaffold (and the machine-owned .kit-base)."""
     assert LOCAL.is_dir()
-    assert not (LOCAL / "rules.yaml").exists(), "upstream's own private layer stays empty of rules"
-    ex = yaml.safe_load((LOCAL / "exceptions.yaml").read_text(encoding="utf-8"))
-    assert ex == {"exceptions": []}
-    bad = []
-    for f in LOCAL.rglob("*"):
-        if f.is_file() and ".kit-base" not in f.parts:
-            text = f.read_text(encoding="utf-8", errors="replace")
-            if ORG_ID.search(text):
-                bad.append(str(f.relative_to(ROOT)))
-    assert bad == []
+    allowed_exact = {"README.md", "exceptions.yaml", "baselines/.gitkeep", "adr/.gitkeep"}
+    found = []
+    for f in sorted(LOCAL.rglob("*")):
+        if not f.is_file():
+            continue
+        rel = f.relative_to(LOCAL)
+        if rel.parts[0] == ".kit-base":
+            continue
+        found.append(rel.as_posix())
+        ok = rel.as_posix() in allowed_exact or (rel.parts[0] == "baselines" and len(rel.parts) == 2 and rel.suffix == ".json")
+        assert ok, f"unexpected file in governance/local/: {rel}"
+    assert {"README.md", "exceptions.yaml"} <= set(found)
+    assert yaml.safe_load((LOCAL / "exceptions.yaml").read_text(encoding="utf-8")) == {"exceptions": []}
 
 
 def test_every_baseline_has_a_reason_and_a_future_expiry():
@@ -95,7 +98,8 @@ def _trace(tmp_path, **kw):
 
 
 def test_trace_passes_on_a_pr_that_cites_ids_against_the_real_tree(tmp_path):
-    p, doc = _trace(tmp_path, ticket_body=REAL_DESIGN, extra=("--agent-login", "agent-bot"))
+    p, doc = _trace(tmp_path, ticket_body=REAL_DESIGN, author="carol", extra=("--agent-login", "agent-bot"))
+    assert p.returncode == 0 and doc["ok"] is True, p.stdout + p.stderr
     findings = {f["check"]: f for f in doc["findings"]}
     assert findings["cited-ids-exist"]["ok"] is True, doc
     assert findings["design-present"]["ok"] is True, doc
@@ -117,3 +121,19 @@ def test_trace_fails_on_a_fixture_pr_that_cites_no_design_or_an_unknown_id(tmp_p
     p3, doc3 = _trace(tmp_path, pr_body="no ticket here\n", ticket_body=REAL_DESIGN, extra=("--agent-login", "agent-bot"))
     assert p3.returncode == 1
     assert [f for f in doc3["findings"] if f["check"] == "ticket-named" and not f["ok"]]
+
+
+def test_the_trace_workflow_is_installed_pinned_and_locked():
+    import hashlib
+    wf = ROOT / ".github" / "workflows" / "governance-trace.yml"
+    text = wf.read_text(encoding="utf-8")
+    doc = yaml.safe_load(text)
+    steps = doc["jobs"]["governance-trace"]["steps"]
+    assert doc["name"] == "governance-trace"
+    plugin = [s for s in steps if s.get("with", {}).get("path") == "plugin"][0]
+    assert re.fullmatch(r"[0-9a-f]{40}", plugin["with"]["ref"])
+    run = [s for s in steps if s.get("name") == "governance-trace"][0]["run"]
+    assert "--base-dir base" in run and "--project-dir pr" in run and "--agent-login" in run
+    assert all(re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", s["uses"]) for s in steps if "uses" in s)
+    lock = yaml.safe_load(LOCK.read_text(encoding="utf-8"))
+    assert lock["snippets"][".github/workflows/governance-trace.yml"] == hashlib.sha256(wf.read_bytes()).hexdigest()

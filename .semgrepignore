@@ -1,13 +1,11 @@
-# gv-19: a custom .semgrepignore replaces semgrep's defaults, so the default test/vendor excludes are restated.
+# A custom .semgrepignore replaces semgrep's defaults, so the default test/vendor excludes are restated.
 tests/
 test/
 node_modules/
 *_test.py
 test_*.py
 
-# Governance kit content is adopter-facing template material (workflow templates, policy fixtures), not code this plugin
-# runs. It is validated by the kit tests, and its intentional anti-patterns (unprivileged-fixture manifests, curl in a
-# registry-compat template) are the subject of those tests.
-governance/kits/*/checks/
+# Adopter-facing workflow/manifest templates: not code this plugin runs.
 governance/kits/*/templates/
-packs/
+# One adopter workflow template: its `curl ... | python3 -c` reads a registry's JSON reply (stdout of curl into a parser, not a script download).
+governance/kits/contracts/checks/schema-registry-compat.yml

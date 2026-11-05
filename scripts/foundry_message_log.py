@@ -436,7 +436,7 @@ def post(ad, repo, remote, sender, to, kind, body, corr=None, refs=None, sleep=t
 
 def _cursor_path(ad, repo, session, me):
     """One cursor per (recipient, session): reading as A never moves the cursor reading as B depends on."""
-    key = re.sub(r"[^A-Za-z0-9_.-]", "_", me)[:40] + "-" + hashlib.sha1(me.encode("utf-8")).hexdigest()[:6]
+    key = re.sub(r"[^A-Za-z0-9_.-]", "_", me)[:40] + "-" + hashlib.sha256(me.encode("utf-8")).hexdigest()[:6]
     base = CURSOR_BASENAME + "." + key + (f".{re.sub(r'[^A-Za-z0-9_.-]', '_', session)}" if session else "")
     r = ad.git(["rev-parse", "--git-path", base], repo)
     if r.returncode != 0 or not r.stdout.strip():
