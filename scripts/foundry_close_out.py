@@ -5,7 +5,8 @@
                          (--plan <execution-plan.yaml> | --plan-ref) --states <json> --atoms <json>
                          --milestone <number> --project <owner/number>
                          [--learned-json <file> | --learned-project <owner/number>]
-                         [--done-means <yaml>] [--target-branch main] [--no-ruleset]
+                         [--done-means <committed yaml> | --programme-issue <o/r#n> [--trust-author]]
+                         [--done-means-timeout 1800] [--run-dir .] [--target-branch main] [--no-ruleset]
                          [--recheck-in SECONDS] [--dry-run]
 
 Close-out runs once, after the last wave has merged into the integration branch. In this order:
@@ -13,10 +14,13 @@ Close-out runs once, after the last wave has merged into the integration branch.
   2. take the lease `refs/foundry/claims/close-out/<programme>` by creating the ref on the integration head
      (a second session finds the ref and is refused); the lease is dropped when the session ends;
   3. close the atom issues (closing keywords fire only on default-branch PRs);
-  4. make sure the ruleset requiring `programme/acceptance` exists on the target branch;
-  5. run the programme's Done means (--done-means) and publish the result as the commit status
-     `programme/acceptance` on the integration head; with no --done-means it reads the status already there;
-  6. confirm the milestone's open issue count is zero;
+  4. run the programme's Done means (--programme-issue, whose Done means must pass the trust check, or a COMMITTED
+     --done-means file) in a work tree at the integration head, each under --done-means-timeout, and publish the
+     result as the commit status `programme/acceptance` on the integration head; without either it reads the status
+     already there;
+  5. confirm the milestone's open issue count is zero;
+  6. make sure the ruleset requiring `programme/acceptance` exists on the target branch (only now, so a refused or
+     pending run leaves no ruleset behind; the report prints the delete command);
   7. run the Learned distill (dl-10, proposals only);
   8. create the DRAFT Release pinned to the integration head SHA, then post the final Project status update.
 It never tags and never publishes: the operator tests, tags and publishes.
@@ -33,9 +37,11 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import importlib.util
 import io
 import json
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -92,9 +98,30 @@ def gh(args, payload=None):
     return _pi.gh_api(args, payload)
 
 
-def run_cmd(argv, timeout):
-    """Run one Done-means command. -> exit code; raises subprocess.TimeoutExpired."""
-    return subprocess.run(argv, capture_output=True, timeout=timeout).returncode
+def run_cmd(argv, timeout, cwd=None):
+    """Run one Done-means command (argv list, no shell). -> exit code; raises subprocess.TimeoutExpired."""
+    return subprocess.run(argv, capture_output=True, timeout=timeout, cwd=cwd).returncode
+
+
+def git_head(run_dir):
+    """The commit the run directory is at."""
+    r = subprocess.run(["git", "-C", str(run_dir), "rev-parse", "HEAD"], capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        raise Refused(f"{run_dir} is not a git work tree")
+    return r.stdout.strip()
+
+
+def read_programme_issue(ref, trust_author):
+    """The trust-checked view of the programme issue (foundry-ticket read_issue): done_trusted is true only when the
+    issue author and every body editor pass the Done-means trust check. -> the record dict."""
+    spec = importlib.util.spec_from_file_location("foundry_ticket", HERE / "foundry-ticket.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    o, r, n = _pi._issue_ref(ref)
+    try:
+        return mod.read_issue(mod.default_run, f"{o}/{r}", n, trust_author=trust_author)
+    except mod.GhError as e:
+        raise Refused(f"cannot read the programme issue: {e}")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -169,20 +196,33 @@ def ruleset_body(programme, target_branch):
 
 
 def ensure_ruleset(repo, programme, target_branch, dry_run):
-    """-> "present" | "created" | "would-create". A token that cannot create it is an external-provisioning stop."""
+    """-> (state, id): "present" | "updated" | "created" | "would-create" | "would-update". Enforcement, conditions
+    and rules are compared, not only the name. A token that cannot write it is an external-provisioning stop."""
     body = ruleset_body(programme, target_branch)
     for rs in gh([f"repos/{repo}/rulesets?per_page=100"]) or []:
         if isinstance(rs, dict) and rs.get("name") == body["name"]:
-            return "present"
+            full = gh([f"repos/{repo}/rulesets/{rs.get('id')}"]) or {}
+            same = all(full.get(k) == body[k] for k in ("target", "enforcement", "conditions", "rules"))
+            if same:
+                return "present", rs.get("id")
+            if dry_run:
+                return "would-update", rs.get("id")
+            try:
+                gh(["-X", "PUT", f"repos/{repo}/rulesets/{rs.get('id')}"], body)
+            except _pi.Unreachable:
+                raise
+            except _pi.IssueError as e:
+                raise Refused(f"external-provisioning: the ruleset cannot be updated with this token ({e})")
+            return "updated", rs.get("id")
     if dry_run:
-        return "would-create"
+        return "would-create", None
     try:
-        gh(["-X", "POST", f"repos/{repo}/rulesets"], body)
+        made = gh(["-X", "POST", f"repos/{repo}/rulesets"], body)
     except _pi.Unreachable:
         raise
     except _pi.IssueError as e:
         raise Refused(f"external-provisioning: the ruleset requiring {CHECK} cannot be created with this token ({e})")
-    return "created"
+    return "created", (made or {}).get("id") if isinstance(made, dict) else None
 
 
 def acceptance_state(repo, sha):
@@ -205,27 +245,56 @@ def post_acceptance(repo, sha, state, description):
        {"state": state, "context": CHECK, "description": description[:140]})
 
 
-def run_done_means(path, clock, runner):
-    """Run the Done-means commands in order. -> ("success"|"failure", description). Raises Pending on a timeout."""
-    try:
-        items = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as e:
-        raise Refused(f"cannot read --done-means: {type(e).__name__}")
-    if not isinstance(items, list) or not items:
-        raise Refused("--done-means must be a non-empty list of {name, argv}")
-    for it in items:
-        ok = isinstance(it, dict) and isinstance(it.get("name"), str) and isinstance(it.get("argv"), list) and \
-            it["argv"] and all(isinstance(x, str) for x in it["argv"])
-        if not ok:
-            raise Refused("each --done-means item needs a string name and a non-empty argv list of strings")
-    for it in items:
-        left = clock.left()
-        if left <= 0:
-            raise Pending([f"done-means:{it['name']}"])
+def committed_file(path, run_dir):
+    """A local --done-means file is accepted only when it is a committed path of the repo, unmodified."""
+    def g(*a):
+        return subprocess.run(["git", "-C", str(run_dir), *a], capture_output=True, text=True, timeout=30)
+    if g("ls-files", "--error-unmatch", "--", str(path)).returncode != 0 or \
+            g("diff", "--quiet", "HEAD", "--", str(path)).returncode != 0:
+        raise Refused(f"done-means-untrusted: {path} is not a committed, unmodified file of the repo")
+    return Path(run_dir) / path
+
+
+def load_done_means(args):
+    """-> list of {name, argv} or None. Sources: a committed repo file, or the trust-checked programme issue."""
+    if args.done_means:
+        run_dir = args.run_dir
+        path = committed_file(args.done_means, run_dir)
         try:
-            rc = runner(it["argv"], min(WAIT_MAX, left))
+            items = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError) as e:
+            raise Refused(f"cannot read --done-means: {type(e).__name__}")
+        if not isinstance(items, list) or not items:
+            raise Refused("--done-means must be a non-empty list of {name, argv}")
+        for it in items:
+            ok = isinstance(it, dict) and isinstance(it.get("name"), str) and isinstance(it.get("argv"), list) and \
+                it["argv"] and all(isinstance(x, str) for x in it["argv"])
+            if not ok:
+                raise Refused("each --done-means item needs a string name and a non-empty argv list of strings")
+        return items
+    if not args.programme_issue:
+        return None
+    rec = read_programme_issue(args.programme_issue, args.trust_author)
+    if not rec.get("done_trusted"):
+        raise Refused(f"done-means-untrusted: the programme issue's Done means is not trusted ({rec.get('done_reason')}); "
+                      "the operator reads it and passes --trust-author")
+    lines = [ln.strip() for ln in (rec.get("done") or "").splitlines() if ln.strip()]
+    if not lines:
+        return None
+    try:
+        return [{"name": f"done-means-{i}", "argv": shlex.split(ln)} for i, ln in enumerate(lines, 1)]
+    except ValueError:
+        raise Refused("the programme issue's Done means is not valid shell-word syntax")
+
+
+def run_done_means(items, args, runner):
+    """Run the Done-means commands in order, each under --done-means-timeout (running the programme's own commands is
+    not waiting on a check, so it is not charged to the 60 s budget). -> ("success"|"failure", description)."""
+    for it in items:
+        try:
+            rc = runner(it["argv"], args.done_means_timeout, args.run_dir)
         except subprocess.TimeoutExpired:
-            raise Pending([f"done-means:{it['name']}"])
+            return "failure", f"done-means {it['name']} timed out after {args.done_means_timeout} s"
         except OSError:
             return "failure", f"done-means {it['name']}: cannot run"
         if rc != 0:
@@ -304,6 +373,7 @@ def close_out(programme, args, clock=None, runner=run_cmd):
         names = ", ".join(f"{b['batch']} (wave {b['wave']})" for b in open_batches)
         raise Refused(f"batch not merged: {names}; close-out runs after the last wave has merged")
     atoms_doc = _pi._read_json(args.atoms)
+    items = load_done_means(args)          # trust is decided before any lease or write
     sha = integration_head(args.repo, args.integration)
     report = {"programme": programme, "sha": sha, "dry_run": bool(args.dry_run)}
     if args.dry_run:
@@ -321,10 +391,13 @@ def close_out(programme, args, clock=None, runner=run_cmd):
         take_lease(args.repo, programme, sha)
     try:
         report["atoms"] = close_atoms(args.repo, plan, atoms_doc, args.dry_run)
-        report["ruleset"] = "skipped" if args.no_ruleset else ensure_ruleset(args.repo, programme, args.target_branch,
-                                                                              args.dry_run)
-        if args.done_means and not args.dry_run:
-            state, desc = run_done_means(args.done_means, clock, runner)
+        if items is not None:
+            report["done_means_plan"] = [it["argv"] for it in items]
+        if items is not None and not args.dry_run:
+            if git_head(args.run_dir) != sha:
+                raise Refused(f"the run directory is not at the integration head {sha[:12]}; run close-out from a "
+                              "work tree at that commit")
+            state, desc = run_done_means(items, args, runner)
             post_acceptance(args.repo, sha, state, desc)
         state = settle_acceptance(args.repo, sha, clock)
         report["acceptance"] = state
@@ -336,6 +409,10 @@ def close_out(programme, args, clock=None, runner=run_cmd):
         report["milestone_open"] = left
         if left != 0:
             raise Refused(f"milestone {args.milestone} has {left} open issue(s); no release created")
+        report["ruleset"] = "skipped"
+        if not args.no_ruleset:
+            report["ruleset"], rid = ensure_ruleset(args.repo, programme, args.target_branch, args.dry_run)
+            report["ruleset_delete"] = (f"gh api -X DELETE repos/{args.repo}/rulesets/{rid if rid else '<id of ' + 'programme-acceptance-' + programme + '>'}")
         report["learned"] = learned(programme, args)
         n_atoms = sum(len(b["atoms"]) for w in plan["waves"] for b in w["batches"])
         body = (f"Programme {programme}: {n_atoms} atoms merged into {args.integration} at {sha}.\n\n"
@@ -373,7 +450,11 @@ def main(argv=None, clock=None, runner=run_cmd):
     p.add_argument("--project", required=True)
     p.add_argument("--learned-json")
     p.add_argument("--learned-project")
-    p.add_argument("--done-means")
+    p.add_argument("--done-means", help="a COMMITTED, unmodified repo file (YAML list of {name, argv})")
+    p.add_argument("--programme-issue", help="<owner>/<repo>#<n>: its trust-checked Done means is run")
+    p.add_argument("--trust-author", action="store_true", help="operator override of the Done-means trust check")
+    p.add_argument("--done-means-timeout", type=int, default=1800)
+    p.add_argument("--run-dir", default=".")
     p.add_argument("--target-branch", default="main")
     p.add_argument("--no-ruleset", action="store_true")
     p.add_argument("--recheck-in", type=int, default=300)
@@ -389,6 +470,8 @@ def main(argv=None, clock=None, runner=run_cmd):
             raise Refused("--integration and --target-branch must be plain branch names")
         if not TAG_RE.match(a.tag):
             raise Refused("--tag must look like v2.0.0")
+        if a.done_means_timeout < 1:
+            raise Refused("--done-means-timeout must be positive")
         if a.milestone < 1:
             raise Refused("--milestone must be a milestone number")
         rep = close_out(a.programme, a, clock, runner)

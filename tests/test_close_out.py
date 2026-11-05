@@ -87,12 +87,17 @@ class GH:
                 return {}
             return {"state": self.issues[n]}
         if path.startswith(f"repos/{REPO}/rulesets"):
-            if method == "POST":
+            if method in ("POST", "PUT"):
                 if self.ruleset_denied:
                     raise pi.IssueError("gh api failed: Must have admin rights (HTTP 403)")
-                self.rulesets.append(payload)
-                return {}
-            return list(self.rulesets)
+                if method == "PUT":
+                    self.rulesets[:] = [dict(payload, id=11)]
+                    return {}
+                self.rulesets.append(dict(payload, id=11))
+                return {"id": 11}
+            if path.endswith("/rulesets/11"):
+                return dict(self.rulesets[0])
+            return [{"id": 11, "name": r["name"]} for r in self.rulesets]
         if path.startswith(f"repos/{REPO}/statuses/") and method == "POST":
             self.statuses.insert(0, {"context": payload["context"], "state": payload["state"]})
             return {}
@@ -129,7 +134,16 @@ class GH:
 @pytest.fixture
 def gh(monkeypatch):
     g = GH()
+    g.issue_rec = {"done_trusted": True, "done_reason": "", "done": "true"}
+    g.read_calls = []
+    g.head = SHA
     monkeypatch.setattr(pi, "gh_api", g)
+
+    def reader(ref, trust):
+        g.read_calls.append((ref, trust))
+        return dict(g.issue_rec) if trust is False or g.issue_rec["done_trusted"] else dict(g.issue_rec, done_trusted=True)
+    monkeypatch.setattr(co, "read_programme_issue", reader, raising=False)
+    monkeypatch.setattr(co, "git_head", lambda d: g.head, raising=False)
     return g
 
 
@@ -154,14 +168,14 @@ def argv(files, *extra):
             "--learned-json", str(files / "learned.json"), *extra]
 
 
-def run(files, *extra, clock=None, runner=lambda a, t: 0, capsys=None):
+def run(files, *extra, clock=None, runner=lambda a, t, c=None: 0, capsys=None):
     rc = co.main(argv(files, *extra), clock or Clock(), runner)
     out, err = capsys.readouterr()
     return rc, out, err
 
 
 def test_happy_path_creates_a_draft_release_pinned_to_the_head(gh, files, capsys):
-    rc, out, err = run(files, "--done-means", str(files / "done.yaml"), capsys=capsys)
+    rc, out, err = run(files, "--programme-issue", "acme/code#9", capsys=capsys)
     assert rc == 0, err
     rep = json.loads(out)
     assert rep["sha"] == SHA and rep["acceptance"] == "success" and rep["release"] == "created"
@@ -170,6 +184,7 @@ def test_happy_path_creates_a_draft_release_pinned_to_the_head(gh, files, capsys
     assert rel["draft"] is True and rel["target_commitish"] == SHA and rel["tag_name"] == "v2.0.0"
     assert gh.statuses[0] == {"context": "programme/acceptance", "state": "success"}
     assert [r["name"] for r in gh.rulesets] == ["programme-acceptance-prog"]
+    assert rep["ruleset_delete"] == f"gh api -X DELETE repos/{REPO}/rulesets/11"
     kinds = gh.kinds()
     assert kinds[0] == ("POST", f"repos/{REPO}/git/refs")                       # lease first
     assert kinds[-1] == ("DELETE", f"repos/{REPO}/git/refs/foundry/claims/close-out/prog")   # lease dropped last
@@ -214,7 +229,7 @@ def test_red_acceptance_or_open_milestone_creates_no_release(gh, files, capsys, 
 
 
 def test_failing_done_means_publishes_a_failure_and_no_release(gh, files, capsys):
-    rc, out, err = run(files, "--done-means", str(files / "done.yaml"), runner=lambda a, t: 1, capsys=capsys)
+    rc, out, err = run(files, "--programme-issue", "acme/code#9", runner=lambda a, t, c=None: 1, capsys=capsys)
     assert rc == 2 and "is red" in err
     assert gh.statuses[0]["state"] == "failure" and gh.releases_written() == []
 
@@ -229,18 +244,11 @@ def test_pending_check_is_recorded_with_a_recheck_time_and_never_waits_past_60s(
     assert sum(clock.slept) <= 60 and gh.releases_written() == [] and gh.lease is False
 
 
-def test_done_means_timeout_is_pending_not_a_failure(gh, files, capsys):
-    def slow(a, t):
-        raise subprocess.TimeoutExpired(a, t)
-    rc, out, err = run(files, "--done-means", str(files / "done.yaml"), runner=slow, capsys=capsys)
-    assert rc == 3 and json.loads(out)["pending"][0]["check"] == "done-means:suite"
-    assert gh.statuses == []                      # a timeout posts no verdict
-
-
 def test_pending_that_turns_green_within_the_budget_completes(gh, files, capsys):
     gh.status_seq = ["pending", "pending", "success"]
     rc, out, err = run(files, clock=Clock(left=60), capsys=capsys)
-    assert rc == 0, err and json.loads(out)["release"] == "created"
+    assert rc == 0, err
+    assert json.loads(out)["release"] == "created"
 
 
 def test_dry_run_reads_but_writes_nothing(gh, files, capsys):
@@ -277,7 +285,7 @@ def test_outage_changes_nothing(gh, files, capsys):
 
 
 def test_final_status_update_is_complete_and_names_the_release(gh, files, capsys):
-    rc, out, err = run(files, "--done-means", str(files / "done.yaml"), capsys=capsys)
+    rc, out, err = run(files, "--programme-issue", "acme/code#9", capsys=capsys)
     assert rc == 0
     posts = [pl for m, p, pl in gh.writes if p == "graphql" and "createProjectV2StatusUpdate" in pl["query"]]
     assert len(posts) == 1
@@ -299,7 +307,7 @@ def test_bad_arguments_are_refused(gh, files, capsys, bad):
     a = argv(files)
     for i in range(0, len(bad), 2):
         a[a.index(bad[i]) + 1] = bad[i + 1]
-    rc = co.main(a, Clock(), lambda a, t: 0)
+    rc = co.main(a, Clock(), lambda a, t, c=None: 0)
     assert rc == 2 and "refused" in capsys.readouterr().err and gh.writes == []
 
 
@@ -307,3 +315,95 @@ def test_help_runs():
     r = subprocess.run([sys.executable, str(ROOT / "scripts" / "foundry_close_out.py"), "--help"],
                        capture_output=True, text=True)
     assert r.returncode == 0 and "close-out" in r.stdout
+
+
+# ---- fix round: Done-means provenance, own timeout, right tree, ruleset timing ----
+def _executed():
+    ran = []
+
+    def runner(a, t, c=None):
+        ran.append((list(a), t, c))
+        return 0
+    return ran, runner
+
+
+def test_untrusted_programme_issue_is_refused_and_nothing_runs(gh, files, capsys):
+    gh.issue_rec = {"done_trusted": False, "done_reason": "body edited by stranger", "done": ""}
+    ran, runner = _executed()
+    rc, out, err = run(files, "--programme-issue", "acme/code#9", runner=runner, capsys=capsys)
+    assert rc == 2 and "done-means-untrusted" in err
+    assert ran == [] and gh.writes == [] and gh.read_calls == [("acme/code#9", False)]
+
+
+def test_trust_author_override_is_passed_to_the_reader(gh, files, capsys):
+    gh.issue_rec = {"done_trusted": False, "done_reason": "x", "done": "true"}
+    ran, runner = _executed()
+    rc, out, err = run(files, "--programme-issue", "acme/code#9", "--trust-author", runner=runner, capsys=capsys)
+    assert rc == 0, err
+    assert gh.read_calls == [("acme/code#9", True)] and ran == [(["true"], 1800, ".")]
+
+
+def test_local_done_means_must_be_a_committed_file(gh, files, capsys):
+    rc, out, err = run(files, "--done-means", "done.yaml", "--run-dir", str(files), capsys=capsys)
+    assert rc == 2 and "done-means-untrusted" in err and gh.writes == []      # tmp dir is no git work tree
+
+
+def test_dry_run_lists_the_exact_argv_it_would_run(gh, files, capsys):
+    gh.issue_rec = {"done_trusted": True, "done_reason": "", "done": "python3 -m pytest -q\nmake 'check all'"}
+    gh.statuses = [{"context": co.CHECK, "state": "success"}]
+    ran, runner = _executed()
+    rc, out, err = run(files, "--programme-issue", "acme/code#9", "--dry-run", runner=runner, capsys=capsys)
+    assert rc == 0, err
+    assert json.loads(out)["done_means_plan"] == [["python3", "-m", "pytest", "-q"], ["make", "check all"]]
+    assert ran == [] and gh.writes == []
+
+
+def test_a_ninety_second_done_means_completes_and_posts_the_status(gh, files, capsys):
+    seen = []
+
+    def runner(a, t, c=None):
+        seen.append(t)
+        if t < 90:
+            raise subprocess.TimeoutExpired(a, t)     # the old code capped the command at the 60 s budget
+        return 0
+    clock = Clock(left=60)
+    rc, out, err = run(files, "--programme-issue", "acme/code#9", runner=runner, clock=clock, capsys=capsys)
+    assert rc == 0, err
+    assert seen == [1800] and gh.statuses[0] == {"context": "programme/acceptance", "state": "success"}
+    assert clock.slept == []                          # running a command is not waiting on a check
+
+
+def test_done_means_timeout_option_is_honoured_and_a_timeout_is_a_failure(gh, files, capsys):
+    def slow(a, t, c=None):
+        raise subprocess.TimeoutExpired(a, t)
+    rc, out, err = run(files, "--programme-issue", "acme/code#9", "--done-means-timeout", "5", runner=slow, capsys=capsys)
+    assert rc == 2 and gh.statuses[0]["state"] == "failure" and gh.releases_written() == []
+
+
+def test_wrong_tree_is_refused_before_any_command_runs(gh, files, capsys):
+    gh.head = "b" * 40
+    ran, runner = _executed()
+    rc, out, err = run(files, "--programme-issue", "acme/code#9", runner=runner, capsys=capsys)
+    assert rc == 2 and "not at the integration head" in err
+    assert ran == [] and gh.statuses == [] and gh.releases_written() == [] and gh.lease is False
+
+
+@pytest.mark.parametrize("why", ["red", "milestone", "pending"])
+def test_refused_or_pending_run_writes_no_ruleset(gh, files, capsys, why):
+    gh.statuses = [{"context": co.CHECK, "state": "failure"}]
+    if why == "milestone":
+        gh.statuses = [{"context": co.CHECK, "state": "success"}]
+        gh.milestone_open = 1
+    if why == "pending":
+        gh.statuses, gh.status_seq = [], ["pending"]
+    rc, out, err = run(files, capsys=capsys)
+    assert rc in (2, 3)
+    assert gh.rulesets == [] and not any("rulesets" in p for _, p in gh.kinds())
+
+
+def test_existing_ruleset_with_other_enforcement_is_updated(gh, files, capsys):
+    gh.statuses = [{"context": co.CHECK, "state": "success"}]
+    gh.rulesets = [dict(co.ruleset_body("prog", "main"), enforcement="disabled", id=11)]
+    rc, out, err = run(files, capsys=capsys)
+    assert rc == 0, err and json.loads(out)["ruleset"] == "updated"
+    assert gh.rulesets[0]["enforcement"] == "active"
