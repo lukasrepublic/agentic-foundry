@@ -470,7 +470,10 @@ def author_trusted(repo: str | None, login: str, gh_json=_gh_json, operators=Non
         return False, "issue author unknown"
     ops = trusted_operator_logins() if operators is None else {str(x).lower() for x in operators}
     me = (gh_json(["api", "user"]) or {}).get("login")
-    if me and me.lower() == login.lower():
+    if not me:
+        # fail CLOSED: without the agent's own login the identity check cannot run, so nobody is trusted on this lookup
+        return False, "identity lookup failed (`gh api user` returned no login), so the issue author cannot be vetted"
+    if me.lower() == login.lower():
         # Checked FIRST: the authenticated gh login is the agent's own identity. Even when it is also a registered operator
         # its self-authored or self-edited body is not vouched for by that fact (a shared identity makes the guarantee
         # nominal: the agent and the operator are indistinguishable to GitHub). The operator reads such a command and passes

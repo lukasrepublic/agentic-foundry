@@ -411,11 +411,15 @@ def _gate_root(cwd) -> Path:
                 top = Path(r.stdout.strip()).resolve()
         except Exception:
             pass
-    if top is not None and (top / ".claude" / "foundry-project.json").is_file():
-        return top
     env = os.environ.get("CLAUDE_PROJECT_DIR")
-    if env and Path(env).is_dir():
-        return Path(env).resolve()
+    envp = Path(env).resolve() if env and Path(env).is_dir() else None
+    if top is not None and (top / ".claude" / "foundry-project.json").is_file():
+        # a toplevel whose project file declares no github_scope must not shadow a CLAUDE_PROJECT_DIR that does:
+        # "claims are not in use" holds only when NEITHER root declares one
+        if envp is None or envp == top or _team_scope(top) is not False or _team_scope(envp) is False:
+            return top
+    if envp is not None:
+        return envp
     return top if top is not None else project_root()
 
 

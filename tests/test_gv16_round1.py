@@ -351,12 +351,11 @@ def test_a_paged_file_list_is_read_in_full(tmp_path):
     assert p.returncode == 1 and len(bad) == 150 and "src/gen/f149.py" in bad
 
 
-def test_a_cross_repo_ticket_ref_vets_the_author_in_that_repo(tmp_path):
+def test_a_cross_repo_ticket_ref_is_judged_in_round_2(tmp_path):
+    """Superseded in round 2: see tests/test_gv16_round2.py (the author is vetted in the PR's repo; the ref repo must be listed)."""
     base = _tree(tmp_path / "base", ["hooks/**"])
-    p, doc = _trace(tmp_path, base, base, author="mallory", pr_body="Closes other/repo#7")
-    assert by(doc, "ticket-named")[0]["detail"].startswith("the PR names ticket other/repo#7")
-    log = (tmp_path / "gh.log").read_text()
-    assert "repos/other/repo/collaborators/mallory/permission" in log and "repos/o/r/collaborators" not in log
+    p, doc = _trace(tmp_path, base, base, author="alice", pr_body="Closes other/repo#7")
+    assert by(doc, "ticket-named")[0]["ok"] is False
 
 
 def test_the_template_states_which_ref_each_checkout_is():

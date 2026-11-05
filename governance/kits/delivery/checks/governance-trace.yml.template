@@ -50,16 +50,17 @@ jobs:
         run: |
           set -euo pipefail
           gh pr view "$PR" --repo "$REPO" --json number,body > pr.json
-          gh api --paginate "repos/${REPO}/pulls/${PR}/files" --jq '.[] | {path: .filename}' | jq -s . > files.json
+          gh api --paginate "repos/${REPO}/pulls/${PR}/files" --jq '.[] | ({path: .filename}, (if .previous_filename then {path: .previous_filename} else empty end))' | jq -s . > files.json
           REF="$(python3 plugin/governance/kits/delivery/checks/governance-trace.py ticket-ref --pr-json pr.json)"
           N="${REF##*#}"
           R="${REF%#*}"
           gh issue view "$N" --repo "${R:-$REPO}" --json number,body,labels,author > ticket.json
-          printf '%s' "${R:-$REPO}" > ticket-repo.txt
       - name: governance-trace
         env:
           CLAUDE_PLUGIN_ROOT: ${{ github.workspace }}/plugin
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: >-
           python3 plugin/governance/kits/delivery/checks/governance-trace.py check
-          --pr-json pr.json --files-json files.json --ticket-json ticket.json --repo "$(cat ticket-repo.txt)"
+          --pr-json pr.json --files-json files.json --ticket-json ticket.json --repo "$REPO"
           --project-dir pr --base-dir base

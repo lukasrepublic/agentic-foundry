@@ -85,6 +85,32 @@ def _too_broad(component: str, g) -> bool:
     return all(rx.fullmatch(p) for p in ("x.py", "a/b.py", "a/b/c/d.txt", "docs/x/y/z.md"))
 
 
+def _scope_repos(base: Path) -> set:
+    """Lower-cased OWNER/NAME slugs the BASE ref's `.claude/foundry-project.json` lists: `github_scope.repos`, every explicit
+    slug in `repos{}`, and `github_scope.planning_repo` (a bare name takes the scope's owner)."""
+    out = set()
+    try:
+        doc = json.loads((base / ".claude" / "foundry-project.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return out
+    if not isinstance(doc, dict):
+        return out
+    scope = doc.get("github_scope") if isinstance(doc.get("github_scope"), dict) else {}
+    owner = str(scope.get("owner") or "")
+    def add(x):
+        x = str(x or "").strip()
+        if re.fullmatch(r"[\w.-]+/[\w.-]+", x):
+            out.add(x.lower())
+        elif x and owner and re.fullmatch(r"[\w.-]+", x):
+            out.add(f"{owner}/{x}".lower())
+    for x in (scope.get("repos") or []) if isinstance(scope.get("repos"), list) else []:
+        add(x)
+    add(scope.get("planning_repo"))
+    for v in (doc.get("repos") or {}).values() if isinstance(doc.get("repos"), dict) else []:
+        add(v if isinstance(v, str) else (v or {}).get("repo") or (v or {}).get("slug"))
+    return out
+
+
 def _default_gh_json(args):
     import subprocess
     try:
@@ -122,15 +148,19 @@ def run_checks(pr: dict, ticket: dict, project: Path, plugin: Path, today: str |
         findings.append(f)
 
     ref_repo, n = ticket_ref(pr)
-    add("ticket-named", n is not None,
-        f"the PR names ticket {(ref_repo or '') + '#' + str(n)}" if n else "the PR body names no ticket (add `Ticket: #<n>`)")
+    listed = n is not None and (not ref_repo or (repo and ref_repo.lower() == repo.lower())
+                                or ref_repo.lower() in _scope_repos(base))
+    add("ticket-named", n is not None and listed,
+        ("the PR names ticket " + (ref_repo or '') + '#' + str(n)) if (n and listed) else (
+            f"the PR names ticket {ref_repo}#{n}, but {ref_repo} is not this repository and is not listed in the base ref's "
+            "github_scope (repos / planning_repo)" if n else "the PR body names no ticket (add `Ticket: #<n>`)"))
     raw_files = files if files is not None else (pr.get("files") or [])
     changed = [str(f.get("path") if isinstance(f, dict) else f) for f in raw_files]
     changed = [f for f in changed if f and f != "None"]
     # the ticket author must be trusted: a Design from an untrusted account is not a Design
     login = ((ticket or {}).get("author") or {}).get("login") or ""
-    trust_repo = ref_repo or repo
-    ok_a, why_a = ft.author_trusted(trust_repo, login, gh_json, operators=ft.trusted_operator_logins(base))
+    # the author is vetted against the PR's own repository, never against the repo a ref names (that repo is the PR author's choice)
+    ok_a, why_a = ft.author_trusted(repo, login, gh_json, operators=ft.trusted_operator_logins(base))
     add("ticket-author", ok_a, why_a)
     body = (ticket or {}).get("body") or ""
     gv = ft.governance_context(base)               # policy, lock, boundaries and rules from the BASE ref

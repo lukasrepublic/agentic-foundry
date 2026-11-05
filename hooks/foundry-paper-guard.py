@@ -29,12 +29,17 @@ the ticket file lifts nothing). The CLI-writable `paper_allowed` never lifts a C
 The path is resolved as a FILE, symlinks included, so a link into a CI path is a CI path. A `Bash` payload is
 checked too (gv-16): the write targets of `sed -i`, `tee`, a `>`/`>>` redirect, `cp`/`mv`/`rm`/`truncate`/`dd of=`/
 `install` that name a CI path are refused the same way (a visibility control: it reads the command, it does not
-emulate a shell). The hook only sees Bash when hooks/hooks.json wires it into the Bash matcher.
+emulate a shell). The hook is wired into the Bash matcher group of hooks/hooks.json.
+DOCUMENTED LIMITS of the Bash reading (it is a visibility control, not a sandbox): it does not track `cd`, so a relative path is
+judged from the payload's cwd; it does not understand wrapper flags (`env -i`, `sudo -u x`), `-t` / `--target-directory`,
+`cp -r dir .github/` (a recursive copy of a directory), `rm -rf tests` (a removal of a non-CI directory that holds CI-named
+files), or `echo > package.json` (a shell edit of package.json is not judged by block; the Edit and Write tools carry that check).
 The point is not that CI never changes: it is that an agent never changes it to turn its own red check green.
 
 Everything else — code, infra, tests, CLAUDE.md, config — is admitted without a ticket. Writes
 outside the project root (e.g. ~/.claude memory) are admitted; so is a symlink that resolves
-outside it. Malformed payloads are admitted (a visibility control, not a security floor). The
+outside it. A payload that is not valid JSON, is not an object, or makes the hook raise is REFUSED (exit 2, with a reason): the hook fails
+closed. The
 first path component is compared case-insensitively on case-insensitive filesystems (darwin).
 A refusal is exit 2 with the reason on stderr (what the agent sees) and as JSON on stdout.
 """
@@ -388,7 +393,9 @@ def main() -> int:
     try:
         payload = json.load(sys.stdin)
     except Exception:
-        return 0
+        return _refuse("the hook payload is not valid JSON, so it cannot be judged (fail closed)")
+    if not isinstance(payload, dict):
+        return _refuse("the hook payload is not a JSON object, so it cannot be judged (fail closed)")
     tool = payload.get("tool_name", "")
     if tool == "Bash":
         return _main_bash(payload, _root())
@@ -429,4 +436,10 @@ def _refuse_paper(rel: Path, doc) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        code = main()
+    except SystemExit:
+        raise
+    except BaseException as exc:  # noqa: BLE001 - any uncaught failure refuses (exit 2), never 0 and never a traceback's 1
+        code = _refuse("the hook failed (%s: %s), so the write cannot be judged (fail closed)" % (type(exc).__name__, str(exc)[:160]))
+    sys.exit(code)
