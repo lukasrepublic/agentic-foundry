@@ -230,7 +230,7 @@ def run_checks(pr: dict, ticket: dict, project: Path, plugin: Path, today: str |
             lines = [ln for ln in buf.getvalue().splitlines() if ln and not ln.startswith("governance-check-ok") and "SKIP exception" not in ln]
         except gm.Refused as e:
             lines = [f"refused: {e}"]
-        stale = [ln for ln in lines if ln.startswith(("rendered-stale", "lock-"))]
+        stale = [ln for ln in lines if ln.startswith(("rendered-stale", "lock-", "snippet-tampered"))]
         exc = [ln for ln in lines if ln not in stale]
         add("rendered-fresh", not stale, "; ".join(stale) if stale else "governance/rendered/ matches the rules")
         add("exceptions-live", not exc, "; ".join(exc) if exc else "no exception has expired")

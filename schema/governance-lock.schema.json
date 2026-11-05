@@ -109,6 +109,12 @@
         }
       ]
     },
+    "snippets": {
+      "type": "object",
+      "description": "sha256 of every kit CI / hook snippet apply|upgrade left in place; `check` reports snippet-tampered:<path> when one is edited by hand.",
+      "propertyNames": {"pattern": "^[A-Za-z0-9._/-]+$"},
+      "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+    },
     "facts_sha256": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"

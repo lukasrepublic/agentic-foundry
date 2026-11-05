@@ -415,3 +415,82 @@ def test_item5_control_admitted_without_a_claim(team, cmd):
     set_ticket(team)
     r = gd(team, cmd)
     assert r.returncode == 0, (cmd, r.stdout, r.stderr)
+
+
+# ------------------------------------------------------------------------------------------ 6 governance lock + leak guard
+import hashlib  # noqa: E402
+import test_governance_intake as gi  # noqa: E402
+import foundry_governance as gov  # noqa: E402
+from test_governance_upgrade import adopted_repo, make_plugin_copy, run as urun, WF  # noqa: E402
+
+
+def test_item6_a_hand_edited_snippet_is_reported_tampered(tmp_path):
+    plugin = make_plugin_copy(tmp_path)
+    proj = adopted_repo(tmp_path, plugin)
+    lock = json.loads(json.dumps(__import__("yaml").safe_load((proj / ".foundry" / "governance.lock").read_text())))
+    assert lock["snippets"][WF] == hashlib.sha256((proj / WF).read_bytes()).hexdigest()      # recorded per file
+    rc, out, _ = urun(proj, "check", plugin=plugin)
+    assert "snippet-tampered" not in out                                                    # control: untouched
+    (proj / WF).write_text((proj / WF).read_text() + "# hand edit\n")
+    rc, out, _ = urun(proj, "check", plugin=plugin)
+    assert rc == 1 and f"snippet-tampered:{WF}" in out
+
+
+def test_item6_discover_out_is_limited_to_the_facts_file(tmp_path):
+    proj = gi.make_repo(tmp_path / "r")
+    (proj / ".foundry").mkdir(exist_ok=True)
+    rc, _, err = gi.run(proj, "discover", "--out", ".foundry/permissions.yaml")
+    assert rc == 2 and "output-not-facts-path" in err and not (proj / ".foundry" / "permissions.yaml").exists()
+    rc, _, err = gi.run(proj, "discover", "--out", ".foundry/other.json")
+    assert rc == 2
+    rc, _, err = gi.run(proj, "discover", "--out", ".foundry/facts.json")                   # control
+    assert rc == 0 and (proj / ".foundry" / "facts.json").is_file()
+
+
+def test_item6_leak_guard_catches_confusables_and_a_doubled_slash():
+    hy = "FG‑SEC‑001"                                                              # U+2011 hyphens
+    cy = "FG-SEС-001"                                                                   # a Cyrillic letter
+    wide = "ＦＧ-SEC-001"                                                            # fullwidth
+    for text in (hy, cy, wide):
+        found = gov.leak_findings({"docs/x.md": f"see {text} here"})
+        assert found, text
+        assert all(text not in f for f in found)                                              # the matched text is never echoed
+    assert gov.leak_findings({"docs/x.md": "see FG-SEC-001 here"}) == []                    # control: a plain FG id passes
+    assert gov.leak_findings({"governance//local/x.yaml": "x"}) == ["governance-local-path:governance/local/x.yaml"]
+    assert gov.leak_findings({"governance/local//x.yaml": "x"})
+    assert gov.leak_findings({"docs/x.md": "acme‑sec‑001"})                       # a private id behind U+2011
+
+
+def test_item6_pr_failure_keeps_files_from_an_earlier_local_apply_and_the_body_lists_managed_files(tmp_path, monkeypatch):
+    # (a) gh fails after the push: the files from the earlier local apply are still in the work tree
+    bindir = tmp_path / "shim-bin"
+    bindir.mkdir()
+    (bindir / "gh").write_text("#!/bin/sh\nexit 1\n")
+    (bindir / "gh").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
+    bare = gi._remote(tmp_path, monkeypatch)
+    proj = gi.make_repo(tmp_path / "r")
+    gi.git(proj, "remote", "add", "origin", str(bare))
+    gi.git(proj, "push", "-q", "origin", "main")
+    gi.intake(proj)
+    assert gi.run(proj, "apply")[0] == 0
+    names = [".foundry/governance.lock", ".github/workflows/ci-gitleaks.yml", "governance/local/exceptions.yaml"]
+    before = {n: (proj / n).read_bytes() for n in names}
+    rc, _, _ = gi.run(proj, "apply", "--pr", "--base", "main")
+    assert rc == 2
+    assert {n: (proj / n).read_bytes() for n in names} == before
+    assert gi.git(proj, "rev-parse", "--abbrev-ref", "HEAD").strip() == "main"
+
+
+def test_item6_pr_body_lists_the_managed_files(tmp_path, monkeypatch):
+    log = gi.gh_shim(tmp_path, monkeypatch)
+    bare = gi._remote(tmp_path, monkeypatch)
+    proj = gi.make_repo(tmp_path / "r")
+    gi.git(proj, "remote", "add", "origin", str(bare))
+    gi.git(proj, "push", "-q", "origin", "main")
+    gi.intake(proj)
+    assert gi.run(proj, "apply", "--pr", "--base", "main")[0] == 0
+    call = json.loads(log.read_text().splitlines()[0])
+    body = call[call.index("--body") + 1]
+    assert "Managed files in this pull request" in body and "- governance/local/exceptions.yaml" in body
+    assert "- .foundry/governance.lock" in body
