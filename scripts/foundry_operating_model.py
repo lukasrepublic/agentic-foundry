@@ -414,10 +414,6 @@ _EXPLAIN = {
         "B3 (floor): run a prior-art sweep before asking the operator. Adopt the converged recommendation and record a dated ruling. Escalate only on no consensus.",
         "Questions that research could answer cost the operator's attention.",
         "research-first skill and the blocker lint."),
-    "decisions.escalation_set": (
-        "B3/B4: the operator is asked only for these reasons, and only after an attempt that could have failed.",
-        "Four items reported as operator-gated in one review were the agent's own work.",
-        "blocker schema (attempted[], control) and its lint."),
     "claims.enabled": (
         "B5: machines check in on a shared lease record before, during and after a chunk of work.",
         "Two machines took the same work.",
@@ -442,10 +438,6 @@ _EXPLAIN = {
     "report.plain_language": ("E1: name fixes by what they do, not by IDs.", "ID-heavy status text could not be followed.", "deck-report renderer."),
     "report.max_lines": ("E1: the renderer refuses output longer than this; every line counts, headings included.", "The operator reads short, plain reports.", "deck-report renderer."),
     "report.include_ids": ("E1: when false, the report names work by what it does, not by ID.", "ID-heavy status text could not be followed.", "deck-report renderer."),
-    "report.handoff_dir": (
-        "E3: step-by-step operator documents go to this directory; generated PDFs go next to them.",
-        "Hand-off files in the repo are noise.",
-        "this policy key."),
     "communication.style": (
         "E2: use Simplified Technical English in agent responses, tick reports, briefs and documentation; off or operator-defined are allowed.",
         "Operators could not follow dense, ID-heavy status text.",
@@ -461,8 +453,6 @@ _EXPLAIN = {
     "models.security_reviewer": (
         "B7: security reviews of auth, secrets and crypto use this model; the default is the strongest model.", "Only these reviews need the strongest model.",
         "command-deck tick template via `render-tick-section B7`."),
-    "hygiene.disk_sweep_each_tick": (
-        "F2: measure the mount where the work writes, not the default one.", "The wrong disk filled while the default looked fine.", "deck-resources script."),
     "hygiene.teardown_required": (
         "F1 (floor): pair every start with a teardown of containers, clusters, port-forwards, worktrees and scratch output, scoped by your own project label.",
         "Orphaned resources accumulate and cost money.",
@@ -479,10 +469,6 @@ _EXPLAIN = {
         "D1: extra paths no reader command may be pointed at, ADDED to ~/.ssh, ~/.aws, ~/.config/gcloud, ~/.kube and .env*.",
         "Private key material never enters an agent's context.",
         "the secret-read guard hook and docs/how-to/secrets-never-read.md."),
-    "messaging.machine_channel": (
-        "Cross-session machine messages are an append-only JSONL log on a protected git branch.", "A git log is the established shape for a machine ledger.", "message-log script."),
-    "messaging.people_channel": (
-        "One issue per production change, request or decision.", "People read issues; machines read the log.", "the inbox and the message-log refs."),
     "messaging.chat_mirror": (
         "Opt-in mirror of PROD-BEFORE and PROD-AFTER lines to chat; off by default.", "Chat is a convenience, not a record.", "message-log script."),
     "messaging.open_change_minutes": (

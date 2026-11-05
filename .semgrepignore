@@ -1,0 +1,11 @@
+# A custom .semgrepignore replaces semgrep's defaults, so the default test/vendor excludes are restated.
+tests/
+test/
+node_modules/
+*_test.py
+test_*.py
+
+# Adopter-facing workflow/manifest templates: not code this plugin runs.
+governance/kits/*/templates/
+# One adopter workflow template: its `curl ... | python3 -c` reads a registry's JSON reply (stdout of curl into a parser, not a script download).
+governance/kits/contracts/checks/schema-registry-compat.yml

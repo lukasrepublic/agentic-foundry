@@ -1,0 +1,19 @@
+{
+  "check": "scorecard",
+  "findings": [
+    {
+      "check": "Branch-Protection",
+      "expires": "2027-02-05",
+      "reason": "Scored from the live repository settings, not the tree. This is a single-operator repository where changes merge on green required status checks, so required human reviews and code owners are deliberately off. Gating returns once a SCORECARD_TOKEN secret exists and the settings are revisited; not fixable in the tree.",
+      "score": 3,
+      "threshold": 7
+    },
+    {
+      "check": "Security-Policy",
+      "expires": "2026-12-05",
+      "reason": "Measured against main before this change. SECURITY.md gained the explicit advisory URL in this PR; scorecard can only re-score after merge, so frozen until the first post-merge run proves it (remove this entry then).",
+      "score": 4,
+      "threshold": 7
+    }
+  ]
+}

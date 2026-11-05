@@ -1,0 +1,19 @@
+{
+  "check": "semgrep",
+  "findings": [
+    {
+      "expires": "2027-02-05",
+      "line": 77,
+      "path": "scripts/foundry-verify.py",
+      "reason": "_dispatch runs ONE command string a stack profile declares, by design (the profile is the reviewed, operator-owned source; output is captured as data, never instructions). Argv form cannot express a profile's shell pipelines. Revisit when profiles declare argv lists. Marked with an inline nosemgrep so the raw CI scan agrees with this baseline.",
+      "rule": "security-checks.fg-sec-022-python-shell-true"
+    },
+    {
+      "expires": "2027-02-05",
+      "line": 78,
+      "path": "scripts/foundry-verify.py",
+      "reason": "Same call as the FG-SEC-022 finding above (the profile-declared command dispatch); one decision, two rules.",
+      "rule": "python.lang.security.audit.subprocess-shell-true.subprocess-shell-true"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+# Enforces FG-SEC-009, FG-SEC-024 (secret scanning), supports FG-SEC-027.
+# Base config: inherits the scanner's default rules; add project rules below, never replace the defaults.
+# Scanner pin: gitleaks v8.30.1 (retrieved 2026-11-04).
+title = "foundry base secret-scan config"
+
+[extend]
+useDefault = true
+
+# Project additions go in [[rules]] blocks here. Do not allowlist a verified leak: rotate it (FG-SEC-027).
+
+# Reviewed false positives (gv-19 dogfood, 2026-11-05). Neither is a credential; both are matched narrowly by content.
+[[allowlists]]
+description = "a pinned file sha256 in a release fixture, and a test assertion comparing two idempotency_key attributes"
+regexTarget = "line"
+regexes = [
+  '''foundry-secret-read-guard\.py: .[0-9a-f]{64}.$''',
+  '''e2\.idempotency_key == e1\.idempotency_key''',
+]

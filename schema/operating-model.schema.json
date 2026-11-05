@@ -44,12 +44,7 @@
     "decisions": {
       "type": "object", "additionalProperties": false,
       "properties": {
-        "research_first": {"type": "boolean", "const": true, "description": "FLOOR (B3): research answers questions before the operator is asked."},
-        "escalation_set": {
-          "type": "array", "uniqueItems": true, "maxItems": 32, "items": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9][a-z0-9_-]*$"},
-          "default": ["external-provisioning", "credential-step", "no-consensus-after-research"],
-          "description": "The only reasons to ask the operator."
-        }
+        "research_first": {"type": "boolean", "const": true, "description": "FLOOR (B3): research answers questions before the operator is asked."}
       }
     },
     "claims": {
@@ -73,8 +68,7 @@
         "timezone": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^(auto|UTC|[A-Za-z_]+(/[A-Za-z0-9_+-]+){1,2})$", "default": "auto", "description": "auto = the operator's local zone."},
         "plain_language": {"type": "boolean", "default": true},
         "max_lines": {"type": "integer", "minimum": 6, "maximum": 200, "default": 8},
-        "include_ids": {"type": "boolean", "default": false},
-        "handoff_dir": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u200b-\\u200d\\u2028\\u2029\\u202a-\\u202e\\u2060\\u2066-\\u2069\\ufeff]+$", "default": "~/Documents/<workspace-name>", "description": "E3 tunable; the placeholder is filled by the operator."}
+        "include_ids": {"type": "boolean", "default": false}
       }
     },
     "communication": {
@@ -95,7 +89,6 @@
     "hygiene": {
       "type": "object", "additionalProperties": false,
       "properties": {
-        "disk_sweep_each_tick": {"type": "boolean", "default": true, "description": "F2 tunable."},
         "teardown_required": {"type": "boolean", "const": true, "description": "FLOOR (F1): pair every start with a teardown."}
       }
     },
@@ -120,8 +113,6 @@
     "messaging": {
       "type": "object", "additionalProperties": false,
       "properties": {
-        "machine_channel": {"enum": ["git-log"], "default": "git-log"},
-        "people_channel": {"enum": ["issue-per-topic"], "default": "issue-per-topic"},
         "chat_mirror": {"enum": ["off", "on"], "default": "off", "description": "Opt-in; PROD-BEFORE and PROD-AFTER only. Unquoted YAML off/no/false mean off and on/yes/true mean on."},
         "open_change_minutes": {"type": "integer", "minimum": 1, "maximum": 10080, "default": 120},
         "cleanup_timeout_s": {"type": "integer", "minimum": 1, "maximum": 3600, "default": 120, "description": "Total wait for the --on-failure cleanup commands of foundry_prod_step.py before it posts STOP with 'cleanup timed out'."}

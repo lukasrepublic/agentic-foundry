@@ -42,6 +42,15 @@ jobs:
       - name: Install (PyYAML/jsonschema for the gate scripts + the pytest dev requirements)
         run: |
           pip install -r requirements-dev.txt
+      # Kit policy-tool tests (conftest / opa / kyverno) used to SKIP here because none of the three was installed.
+      # Research timestamp 2026-11-05T05:00Z, read from each vendor's GitHub releases page (latest, non-prerelease):
+      #   conftest v0.71.1 (2026-10-06), opa v1.22.0 (2026-10-29), kyverno-cli v1.19.2 (2026-10-20).
+      # Each URL is a fixed release asset (no `latest`, no redirect to a moving tag) and each download is verified
+      # against the sha256 recorded in scripts/ci-install-policy-tools.sh, which was cross-checked against the vendor's published checksums file.
+      # The kit suites were run green against exactly these three binaries. Upgrade = a reviewed edit of version + hash.
+      # When CI=true a missing tool FAILS those tests (tests/conftest.py) instead of skipping them.
+      - name: Install conftest, opa and kyverno (pinned, sha256-verified)
+        run: bash scripts/ci-install-policy-tools.sh
       - name: pytest suite (replaces the per-script --selftest step battery)
         # The denylist reaches the suite by CONTENT so AC-DOT-1(b) — "no proprietary term survives in
         # any tracked file" — actually runs here rather than skipping in the one place that gates a

@@ -110,3 +110,29 @@ def _clean_env(monkeypatch):
     # gv-16: under GITHUB_ACTIONS=true the trust check skips the `gh api user` self-identity lookup (an App token cannot call it);
     # a test must ask for that explicitly, so the CI runner's own variable never changes what a local-style test sees.
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
+
+# gv-19: the kit policy-tool tests (conftest / opa / kyverno) skip when the binary is absent so a laptop run stays quiet.
+# In CI that skip is a silent loss of coverage, so under CI=true the same skip FAILS. ci.yml installs the three (pinned,
+# sha256-verified); a missing binary there is a broken install, not a reason to pass.
+import re as _re
+
+_POLICY_TOOL_SKIP = _re.compile(r"^(?:Skipped:\s*)?(conftest|opa|kyverno)\b.*\b(not on path|not installed)\b", _re.IGNORECASE)
+
+
+def policy_tool_skip_must_fail(reason, env=None):
+    """True when `reason` is a missing-policy-tool skip and the environment says CI (CI=true)."""
+    env = os.environ if env is None else env
+    return env.get("CI") == "true" and bool(_POLICY_TOOL_SKIP.search(str(reason or "")))
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    rep = outcome.get_result()
+    if rep.skipped and not hasattr(rep, "wasxfail"):
+        lr = rep.longrepr
+        reason = lr[2] if isinstance(lr, tuple) and len(lr) == 3 else str(lr)
+        if policy_tool_skip_must_fail(reason):
+            rep.outcome = "failed"
+            rep.longrepr = f"CI=true and a policy tool is missing, so this test may not skip: {reason}"

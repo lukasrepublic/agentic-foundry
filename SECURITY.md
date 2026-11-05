@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report suspected vulnerabilities privately via **GitHub Security Advisories**
-("Report a vulnerability" on this repo) rather than public issues. You'll get an
+("Report a vulnerability" on this repo, <https://github.com/lukasrepublic/agentic-foundry/security/advisories/new>) rather than public issues. You'll get an
 acknowledgment within 72 hours and a status update within 14 days. Coordinated disclosure
 is appreciated; credit is given unless you prefer otherwise.
 

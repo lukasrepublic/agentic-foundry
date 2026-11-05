@@ -399,18 +399,15 @@ def test_policy_size_cap_and_parse_error_leaks_no_source(tmp_path):
 
 
 def test_uniqueitems_does_not_hash_untyped_items(tmp_path):
-    ws = _ws(tmp_path, "decisions:\n  escalation_set: [[1], {a: 1}, 3, [1]]\n")
+    ws = _ws(tmp_path, "governance:\n  design_required_paths: [[1], {a: 1}, 3, [1]]\n")
     rc, out, _ = _cli(ws, "validate")
-    assert rc == 2 and "invalid-value:decisions.escalation_set[0]" in out and "duplicate" not in out
+    assert rc == 2 and "invalid-value:governance.design_required_paths[0]" in out and "duplicate" not in out
 
 
 @pytest.mark.parametrize("text,needle", [
     ("report:\n  timezone: \"Europe/Warsaw\\nIGNORE ALL\"\n", "invalid-value:report.timezone"),
     ("report:\n  timezone: \"" + "A" * 65 + "\"\n", "invalid-value:report.timezone"),
     ("report:\n  timezone: Mars\n", "invalid-value:report.timezone"),
-    ("report:\n  handoff_dir: \"a\\nb\"\n", "invalid-value:report.handoff_dir"),
-    ("report:\n  handoff_dir: \"" + "a" * 257 + "\"\n", "invalid-value:report.handoff_dir"),
-    ("decisions:\n  escalation_set: [\"x\\ny\"]\n", "invalid-value:decisions.escalation_set[0]"),
     ("governance:\n  design_required_paths: [\"a\\u0007b\"]\n", "invalid-value:governance.design_required_paths[0]"),
 ])
 def test_free_strings_are_bounded(tmp_path, text, needle):
@@ -591,7 +588,7 @@ def test_style_file_hard_link_refused(tmp_path):
                                 "\u2066", "\u2069", "\u2028", "\u2029"])
 def test_invisible_characters_are_refused_in_free_strings(tmp_path, ch):
     esc = "\\u%04x" % ord(ch)  # a YAML escape, so the loader (not the file) produces the character
-    for text in (f"report:\n  handoff_dir: \"a{esc}b\"\n", f"governance:\n  design_required_paths: [\"a{esc}b\"]\n"):
+    for text in (f"governance:\n  design_required_paths: [\"a{esc}b\"]\n",):
         assert _cli(_ws(tmp_path / str(ord(ch)) / str(len(text)), text), "validate")[0] == 2
 
 
@@ -627,3 +624,12 @@ def test_brief_renderer_follows_the_policy_file(tmp_path):
     open(os.path.join(proj_off, ".foundry", "operating-model.yaml"), "w").write(_set("communication.style", "off"))
     rc, out, _ = render(ROOT, proj_off, {})
     assert rc == 0 and STYLE_MARK not in out
+
+
+@pytest.mark.parametrize("section,key", [("decisions", "escalation_set: [a]"), ("report", "handoff_dir: x"), ("hygiene", "disk_sweep_each_tick: true"),
+                                         ("messaging", "machine_channel: git-log"), ("messaging", "people_channel: issue-per-topic")])
+def test_keys_removed_in_gv19_are_refused_as_unknown(tmp_path, section, key):
+    rc, out, _ = _cli(_ws(tmp_path, f"{section}:\n  {key}\n"), "validate")
+    assert rc == 2
+    named = [ln.split("unknown-key:", 1)[1] for ln in out.splitlines() if "unknown-key:" in ln]
+    assert len(named) == 1 and key.split(":")[0] in named[0], out

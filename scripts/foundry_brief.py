@@ -6,7 +6,7 @@
 
 Sections, in order: always-on core (product charter by path if present, conduct rules), the blueprint's
 level-1 rules, the ticket's cited rule ids with statements inlined, path-scoped rules, the communication
-style block (unless `communication.style` is off), hygiene and shell-shape rules.
+style block (unless `communication.style` is off), hygiene and shell-shape rules, and the one production-step line (D2).
 
 Ticket JSON: `{"title": str, "cites": ["FG-SEC-006", ...]}` (`cited_ids` is accepted as an alias).
 The style setting comes from the operating-model policy loader (`foundry_operating_model.py`, a sibling
@@ -47,6 +47,10 @@ SHELL_SHAPE = """Shell shape:
 - Run one plain command per Bash call. Do not chain with ; && or |.
 - Use absolute paths. Do not change directory.
 - Write text that names a guarded command with Write or Edit, never a heredoc."""
+PROD_STEP = (
+    "Production steps (rule D2): State a production or irreversible step before it runs and report the outcome after it. "
+    'Wrap it: python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_prod_step.py" --repo <repo-dir> --remote <remote> '
+    '--what "<one line>" -- <command>. Never persist an allow for that script. Approve each call.')
 CHARTER_CANDIDATES = (".foundry/product-charter.md", "PRODUCT-CHARTER.md", "docs/product-charter.md")
 
 
@@ -148,7 +152,7 @@ def build_brief(proj: Path, root: Path, ticket: dict, paths: list, blueprint=Non
         blocks += _paragraphs(header, items, cap)
     if communication_style(proj, style) != "off":
         blocks.append(STYLE_BLOCK)
-    blocks += [HYGIENE, SHELL_SHAPE]
+    blocks += [HYGIENE, SHELL_SHAPE, PROD_STEP]
     return "\n\n".join(blocks) + "\n"
 
 

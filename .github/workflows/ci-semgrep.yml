@@ -1,0 +1,23 @@
+# Enforces FG-SEC-022. Adopters copy this kit's checks/ directory into their repo as security-checks/ and run from the repo root.
+# Registry packs (p/...) are not pinnable by commit or tag; the own rules file is versioned with the repo.
+name: sast
+on: [pull_request]
+permissions:
+  contents: read
+jobs:
+  semgrep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      # Only semgrep is pinned; its transitive dependencies float. For a fully pinned install generate a hashed requirements file
+      # (pip-compile --generate-hashes) and use: pip install --require-hashes -r security-checks/semgrep-requirements.txt
+      - run: pip install semgrep==1.183.0 # pinned 2026-11-04
+      - run: >-
+          semgrep scan --metrics=off --error
+          --config p/owasp-top-ten --config p/secrets
+          --config security-checks/semgrep-rules.yaml

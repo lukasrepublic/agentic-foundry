@@ -594,8 +594,7 @@ def test_chat_mirror_template_is_opt_in_prod_only_sha_pinned_least_privilege():
 def test_policy_keys_exist_with_the_documented_defaults(tmp_path):
     import foundry_operating_model as om
     p = om.load(tmp_path)
-    assert (p.get("messaging.machine_channel"), p.get("messaging.people_channel"), p.get("messaging.chat_mirror"),
-            p.get("messaging.open_change_minutes")) == ("git-log", "issue-per-topic", "off", 120)
+    assert (p.get("messaging.chat_mirror"), p.get("messaging.open_change_minutes")) == ("off", 120)
 
 
 # ============================================================================================ round 1 (review)

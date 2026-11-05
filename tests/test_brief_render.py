@@ -206,3 +206,13 @@ def test_a_long_note_is_truncated_with_a_marker_but_the_statement_is_not(tmp_pat
     proj = make_project(tmp_path, overrides=[{"id": "FG-TST-001", "note": "n" * 900}])
     out = render(plugin, proj, {"cites": ["FG-TST-001"]})[1]
     assert "...[truncated: 500 chars]" in out and "An agent MUST keep this whole." in out
+
+
+def test_every_brief_ends_with_the_one_d2_production_step_line(shipped):
+    for extra in ((), ("--style", "off")):
+        out = render(*shipped, {}, *extra)[1]
+        paras = [p for p in out.split("\n\n") if p.strip()]
+        d2 = [p for p in paras if p.startswith("Production steps (rule D2):")]
+        assert len(d2) == 1 and paras[-1] == d2[0]            # exactly one line, and it is the last paragraph
+        assert "\n" not in d2[0].strip()
+        assert "foundry_prod_step.py" in d2[0] and "--what" in d2[0] and "persist an allow" in d2[0]

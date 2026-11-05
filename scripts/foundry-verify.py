@@ -73,8 +73,9 @@ def _dispatch(command, *, cwd, env, timeout):
     launch failure OR a timeout => passed=False. Command output is treated as DATA (captured), never as
     instructions."""
     try:
-        proc = subprocess.run(
-            command, shell=True, cwd=cwd, env=env,
+        # By design: `command` is ONE string a reviewed stack profile declares (pipelines need a shell); see governance/local/baselines/semgrep.json.
+        proc = subprocess.run(  # nosemgrep: security-checks.fg-sec-022-python-shell-true, python.lang.security.audit.subprocess-shell-true.subprocess-shell-true
+            command, shell=True, cwd=cwd, env=env,  # nosemgrep: security-checks.fg-sec-022-python-shell-true, python.lang.security.audit.subprocess-shell-true.subprocess-shell-true
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=timeout,
         )
