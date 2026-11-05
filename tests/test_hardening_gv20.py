@@ -419,6 +419,7 @@ def test_item5_control_admitted_without_a_claim(team, cmd):
 
 # ------------------------------------------------------------------------------------------ 6 governance lock + leak guard
 import hashlib  # noqa: E402
+from pathlib import Path  # noqa: E402
 import test_governance_intake as gi  # noqa: E402
 import foundry_governance as gov  # noqa: E402
 from test_governance_upgrade import adopted_repo, make_plugin_copy, run as urun, WF  # noqa: E402
@@ -602,3 +603,34 @@ def test_item7_audit_flags_a_rewrite_of_earlier_lines_and_passes_an_append(tmp_p
     assert hits and hits[0]["removed_lines"] >= 1 and "first" not in json.dumps(hits)
     res2 = ml.audit(ad, w, "origin", open_minutes=120)                                    # the cursor is not advanced past a rewrite
     assert [f for f in res2["findings"] if f["rule"] == "history-rewritten"]
+
+
+# ------------------------------------------------------------------------------------------ 8 research note ruled path
+import foundry_research_note as rn  # noqa: E402
+from test_research_note import sweep_with, DATE as RN_DATE  # noqa: E402
+
+
+def test_item8_a_ruled_run_does_not_overwrite_a_foreign_decision_file(tmp_path):
+    d = tmp_path / ".foundry" / "decisions"
+    d.mkdir(parents=True)
+    (d / f"{RN_DATE}-mine.md").write_text("# an operator-written decision\n")
+    with pytest.raises(rn.SweepError, match="ruling-conflict"):
+        rn.write_all(sweep_with(), "mine", str(tmp_path), RN_DATE)
+    assert (d / f"{RN_DATE}-mine.md").read_text() == "# an operator-written decision\n"
+
+
+def test_item8_a_ruled_run_does_not_write_through_a_symlink(tmp_path):
+    d = tmp_path / ".foundry" / "decisions"
+    d.mkdir(parents=True)
+    target = tmp_path / "elsewhere.md"
+    target.write_text("keep")
+    (d / f"{RN_DATE}-lnk.md").symlink_to(target)
+    with pytest.raises(rn.SweepError, match="ruling-conflict"):
+        rn.write_all(sweep_with(), "lnk", str(tmp_path), RN_DATE)
+    assert target.read_text() == "keep"
+
+
+def test_item8_control_an_own_ruling_is_rewritten_by_a_ruled_rerun(tmp_path):
+    first = rn.write_all(sweep_with(), "again", str(tmp_path), RN_DATE)
+    second = rn.write_all(sweep_with(), "again", str(tmp_path), RN_DATE)
+    assert first["status"] == second["status"] == "ruled" and Path(second["ruling"]).is_file()

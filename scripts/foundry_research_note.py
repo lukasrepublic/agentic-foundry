@@ -253,8 +253,9 @@ def write_all(raw, slug, project_dir, date=None, run_id=None):
     ruling_path = os.path.join(ddir, f"{date}-{slug}.md")
     held = [x for x in n["consensus"] if _SENSITIVE_RE.search(x)]
     ruled = bool(n["consensus"]) and not n["no_consensus"] and not held
-    # a ruling left by an earlier run of this (date, slug) must not outlive a run that no longer supports it
-    if not ruled and os.path.lexists(ruling_path):
+    # a ruling file at this (date, slug) is overwritten or removed only when THIS script wrote it (its first line is the
+    # ruling marker); the same check guards the `ruled` write and the `escalate` removal (gv-20)
+    if os.path.lexists(ruling_path):
         try:
             with open(ruling_path, encoding="utf-8") as f:
                 ours = f.readline().startswith(f"# Ruling — {slug}")
@@ -262,7 +263,8 @@ def write_all(raw, slug, project_dir, date=None, run_id=None):
             ours = False
         if not ours or os.path.islink(ruling_path):
             raise SweepError(f"ruling-conflict: {ruling_path} exists and is not a ruling written by this script")
-        os.unlink(ruling_path)
+        if not ruled:
+            os.unlink(ruling_path)
     _atomic_write(note_path, render_note(n, slug, date, raw_rel))
     _atomic_write(os.path.join(rdir, f"{date}-{slug}.json"), json.dumps(raw, indent=2, sort_keys=True) + "\n")
     out = {"note": note_path, "raw": os.path.join(rdir, f"{date}-{slug}.json"), "ruling": None,
