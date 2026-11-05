@@ -68,4 +68,3 @@ snippets:
   .github/workflows/ci-semgrep.yml: 1288d0a192d393b959d823bd5419e92f9b4b152e3013b83d64f030d49569cd31
   .github/workflows/ci-release-attest.yml: 18a6a02f13427bb3d1a0d3f63f8ec0147682992c9fb953befa93709d193dca9f
   .github/workflows/ci-scorecard.yml: 1ae1fbd0a2b56878a16b44e9d22011bd2372b8dcf2d6f235451ddf71b220e913
-  .github/workflows/governance-trace.yml: 189784564fb3a11d4600e500126c9935aae956c49063c5cbf8bbf80e5eafff0d

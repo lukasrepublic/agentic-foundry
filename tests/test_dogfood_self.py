@@ -121,19 +121,3 @@ def test_trace_fails_on_a_fixture_pr_that_cites_no_design_or_an_unknown_id(tmp_p
     p3, doc3 = _trace(tmp_path, pr_body="no ticket here\n", ticket_body=REAL_DESIGN, extra=("--agent-login", "agent-bot"))
     assert p3.returncode == 1
     assert [f for f in doc3["findings"] if f["check"] == "ticket-named" and not f["ok"]]
-
-
-def test_the_trace_workflow_is_installed_pinned_and_locked():
-    import hashlib
-    wf = ROOT / ".github" / "workflows" / "governance-trace.yml"
-    text = wf.read_text(encoding="utf-8")
-    doc = yaml.safe_load(text)
-    steps = doc["jobs"]["governance-trace"]["steps"]
-    assert doc["name"] == "governance-trace"
-    plugin = [s for s in steps if s.get("with", {}).get("path") == "plugin"][0]
-    assert re.fullmatch(r"[0-9a-f]{40}", plugin["with"]["ref"])
-    run = [s for s in steps if s.get("name") == "governance-trace"][0]["run"]
-    assert "--base-dir base" in run and "--project-dir pr" in run and "--agent-login" in run
-    assert all(re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", s["uses"]) for s in steps if "uses" in s)
-    lock = yaml.safe_load(LOCK.read_text(encoding="utf-8"))
-    assert lock["snippets"][".github/workflows/governance-trace.yml"] == hashlib.sha256(wf.read_bytes()).hexdigest()

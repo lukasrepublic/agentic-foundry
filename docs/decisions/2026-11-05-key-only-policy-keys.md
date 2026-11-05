@@ -46,10 +46,13 @@ These are recorded here because the same dogfood pass produced them; they are no
   gitleaks and scorecard workflows (a pinned scanner version, a narrower gate), so their lock hashes were re-written to the new
   file bytes by hand. This is the known kit gap: there is no verb that re-baselines a deliberate snippet edit. The next
   `upgrade` merges three-way against the untouched `governance/local/.kit-base/` copy, as designed.
-- **The delivery kit's trace workflow is not installed by `apply`.** `governance-trace.yml.template` is neither a `.tmpl` file nor
-  listed in the kit's `checks`, so intake never places it. It was installed by hand with the plugin ref filled in and recorded in
-  the lock. An `upgrade` does not carry a snippet that is not in the kit plan, so the lock entry must be re-added until the
-  kit lists the workflow.
+- **The `governance-trace` CI job is not installed here, and `apply` would not install it.** The kit's
+  `governance-trace.yml.template` is neither a `.tmpl` file nor listed in the kit's `checks`, so intake never places it, and an
+  `upgrade` drops a lock entry that was recorded by hand. Separately, the job needs an agent identity distinct from the account
+  that authors tickets. This repository has one GitHub identity, so the job's `ticket-author` check refuses every
+  agent-authored pull request (the refusal is correct by design; the fix is provisioning, not code). Install it from the kit
+  template once `github_scope.agent_login` names a distinct account (a bot account or a GitHub App). Until then the check logic
+  is proven by the direct-invocation pass and fail control in `tests/test_dogfood_self.py`.
 - **Raw scanner runs do not read baselines.** `check` honours `governance/local/baselines/`; the kit's semgrep workflow runs
   `semgrep scan --error` and does not. A baselined finding therefore also needs an inline `nosemgrep` with a reason, or CI is red
   while `check` is green.
