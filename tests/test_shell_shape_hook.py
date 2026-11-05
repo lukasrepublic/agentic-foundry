@@ -182,11 +182,14 @@ def test_scratch_resolution_order_env_then_payload_then_pattern(tmp_path):
     assert refused(r)           # tool_input is agent-written: never a scratch source
     assert refused(run_hook(f"rm {env_dir}/x", payload_extra={"scratchpad": str(payload_dir)}))
     # 3. the /tmp/claude-*/**/scratchpad pattern when neither is present
-    assert admitted(run_hook(f"rm {SCRATCH_PATH_LAYOUT}/run/out"))
+    me = {"session_id": "abc-123"}        # gv-20: the fallback admits THIS session's scratchpad only
+    assert admitted(run_hook(f"rm {SCRATCH_PATH_LAYOUT}/run/out", payload_extra=me))
+    assert refused(run_hook(f"rm {SCRATCH_PATH_LAYOUT}/run/out", payload_extra={"session_id": "other-session"}))
     assert refused(run_hook(f"rm {SCRATCH_PATH_LAYOUT}"))
-    assert refused(run_hook("rm /tmp/claude-1000/scratchpad/x"))          # too shallow for the layout
-    assert refused(run_hook("rm /tmp/other-1000/a/b/scratchpad/x"))
-    assert refused(run_hook(f"rm {SCRATCH_PATH_LAYOUT}/../../../etc/passwd"))
+    assert refused(run_hook(f"rm {SCRATCH_PATH_LAYOUT}", payload_extra=me))
+    assert refused(run_hook("rm /tmp/claude-1000/scratchpad/x", payload_extra=me))          # too shallow for the layout
+    assert refused(run_hook("rm /tmp/other-1000/a/b/scratchpad/x", payload_extra=me))
+    assert refused(run_hook(f"rm {SCRATCH_PATH_LAYOUT}/../../../etc/passwd", payload_extra=me))
     # a relative CLAUDE_SCRATCHPAD is not a root
     assert refused(run_hook("rm x", env_extra={"CLAUDE_SCRATCHPAD": "relative/dir"}))
 

@@ -134,6 +134,49 @@ def _within(path: str, components: list, gv: dict, ft) -> bool:
     return False
 
 
+def _declared_agent_logins(base: Path) -> list:
+    """`github_scope.agent_login` (a string or a list of strings) from the BASE ref's project file; [] when absent/unreadable.
+    Malformed entries are kept so author_trusted fails closed on them rather than silently dropping them."""
+    try:
+        gs = json.loads((Path(base) / ".claude" / "foundry-project.json").read_text(encoding="utf-8")).get("github_scope") or {}
+        v = gs.get("agent_login")
+    except (OSError, ValueError, AttributeError):
+        return []
+    if isinstance(v, str):
+        return [v]
+    return list(v) if isinstance(v, list) else []
+
+
+def _snippet_findings(base: Path, project: Path):
+    """None when the BASE ref has no lock file at all (nothing to compare; the caller keeps the head's own findings). Otherwise
+    the list of `snippet-tampered:<path>` / `snippet-missing:<path>` for every installed snippet whose hash in the BASE lock the PR
+    head no longer matches (an edit of the file, an edit together with the PR's own lock, or a deletion). A base lock that exists but
+    cannot be read (bad YAML, no PyYAML, a malformed `snippets`) is a `lock-unreadable` finding, never "nothing to compare"."""
+    import hashlib
+    lock_file = Path(base) / ".foundry" / "governance.lock"
+    if not lock_file.is_file():
+        return None
+    try:
+        import yaml
+        lock = yaml.safe_load(lock_file.read_text(encoding="utf-8")) or {}
+        snippets = lock.get("snippets") or {}
+        if not isinstance(snippets, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in snippets.items()):
+            raise ValueError("snippets is not a mapping of path to sha256")
+        items = sorted(snippets.items())
+    except Exception as exc:  # noqa: BLE001 - any failure to read the base lock is a finding
+        return [f"lock-unreadable:{type(exc).__name__}"]
+    out = []
+    for dest, want in items:
+        f = Path(project) / dest
+        if f.is_symlink() or (f.exists() and not f.is_file()):
+            out.append(f"snippet-tampered:{dest}")
+        elif not f.exists():
+            out.append(f"snippet-missing:{dest}")
+        elif hashlib.sha256(f.read_bytes()).hexdigest() != want:
+            out.append(f"snippet-tampered:{dest}")
+    return out
+
+
 def run_checks(pr: dict, ticket: dict, project: Path, plugin: Path, today: str | None, base: Path | None = None,
                gh_json=None, repo: str | None = None, files: list | None = None, agent_login: str | None = None) -> list:
     ft = _load_ticket_module(plugin)
@@ -160,8 +203,11 @@ def run_checks(pr: dict, ticket: dict, project: Path, plugin: Path, today: str |
     # the ticket author must be trusted: a Design from an untrusted account is not a Design
     login = ((ticket or {}).get("author") or {}).get("login") or ""
     # the author is vetted against the PR's own repository, never against the repo a ref names (that repo is the PR author's choice)
+    # gv-20: the agent accounts are the one DECLARED on the base ref (github_scope.agent_login) plus the workflow actor as an
+    # addition -- never the actor alone (github.actor varies with the event that triggered the run).
+    accounts = _declared_agent_logins(base) + ([agent_login] if agent_login else [])
     ok_a, why_a = ft.author_trusted(repo, login, gh_json, operators=ft.trusted_operator_logins(base),
-                                    agent_login=agent_login)
+                                    agent_login=accounts or None)
     add("ticket-author", ok_a, why_a)
     body = (ticket or {}).get("body") or ""
     gv = ft.governance_context(base)               # policy, lock, boundaries and rules from the BASE ref
@@ -214,7 +260,12 @@ def run_checks(pr: dict, ticket: dict, project: Path, plugin: Path, today: str |
             lines = [ln for ln in buf.getvalue().splitlines() if ln and not ln.startswith("governance-check-ok") and "SKIP exception" not in ln]
         except gm.Refused as e:
             lines = [f"refused: {e}"]
-        stale = [ln for ln in lines if ln.startswith(("rendered-stale", "lock-"))]
+        # the head's own snippet findings compare with the head's own lock, which a PR can edit together with the snippet;
+        # the judgement is made against the BASE ref's lock hashes below
+        from_base = _snippet_findings(base, project)
+        if from_base is not None:           # no lock in the base: the head's own snippet findings stand
+            lines = [ln for ln in lines if not ln.startswith("snippet-")] + from_base
+        stale = [ln for ln in lines if ln.startswith(("rendered-stale", "lock-", "snippet-"))]
         exc = [ln for ln in lines if ln not in stale]
         add("rendered-fresh", not stale, "; ".join(stale) if stale else "governance/rendered/ matches the rules")
         add("exceptions-live", not exc, "; ".join(exc) if exc else "no exception has expired")
@@ -230,7 +281,7 @@ def main(argv=None) -> int:
     p.add_argument("--pr-json", required=True)
     p.add_argument("--ticket-json", required=True)
     p.add_argument("--project-dir", help="the PR head checkout (rendered rules, exceptions)")
-    p.add_argument("--base-dir", help="a checkout of the PR's BASE ref (policy, lock, boundaries, operators); default: --project-dir")
+    p.add_argument("--base-dir", help="a checkout of the PR's BASE ref (policy, lock, boundaries, operators); required")
     p.add_argument("--files-json", help="the paged changed-file list: a JSON list of {\"path\": ...}")
     p.add_argument("--repo", help="OWNER/NAME of the repository the PR is in (the default repo of a bare #N ticket ref)")
     p.add_argument("--agent-login", help="the account the agent acts as (CI: the workflow actor). `github.token` cannot call "
@@ -251,7 +302,11 @@ def main(argv=None) -> int:
         ticket = json.loads(Path(a.ticket_json).read_text(encoding="utf-8"))
         project = Path(a.project_dir or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve()
         files = json.loads(Path(a.files_json).read_text(encoding="utf-8")) if a.files_json else None
-        base = Path(a.base_dir).resolve() if a.base_dir else None
+        if not a.base_dir:
+            print("refused: --base-dir is required (a checkout of the PR's BASE ref); comparing the PR with its own lock and "
+                  "policy would let it vouch for itself", file=sys.stderr)
+            return 2
+        base = Path(a.base_dir).resolve()
         findings = run_checks(pr, ticket, project, _plugin_root(a.plugin_root), a.today, base=base, repo=a.repo, files=files,
                               agent_login=a.agent_login)
     except (OSError, ValueError) as e:

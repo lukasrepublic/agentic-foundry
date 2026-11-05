@@ -79,6 +79,7 @@ The "Acts through" column says how far the key reaches. Read it before you rely 
 | `messaging.people_channel` | tunable | `issue-per-topic` | - | key only | none: people use issues; only one value exists |
 | `messaging.chat_mirror` | tunable | `off` | - | key only | none: `cli/templates/workflows/message-log-chat-mirror.yml` runs only when the repository variable `MESSAGE_LOG_CHAT_MIRROR` is `on`; it does not read this key |
 | `messaging.open_change_minutes` | tunable | `120` | D2 | script | `scripts/foundry_message_log.py` (`audit`) |
+| `messaging.cleanup_timeout_s` | tunable | `120` | D2 | script | `scripts/foundry_prod_step.py` |
 | `governance.design_required_paths` | tunable | `(empty)` | - | script | `scripts/foundry-ticket.py` (`design-required`) |
 | `governance.size_tag_required` | tunable | `L` | - | script | `scripts/foundry-ticket.py` (`design-required`) |
 

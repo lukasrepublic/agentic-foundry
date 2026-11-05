@@ -558,6 +558,44 @@ def _claim_gate_or_block(what, repo_dir=None):
         block("%s refused: %s. Command: %s" % (what, why_, cmd), remediation=_CLAIM_REMEDY, retryable=True)
 
 
+def _gh_api_pr_post(argv):
+    """gv-20: True for a `gh api repos/<o>/<r>/pulls` call that CREATES a non-draft PR through the REST route (clause (m)
+    gates it like `gh pr create`). A POST is explicit (`-X POST`, `--method POST`) or implied (`gh api` sends a POST as soon
+    as a body field or --input is given and no method is). `-F/--field draft=true` makes it a draft and is admitted."""
+    bare, method, fields, draft, k = [], None, False, False, 0
+    while k < len(argv):
+        a = argv[k]
+        nxt = argv[k + 1] if k + 1 < len(argv) else ""
+        if a in ("-X", "--method"):
+            method, k = nxt.upper(), k + 2
+        elif a.startswith("--method="):
+            method, k = a.split("=", 1)[1].upper(), k + 1
+        elif a.startswith("-X") and len(a) > 2:
+            method, k = a[2:].upper(), k + 1
+        elif a in ("-f", "-F", "--field", "--raw-field", "--input"):
+            fields = True
+            if a in ("-F", "--field") and re.fullmatch(r"draft=(true|1)", nxt, re.I):
+                draft = True
+            k += 2
+        elif a.startswith(("--field=", "--raw-field=", "--input=")) or (a.startswith(("-f", "-F")) and len(a) > 2 and not a.startswith("--")):
+            fields = True
+            draft = draft or bool(re.fullmatch(r"(?:--field=|-F)draft=(true|1)", a, re.I))
+            k += 1
+        elif a in ("-H", "--header", "-q", "--jq", "-t", "--template", "--hostname", "--cache", "-p", "--preview"):
+            k += 2
+        elif a.startswith("-"):
+            k += 1
+        else:
+            bare.append(a)
+            k += 1
+    if len(bare) < 2 or bare[0].lower() != "api":
+        return False
+    ep = bare[1].lstrip("/").split("?")[0].rstrip("/")
+    if not re.fullmatch(r"repos/[^/]+/[^/]+/pulls", ep, re.I):
+        return False
+    return (method == "POST" or (method is None and fields)) and not draft
+
+
 # Iterate every `git` token (position-independent — env-prefix/wrapper/compound all fall
 # out of scanning all indices).
 for i, t in enumerate(low):
@@ -959,8 +997,13 @@ for i, t in enumerate(low):
             continue
         if not _a.startswith("-"):
             _bare_m.append(_a)
-    if _bare_m[:2] == ["pr", "create"] and not any(_a in ("--draft", "-d") for _a in largs):
-        _claim_gate_or_block("non-draft `gh pr create`")
+    if _bare_m[:2] in (["pr", "create"], ["pr", "new"]) and not any(_a in ("--draft", "-d") for _a in largs):
+        _claim_gate_or_block("non-draft `gh pr %s`" % _bare_m[1])
+    # gv-20: `gh pr create --draft` then `gh pr ready` is a non-draft create in two steps; `gh pr ready --undo` goes back to draft.
+    if _bare_m[:2] == ["pr", "ready"] and "--undo" not in largs:
+        _claim_gate_or_block("`gh pr ready` (a draft becoming a non-draft PR)")
+    if _gh_api_pr_post(args):
+        _claim_gate_or_block("a non-draft pull request created through `gh api .../pulls`")
 
     # (j) `gh pr create` without --draft/-d is a request for CI — admitted only with local-green.
     if local_green_on:

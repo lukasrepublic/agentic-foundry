@@ -197,7 +197,29 @@ hook_comment_expectation:
   #      (scripts/foundry_ticket_store.py claim_gate; honours `git -C`, fail-closed on an unreadable claims store
   #      or project file, inert where claims are not in use). Every other clause byte-identical. Corpus:
   #      tests/test_claims_expiry.py.
-  executable_content_sha256: '47e95a2a75461b0591866bf4127a7a4249f094cddec1a4a34f56de6fb0972fe3'  # re-baselined for entry 14 (gv-11)
+  #  15. gv-20 hardening (2026-11-05, security lane): clause (m) also gates `gh pr new`, `gh pr ready` (a draft becoming a
+  #      non-draft PR; `--undo` is exempt) and a REST `gh api repos/<o>/<r>/pulls` create (explicit or field-implied POST,
+  #      `-F draft=true` exempt), via a new _gh_api_pr_post helper. Every other clause byte-identical. Corpus:
+  #      tests/test_hardening_gv20.py (item 5).
+  executable_content_sha256: '346141c13131b9de292190dfd7d58e5145a0cbdf33ebf5f51f106d82dfce0a82'  # re-baselined for entry 15 (gv-20)
+
+# gv-20 hook pins: sha256 of the EXECUTABLE CONTENT (full-line comments stripped, shebang kept; same function as the
+# git-discipline row above) of every other hook the hardening pass changed. Re-baselining is the documented response to a
+# real, reviewed change, with a log line here: this row still fails on any later unreviewed edit.
+#   1. gv-20 (2026-11-05, security lane): paper guard (cd tracking, -t, recursive copies, rm -rf trees, worktree/nested CI),
+#      shell-shape (redirect forms, ANSI/locale quoting, packed interpreters, delete verbs, own-session scratch), secret-read
+#      guard (option-tolerant verbs, dd if=, whole-home reads, tar -C, /proc/*/environ), plugin-scripts-allow (env remote ask).
+#   2. gv-20 round 2 (2026-11-05): paper guard keeps a successful `cd` across `;`, newline, `||`, `&&` (ends at a pipe, a lone `&`, `)`);
+#      shell-shape: python `-V` only as a version flag, per-interpreter option values, `deno eval`; secret-read guard: tar operands
+#      judged against the cwd and every -C.
+#   3. gv-20 round 3 (2026-11-05): shell-shape refuses a bare `-` script operand and `--eval=`/`--print=` forms and applies the
+#      value-aware operand parse to python; paper guard restores the pre-pipeline base at `|`/`&` and treats `cd -`/`popd`/`cd $VAR`
+#      as unknown (previous base kept); secret-read guard reads a bundled `-zC<dir>` value.
+gv20_hook_pins:
+  foundry-paper-guard.py: 'e8d53c711e40e9869f3b2076c04e8474f7e4dff240b1e5b0f653596961aae88d'
+  foundry-shell-shape.py: 'de6722ba044b0029040a28b075227317bb0cd988da803c794de426ad414acc60'
+  foundry-secret-read-guard.py: 'dbaac7eb5fe017c3088afdc6ca138886ad68211dd369dfe16a113472715a48be'
+  foundry-plugin-scripts-allow.py: '2d2e3ff27e8ba1430767f87616e780f406101f390424f4abdc3194d2a3d5e7f3'
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
 operator_registry_shape:

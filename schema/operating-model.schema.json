@@ -123,7 +123,8 @@
         "machine_channel": {"enum": ["git-log"], "default": "git-log"},
         "people_channel": {"enum": ["issue-per-topic"], "default": "issue-per-topic"},
         "chat_mirror": {"enum": ["off", "on"], "default": "off", "description": "Opt-in; PROD-BEFORE and PROD-AFTER only. Unquoted YAML off/no/false mean off and on/yes/true mean on."},
-        "open_change_minutes": {"type": "integer", "minimum": 1, "maximum": 10080, "default": 120}
+        "open_change_minutes": {"type": "integer", "minimum": 1, "maximum": 10080, "default": 120},
+        "cleanup_timeout_s": {"type": "integer", "minimum": 1, "maximum": 3600, "default": 120, "description": "Total wait for the --on-failure cleanup commands of foundry_prod_step.py before it posts STOP with 'cleanup timed out'."}
       }
     },
     "governance": {

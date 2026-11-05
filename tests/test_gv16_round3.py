@@ -56,12 +56,11 @@ def test_in_ci_the_actor_authored_ticket_is_refused_even_if_registered(tmp_path)
     assert f["ok"] is False and "agent itself" in f["detail"] and p.returncode == 1
 
 
-def test_in_ci_without_an_agent_login_the_self_branch_is_skipped(tmp_path):
+def test_in_ci_without_an_agent_login_the_check_refuses(tmp_path):      # gv-20: was "self branch is skipped"
     base = _tree(tmp_path / "base", ["hooks/**"], operators=("alice",))
     p, doc = _ci_trace(tmp_path, base, "alice")
-    assert by(doc, "ticket-author")[0]["ok"] is True
-    p, doc = _ci_trace(tmp_path, base, "mallory")                  # control: a stranger is still refused (no permission)
-    assert by(doc, "ticket-author")[0]["ok"] is False
+    f = by(doc, "ticket-author")[0]
+    assert f["ok"] is False and "identity lookup failed" in f["detail"]
 
 
 def test_outside_ci_a_failed_lookup_is_still_identity_lookup_failed(tmp_path):
@@ -77,7 +76,8 @@ def test_author_trusted_unit_under_github_actions(monkeypatch):
     dead = lambda a: None if a[:2] == ["api", "user"] else {"permission": "write"}      # noqa: E731
     assert ft.author_trusted("o/r", "carol", dead, operators=())[0] is False             # outside CI: fail closed
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
-    assert ft.author_trusted("o/r", "carol", dead, operators=())[0] is True              # in CI: no lookup, permission route
+    assert ft.author_trusted("o/r", "carol", dead, operators=())[0] is False             # gv-20: in CI with no login: refuse
+    assert ft.author_trusted("o/r", "carol", dead, operators=(), agent_login="bot")[0] is True   # explicit login: permission route
     ok, why = ft.author_trusted("o/r", "carol", dead, operators=("carol",), agent_login="carol")
     assert ok is False and "agent itself" in why
 

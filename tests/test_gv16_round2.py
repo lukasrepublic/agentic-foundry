@@ -53,8 +53,8 @@ def test_the_wiring_description_and_the_documented_limits():
     hooks = (ROOT / "hooks" / "hooks.json").read_text()
     assert "secret-read-guard, paper-guard" in json.loads(hooks)["//"].replace("(CI paths named by a Bash write), ", "")
     doc = HOOK.read_text().split('"""')[1]
-    for limit in ("does not track `cd`", "`env -i`", "`sudo -u x`", "--target-directory", "cp -r dir .github/", "rm -rf tests",
-                  "echo > package.json", "visibility control"):
+    for limit in ("`cd X && ...` is tracked", "`env -i`", "`sudo -u x`", "--target-directory", "cp -r", "rm -rf tests",
+                  "echo ... > package.json", "visibility control"):
         assert limit in doc, limit
 
 

@@ -67,6 +67,7 @@ messaging:
   people_channel: issue-per-topic
   chat_mirror: "off"                  # off | on
   open_change_minutes: 120
+  cleanup_timeout_s: 120              # total wait for foundry_prod_step.py --on-failure cleanups before STOP "cleanup timed out"
 
 governance:
   design_required_paths: []

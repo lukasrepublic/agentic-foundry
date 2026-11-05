@@ -42,6 +42,7 @@ Four kinds of page, four kinds of question. Start where your question lives:
 - [CI budgets are tools, not gates](how-to/ci-budgets-are-tools.md) — rule C2: budgets report and never gate; the budget lint
 - [The evidence and baseline rule](how-to/evidence-baseline-rule.md) — rule G1: no baseline before the first fully green run
 - [Operator hand-off files](how-to/operator-handoff-files.md) — rule E3: `report.handoff_dir`, durable instructions in the repo, PDFs beside the hand-off files
+- [Governance hardening notes](how-to/governance-hardening-notes.md) — what the hardening pass closed, and which controls are boundaries and which are visibility controls
 
 ## Reference — look it up
 

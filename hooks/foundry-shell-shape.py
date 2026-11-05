@@ -19,13 +19,17 @@ REFUSES (exit 2, reason + the allowed shape on stderr and as a `permissionDecisi
   * a heredoc `the foundry_shell_scan module` classifies `code` (anything but a closed, inert,
     file-sink shape). A `data` heredoc whose sink is a file (`cat > notes.txt <<'EOF' …`) is ADMITTED:
     that IS "write the script to a file and run it by name".
+  * gv-20: also `truncate`, `git clean` (without -n), `rsync --delete*` / `--remove-source-files`; a leading redirection
+    (`</dev/null rm -rf x`) and ANSI-C quoting (`$'rm'`) no longer hide the verb; a trailing redirection (`2>/dev/null`) is not a
+    delete target; `bash -c "$CMD"`, a script on stdin (`cat s.py | python3`) and `perl|ruby|node|php -e` are refused as packed.
   * `cd` / `pushd` / `popd` as a command (use `git -C <abs-dir> …` and absolute paths).
 
 SCRATCH RESOLUTION ORDER (first that exists wins; later ones are NOT consulted once an earlier one is set):
   1. `$CLAUDE_SCRATCHPAD`                           (the hook process's environment, an absolute path)
   2. the harness-provided path in the hook payload  (`scratchpad` / `scratchpad_dir` / `scratch_dir`,
                                                       top level or under `tool_input`)
-  3. the pattern `/tmp/claude-*/**/scratchpad/`      (the Claude Code per-session scratch layout)
+  3. the pattern `/tmp/claude-*/**/<session_id>/scratchpad/` for THIS session only (the payload's `session_id`; another
+     session's scratchpad is not admitted, and with no session id the fallback admits nothing)
 A target equals-or-escapes the scratch root is refused: only paths STRICTLY INSIDE it are admitted, symlinks
 are resolved first (`realpath`), and `..` cannot climb out.
 
@@ -53,7 +57,10 @@ scan = None     # foundry_shell_scan, imported inside main() once a command is i
 
 GUARD = "shell-shape"
 MAX_DEPTH = 3
-DELETE_VERBS = {"rm", "unlink", "shred", "rmdir"}
+DELETE_VERBS = {"rm", "unlink", "shred", "rmdir", "truncate"}
+# options of a delete verb that consume the next word (so the value is not mistaken for a target)
+_VERB_TAKES = {"truncate": {"-s", "-r", "--size", "--reference"}, "shred": {"-n", "-s", "--iterations", "--size", "--random-source"}}
+_RSYNC_DELETE = re.compile(r"--(?:del|delete(?:-[a-z]+)?|remove-source-files)(?:=.*)?")
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 SCRATCH_PATTERN = re.compile(r"^/tmp/claude-[^/]+/(?:[^/]+/)+scratchpad/.+$")
 _GLOB = re.compile(r"[*?\[]")
@@ -99,10 +106,17 @@ def _root_ok(real, cwd):
     return True
 
 
+def _session_id(payload):
+    sid = payload.get("session_id") if isinstance(payload, dict) else None
+    sid = sid if isinstance(sid, str) and sid else os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    return sid if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", sid or "") else ""
+
+
 def scratch_root(payload, cwd=None):
-    """(kind, value): ("path", realpath) for an explicit root, ("pattern", None) for the layout pattern,
-    ("none", None) for an explicit root that is not a plausible scratch directory (every rm is then refused).
-    The payload's `tool_input` is agent-written and is NEVER a source."""
+    """(kind, value): ("path", realpath) for an explicit root, ("pattern", session_id) for the layout pattern of THIS session's
+    scratchpad (`/tmp/claude-<uid>/<project>/<session_id>/scratchpad/`), ("none", None) for an explicit root that is not a
+    plausible scratch directory or a fallback with no session id (every rm is then refused). Another session's scratchpad
+    is never admitted by the fallback. The payload's `tool_input` is agent-written and is NEVER a source."""
     cwd = cwd or os.getcwd()
     env = os.environ.get("CLAUDE_SCRATCHPAD", "")
     if env and os.path.isabs(env):
@@ -114,7 +128,8 @@ def scratch_root(payload, cwd=None):
             if isinstance(v, str) and os.path.isabs(v):
                 real = os.path.realpath(v)
                 return ("path", real) if _root_ok(real, cwd) else ("none", None)
-    return "pattern", None
+    sid = _session_id(payload)
+    return ("pattern", sid) if sid else ("none", None)
 
 
 def _literal_prefix(target):
@@ -149,17 +164,25 @@ def inside_scratch(target, cwd, root):
         return False
     if kind == "path":
         return real.startswith(base.rstrip("/") + "/") and real != base
-    return SCRATCH_PATTERN.match(real) is not None
+    own = re.compile(r"^/tmp/claude-[^/]+/(?:[^/]+/)*%s/scratchpad/.+$" % re.escape(base))
+    return own.match(real) is not None
 
 
 # ------------------------------------------------------------------------------------ analysis --
-def _deletion_targets(args):
-    targets, end_opts = [], False
+def _deletion_targets(args, verb=None):
+    """The operands a delete verb names: no options, no option VALUES (`truncate -s 0 f`), no redirections (`2>/dev/null`)."""
+    takes = _VERB_TAKES.get(verb, set())
+    targets, end_opts, skip = [], False, False
+    args = scan.strip_redirects(list(args))
     for a in args:
+        if skip:
+            skip = False
+            continue
         if not end_opts and a == "--":
             end_opts = True
             continue
         if not end_opts and a.startswith("-") and len(a) > 1:
+            skip = a in takes
             continue
         targets.append(a)
     return targets
@@ -170,10 +193,31 @@ def _check_delete(inv, cwd, root):
         raise Refuse("`%s` with a command substitution (its target cannot be known)" % inv.cmd, SHAPE_RM)
     if "xargs" in inv.wrappers:
         raise Refuse("`xargs %s` (its targets arrive on stdin and cannot be known)" % inv.cmd, SHAPE_RM)
-    for t in _deletion_targets(inv.args):
+    targets = _deletion_targets(inv.args, inv.cmd)
+    if not targets:      # gv-20: a delete verb whose operands were all redirections or option values names nothing provable
+        raise Refuse("`%s` with no target operand (what it deletes cannot be known)" % inv.cmd, SHAPE_RM)
+    for t in targets:
         if not inside_scratch(t, cwd, root):
             raise Refuse("`%s` of %r, which is not provably inside the session scratch directory"
                          % (inv.cmd, t), SHAPE_RM)
+
+
+def _check_other_deleters(inv, cwd, root):
+    """`git clean` and `rsync --delete*` / `--remove-source-files` delete without naming a delete verb."""
+    args = scan.strip_redirects(list(inv.args))
+    if inv.cmd == "git":
+        i = 0
+        while i < len(args) and args[i].startswith("-"):      # global options; -C/-c take a value
+            i += 2 if args[i] in ("-C", "-c", "--git-dir", "--work-tree", "--namespace") else 1
+        if i < len(args) and args[i] == "clean":
+            rest = args[i + 1:]
+            if not any(a == "--dry-run" or (a.startswith("-") and not a.startswith("--") and "n" in a[1:]) for a in rest):
+                raise Refuse("`git clean` (it deletes untracked files; use -n to preview)", SHAPE_RM)
+    elif inv.cmd == "rsync" and any(_RSYNC_DELETE.fullmatch(a) for a in args):
+        ops = [a for a in args if not a.startswith("-")]
+        if inv.has_subst or not ops or any(not inside_scratch(o, cwd, root) for o in ops):
+            raise Refuse("`rsync --delete` / `--remove-source-files` with an operand not provably inside the session scratch "
+                         "directory", SHAPE_RM)
 
 
 def _check_find(inv, cwd, root):
@@ -243,6 +287,49 @@ def _leading_dash(args, takes):
     return False
 
 
+_EVAL_INTERPRETERS = {"perl", "ruby", "node", "nodejs", "php", "lua", "bun", "deno"}
+_EVAL_FLAGS = {"--eval", "--print", "--exec"}
+_VERSION_FLAGS = {"-v", "-V", "--version", "-version"}
+_PY_VERSION_FLAGS = {"-V", "-VV", "--version"}
+# options that take the NEXT word as a value (so it is not the script operand), per interpreter
+_INTERP_TAKES = {
+    "node": {"-r", "--require", "--import", "--loader", "--experimental-loader", "-C", "--conditions"},
+    "nodejs": {"-r", "--require", "--import", "--loader", "--experimental-loader", "-C", "--conditions"},
+    "ruby": {"-r", "-I", "-C", "-E", "--encoding"},
+    "perl": {"-I", "-M", "-m", "-C"},
+    "lua": {"-l"},
+    "php": {"-d", "-c", "-f"},
+}
+
+
+def _interpreter_args(cmd, args, takes=None):
+    """-> (the interpreter's option words, its script operand or None). Option VALUES are not script operands."""
+    takes = _INTERP_TAKES.get(cmd, set()) if takes is None else takes
+    flags, script, k = [], None, 0
+    while k < len(args):
+        a = args[k]
+        if a == "--":
+            script = args[k + 1] if k + 1 < len(args) else None
+            break
+        if a.startswith("-") and a != "-":
+            flags.append(a)
+            k += 2 if a in takes else 1
+            continue
+        script = a
+        break
+    return flags, script
+
+
+def _leading_options(args):
+    """The interpreter's options before its first operand."""
+    out = []
+    for a in args:
+        if not a.startswith("-") or a == "-":
+            break
+        out.append(a)
+    return out
+
+
 def _check_packed(inv, depth, cwd, root, strict_mode):
     cmd, args = inv.cmd, inv.args
     if cmd in SHELLS:
@@ -250,6 +337,9 @@ def _check_packed(inv, depth, cwd, root, strict_mode):
         if payload is not None:
             if inv.has_subst or "$(" in payload or "`" in payload:
                 raise Refuse("`%s -c` with a command substitution in its payload" % cmd, SHAPE_PACKED)
+            for sub in scan.invocations(payload):
+                if sub.cmd.startswith("$"):
+                    raise Refuse("`%s -c` whose command is an expansion (%s), which cannot be judged" % (cmd, sub.cmd), SHAPE_PACKED)
             _judge_payload(cmd + " -c", payload, depth, cwd, root, strict_mode)
             return
         if not args or _leading_flag(args, _SH_TAKES, "-s") or _leading_dash(args, _SH_TAKES):
@@ -265,6 +355,24 @@ def _check_packed(inv, depth, cwd, root, strict_mode):
         payload = _payload_after_c(args, _PY_C, _PY_TAKES)
         if payload is not None:
             _judge_payload(cmd + " -c", payload, depth, cwd, root, strict_mode, python=True)
+        elif len(args) == 1 and args[0] in _PY_VERSION_FLAGS:
+            return                       # `python3 -V`, `-VV`, `--version`: nothing to run (`-v` is VERBOSE and runs stdin)
+        else:
+            pflags, pscript = _interpreter_args(cmd, scan.strip_redirects(list(args)), _PY_TAKES | {"-m"})
+            if pscript in (None, "-") and "-m" not in pflags and "--version" not in pflags:
+                raise Refuse("`%s` with no script operand (it reads the script from stdin, e.g. `cat s.py | %s`)" % (cmd, cmd), SHAPE_PACKED)
+    elif cmd in _EVAL_INTERPRETERS:
+        flags, script = _interpreter_args(cmd, scan.strip_redirects(list(args)))
+        if len(args) == 1 and args[0] in _VERSION_FLAGS:
+            return                       # `node --version`, `perl -v`, `ruby -v`: no script, nothing to judge
+        if cmd == "deno" and args[:1] == ["eval"]:
+            raise Refuse("`deno eval` (an inline script)", SHAPE_PACKED)
+        eval_short = r"-[A-Za-z]*[eEp][A-Za-z]*" if cmd in ("perl", "node", "nodejs", "bun") else r"-[A-Za-z]*[eE][A-Za-z]*"
+        if any(f in _EVAL_FLAGS or f.split("=", 1)[0] in _EVAL_FLAGS for f in flags) or any(re.fullmatch(eval_short, f) for f in flags if not f.startswith("--")) \
+                or (cmd == "php" and "-r" in flags):
+            raise Refuse("`%s` with an inline script (-e/-E/--eval/-p)" % cmd, SHAPE_PACKED)
+        if script in (None, "-"):
+            raise Refuse("`%s` with no script operand (it reads the script from stdin)" % cmd, SHAPE_PACKED)
 
 
 def _judge_payload(what, payload, depth, cwd, root, strict_mode, python=False):
@@ -297,6 +405,8 @@ def analyze(command, depth, cwd, root, strict):
             _check_delete(inv, cwd, root)
         elif inv.cmd == "find":
             _check_find(inv, cwd, root)
+        elif inv.cmd in ("git", "rsync"):
+            _check_other_deleters(inv, cwd, root)
         _check_packed(inv, depth, cwd, root, strict)
 
 

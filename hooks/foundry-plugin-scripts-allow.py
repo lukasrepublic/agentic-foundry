@@ -127,6 +127,8 @@ def allowed(command, root):
         return False
     if name in _ASK_SCRIPTS:
         return False
+    if name == "foundry_message_log.py" and ("FOUNDRY_MESSAGE_REMOTE" in os.environ or "FOUNDRY_MESSAGE_REPO" in os.environ):
+        return False  # gv-20: the hook process's own environment redirects the remote even when the command text does not name it
     if name == "foundry_message_log.py" and (_names_option(argv[1:], "--remote") or _names_option(argv[1:], "--repo")
                                             or "FOUNDRY_MESSAGE_REMOTE" in command or "FOUNDRY_MESSAGE_REPO" in command):
         return False  # read|audit stay silent only against the default remote and repo (an injected --remote is an exfil path)

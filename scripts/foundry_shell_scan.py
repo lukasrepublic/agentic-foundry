@@ -42,6 +42,12 @@ import tempfile
 from typing import Dict, List, NamedTuple, Optional, Tuple
 
 
+class _Q(str):
+    """A word that had any quoting in its source (`'>'`, `"x"`, `$'x'`). It compares and prints as the plain text, and a
+    quoted word is never a redirection operator (gv-20)."""
+    __slots__ = ()
+
+
 class Word(NamedTuple):
     """One tokenizer output unit.
 
@@ -146,6 +152,58 @@ def _find_heredoc_end(cmd: str, body_start: int, delim: str, strip_tabs: bool) -
 _FD_DUP_RE = re.compile(r"^\d*[<>]&\d*$")
 
 
+_ANSI_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v",
+                "\\": "\\", "'": "'", '"': '"', "?": "?"}
+
+
+def _ansi_c_word(cmd: str, i: int):
+    """Decode the body of a `$'...'` word starting at `cmd[i]` (just past the opening quote) -> (text, index past the
+    closing quote), or (None, None) when it is unterminated (the caller then falls back to the plain quote reading)."""
+    out, n = [], len(cmd)
+    while i < n:
+        ch = cmd[i]
+        if ch == "'":
+            return "".join(out), i + 1
+        if ch != "\\" or i + 1 >= n:
+            out.append(ch)
+            i += 1
+            continue
+        nx = cmd[i + 1]
+        if nx in _ANSI_SIMPLE:
+            out.append(_ANSI_SIMPLE[nx])
+            i += 2
+        elif nx == "x" and re.match(r"[0-9A-Fa-f]{1,2}", cmd[i + 2:i + 4]):
+            m = re.match(r"[0-9A-Fa-f]{1,2}", cmd[i + 2:i + 4])
+            out.append(chr(int(m.group(0), 16)))
+            i += 2 + len(m.group(0))
+        elif nx in "01234567":
+            m = re.match(r"[0-7]{1,3}", cmd[i + 1:i + 4])
+            out.append(chr(int(m.group(0), 8) & 0xFF))
+            i += 1 + len(m.group(0))
+        elif nx in "uU" and re.match(r"[0-9A-Fa-f]{1,8}", cmd[i + 2:i + 10]):
+            m = re.match(r"[0-9A-Fa-f]{1," + ("4" if nx == "u" else "8") + "}", cmd[i + 2:i + 10])
+            try:
+                out.append(chr(int(m.group(0), 16)))
+            except (ValueError, OverflowError):
+                out.append("?")
+            i += 2 + len(m.group(0))
+        else:
+            out.append("\\" + nx)
+            i += 2
+    return None, None
+
+
+def _escaped(buf) -> bool:
+    """True when the characters gathered so far end in an ODD run of backslashes (the next character is escaped)."""
+    n = 0
+    for piece in reversed(buf):
+        for ch in reversed(piece):
+            if ch != "\\":
+                return n % 2 == 1
+            n += 1
+    return n % 2 == 1
+
+
 def _scan(cmd: str, emit_words: bool):
     """The single shared scan loop. If `emit_words` is False, returns only the heredoc region
     list (used for classification/neutralize). If True, also returns the full top-level Word
@@ -173,6 +231,8 @@ def _scan(cmd: str, emit_words: bool):
     # True the moment a quote opens (even an empty one) or an ordinary char is appended, and only
     # resets on an actual word boundary (whitespace/separator/newline) or at start of input.
     token_started = False
+    word_quoted = False       # the current word had any quoting
+    word_is_redir = False     # the current word began with an UNQUOTED redirection operator (its operand may be quoted)
 
     def cur_kind() -> str:
         if sub_stack:
@@ -180,15 +240,19 @@ def _scan(cmd: str, emit_words: bool):
         return "word"
 
     def flush_word():
-        nonlocal buf, cur_other_consumer, token_started
+        nonlocal buf, cur_other_consumer, token_started, word_quoted, word_is_redir
         if buf:
             text = "".join(buf)
+            if word_quoted and not word_is_redir:
+                text = _Q(text)
             if not sub_stack and _FD_DUP_RE.match(text):
                 cur_other_consumer = True
             if emit_words:
                 words.append(Word(text, clause_index, False, cur_kind()))
         buf = []
         token_started = False
+        word_quoted = False
+        word_is_redir = False
 
     while i < n:
         ch = cmd[i]
@@ -237,13 +301,28 @@ def _scan(cmd: str, emit_words: bool):
             i += 3
             continue
 
+        if ch == "$" and i + 1 < n and cmd[i + 1] == "'":
+            # gv-20: ANSI-C quoting. `$'rm'` is the word `rm` (the `$` is not part of it) and `$'\x72m'` decodes to `rm`; a `\'`
+            # inside does NOT end the quote the way it would in a plain single-quoted string.
+            text, j = _ansi_c_word(cmd, i + 2)
+            if j is not None:
+                buf.append(text)
+                token_started = True
+                word_quoted = True
+                i = j
+                continue
+        if ch == "$" and i + 1 < n and cmd[i + 1] == '"':
+            i += 1                      # gv-20: locale quoting `$"rm"` is the word `rm`; the `$` is not part of it
+            continue
         if ch == "'":
             in_squote = True
+            word_quoted = True
             token_started = True
             i += 1
             continue
         if ch == '"':
             in_dquote = True
+            word_quoted = True
             token_started = True
             i += 1
             continue
@@ -356,6 +435,25 @@ def _scan(cmd: str, emit_words: bool):
             clause_index += 1
             hard_clause_start = i
             cur_other_consumer = False
+            continue
+
+        # gv-20: a redirection operator is ONE word with its fd prefix and its glued operand: `2>&1`, `>&f`, `<&3`, `&>f`, `&>>f`, `>|f`,
+        # `>>f`, `<f`, `<>f`. An UNQUOTED operator ends the word before it (`x>f` is `x` and `>f`); an escaped (`\>`) or quoted one
+        # is an ordinary character. The word is marked as a redirection even when its operand is quoted (`>"f"`).
+        if not sub_stack and ((ch in "<>" and not (cmd[i + 1:i + 2] == "(") and not _escaped(buf))
+                              or (ch == "&" and cmd[i + 1:i + 2] == ">")):
+            if buf and not (word_quoted is False and "".join(buf).isdigit() and ch != "&"):
+                flush_word()
+            if ch == "&":
+                op = "&>>" if cmd[i:i + 3] == "&>>" else "&>"
+            elif ch == ">":
+                op = ">>" if cmd[i:i + 2] == ">>" else (">|" if cmd[i:i + 2] == ">|" else (">&" if cmd[i:i + 2] == ">&" else ">"))
+            else:
+                op = "<<<" if cmd[i:i + 3] == "<<<" else ("<>" if cmd[i:i + 2] == "<>" else ("<&" if cmd[i:i + 2] == "<&" else "<"))
+            buf.append(op)
+            word_is_redir = True
+            token_started = True
+            i += len(op)
             continue
 
         if not sub_stack and ch in ";&|":
@@ -656,6 +754,8 @@ class Invocation(NamedTuple):
     has_subst — True when the same clause also contains a command/process substitution, i.e. some argument
                 is a value this scan cannot know.
     wrappers  — the wrapper commands that were looked through (`xargs` means more arguments arrive on stdin).
+    redirs    — the operand of every redirection that LED the clause (`</dev/null rm x` -> ("/dev/null",)) so a caller that
+                judges reads can still see `<file`; leading redirections are not part of `cmd` / `args`.
     """
     cmd: str
     args: List[str]
@@ -663,6 +763,7 @@ class Invocation(NamedTuple):
     sub: bool
     has_subst: bool
     wrappers: Tuple[str, ...] = ()
+    redirs: Tuple[str, ...] = ()
 
 
 _ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\+?=")
@@ -686,6 +787,32 @@ _WRAPPERS = {
 }
 
 
+_REDIR_RE = re.compile(r"^(?:\d+|&)?(?:>>?\|?|<>|<<<|<|>&|<&|&>>?)(.*)$", re.S)
+
+
+def redirect_operand(word: str) -> Optional[str]:
+    """None when `word` is not a redirection; "" for a bare operator (the NEXT word is its operand: `>`, `2>`); otherwise the
+    operand glued to the operator (`>/dev/null`, `2>/dev/null`, `</dev/null`). A word the tokenizer already unquoted is
+    indistinguishable from a quoted `'>x'`; that is a literal name no deletion guard needs to model."""
+    if isinstance(word, _Q):
+        return None                    # a quoted word is a literal, never an operator
+    m = _REDIR_RE.match(word)
+    return None if m is None else m.group(1)
+
+
+def strip_redirects(words: List[str]) -> List[str]:
+    """`words` without redirection operators and their operands."""
+    out, i = [], 0
+    while i < len(words):
+        rd = redirect_operand(words[i])
+        if rd is None:
+            out.append(words[i])
+            i += 1
+        else:
+            i += 2 if rd == "" else 1
+    return out
+
+
 def _cmd_basename(word: str) -> str:
     w = word.replace("\\", "")        # bash removes an unquoted backslash: `r\m` runs `rm`
     return w.rsplit("/", 1)[-1] if "/" in w else w
@@ -698,7 +825,7 @@ def resolve_command(words: List[str]) -> Optional[Tuple[str, List[str]]]:
     return None if r is None else (r[0], r[1])
 
 
-def _resolve(words: List[str]) -> Optional[Tuple[str, List[str], Tuple[str, ...]]]:
+def _resolve(words: List[str], redirs_out: Optional[List[str]] = None) -> Optional[Tuple[str, List[str], Tuple[str, ...]]]:
     i, n = 0, len(words)
     seen: List[str] = []
     while i < n:
@@ -711,6 +838,14 @@ def _resolve(words: List[str]) -> Optional[Tuple[str, List[str], Tuple[str, ...]
             w = stripped
         if _ASSIGN_RE.match(w):
             i += 1
+            continue
+        rd = redirect_operand(words[i] if stripped == words[i] else w)
+        if rd is not None:                  # gv-20: `</dev/null rm -rf x` -- a leading redirection is not the command word
+            if redirs_out is not None:
+                op = rd if rd != "" else (words[i + 1] if i + 1 < n else "")
+                if op and w.lstrip("0123456789&")[:1] == "<":
+                    redirs_out.append(op)
+            i += 2 if rd == "" else 1
             continue
         base = _cmd_basename(w)
         if base in _WRAPPERS:
@@ -760,9 +895,10 @@ def invocations(command) -> List[Invocation]:
         for words, is_sub in ((by_clause.get(idx), False), (sub_clause.get(idx), True)):
             if not words:
                 continue
-            r = _resolve(words)
+            reds: List[str] = []
+            r = _resolve(words, reds)
             if r is not None:
-                out.append(Invocation(r[0], r[1], idx, is_sub, has_sub, r[2]))
+                out.append(Invocation(r[0], r[1], idx, is_sub, has_sub, r[2], tuple(reds)))
     return out
 
 

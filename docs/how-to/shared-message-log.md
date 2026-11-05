@@ -72,7 +72,7 @@ read never advances it (it would skip the records the filter hid). A first read 
 `PROD-BEFORE` for its `corr`; a `PROD-BEFORE` with no `PROD-AFTER` or `STOP` after N minutes (default: the
 policy's `messaging.open_change_minutes`, `120`); and a production record that fails lint (for example one with no `corr`; it is listed under `malformed` and
 counted as a `malformed-prod-record` finding). Exit `3` when anything is
-flagged. Anyone may close a pair with a `STOP` that gives its reason. The `120`-minute default is a tunable
+flagged. It also reports `history-rewritten` (see "How far the protection goes"); `--no-advance` leaves the audit cursor alone. Anyone may close a pair with a `STOP` that gives its reason. The `120`-minute default is a tunable
 without an industry value behind it.
 
 **`import <issue-url>`**. One-time migration of an existing issue's comments into the log. Paginated (the
@@ -100,12 +100,19 @@ on this branch are optional: there is no consensus for bot writers.
 ## How far the protection goes
 
 The ruleset blocks a force-push and a deletion of the branch. It does not block a fast-forward commit, and a fast-forward
-commit can change or remove earlier lines. `audit` replays the log as it stands at the tip, so today it does **not** catch
-such a rewrite: the log is append-only by convention and by the ruleset, and it is not tamper-evident against a
-fast-forward rewrite until `audit` gains the `history-rewritten` check (planned). The git history of the branch does show
-the change, and a reviewer can read it. Treat the log as a coordination record, not as evidence that would stand against a
-writer who wants to hide something. The `from` field is also self-declared, so any writer can close another session's
-production pair.
+commit can change or remove earlier lines. The log is therefore **not tamper-evident against a fast-forward rewrite on its own**.
+`audit` now flags one: it remembers the tip it last saw (the audit cursor) and compares every commit this clone has already
+audited or read with the current tip. It reports `history-rewritten` when `cursor..tip` removes a line under `messages/`, when a
+commit it saw is no longer an ancestor of the tip, and `cursor-commit-missing` when a cursor commit has been pruned from the clone
+(a finding of the same class). A rewrite pins the old cursor: the audit cursor is not advanced past a rewrite, so every later
+`audit` exits `3` until you have read the history and removed the cursor that names the missing or rewritten commit. Both kinds count:
+`audit` compares the audit cursor and every per-recipient read cursor in the git dir. Find them with
+`git rev-parse --git-path foundry-message-audit-cursor` (the audit cursor) and `git rev-parse --git-path foundry-message-cursor.x` (the directory of the
+read cursors, whose files are named `foundry-message-cursor.<recipient>[.<session>]`), then delete the file the finding's `since` commit came from. `audit --no-advance` leaves the cursor where it is. The check sees only commits this clone has
+already audited or read: a rewrite made before its first audit is not seen, and on an ephemeral CI runner, where the git dir is
+new every run, the cursor never exists and the check is a no-op. The git history of the branch always shows the change, and a
+reviewer can read it. Treat the log as a coordination record, not as evidence that would stand against a writer who wants to hide
+something. The `from` field is also self-declared, so any writer can close another session's production pair.
 
 ## The branch that `queue-land` can create
 
@@ -152,4 +159,5 @@ messaging:
   people_channel: issue-per-topic
   chat_mirror: off
   open_change_minutes: 120
+  cleanup_timeout_s: 120      # total wait for foundry_prod_step.py --on-failure cleanups before STOP says "cleanup timed out"
 ```
