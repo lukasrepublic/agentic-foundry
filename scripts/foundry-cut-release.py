@@ -806,47 +806,186 @@ def _gh_er_state(ers, repo=None):
     return out
 
 
-CADENCE_DAYS = 30
+def _previous_tag(tree, version):
+    """Newest release tag (v<digits>...) reachable from HEAD, other than the one being cut; None if none."""
+    try:
+        out = subprocess.run(["git", "-C", tree, "for-each-ref", "--sort=-creatordate", "--merged", "HEAD",
+                              "--format=%(refname:short)", "refs/tags/v[0-9]*"],
+                             capture_output=True, text=True, timeout=30)
+    except Exception:  # pragma: no cover - git missing
+        return None
+    if out.returncode != 0:
+        return None
+    tags = [t.strip() for t in (out.stdout or "").splitlines() if t.strip() and t.strip() != f"v{version}"]
+    return tags[0] if tags else None
 
 
-def release_cadence(tree, version, *, now=None):
-    """(ok, detail) — v2.0.0: a release may not be cut less than CADENCE_DAYS after the previous tag.
-    Measured: 34 tags in 60 days, each followed by per-workspace upgrade ceremony on the operator's
-    path. `--hotfix` is the only bypass and is recorded in the CLI output. Reads the newest tag's
-    creatordate from the candidate tree's own git; a tree with no tags, or git unavailable, is ok."""
+_PR_MERGE = re.compile(r"^Merge pull request #(\d+) from [^/\s]+/(\S+)")
+_PR_SQUASH = re.compile(r"\(#(\d+)\)\s*$")
+# A branch prefix that names a kind of change, not a programme: these PRs count as "other".
+NON_PROGRAMME_PREFIXES = ("hotfix", "release", "dependabot", "renovate")
+OFFLINE_ENV = "FOUNDRY_CUT_RELEASE_OFFLINE"
+
+
+def _offline(explicit=None):
+    """True when release notes must not call the network: an explicit flag, the env var, or a running
+    pytest (which sets PYTEST_CURRENT_TEST) — so no test path reaches `gh` unless it injects a fn."""
+    return bool(explicit) or bool(os.environ.get(OFFLINE_ENV)) or bool(os.environ.get("PYTEST_CURRENT_TEST"))
+
+
+def _draft_release_input(tree, version):
+    """Close-out's draft GitHub Release for the tag v<version>, as {"programmes": [...], "other_prs": n},
+    or None. Matched by `tag_name == v<version>` and `draft: true` (all pages of releases are read).
+
+    Draft BODY GRAMMAR (dl-12's close-out writes this shape; one item per line, any of `-` or `*`):
+        - programme: <programme-id>      (one line per merged programme)
+        - other: <n>                     (count of other PRs; optional, default 0)
+    Read-only and fail-safe: gh missing, offline, no matching draft or bad JSON yields None, and the
+    caller falls back to the merged PRs."""
+    try:
+        rel = subprocess.run(["gh", "api", "--paginate", "repos/{owner}/{repo}/releases", "--jq",
+                              ".[] | select(.draft == true) | {tag: .tag_name, body: .body}"],
+                             capture_output=True, text=True, timeout=60, cwd=tree)
+    except Exception:
+        return None
+    if rel.returncode != 0:
+        return None
+    return _parse_draft_releases(rel.stdout or "", version)
+
+
+def _parse_draft_releases(text, version):
+    """Parse one-JSON-object-per-line draft releases; return the grammar result for v<version> or None."""
+    dec = json.JSONDecoder()
+    i, n = 0, len(text)
+    while i < n:
+        while i < n and text[i].isspace():
+            i += 1
+        if i >= n:
+            break
+        try:
+            obj, i = dec.raw_decode(text, i)
+        except ValueError:
+            return None
+        if isinstance(obj, dict) and obj.get("tag") == f"v{version}":
+            body = obj.get("body") or ""
+            progs = re.findall(r"^\s*[-*]\s*programme:\s*(\S.*?)\s*$", body, re.M)
+            other = re.search(r"^\s*[-*]\s*other:\s*(\d+)", body, re.M)
+            return {"programmes": progs, "other_prs": int(other.group(1)) if other else 0}
+    return None
+
+
+def _previous_tag_date(tree, tag):
+    try:
+        out = subprocess.run(["git", "-C", tree, "for-each-ref", "--format=%(creatordate:iso8601-strict)",
+                              f"refs/tags/{tag}"], capture_output=True, text=True, timeout=30)
+        return (out.stdout or "").strip() or None
+    except Exception:  # pragma: no cover
+        return None
+
+
+def _gh_merged_prs(tree, since_iso):
+    """Merged PRs on the default branch since `since_iso`, as [{"number","headRefName"}] or None when gh
+    is unavailable. Pages by shrinking the `merged:` window when a page is full (gh caps --limit)."""
     import datetime as _dt
     try:
-        # release tags only (v<digits>…), reachable from HEAD (not another line's backport),
-        # excluding the tag of the version being cut (a re-run must not refuse itself). A
-        # lightweight tag dates by its commit, an annotated one by its tagger — both are "when
-        # the release happened" closely enough for a 30-day floor.
-        out = subprocess.run(["git", "-C", tree, "for-each-ref", "--sort=-creatordate",
-                              "--merged", "HEAD",
-                              "--format=%(refname:short) %(creatordate:iso8601-strict)",
-                              "refs/tags/v[0-9]*"],
-                             capture_output=True, text=True, timeout=30)
-    except Exception as e:  # pragma: no cover - git missing
-        return True, f"cadence not checked ({e})"
-    if out.returncode != 0:
-        return True, "cadence NOT checked (git for-each-ref failed: %s)" % (out.stderr or "").strip()[:120]
-    lines = [ln for ln in (out.stdout or "").splitlines() if ln.strip() and ln.split()[0] != f"v{version}"]
-    if not lines:
-        return True, "no previous release tag reachable from HEAD"
-    tag, _, when = lines[0].strip().partition(" ")
+        base = subprocess.run(["gh", "repo", "view", "--json", "defaultBranchRef", "--jq",
+                               ".defaultBranchRef.name"], capture_output=True, text=True, timeout=30, cwd=tree)
+        base_name = (base.stdout or "").strip() or "main" if base.returncode == 0 else "main"
+        seen, upper = {}, None
+        while True:
+            q = f"merged:>={since_iso}" if since_iso else "is:merged"
+            if upper:
+                q = f"merged:{since_iso or '2000-01-01T00:00:00Z'}..{upper}"
+            r = subprocess.run(["gh", "pr", "list", "--state", "merged", "--base", base_name, "--search", q,
+                                "--json", "number,headRefName,mergedAt", "--limit", "500"],
+                               capture_output=True, text=True, timeout=120, cwd=tree)
+            if r.returncode != 0:
+                return None
+            page = json.loads(r.stdout or "[]")
+            new = 0
+            for pr in page:
+                if pr["number"] not in seen:
+                    seen[pr["number"]] = pr
+                    new += 1
+            if len(page) < 500 or not new:
+                break
+            oldest = min(p["mergedAt"] for p in page)
+            upper = (_dt.datetime.fromisoformat(oldest.replace("Z", "+00:00"))
+                     ).astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except Exception:
+        return None
+    since = _dt.datetime.fromisoformat(since_iso) if since_iso else None
+    out = []
+    for pr in seen.values():
+        if since and _dt.datetime.fromisoformat(pr["mergedAt"].replace("Z", "+00:00")) <= since:
+            continue
+        out.append({"number": pr["number"], "headRefName": pr.get("headRefName") or ""})
+    return out
+
+
+def _git_history_prs(tree, prev):
+    """Offline fallback: PRs from commit subjects since the previous tag, in BOTH styles — a merge commit
+    (`Merge pull request #N from owner/branch`, branch known) and a squash (`title (#N)`, branch unknown)."""
+    rng = f"{prev}..HEAD" if prev else "HEAD"
     try:
-        prev = _dt.datetime.fromisoformat(when.replace("Z", "+00:00"))
-    except ValueError:
-        return True, f"previous tag {tag} has an unparseable date {when!r}"
-    now = now or _dt.datetime.now(_dt.timezone.utc)
-    age = (now - prev).days
-    if age < CADENCE_DAYS:
-        return False, (f"previous tag {tag} is {age} day(s) old; the cadence floor is {CADENCE_DAYS} days. "
-                       f"Batch this into the next monthly release, or pass --hotfix for a defect that "
-                       f"blocks the operator's work.")
-    return True, f"previous tag {tag} is {age} day(s) old (floor {CADENCE_DAYS})"
+        out = subprocess.run(["git", "-C", tree, "log", "--format=%s", rng],
+                             capture_output=True, text=True, timeout=30)
+    except Exception:  # pragma: no cover - git missing
+        return []
+    prs = []
+    for subj in (out.stdout or "").splitlines() if out.returncode == 0 else []:
+        m = _PR_MERGE.match(subj)
+        if m:
+            prs.append({"number": int(m.group(1)), "headRefName": m.group(2)})
+            continue
+        m = _PR_SQUASH.search(subj)
+        if m:
+            prs.append({"number": int(m.group(1)), "headRefName": ""})
+    return prs
 
 
-def cut_release(tree, version, *, acceptance_fn=None, er_state_fn=None, suite_runner=None, hotfix=False):
+def release_notes(tree, version, *, draft_fn=None, prs_fn=None, offline=None):
+    """Release-notes input for a cut. No cadence rule applies: the operator decides what ships. A cut may
+    combine several programmes plus the accumulated ad-hoc PRs. Input, in order: (1) close-out's draft
+    Release for v<version> (`_draft_release_input`; grammar in its docstring); (2) merged PRs from
+    `prs_fn(tree, since_iso)` (default: `gh pr list --state merged`); (3) the offline git-history parser.
+    A PR whose branch is `<programme>/<name>` belongs to that programme (one line per programme); a PR
+    with no prefix, or a prefix in NON_PROGRAMME_PREFIXES, or an unknown branch (squash subject) is counted
+    as other. Network sources are skipped when offline (flag, env FOUNDRY_CUT_RELEASE_OFFLINE, or pytest)
+    unless the fn is injected. Returns {"source","previous_tag","programmes","other_prs","lines"}."""
+    off = _offline(offline)
+    prev = _previous_tag(tree, version)
+    if draft_fn is None and not off:
+        draft_fn = lambda t: _draft_release_input(t, version)  # noqa: E731
+    draft = draft_fn(tree) if draft_fn else None
+    if draft is not None:
+        progs = [{"id": p, "prs": None} for p in draft.get("programmes", [])]
+        other, source = int(draft.get("other_prs", 0)), "close-out draft release"
+    else:
+        if prs_fn is None and not off:
+            prs_fn = _gh_merged_prs
+        prs = prs_fn(tree, _previous_tag_date(tree, prev) if prev else None) if prs_fn else None
+        source = "merged PRs (gh)"
+        if prs is None:
+            prs, source = _git_history_prs(tree, prev), "git history"
+        by_prog, other = {}, 0
+        for pr in prs:
+            head = pr.get("headRefName") or ""
+            prefix = head.split("/", 1)[0] if "/" in head else ""
+            if prefix and prefix not in NON_PROGRAMME_PREFIXES:
+                by_prog.setdefault(prefix, []).append(int(pr["number"]))
+            else:
+                other += 1
+        progs = [{"id": k, "prs": sorted(v)} for k, v in sorted(by_prog.items())]
+    lines = [f"programme {p['id']}" + (f" ({len(p['prs'])} PR(s))" if p["prs"] else "") for p in progs]
+    since = f"since {prev}" if prev else "since the start of history"
+    lines.append(f"{other} other PR(s) " + ("in the close-out draft release" if source == "close-out draft release"
+                                            else since))
+    return {"source": source, "previous_tag": prev, "programmes": progs, "other_prs": other, "lines": lines}
+
+
+def cut_release(tree, version, *, acceptance_fn=None, er_state_fn=None, suite_runner=None, draft_fn=None, prs_fn=None,
+                offline=None):
     """The deterministic-seam. preflight → (if ok) acceptance_fn(tree) → (if pass) publish_plan. Returns a
     verdict dict {state ∈ refused|gated|ready, ...}. NEVER runs git tag/push/gh or mutates the tree.
     acceptance_fn and er_state_fn are dependency-injected (defaults to the real gate / gh resolver) so the
@@ -855,12 +994,6 @@ def cut_release(tree, version, *, acceptance_fn=None, er_state_fn=None, suite_ru
     acceptance_fn = acceptance_fn or run_acceptance
     if er_state_fn is None:
         er_state_fn = _gh_er_state
-    if not hotfix:
-        cad_ok, cad_detail = release_cadence(tree, version)
-        if not cad_ok:
-            return {"state": "refused", "stage": "cadence",
-                    "preflight": [("release cadence (30-day floor; --hotfix bypasses)", False, cad_detail)],
-                    "failures": [f"release cadence: {cad_detail}"], "plan": None}
     pf = preflight(tree, version, suite_runner=suite_runner)
     failed = [c for c in pf if not c[1]]
     if failed:
@@ -878,10 +1011,25 @@ def cut_release(tree, version, *, acceptance_fn=None, er_state_fn=None, suite_ru
     open_ers = sorted(n for n in ers if str(states.get(n, "")).lower() == "open") if er_state_checked else []
     return {"state": "ready", "stage": "publish-plan", "preflight": pf, "acceptance": verdict,
             "signing": signing_seam(), "plan": plan, "traced_ers": ers,
+            "release_notes": release_notes(tree, version, draft_fn=draft_fn, prs_fn=prs_fn,
+                                              offline=offline),
             "open_ers": open_ers, "er_state_checked": er_state_checked, "failures": []}
 
 
 def _selftest():
+    """Run the hermetic selftest with the release notes forced offline (no `gh`), restoring the env after."""
+    old = os.environ.get(OFFLINE_ENV)
+    os.environ[OFFLINE_ENV] = "1"
+    try:
+        return _selftest_body()
+    finally:
+        if old is None:
+            os.environ.pop(OFFLINE_ENV, None)
+        else:
+            os.environ[OFFLINE_ENV] = old
+
+
+def _selftest_body():
     # Defined INSIDE _selftest so it is structurally unreachable from main() — a module-level stub runner
     # is one stray edit away from being wired into the real cut path (which is exactly what happened once).
     _GREEN_SUITE = (lambda _t: (0, "1 passed", ""))
@@ -1083,8 +1231,8 @@ def main(argv=None):
     ap.add_argument("--tree", help="path to the candidate plugin tree (a committed checkout)")
     ap.add_argument("--version", help="the release version being cut (the operator picks it; no inference)")
     ap.add_argument("--json", action="store_true")
-    ap.add_argument("--hotfix", action="store_true",
-                    help="bypass the 30-day release cadence floor for a defect that blocks the operator's work")
+    ap.add_argument("--offline", action="store_true",
+                    help="build the release notes from git history only; never call gh for them")
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--verify-tag", action="store_true",
                     help="re-run ONLY the install-pin coherence check against an EXISTING tag "
@@ -1123,7 +1271,7 @@ def main(argv=None):
         # path would make every cut report a fabricated green suite — strictly worse than the v0.27.0 hole
         # this atom closes, because v0.27.0 at least made no claim about tests. Guarded by
         # test_cli_path_never_injects_a_suite_runner and by _GREEN_SUITE being local to _selftest.
-        r = cut_release(os.path.abspath(args.tree), args.version, hotfix=args.hotfix)
+        r = cut_release(os.path.abspath(args.tree), args.version, offline=args.offline)
     except CutReleaseError as e:
         print(f"cut-release error: {e}", file=sys.stderr)
         return 2
@@ -1150,6 +1298,10 @@ def main(argv=None):
             elif not r.get("er_state_checked"):
                 print("  (ER open/closed state not checked — gh unavailable/offline; the reconciliation "
                       "plan steps are still emitted below.)")
+        rn = r.get("release_notes") or {}
+        print(f"release notes (from {rn.get('source')}):")
+        for ln in rn.get("lines", []):
+            print(f"  - {ln}")
         print("PUBLISH PLAN — cut-release NEVER runs these; the operator executes them:")
         for step in r["plan"]:
             print(f"  $ {step}")

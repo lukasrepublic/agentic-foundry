@@ -371,6 +371,17 @@ lands in the cut-release playbook specifically — for the plugin's own repo AND
 - A **hotfix** never uses a release branch at all: `hotfix/<id>` → `main` directly, stated in the
   hotfix PR's own body.
 
+## When to cut, and what the notes list
+
+There is no calendar rule. The operator decides what ships through the version tag and publish. A cut
+can follow any previous tag at any age. A cut can combine several programmes and the ad-hoc tickets
+that merged since the previous tag.
+
+On `READY` the script prints a release-notes block: one line per merged programme and a count of the
+other PRs since the previous tag. If close-out left a draft GitHub Release pinned to `HEAD`, the notes
+use that draft as input. Otherwise the notes come from the merged PRs in git history. The playbook
+never tags, pushes, or publishes. The operator does that.
+
 ## What it does NOT do
 
 - **It never tags, pushes, or closes issues.** It emits the plan — including the ER-reconciliation

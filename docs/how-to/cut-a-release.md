@@ -23,6 +23,31 @@ data** — it never tags, never pushes, never closes issues itself. You execute 
                               5. gh issue close … (review each first)
 ```
 
+## When to cut
+
+A release follows programme readiness and the operator's judgement. There is no minimum time between
+releases. One cut can combine several programmes and the ad-hoc tickets merged since the previous tag.
+The cut-release playbook prints the release notes: one line per programme and a count of the other PRs
+since the previous tag. It uses the close-out draft Release for `HEAD` as input when one exists. You
+run the version tag and the publish yourself.
+
+Where the notes come from, in order:
+
+1. The close-out draft Release whose tag is `v<version>` and that is still a draft.
+2. The merged PRs on the default branch since the previous tag (`gh pr list --state merged`).
+3. With `--offline`, or when `gh` is unavailable, the git history (merge commits and squash `(#N)` subjects).
+
+A PR from a branch `<programme>/<name>` belongs to that programme. A PR from `hotfix/`, `release/`,
+`dependabot/` or `renovate/`, a branch with no prefix, or a squash commit with an unknown branch counts
+as other.
+
+The draft Release body that close-out writes uses this grammar, one item per line:
+
+```
+- programme: <programme-id>
+- other: <n>
+```
+
 ## Steps
 
 1. **Prep** — pick the version (yours to pick; there is no inference), then:
