@@ -59,7 +59,7 @@ GUARD = "shell-shape"
 MAX_DEPTH = 3
 DELETE_VERBS = {"rm", "unlink", "shred", "rmdir", "truncate"}
 # options of a delete verb that consume the next word (so the value is not mistaken for a target)
-_VERB_TAKES = {"truncate": {"-s", "-r", "--size", "--reference", "-o"}, "shred": {"-n", "-s", "--iterations", "--size", "--random-source"}}
+_VERB_TAKES = {"truncate": {"-s", "-r", "--size", "--reference"}, "shred": {"-n", "-s", "--iterations", "--size", "--random-source"}}
 _RSYNC_DELETE = re.compile(r"--(?:del|delete(?:-[a-z]+)?|remove-source-files)(?:=.*)?")
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 SCRATCH_PATTERN = re.compile(r"^/tmp/claude-[^/]+/(?:[^/]+/)+scratchpad/.+$")
@@ -193,7 +193,10 @@ def _check_delete(inv, cwd, root):
         raise Refuse("`%s` with a command substitution (its target cannot be known)" % inv.cmd, SHAPE_RM)
     if "xargs" in inv.wrappers:
         raise Refuse("`xargs %s` (its targets arrive on stdin and cannot be known)" % inv.cmd, SHAPE_RM)
-    for t in _deletion_targets(inv.args, inv.cmd):
+    targets = _deletion_targets(inv.args, inv.cmd)
+    if not targets:      # gv-20: a delete verb whose operands were all redirections or option values names nothing provable
+        raise Refuse("`%s` with no target operand (what it deletes cannot be known)" % inv.cmd, SHAPE_RM)
+    for t in targets:
         if not inside_scratch(t, cwd, root):
             raise Refuse("`%s` of %r, which is not provably inside the session scratch directory"
                          % (inv.cmd, t), SHAPE_RM)
@@ -285,7 +288,8 @@ def _leading_dash(args, takes):
 
 
 _EVAL_INTERPRETERS = {"perl", "ruby", "node", "nodejs", "php", "lua", "bun", "deno"}
-_EVAL_FLAGS = {"--eval", "--print", "-r", "--exec"}
+_EVAL_FLAGS = {"--eval", "--print", "--exec"}
+_VERSION_FLAGS = {"-v", "-V", "--version", "-version"}
 
 
 def _leading_options(args):
@@ -323,11 +327,17 @@ def _check_packed(inv, depth, cwd, root, strict_mode):
         payload = _payload_after_c(args, _PY_C, _PY_TAKES)
         if payload is not None:
             _judge_payload(cmd + " -c", payload, depth, cwd, root, strict_mode, python=True)
+        elif args and all(a in _VERSION_FLAGS for a in args) and len(args) == 1:
+            return                       # `python3 -V`
         elif not [a for a in scan.strip_redirects(list(args)) if not a.startswith("-")] and "-m" not in args and "--version" not in args:
             raise Refuse("`%s` with no script operand (it reads the script from stdin, e.g. `cat s.py | %s`)" % (cmd, cmd), SHAPE_PACKED)
     elif cmd in _EVAL_INTERPRETERS:
         lead = _leading_options(args)
-        if any(a in _EVAL_FLAGS for a in lead) or any(re.fullmatch(r"-[A-Za-z]*[eEp][A-Za-z]*", a) for a in lead if not a.startswith("--")):
+        if len(args) == 1 and args[0] in _VERSION_FLAGS:
+            return                       # `node --version`, `perl -v`, `ruby -v`: no script, nothing to judge
+        eval_short = r"-[A-Za-z]*[eEp][A-Za-z]*" if cmd in ("perl", "node", "nodejs", "bun") else r"-[A-Za-z]*[eE][A-Za-z]*"
+        if any(a in _EVAL_FLAGS for a in lead) or \
+                any(re.fullmatch(eval_short, a) for a in lead if not a.startswith("--")) or (cmd == "php" and "-r" in lead):
             raise Refuse("`%s` with an inline script (-e/-E/--eval/-p)" % cmd, SHAPE_PACKED)
         if not [a for a in scan.strip_redirects(list(args)) if not a.startswith("-")]:
             raise Refuse("`%s` with no script operand (it reads the script from stdin)" % cmd, SHAPE_PACKED)

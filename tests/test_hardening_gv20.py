@@ -662,3 +662,54 @@ def test_chat_mirror_jq_filter_neutralises_mentions_and_link_markup(tmp_path):
         assert bad not in first, (bad, first)
     assert "(at)channel" in first and "&lt;https://evil.example|click&gt;" in first and "&amp; done next" in first
     assert out[1] == "PROD-AFTER c2 from plain: all good"                                  # control: plain text is unchanged
+
+
+# ------------------------------------------------------------------------------------------ round 1: shell scan redirect forms
+ROUND1_REFUSED = [
+    "rm -rf 2>&1 /home/u/proj",
+    "rm -rf >&/dev/null /x",
+    "rm -rf &>/dev/null /x",
+    "rm -rf 2>&1",
+    "rm -rf '>' /x",
+    "rm -rf \">\" /x",
+    "rm -rf '2>' /x",
+    "$\"rm\" -rf /x",
+    "rm -rf",
+    "rm -rf 2>/dev/null",
+    "echo '>'&rm -rf /x",
+]
+ROUND1_ADMITTED = [
+    f"rm -rf {SCR}/x 2>/dev/null",
+    f"rm -rf {SCR}/x 2>&1",
+    f"rm -rf {SCR}/x >&/dev/null",
+    f"rm -rf {SCR}/x &>/dev/null",
+    f"rm -rf {SCR}/x > /dev/null 2>&1",
+    f"truncate -o -s 5 {SCR}/f",
+    "node --version",
+    "perl -v",
+    "ruby -v",
+    "python3 -V",
+    "node -r ./preload.js script.js",
+]
+
+
+@pytest.mark.parametrize("cmd", ROUND1_REFUSED)
+def test_round1_shape_refused(cmd):
+    r = shape(cmd)
+    assert r.returncode == 2, (cmd, r.stdout, r.stderr)
+
+
+@pytest.mark.parametrize("cmd", ROUND1_ADMITTED)
+def test_round1_shape_control_admitted(cmd):
+    r = shape(cmd)
+    assert r.returncode == 0, (cmd, r.stdout, r.stderr)
+
+
+def test_round1_tokenizer_keeps_a_redirection_in_one_word_and_marks_quoting():
+    import foundry_shell_scan as fss
+    for cmd, word in (("rm x 2>&1", "2>&1"), ("rm x >&f", ">&f"), ("rm x &>f", "&>f"), ("rm x <&3", "<&3")):
+        inv = fss.invocations(cmd)
+        assert len(inv) == 1 and word in inv[0].args, (cmd, [(i.cmd, i.args) for i in inv])
+    assert [i.cmd for i in fss.invocations("echo '>'&rm x")] == ["echo", "rm"]          # a quoted > does not glue the &
+    assert fss.redirect_operand(fss.invocations("rm '>' x")[0].args[0]) is None         # quoted: a literal
+    assert [(i.cmd, i.args) for i in fss.invocations('$"rm" -rf /x')] == [("rm", ["-rf", "/x"])]

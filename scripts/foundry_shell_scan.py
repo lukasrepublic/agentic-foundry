@@ -42,6 +42,12 @@ import tempfile
 from typing import Dict, List, NamedTuple, Optional, Tuple
 
 
+class _Q(str):
+    """A word that had any quoting in its source (`'>'`, `"x"`, `$'x'`). It compares and prints as the plain text, and a
+    quoted word is never a redirection operator (gv-20)."""
+    __slots__ = ()
+
+
 class Word(NamedTuple):
     """One tokenizer output unit.
 
@@ -214,6 +220,8 @@ def _scan(cmd: str, emit_words: bool):
     # True the moment a quote opens (even an empty one) or an ordinary char is appended, and only
     # resets on an actual word boundary (whitespace/separator/newline) or at start of input.
     token_started = False
+    word_quoted = False       # the current word had any quoting
+    redir_mark = -1           # len(buf) right after an UNQUOTED `<` or `>` was appended (so `>&` / `<&` can be kept whole)
 
     def cur_kind() -> str:
         if sub_stack:
@@ -221,15 +229,19 @@ def _scan(cmd: str, emit_words: bool):
         return "word"
 
     def flush_word():
-        nonlocal buf, cur_other_consumer, token_started
+        nonlocal buf, cur_other_consumer, token_started, word_quoted, redir_mark
         if buf:
             text = "".join(buf)
+            if word_quoted:
+                text = _Q(text)
             if not sub_stack and _FD_DUP_RE.match(text):
                 cur_other_consumer = True
             if emit_words:
                 words.append(Word(text, clause_index, False, cur_kind()))
         buf = []
         token_started = False
+        word_quoted = False
+        redir_mark = -1
 
     while i < n:
         ch = cmd[i]
@@ -285,15 +297,21 @@ def _scan(cmd: str, emit_words: bool):
             if j is not None:
                 buf.append(text)
                 token_started = True
+                word_quoted = True
                 i = j
                 continue
+        if ch == "$" and i + 1 < n and cmd[i + 1] == '"':
+            i += 1                      # gv-20: locale quoting `$"rm"` is the word `rm`; the `$` is not part of it
+            continue
         if ch == "'":
             in_squote = True
+            word_quoted = True
             token_started = True
             i += 1
             continue
         if ch == '"':
             in_dquote = True
+            word_quoted = True
             token_started = True
             i += 1
             continue
@@ -408,6 +426,14 @@ def _scan(cmd: str, emit_words: bool):
             cur_other_consumer = False
             continue
 
+        if not sub_stack and ch == "&" and ((buf and redir_mark == len(buf)) or (not buf and not token_started and cmd[i + 1:i + 2] == ">")):
+            # gv-20: `2>&1`, `>&file`, `<&3` and `&>file` are ONE redirection word, not a redirection plus a `&` separator
+            buf.append(ch)
+            token_started = True
+            redir_mark = -1
+            i += 1
+            continue
+
         if not sub_stack and ch in ";&|":
             two = cmd[i:i + 2]
             flush_word()
@@ -442,6 +468,7 @@ def _scan(cmd: str, emit_words: bool):
 
         buf.append(ch)
         token_started = True
+        redir_mark = len(buf) if (ch in "<>" and not sub_stack) else -1
         i += 1
 
     flush_word()
@@ -746,6 +773,8 @@ def redirect_operand(word: str) -> Optional[str]:
     """None when `word` is not a redirection; "" for a bare operator (the NEXT word is its operand: `>`, `2>`); otherwise the
     operand glued to the operator (`>/dev/null`, `2>/dev/null`, `</dev/null`). A word the tokenizer already unquoted is
     indistinguishable from a quoted `'>x'`; that is a literal name no deletion guard needs to model."""
+    if isinstance(word, _Q):
+        return None                    # a quoted word is a literal, never an operator
     m = _REDIR_RE.match(word)
     return None if m is None else m.group(1)
 
@@ -789,7 +818,7 @@ def _resolve(words: List[str], redirs_out: Optional[List[str]] = None) -> Option
         if _ASSIGN_RE.match(w):
             i += 1
             continue
-        rd = redirect_operand(w)
+        rd = redirect_operand(words[i] if stripped == words[i] else w)
         if rd is not None:                  # gv-20: `</dev/null rm -rf x` -- a leading redirection is not the command word
             if redirs_out is not None:
                 op = rd if rd != "" else (words[i + 1] if i + 1 < n else "")
