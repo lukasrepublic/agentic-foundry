@@ -65,15 +65,15 @@ def test_deck_frontmatter_parses():
     fm = yaml.safe_load(text[3:end])
     assert fm["name"] == "command-deck"
     assert isinstance(fm["description"], str) and "\n" not in fm["description"].strip()
-    for sub in ("start", "status", "stop", "tick"):
+    for sub in ("start", "status", "stop", "tick", "pause", "resume"):
         assert sub in fm["description"]
 
 
 def test_deck_subcommand_table_exact():
     body = sections(SKILL.read_text())["Subcommands"]
     rows = [l for l in body.splitlines() if l.startswith("|")][2:]
-    subs = [re.match(r"\|\s*`([^`]+)`", r).group(1) for r in rows]
-    assert subs == ["start", "status", "stop", "tick"]
+    subs = [re.match(r"\|\s*`([^`\s]+)", r).group(1) for r in rows]
+    assert subs == ["start", "status", "stop", "tick", "pause", "resume"]   # gv-13 added pause and resume (B9)
 
 
 def test_deck_template_seven_steps_in_order():

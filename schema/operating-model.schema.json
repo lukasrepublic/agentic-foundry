@@ -84,6 +84,14 @@
         "operator_style_file": {"type": "string", "maxLength": 128, "pattern": "^$|^\\.foundry/([A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*\\.(md|txt)$", "default": "", "description": "A regular .md or .txt file under .foundry/ (no dot-file, no symlink, at most 4 KiB), used when style is operator-defined. Its text is operator instruction text by design."}
       }
     },
+    "models": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "builder": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$", "default": "smaller", "description": "B7 tunable: the model for builders. smaller = the smaller model."},
+        "reviewer": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$", "default": "smaller", "description": "B7 tunable: the model for separate-context reviewers. Reviewers get a diff file, never shell access."},
+        "security_reviewer": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$", "default": "strongest", "description": "B7 tunable: the model for security reviews of auth, secrets and crypto. strongest = the strongest model."}
+      }
+    },
     "hygiene": {
       "type": "object", "additionalProperties": false,
       "properties": {
