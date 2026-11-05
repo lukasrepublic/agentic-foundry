@@ -844,7 +844,11 @@ def test_round1_governance_trace_compares_with_the_base_lock(tmp_path):
     import importlib.util
     spec = importlib.util.spec_from_file_location("gtrace", ROOT / "governance" / "kits" / "delivery" / "checks" / "governance-trace.py")
     gt = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(gt)
+    old, sys.dont_write_bytecode = sys.dont_write_bytecode, True          # no __pycache__ inside the kit directory
+    try:
+        spec.loader.exec_module(gt)
+    finally:
+        sys.dont_write_bytecode = old
     plugin = make_plugin_copy(tmp_path)
     base = adopted_repo(tmp_path, plugin)
     head = tmp_path / "head"
