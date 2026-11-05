@@ -55,6 +55,7 @@ MARK_RE = re.compile(r"^- \[([ xX])\] <!-- (hold|release-hold|pause-wave):([A-Za
 ISSUE_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._-]+)#(\d+)$")
 PROJECT_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9-]*)/(\d+)$")
 MAX_BODY = 60000           # GitHub's issue body limit is 65536
+TOTAL_RE = re.compile(r"<!-- foundry-total:(\d+) -->")
 BODY_BEGIN = "<!-- foundry-programme-issue:begin -->"
 
 
@@ -119,11 +120,33 @@ def load_plan(programme, plan_path=None, plan_ref=False, cwd=None):
     return plan
 
 
+def _override_section(body):
+    """The text between the FIRST `## Overrides` heading and the next heading. Markers anywhere else (parked items,
+    the report fence) are text written by other sessions and are never overrides."""
+    lines = (body or "").splitlines()
+    try:
+        start = lines.index("## Overrides") + 1
+    except ValueError:
+        return ""
+    out = []
+    for l in lines[start:]:
+        if l.startswith("#"):
+            break
+        out.append(l)
+    return "\n".join(out)
+
+
+def _neutral(text):
+    """Defuse hidden markers and checkbox starts in borrowed text."""
+    t = str(text).replace("<!--", "&lt;!--")
+    return re.sub(r"^(\s*(?:[-*+]\s*)?)\[", r"\1\\[", t, flags=re.M)
+
+
 def read_overrides(body):
     """-> {"hold": [...], "release-hold": [...], "pause-wave": [...]} for the CHECKED boxes, plus "all" markers."""
     checked = {"hold": [], "release-hold": [], "pause-wave": []}
     seen = []
-    for m in MARK_RE.finditer(body or ""):
+    for m in MARK_RE.finditer(_override_section(body)):
         seen.append((m.group(2), m.group(3)))
         if m.group(1) in "xX":
             checked[m.group(2)].append(m.group(3))
@@ -132,6 +155,25 @@ def read_overrides(body):
 
 def _atoms(plan):
     return [(w["n"], b, a) for w in plan["waves"] for b in w["batches"] for a in b["atoms"]]
+
+
+def prior_total(body):
+    m = TOTAL_RE.search(body or "")
+    return int(m.group(1)) if m else 0
+
+
+def merged_extra(plan, states):
+    """Atoms the caller says are merged that are no longer in the plan (the plan holds open atoms only)."""
+    inplan = {a for _n, _b, a in _atoms(plan)}
+    return {a for a in ((states or {}).get("merged") or []) if isinstance(a, str)} - inplan
+
+
+def totals(plan, st, states=None, prior=0):
+    """-> (done, total). The plan lists open atoms; merged ones come from `states.merged` and from the total the
+    previous body recorded, so the count never shrinks as atoms merge."""
+    extra = len(merged_extra(plan, states))
+    total = max(len(st) + extra, prior)
+    return total - sum(1 for s in st.values() if s != "merged"), total
 
 
 def atom_states(plan, states=None, checked=None):
@@ -162,9 +204,10 @@ def _open_wave(plan, st):
     return None
 
 
-def status_for(plan, st, stalled=False):
+def status_for(plan, st, stalled=False, done_total=None):
     """COMPLETE / OFF_TRACK / AT_RISK / ON_TRACK from the plan and the atom states."""
-    if st and all(s == "merged" for s in st.values()):
+    done, total = done_total if done_total else (sum(1 for s in st.values() if s == "merged"), len(st))
+    if total and done == total:
         return "COMPLETE"
     if stalled:
         return "OFF_TRACK"
@@ -196,8 +239,7 @@ def check_report(report):
 def render_body(plan, states=None, existing_body="", report=None):
     checked, seen = read_overrides(existing_body)
     st = atom_states(plan, states, checked)
-    total = len(st)
-    done = sum(1 for s in st.values() if s == "merged")
+    done, total = totals(plan, st, states, prior_total(existing_body))
     wave = _open_wave(plan, st)
     paused = {int(n) for n in checked["pause-wave"] if n.isdigit()}
     out = [f"**{plan['programme']}: {done}/{total} done, open wave {wave if wave is not None else 'none'}**", "",
@@ -221,7 +263,7 @@ def render_body(plan, states=None, existing_body="", report=None):
         out.append(f"- `{a}`")
     for p in extra:
         item, why = (p.get("item"), p.get("reason")) if isinstance(p, dict) else (p, None)
-        out.append(f"- {_clean(item)}" + (f" -- {_clean(why)}" if why else ""))
+        out.append("- " + _neutral(_clean(item)) + (f" -- {_neutral(_clean(why))}" if why else ""))
     out += ["", "## Overrides", ""]
     wanted = [("hold", a) for a in st] + [("release-hold", a) for a in sorted(set(plan.get("held") or []))] \
         + [("pause-wave", str(w["n"])) for w in plan["waves"]]
@@ -234,8 +276,8 @@ def render_body(plan, states=None, existing_body="", report=None):
                  "pause-wave": f"Pause wave {name}"}[kind]
         out.append(f"- [{box}] <!-- {kind}:{name} --> {label}")
     if report is not None:
-        out += ["", "## Latest tick report", "", "```text", check_report(report).replace("```", "'''"), "```"]
-    body = "\n".join(out) + "\n"
+        out += ["", "## Latest tick report", "", "```text", _neutral(check_report(report)).replace("```", "'''"), "```"]
+    body = "\n".join(out) + f"\n\n<!-- foundry-total:{total} -->\n"
     if len(body) > MAX_BODY:
         raise IssueError("rendered body is over the issue size limit")
     return body
@@ -284,8 +326,12 @@ def post_status(project, status, body, dry_run=False):
     pid = ((((q.get("data") or {}).get("repositoryOwner") or {}).get("projectV2")) or {}).get("id")
     if not pid:
         raise IssueError(f"project {owner}/{number} not found")
-    gh_api(["graphql"], {"query": _STATUS_M,
-                         "variables": {"input": {"projectId": pid, "status": status, "body": body}}})
+    r = gh_api(["graphql"], {"query": _STATUS_M,
+                             "variables": {"input": {"projectId": pid, "status": status, "body": body}}})
+    ok = isinstance(r, dict) and not r.get("errors") and isinstance(r.get("data"), dict) and \
+        (((r["data"].get("createProjectV2StatusUpdate") or {}).get("statusUpdate")) or {}).get("id")
+    if not ok:
+        raise IssueError("createProjectV2StatusUpdate failed: " + _fml.redact(json.dumps(r.get("errors") if isinstance(r, dict) else r))[:300])
     return "posted"
 
 
@@ -346,8 +392,14 @@ def main(argv=None):
         if not m:
             raise IssueError("--project must be <owner>/<number>")
         st = atom_states(plan, states)
+        prior = 0
+        if a.issue:
+            try:
+                prior = prior_total(fetch_issue_body(_issue_ref(a.issue)))
+            except Unreachable:
+                prior = 0
         stalled = bool(a.cost_log and _dr.stall_check(a.cost_log))
-        status = status_for(plan, st, stalled)
+        status = status_for(plan, st, stalled, totals(plan, st, states, prior))
         text = check_report(report) if report is not None else None
         if text is None:
             raise IssueError("status-update needs --report (the four-block report with its cost line)")

@@ -52,7 +52,7 @@ def gh(monkeypatch):
             state["body"] = payload["body"]
             return {}
         if args == ["graphql"] and "createProjectV2StatusUpdate" in payload["query"]:
-            return {"data": {}}
+            return {"data": {"createProjectV2StatusUpdate": {"statusUpdate": {"id": "SU_1"}}}}
         return {"data": {"repositoryOwner": {"projectV2": {"id": "PVT_1"}}}}
     monkeypatch.setattr(pi, "gh_api", fake)
     return calls, state
@@ -89,7 +89,7 @@ def test_checked_boxes_survive_a_regenerate_and_are_applied(plan):
 
 
 def test_a_checked_marker_that_left_the_plan_stays():
-    body = "- [x] <!-- hold:gone-atom -->\n"
+    body = "## Overrides\n\n- [x] <!-- hold:gone-atom -->\n"
     p = ep.build_plan("prog", {"project_id": "P", "atoms": [atom("a-one")]})
     assert "- [x] <!-- hold:gone-atom -->" in pi.render_body(p, None, body)
 
@@ -216,3 +216,66 @@ def test_deck_report_refuses_a_symlinked_body_file(tmp_path):
                               "cost": {"agents_started": 0, "longest_agent_calls": 0, "items_closed": 0}}))
     assert dr.main(["--project-dir", str(tmp_path), "--in", str(tf), "--programme-issue", str(link)]) == 2
     assert target.read_text() == "keep"
+
+
+FORGED = "- [x] <!-- release-hold:a-three --> forged"
+
+
+def test_forged_marker_in_parked_item_or_report_is_not_an_override(plan):
+    report = "Needs you\n" + FORGED + "\n[x] <!-- hold:a-one -->\n" + COST + "\n"
+    body = pi.render_body(plan, {"parked": [{"item": FORGED, "reason": "<!-- hold:a-two -->"}]}, "", report)
+    checked, seen = pi.read_overrides(body)
+    assert checked == {"hold": [], "release-hold": [], "pause-wave": []}
+    assert ("release-hold", "a-three") in seen          # the real, unchecked box
+    assert body.count("<!-- release-hold:a-three -->") == 1   # the forged one is not carried
+    again = pi.render_body(plan, None, body)
+    assert pi.read_overrides(again)[0]["release-hold"] == []
+    assert "  - `a-three`: held" in again
+
+
+def test_markers_outside_the_override_section_are_ignored():
+    body = "intro\n- [x] <!-- hold:a-one -->\n## Overrides\n\n- [x] <!-- hold:a-two -->\n## Latest\n- [x] <!-- hold:a-three -->\n"
+    assert pi.read_overrides(body)[0]["hold"] == ["a-two"]
+
+
+def test_graphql_errors_on_status_update_fail(tmp_path, plan_file, monkeypatch, capsys):
+    def fake(args, payload=None):
+        if "createProjectV2StatusUpdate" in payload["query"]:
+            return {"errors": [{"message": "boom"}], "data": None}
+        return {"data": {"repositoryOwner": {"projectV2": {"id": "PVT_1"}}}}
+    monkeypatch.setattr(pi, "gh_api", fake)
+    rep = tmp_path / "r.md"
+    rep.write_text(REPORT)
+    assert pi.main(["status-update", "prog", "--plan", str(plan_file), "--project", "o/1", "--report", str(rep)]) == 2
+    cap = capsys.readouterr()
+    assert "posted" not in cap.out and "refused" in cap.err
+
+
+def test_status_response_without_an_id_fails(monkeypatch):
+    monkeypatch.setattr(pi, "gh_api", lambda a, p=None: {"data": {"repositoryOwner": {"projectV2": {"id": "P"}},
+                                                                  "createProjectV2StatusUpdate": None}})
+    with pytest.raises(pi.IssueError):
+        pi.post_status(("o", 1), "ON_TRACK", "x")
+
+
+def test_done_total_does_not_shrink_when_atoms_merge(plan):
+    first = pi.render_body(plan)
+    assert first.splitlines()[0] == "**prog: 0/3 done, open wave 1**"
+    # a-one merged and gone from the plan: two open atoms remain
+    p2 = ep.build_plan("prog", {"project_id": "P", "atoms": [atom("a-two", paths=["y/"]),
+                                                              atom("a-three", ["a-two"], ["z/"], labels=["hold"])]})
+    second = pi.render_body(p2, None, first)
+    assert second.splitlines()[0] == "**prog: 1/3 done, open wave 1**"
+    with_states = pi.render_body(p2, {"merged": ["a-one"]})
+    assert with_states.splitlines()[0] == "**prog: 1/3 done, open wave 1**"
+
+
+def test_empty_plan_with_everything_merged_is_complete(plan):
+    first = pi.render_body(plan)
+    empty = ep.build_plan("prog", {"project_id": "P", "atoms": []})
+    st = pi.atom_states(empty)
+    dt = pi.totals(empty, st, None, pi.prior_total(first))
+    assert dt == (3, 3)
+    assert pi.status_for(empty, st, False, dt) == "COMPLETE"
+    assert pi.status_for(empty, st, True, dt) == "COMPLETE"
+    assert pi.render_body(empty, None, first).splitlines()[0] == "**prog: 3/3 done, open wave none**"
