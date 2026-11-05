@@ -249,3 +249,129 @@ def test_item3_control_admitted(prepo, cmd):
 def test_item3_the_docstring_still_says_visibility_control_and_no_boundary():
     doc = (ROOT / "hooks" / "foundry-paper-guard.py").read_text().split('"""')[1]
     assert "visibility control" in doc and "not a sandbox" in doc
+
+
+# ------------------------------------------------------------------------------------------ 4 shell shape + secret guard
+SHAPE = ROOT / "hooks" / "foundry-shell-shape.py"
+SID = "11111111-2222-3333-4444-555555555555"
+SCR = f"/tmp/claude-1000/-proj/{SID}/scratchpad"
+
+
+def shape(command, *, session=SID, extra=None):
+    payload = {"tool_input": {"command": command}, "cwd": str(ROOT), "session_id": session}
+    payload.update(extra or {})
+    env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_SCRATCHPAD", "FOUNDRY_SHELL_SHAPE_STRICT")}
+    return subprocess.run([sys.executable, str(SHAPE)], input=json.dumps(payload), capture_output=True, text=True, env=env)
+
+
+SHAPE_REFUSED = [
+    "</dev/null rm -rf /x",
+    "$'rm' -rf /x",
+    "$'\\x72m' -rf /x",
+    "FOO=1 2>/dev/null rm -rf /x",
+    "rm -rf /x 2>/dev/null",
+    'bash -c "$CMD"',
+    "cat s.py | python3",
+    "python3 < s.py",
+    "perl -e 'unlink 1'",
+    "ruby -e 'File.delete(1)'",
+    "node -e 'require(1)'",
+    "git clean -fdx",
+    "git -C /x clean -fd",
+    "rsync -a --delete src/ dst/",
+    "rsync -a --remove-source-files src/ dst/",
+    "truncate -s 0 /x/file",
+    "shred /x/file",
+    "unlink /x/file",
+    f"rm -rf /tmp/claude-1000/-proj/other-session/scratchpad/x",
+]
+SHAPE_ADMITTED = [
+    f"rm -rf {SCR}/x 2>/dev/null",
+    f"rm -rf {SCR}/x >/dev/null 2>&1",
+    f"rm -rf {SCR}/x > /dev/null",
+    f"</dev/null rm -rf {SCR}/x",
+    f"truncate -s 0 {SCR}/f",
+    f"rsync -a --delete {SCR}/a/ {SCR}/b/",
+    "git clean -n",
+    "python3 script.py",
+    "node script.js",
+    "perl script.pl",
+    "bash -c 'git status'",
+    "ls -la",
+]
+
+
+@pytest.mark.parametrize("cmd", SHAPE_REFUSED)
+def test_item4_shape_refused(cmd):
+    r = shape(cmd)
+    assert r.returncode == 2, (cmd, r.stdout, r.stderr)
+
+
+@pytest.mark.parametrize("cmd", SHAPE_ADMITTED)
+def test_item4_shape_control_admitted(cmd):
+    r = shape(cmd)
+    assert r.returncode == 0, (cmd, r.stdout, r.stderr)
+
+
+def test_item4_fallback_admits_only_this_sessions_scratchpad():
+    assert shape(f"rm -rf {SCR}/x").returncode == 0
+    assert shape(f"rm -rf {SCR}/x", session="someone-else").returncode == 2
+    assert shape(f"rm -rf {SCR}/x", session="").returncode == 2         # no session id: the fallback admits nothing
+
+
+def test_item4_ansi_c_tokenizer_models():
+    import foundry_shell_scan as fss
+    assert [(i.cmd, i.args) for i in fss.invocations("$'r\\x6d' -rf /x")] == [("rm", ["-rf", "/x"])]
+    assert [(i.cmd, i.args) for i in fss.invocations("echo $'a\\'b' c")] == [("echo", ["a'b", "c"])]
+    assert fss.redirect_operand("2>/dev/null") == "/dev/null" and fss.redirect_operand("2>") == "" and fss.redirect_operand("-rf") is None
+
+SECRET = ROOT / "hooks" / "foundry-secret-read-guard.py"
+
+
+def secret(command, cwd=None):
+    env = {k: v for k, v in os.environ.items()}
+    return subprocess.run([sys.executable, str(SECRET)], input=json.dumps({"tool_input": {"command": command}, "cwd": cwd or str(ROOT)}),
+                          capture_output=True, text=True, env=env)
+
+
+SECRET_REFUSED = [
+    "aws secretsmanager --region x get-secret-value --secret-id s",
+    "aws --profile p secretsmanager --region eu-west-1 get-secret-value --secret-id s",
+    "aws ssm --region x get-parameter --name n --with-decryption",
+    "vault -address http://x kv get secret/a",
+    "dd if=~/.ssh/id_rsa of=/dev/null",
+    "dd if=$HOME/.aws/credentials",
+    "grep -r TOKEN ~",
+    "grep -rn password $HOME",
+    "rg token ~",
+    "tar czf x.tgz ~",
+    "zip -r x.zip /home/someone",
+    "cp -r ~ /tmp/x",
+    "cat /proc/$$/environ",
+    "cat /proc/self/task/1/environ",
+    "</root/.ssh/id_rsa cat",
+]
+SECRET_ADMITTED = [
+    "aws secretsmanager describe-secret --secret-id s",
+    "aws secretsmanager --region x describe-secret --secret-id s",
+    "vault kv metadata get secret/a",
+    "vault kv --namespace n metadata get secret/a",
+    "dd if=/dev/zero of=/tmp/x count=1",
+    "grep -r TOKEN src",
+    "grep TOKEN ~/notes.txt",
+    "tar czf x.tgz src",
+    "cat /proc/cpuinfo",
+    "ls ~",
+]
+
+
+@pytest.mark.parametrize("cmd", SECRET_REFUSED)
+def test_item4_secret_refused(cmd):
+    r = secret(cmd)
+    assert r.returncode == 2, (cmd, r.stdout, r.stderr)
+
+
+@pytest.mark.parametrize("cmd", SECRET_ADMITTED)
+def test_item4_secret_control_admitted(cmd):
+    r = secret(cmd)
+    assert r.returncode == 0, (cmd, r.stdout, r.stderr)

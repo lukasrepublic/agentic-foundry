@@ -38,9 +38,12 @@ documented output is the secret value itself:
   a READER (cat, head, grep, cp, scp, tar, curl -d @file, an interpreter's inline open(), …) pointed at a
   NO-PRINT ROOT: ~/.ssh, ~/.aws, ~/.config/gcloud, ~/.kube, .env* (not .env.example/.sample/.template/.dist/.defaults),
   ~/.git-credentials, ~/.netrc, ~/.docker/config.json, ~/.npmrc, ~/.pypirc, ~/.config/gh, ~/.claude/.credentials.json,
-  ~/.gnupg, ~/.vault-token, ~/.azure, ~/.terraform.d, *.tfstate*, /proc/*/environ (`~/x` also means x under any
+  ~/.gnupg, ~/.vault-token, ~/.azure, ~/.terraform.d, *.tfstate*, /proc/*/environ, /proc/*/task/*/environ (`~/x` also means x under any
   user's home; cp/mv/install are judged by their SOURCE operands; here-strings into a reader and brace-expanded
-  reader paths are refused; a reader whose target is an unknowable `$VAR` is ADMITTED - a practice, not a control)
+  reader paths are refused; a reader whose target is an unknowable `$VAR` is ADMITTED - a practice, not a control;
+  gv-20: an option VALUE may sit between two sub-words of a verb, `dd if=<root>` is judged by its `if=`, a recursive read
+  of a whole home (`grep -r X ~`, `tar czf x ~`, `rg X $HOME`) is refused, a leading `<root` redirect is read, and
+  `/proc/$$/environ` counts)
 NOT BANNED, on purpose: `kubectl describe secret` (prints key names and byte sizes only), `aws secretsmanager
 describe-secret|list-secrets`, `gcloud secrets versions describe|list`, `kubectl get secret -o name|wide`,
 `gcloud iam service-accounts keys list` — metadata verification is what D1 asks for.
@@ -79,16 +82,48 @@ def _opts(args):
     return [a for a in args if a.startswith("-")]
 
 
+class _Words(list):
+    """The non-option words of an argument list, each tagged with whether it directly FOLLOWS an option (`--region x`: `x`)."""
+    after_opt = ()
+
+
 def _words(args):
-    return [a for a in args if not a.startswith("-")]
+    out, tags, prev_opt = _Words(), [], False
+    for a in args:
+        if a.startswith("-"):
+            prev_opt = "=" not in a and len(a) > 1 and a != "--"
+            continue
+        out.append(a)
+        tags.append(prev_opt)
+        prev_opt = False
+    out.after_opt = tags
+    return out
 
 
 def _subseq(words, seq):
-    """`seq` as a CONTIGUOUS run of `words`. (Contiguous, not merely ordered: `vault kv metadata get` is a
-    metadata verb and must not read as `vault kv get`. Option VALUES such as `--profile p` are words, so the
-    run may start anywhere.)"""
+    """`seq` as a run of `words` that is CONTIGUOUS except for option values (gv-20). Contiguous, not merely ordered:
+    `vault kv metadata get` is a metadata verb and must not read as `vault kv get`. A word that directly follows an option
+    (`--region x`, `--profile p`) may sit BETWEEN two sub-words (`aws secretsmanager --region x get-secret-value`); a word
+    that does not follow an option may not. The run may start anywhere."""
     n = len(seq)
-    return n == 0 or any(list(words[i:i + n]) == list(seq) for i in range(len(words) - n + 1))
+    if n == 0:
+        return True
+    words = list(words) if not isinstance(words, _Words) else words
+    tags = list(getattr(words, "after_opt", ())) or [False] * len(words)
+    for i in range(len(words)):
+        if words[i] != seq[0]:
+            continue
+        j, k = 1, i + 1
+        while j < n and k < len(words):
+            if words[k] == seq[j]:
+                j, k = j + 1, k + 1
+            elif tags[k]:
+                k += 1                          # an option value between two sub-words
+            else:
+                break
+        if j == n:
+            return True
+    return False
 
 
 def _flag(args, *names):
@@ -247,7 +282,7 @@ DEFAULT_VERB_NAMES = [n for n, _ in DEFAULT_VERBS]
 
 DEFAULT_ROOTS = ["~/.ssh", "~/.aws", "~/.config/gcloud", "~/.kube", ".env*", "~/.git-credentials", "~/.netrc",
                  "~/.docker/config.json", "~/.npmrc", "~/.pypirc", "~/.config/gh", "~/.claude/.credentials.json",
-                 "~/.gnupg", "~/.vault-token", "~/.azure", "~/.terraform.d", "*.tfstate*", "/proc/*/environ"]
+                 "~/.gnupg", "~/.vault-token", "~/.azure", "~/.terraform.d", "*.tfstate*", "/proc/*/environ", "/proc/*/task/*/environ"]
 ROOT_EXEMPT_SUFFIX = (".example", ".sample", ".template", ".dist", ".defaults")
 READERS = {
     "cat", "tac", "less", "more", "head", "tail", "bat", "batcat", "nl", "od", "xxd", "hexdump", "strings", "base64",
@@ -324,6 +359,8 @@ def _touches_root(word, cwd, matchers):
         w = w.split("=", 1)[1]
     if w.startswith("@"):
         w = w[1:]
+    if re.fullmatch(r"/proc/[^/]*/(?:task/[^/]*/)?environ", w):
+        return "/proc/*/environ"                    # `/proc/$$/environ`, `/proc/$PID/task/1/environ`: any pid, expanded or not
     if "$" in w and not (w.startswith("$HOME") or w.startswith("${HOME}")):
         return None
     path = _expand(w, cwd)
@@ -380,6 +417,10 @@ def check_invocation(inv, cwd, verbs, matchers, depth=0):
     if cmd in ("curl", "wget"):
         reads = any(a.split("=", 1)[0] in _UPLOAD_FLAGS or a.startswith("-d@") for a in args) or \
             any("@" in a for a in args)
+    for tgt in getattr(inv, "redirs", ()):          # `</root/.ssh/id_rsa cat`: a redirect that led the clause
+        root = _touches_root(tgt, cwd, matchers)
+        if root:
+            return Verdict("read of no-print root %s" % root, "`<` redirect from %s" % tgt)
     words = [cmd] + list(args)
     for i, w in enumerate(words):
         if w.startswith("<") and not w.startswith(("<<", "<(")):
@@ -393,6 +434,13 @@ def check_invocation(inv, cwd, verbs, matchers, depth=0):
         operands = args
         if cmd in ("cp", "mv", "install"):       # judged by SOURCE operands only: `cp .env.example .env` is fine
             operands = _copy_sources(args)
+        elif cmd == "dd":                        # `dd if=~/.ssh/id_rsa`: the SOURCE is the `if=` value
+            operands = [a.split("=", 1)[1] for a in args if a.startswith("if=")]
+        if _recursive_read(cmd, args):
+            for w in operands:
+                if _whole_home(w, cwd):
+                    return Verdict("whole-home recursive read by %s" % cmd,
+                                   "`%s` reads %s recursively, which holds the no-print roots" % (cmd, w))
         for w in operands:
             if "{" in w and "}" in w and ("," in w or ".." in w):
                 return Verdict("brace expansion in %s path" % cmd, "`%s` path %s uses brace expansion" % (cmd, w))
@@ -406,6 +454,33 @@ def check_invocation(inv, cwd, verbs, matchers, depth=0):
             if root:
                 return Verdict("%s naming no-print root %s" % (cmd, root), "inline `%s` text names %s" % (cmd, tok))
     return None
+
+
+_ALWAYS_RECURSIVE = {"rg", "ag", "tar", "zip", "7z"}
+_NEEDS_RECURSIVE_FLAG = {"grep", "egrep", "fgrep", "cp", "scp", "rsync"}
+
+
+def _recursive_read(cmd, args):
+    if cmd in _ALWAYS_RECURSIVE:
+        return True
+    if cmd in _NEEDS_RECURSIVE_FLAG:
+        return any(re.fullmatch(r"-[A-Za-z]*[rRa][A-Za-z]*", a) or a in ("--recursive", "--dereference-recursive", "--archive") for a in args) \
+            or any(a.startswith("--directories=recurse") for a in args)
+    return False
+
+
+def _whole_home(word, cwd):
+    """True when `word` names a home directory or one of its ancestors (`~`, `$HOME`, `/home/u`, `/home`, `/`): a recursive read
+    of it reaches every no-print root below."""
+    if not word or word.startswith("-"):
+        return False
+    w = word.replace("${HOME}", "~").replace("$HOME", "~")
+    if "$" in w or "`" in w:
+        return False
+    path = _expand(w.rstrip("/") or "/", cwd)
+    home = os.path.normpath(os.path.expanduser("~"))
+    return path in ("/", "/home", "/Users", "/root", home, os.path.dirname(home)) or bool(
+        re.fullmatch(r"/(?:home|Users)/[^/]+", path))
 
 
 def _copy_sources(args):
