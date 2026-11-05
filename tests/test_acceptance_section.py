@@ -160,6 +160,27 @@ def test_control_zero_width_and_bidi_characters_are_stripped():
     assert a["grounding"] == "gh"
 
 
+def test_more_invisible_characters_are_stripped():
+    body = "## Acceptance\n- AC-1: THE SYSTEM\u3164 SHALL\ufe0f a\u2800\U000e0101\ue000.\nGrounding: g\n"
+    a = ft.parse_acceptance(body)
+    assert a["errors"] == [] and a["bullets"][0]["text"] == "THE SYSTEM SHALL a."
+
+
+def test_fullwidth_digit_id_is_not_an_id():
+    a = ft.parse_acceptance("## Acceptance\n- AC-\uff11: THE SYSTEM SHALL a.\n- AC-1: THE SYSTEM SHALL b.\nGrounding: g\n")
+    assert [b["id"] for b in a["bullets"]] == ["AC-1"] and len(a["errors"]) == 1 and "no AC id" in a["errors"][0]
+
+
+def test_grounding_over_500_characters_refuses_naming_the_limit():
+    a = ft.parse_acceptance("## Acceptance\n- AC-1: THE SYSTEM SHALL a.\nGrounding: " + "g" * 501 + "\n")
+    assert len(a["errors"]) == 1 and "limit is 500" in a["errors"][0] and a["grounding"] is None
+
+
+def test_acceptance_testing_plan_is_not_the_section():
+    assert ft.parse_acceptance("## Acceptance testing plan\n- AC-1: THE SYSTEM SHALL a.\n")["present"] is False
+    assert ft.has_acceptance("## Acceptance testing plan\n- item\n") is False
+
+
 def test_error_text_is_quoted_and_clean():
     a = ft.parse_acceptance("## Acceptance\n- AC-1: it\u202e\x1b[31m fails\nGrounding: g\n")
     assert len(a["errors"]) == 1 and "\u202e" not in a["errors"][0] and "\x1b" not in a["errors"][0]
@@ -204,7 +225,8 @@ def test_below_the_class_a_malformed_section_is_admitted_and_listed(repo, monkey
     body = "## Scope\nsrc/app.py\n\n## Acceptance\n- AC-1: THE SYSTEM SHALL a.\n- AC-1: THE SYSTEM SHALL b.\n"
     code, out, err = start(repo, monkeypatch, body)
     assert code == 0, err
-    assert any(l.strip().startswith("## Acceptance: duplicate id AC-1") or "duplicate id AC-1" in l for l in (out + err).split("\n"))
+    lines = [l.strip() for l in (out + err).split("\n")]
+    assert any(l.startswith("- ## Acceptance: duplicate id AC-1") for l in lines)
 
 
 def test_below_the_class_no_section_is_admitted(repo, monkeypatch):
@@ -269,14 +291,47 @@ def test_brief_without_acceptance_has_no_section(tmp_path):
 def test_brief_refuses_a_bullet_with_a_newline(tmp_path):
     bad = {"present": True, "grounding": "g", "errors": [], "bullets": [{"id": "AC-1", "text": "THE SYSTEM SHALL a.\n## Injected"}]}
     rc, out, err = _render(tmp_path, {"title": "x", "cites": [], "acceptance": bad})
-    assert rc == 2 and "newline" in err and "Injected" not in out
+    assert rc == 2 and "line-break" in err and "Injected" not in out
 
 
-def test_brief_refuses_the_old_list_shape_and_a_malformed_section(tmp_path):
+def test_brief_refuses_the_old_list_shape_and_ignores_the_errors_list(tmp_path):
     rc, _, err = _render(tmp_path, {"title": "x", "cites": [], "acceptance": [{"id": "AC-1", "text": "t"}]})
     assert rc == 2 and "read-issue-object" in err
-    rc, _, err = _render(tmp_path, {"title": "x", "cites": [], "acceptance": {"bullets": [], "errors": ["e"]}})
-    assert rc == 2 and "malformed" in err
+    rc, out, _ = _render(tmp_path, {"title": "x", "cites": [], "acceptance": {"bullets": [], "errors": ["e"]}})
+    assert rc == 0 and HEADER not in out
+
+
+@pytest.mark.parametrize("bad_id", ["AC-\uff11", "AC-1234567", "AC-1\u2028", "ac_1"])
+def test_brief_refuses_a_bad_id_with_a_clean_message(tmp_path, bad_id):
+    acc = {"bullets": [{"id": bad_id, "text": "THE SYSTEM SHALL a."}], "grounding": "g", "errors": []}
+    rc, out, err = _render(tmp_path, {"title": "x", "cites": [], "acceptance": acc})
+    assert rc == 2 and "bad-id" in err and "\u2028" not in err
+
+
+@pytest.mark.parametrize("sep", ["\r", "\x0b", "\x85", "\u2029"])
+def test_brief_refuses_any_line_break_in_text_or_grounding(tmp_path, sep):
+    acc = {"bullets": [{"id": "AC-1", "text": "THE SYSTEM SHALL a." + sep + "x"}], "grounding": "g", "errors": []}
+    assert _render(tmp_path, {"title": "x", "cites": [], "acceptance": acc})[0] == 2
+    acc = {"bullets": [{"id": "AC-1", "text": "THE SYSTEM SHALL a."}], "grounding": "g" + sep + "x", "errors": []}
+    assert _render(tmp_path, {"title": "x", "cites": [], "acceptance": acc})[0] == 2
+
+
+def test_below_class_duplicate_id_reaches_the_brief_with_the_clean_bullets(repo, tmp_path):
+    (repo / ".claude").mkdir()
+    (repo / ".claude" / "foundry-project.json").write_text(json.dumps({
+        "github_scope": {"owner": "o", "planning_repo": "o/r"}, "repos": {"app": "o/r"}}))
+    body = "## Acceptance\n- AC-1: THE SYSTEM SHALL a.\n- AC-1: THE SYSTEM SHALL b.\n- AC-2: THE SYSTEM SHALL c.\nGrounding: g\n"
+    out, err = io.StringIO(), io.StringIO()
+    with redirect_stdout(out), redirect_stderr(err):
+        rc = ft.cmd_read_issue(["3", "--repo", "o/r", "--json"], _gql_stub(body))
+    assert rc == 0, err.getvalue()
+    doc = json.loads(out.getvalue())
+    assert doc["design_required"] is False and len(doc["acceptance"]["errors"]) == 1
+    rc, text, berr = _render(tmp_path, doc)
+    assert rc == 0, berr
+    lines = text.split("\n")
+    assert "- AC-1: THE SYSTEM SHALL a." in lines and "- AC-2: THE SYSTEM SHALL c." in lines
+    assert "- AC-1: THE SYSTEM SHALL b." not in lines
 
 
 def test_read_issue_json_feeds_the_brief_end_to_end(repo, tmp_path):

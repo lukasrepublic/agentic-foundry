@@ -167,10 +167,10 @@ def parse_body(body: str) -> tuple[str, list[str]]:
 _DESIGN_H = re.compile(r"^##[ \t]+design[ \t]*:?[ \t]*$", re.I | re.M)
 _SECURITY_H = re.compile(r"^##[ \t]+security[ \t]*:?[ \t]*$", re.I | re.M)
 _SURFACES_H = re.compile(r"^##[ \t]+surfaces?[ \t]*:?[ \t]*$", re.I | re.M)
-_ACCEPTANCE_H = re.compile(r"^##[ \t]+acceptance(?:[ \t]+criteria)?[ \t]*:?[ \t]*$", re.I | re.M)   # both spellings, one section
-_AC_ID_RE = re.compile(r"^AC-(\d{1,6})$")
+_ACCEPTANCE_H = re.compile(r"^##[ \t]+acceptance(?:[ \t]+criteria)?[ \t]*(?::[ \t]*)?$", re.I | re.M)   # both spellings, one section
+_AC_ID_RE = re.compile(r"^AC-([0-9]{1,6})$", re.A)
 _AC_BULLET_RE = re.compile(r"^[-*+][ \t]+(.*)$")
-_AC_LEAD_RE = re.compile(r"^(?:\[(AC-\d{1,6})\]|\**(AC-\d{1,6})\**[ \t]*[:.)\-]?\**)(?!\d)[ \t]*(.*)$", re.I)
+_AC_LEAD_RE = re.compile(r"^(?:\[(AC-[0-9]{1,6})\]|\**(AC-[0-9]{1,6})\**[ \t]*[:.)\-]?\**)(?![0-9])[ \t]*(.*)$", re.I | re.A)
 _GROUNDING_RE = re.compile(r"^(?:[-*+][ \t]+)?\**grounding\**[ \t]*:\**[ \t]*(.*)$", re.I)
 AC_MAX_BULLETS = 50
 AC_MAX_BULLET_CHARS = 500
@@ -281,10 +281,14 @@ def _parse_surfaces(sec: str | None) -> dict:
     return out
 
 
+_AC_INVISIBLE = frozenset("\u034f\u115f\u1160\u3164\uffa0\u2800")
+
+
 def _ac_clean(text: str) -> str:
     """Drop control, zero-width and bidi-override characters (Unicode categories Cc, Cf, Zl, Zp); tab becomes a space."""
     text = text.replace("\t", " ")
-    return "".join(c for c in text if unicodedata.category(c) not in ("Cc", "Cf", "Zl", "Zp"))
+    return "".join(c for c in text if unicodedata.category(c) not in ("Cc", "Cf", "Zl", "Zp", "Co", "Cn", "Cs")
+                   and c not in _AC_INVISIBLE and not ("\ufe00" <= c <= "\ufe0f") and not ("\U000e0100" <= c <= "\U000e01ef"))
 
 
 def _ac_show(text: str, n: int = 80) -> str:
@@ -341,8 +345,9 @@ def parse_acceptance(body: str) -> dict:
         if not re.search(r"\bSHALL\b", text, re.I):
             out["errors"].append(f"{aid} is not an EARS bullet (needs `THE SYSTEM SHALL ...`): {_ac_show(text)}")
         out["bullets"].append({"id": aid, "text": text})
-    if out["grounding"]:
-        out["grounding"] = out["grounding"][:AC_MAX_BULLET_CHARS]
+    if out["grounding"] and len(out["grounding"]) > AC_MAX_BULLET_CHARS:
+        out["errors"].append(f"`Grounding:` is {len(out['grounding'])} characters; the limit is {AC_MAX_BULLET_CHARS} characters")
+        out["grounding"] = None
     return out
 
 
@@ -931,7 +936,7 @@ SKIP_REASONS = ("unassigned", "other-owner", "backlog", "blocked", "no-acceptanc
 STOP_REASONS = ("reassigned", "cancelled", "duplicate", "withdrawn", "acceptance_changed",
                 "closed", "not_started", "unverified")
 _PRIORITY_WORDS = {"critical": 0, "urgent": 0, "blocker": 0, "high": 1, "medium": 2, "normal": 2, "low": 3}
-_ACCEPT_RE = re.compile(r"^##+[ \t]*acceptance(?:[ \t]+criteria)?\b.*?$", re.I | re.M)
+_ACCEPT_RE = re.compile(r"^##+[ \t]*acceptance(?:[ \t]+criteria)?[ \t]*(?::[ \t]*)?$", re.I | re.M)
 _ITEM_RE = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\S", re.M)
 _REF_RE = re.compile(r"^(?:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#)?(\d+)$")
 
