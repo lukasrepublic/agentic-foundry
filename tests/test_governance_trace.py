@@ -73,8 +73,7 @@ def run(proj, tmp_path, *, pr_body="Ticket: #7\n", files=("hooks/foundry-example
         fj = tmp_path / "files.json"
         fj.write_text(json.dumps([{"path": f} for f in files]))
         cmd += ["--files-json", str(fj)]
-    if base is not None:
-        cmd += ["--base-dir", str(base)]
+    cmd += ["--base-dir", str(base if base is not None else proj)]       # gv-20: the CLI refuses to run without a base checkout
     if today:
         cmd += ["--today", today]
     env = dict(os.environ, PATH=str(tmp_path / "ghbin") + os.pathsep + os.environ["PATH"], GH_LOG=str(tmp_path / "gh.log"))

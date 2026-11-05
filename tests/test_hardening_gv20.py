@@ -971,7 +971,7 @@ def test_round2_trace_an_unreadable_or_odd_base_lock_is_a_finding_and_no_lock_is
     assert gt._snippet_findings(base, head)[0].startswith("lock-unreadable")
     (base / ".foundry" / "governance.lock").write_text("snippets: [1, 2]\n")
     assert gt._snippet_findings(base, head)[0].startswith("lock-unreadable")
-    (base / ".foundry" / "governance.lock").write_text("snippets: {a.yml: " + "0" * 64 + "}\n")
+    (base / ".foundry" / "governance.lock").write_text("snippets: {a.yml: '" + "0" * 64 + "'}\n")
     assert gt._snippet_findings(base, head) == ["snippet-missing:a.yml"]                   # control: a readable lock compares
 
 
