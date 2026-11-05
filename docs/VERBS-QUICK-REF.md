@@ -32,6 +32,7 @@ three verbs (`init`, `dispatch`, `merge-when-green`); see the `## Start here` ta
 |---|---|
 | `/foundry:dispatch` | Builds a ticket in an isolated worktree, runs the local-green step, and opens one PR |
 | `/foundry:execution-plan` | Plans a programme: reads its live issues, writes `execution-plan.yaml` (waves, batches, critical path, total float) to `plan/<programme>`, and sets the Project fields `wave` and `batch`. Plans only; it never claims or dispatches |
+| `/foundry:close-out` | The single final session of a programme: refuses while a batch is unmerged or another session holds the lease; closes the atom issues, runs the Done means as the check `programme/acceptance`, confirms the milestone open count is zero, runs the Learned distill, creates a DRAFT Release pinned to the integration head and posts the final Project status update. It never tags or publishes |
 | `/foundry:command-deck` | The operator's personal lead over their GitHub queue: `start`/`status`/`stop`/`tick` — services the inbox, escalates cross-engineer blockers, schedules the rest, reconciles owned work, then selects within capacity |
 | `/foundry:leader-board` | Read-only operator and outcome statistics over GitHub history and native usage: three windows, queue panel, coverage |
 | `/foundry:merge-when-green` | On your explicit instruction, waits for a PR's checks and mergeStateStatus, then merges the instant both are green — the one primitive that replaces a hand-rolled sleep-then-poll loop |
