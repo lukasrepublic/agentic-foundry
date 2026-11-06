@@ -630,7 +630,18 @@ def test_rh_siblings_use_pipe_and_cycle_members_use_colon(repo, capsys):
     derive(repo, "--python-graph", FX / "python-graph-siblings.json", capsys=capsys)
     lines = (repo / ".importlinter").read_text().splitlines()
     block = lines[lines.index("layers =") + 1:lines.index("layers =") + 4]
-    assert block == ["    shop.web", "    shop.api | shop.billing : shop.orders", "    shop.core"]
+    # import-linter forbids mixing separators on one line, so a layer with a cycle group uses `:` throughout
+    assert block == ["    shop.web", "    shop.api : shop.billing : shop.orders", "    shop.core"]
+
+
+def test_rh_no_layer_line_mixes_separators(repo, capsys):
+    derive(repo, "--python-graph", FX / "python-graph-siblings.json", capsys=capsys)
+    lines = (repo / ".importlinter").read_text().splitlines()
+    i, checked = lines.index("layers =") + 1, 0
+    while i < len(lines) and lines[i].startswith("    "):
+        assert not (" | " in lines[i] and " : " in lines[i]), lines[i]
+        i, checked = i + 1, checked + 1
+    assert checked == 3  # the fixture has three layers; a vacuous loop fails here
 
 
 # ---- R-i: lint keyword case, the generic element keyword, unquoted tokens -------------------------------------------------

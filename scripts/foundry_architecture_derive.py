@@ -475,12 +475,15 @@ def render_importlinter(ext, plan, ext_by_layer):
     root = ext["root"]
     lines = ["# DRAFT import-linter contract derived by foundry_architecture_derive.py. Nothing enforces it until a human",
              "# confirms the layer order and names. Layers are listed top (may import the rest) to bottom.",
-             "# `a : b` marks units that may import each other (a detected cycle); `a | b` marks independent units of one layer.",
+             "# `a | b` marks independent units of one layer; `a : b` marks a layer holding a detected cycle (may import each other).",
              "[importlinter]", f"root_package = {root}", "include_external_packages = True", "",
              "[importlinter:contract:layers]", "name = Layers and allowed direction (DRAFT)", "type = layers", "layers ="]
     for layer in plan["layers"]:
-        # `:` only inside one cycle group (units that import each other); `|` between independent groups
-        lines.append("    " + " | ".join(" : ".join(g) for g in layer["groups"]))
+        # import-linter forbids mixing `|` and `:` on one line. All groups singletons: `|` (independent units). Any
+        # cycle group in the layer: `:` for the whole line (valid, looser: the human may split it when confirming).
+        groups = layer["groups"]
+        sep = " | " if all(len(g) == 1 for g in groups) else " : "
+        lines.append("    " + sep.join(u for g in groups for u in g))
     lines += ["", "# Observed external packages per layer (allowed-externals draft; confirm before enforcing):"]
     for i, layer in enumerate(plan["layers"]):
         lines.append(f"#   {', '.join(layer['units'])}: {', '.join(ext_by_layer[i]) or '(none observed)'}")
