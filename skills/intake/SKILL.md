@@ -58,7 +58,8 @@ downstream pipeline.
 
 ## `intake existing` — governance intake of a codebase that already exists
 
-The same five steps `/foundry:init` runs (design 5.5): discover, select, declare, apply, baseline. Brownfield
+The same five steps `/foundry:init` runs (design 5.5): discover, select, declare, apply, baseline, with one derive step
+between select and baseline for the architecture kit. Brownfield
 onboarding is by pull request, never by regeneration: `apply --pr` writes `.foundry/governance.lock`, scaffolds
 `governance/local/`, installs the selected kits' CI snippets and opens one PR for the operator to review. The
 same verbs run again as `upgrade` when the plugin advances (the updater runs it; `/foundry:post-upgrade`
@@ -76,7 +77,16 @@ reviews the PR).
    (surfaces: `ui`, `api`, `cli`, `workflows`, `mcp`, `goal-agents`). Ask; do not invent. An authentication
    library hint is printed as a hint only.
 4. **Apply.** `apply --pr` (a dirty tracked tree is refused; running it twice changes nothing).
-5. **Baseline.** For each check that already fails today, freeze the findings so only new violations fail:
+   **Derive the architecture (draft).** After select and before baseline, run
+   `foundry_architecture_derive.py --repo . [--dry-run]`. It extracts with the ecosystem's own tool only (Grimp,
+   `depcruise -T json`, `tofu show -json`, rendered Helm or Kustomize manifests), proposes layers by cycle collapse
+   and topological levelling, and writes DRAFTS: the layers contract (`.importlinter` or `.dependency-cruiser.cjs`),
+   `docs/architecture/workspace.dsl` (every element tagged `draft` with a `source` property), retroactive ADR drafts
+   and `docs/architecture/DERIVE-CONFIRM.md`. A tool that is missing is `could-not-look:<tool>`, never an empty graph;
+   Java and Nx report `no-derive:<ecosystem>`. It never writes a baseline and never applies infrastructure. Do not
+   add model elements by hand without a `source`; `checks/model_source_lint.py` fails them. Ask the operator to
+   confirm the checklist (merging the PR is the confirmation). Guide: `docs/how-to/derive-architecture.md`.
+5. **Baseline.** Only after the operator confirms the derived drafts. For each check that already fails today, freeze the findings so only new violations fail:
    `baseline --check <name> --findings <file>`.
 
 Every verb prints what it did and exits 0 ok, 1 findings, 2 refused, 3 decision needed. Never edit the lock or

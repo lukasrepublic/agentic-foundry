@@ -1,0 +1,15 @@
+{
+  "format_version": "1.2",
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {"address": "aws_instance.web", "type": "aws_instance", "name": "web"},
+        {"address": "aws_db_instance.main", "type": "aws_db_instance", "name": "main"}
+      ],
+      "child_modules": [
+        {"address": "module.net", "resources": [
+          {"address": "module.net.aws_vpc.main", "type": "aws_vpc", "name": "main"}]}
+      ]
+    }
+  }
+}

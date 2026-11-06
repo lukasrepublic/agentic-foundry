@@ -1,0 +1,12 @@
+{
+  "modules": [
+    {"source": "src/ui/page.ts", "dependencies": [
+      {"resolved": "src/services/api.ts", "dependencyTypes": ["local"]},
+      {"resolved": "src/core/model.ts", "dependencyTypes": ["local"]},
+      {"resolved": "node_modules/react/index.js", "module": "react", "dependencyTypes": ["npm"]}]},
+    {"source": "src/services/api.ts", "dependencies": [
+      {"resolved": "src/core/model.ts", "dependencyTypes": ["local"]},
+      {"resolved": "node_modules/axios/index.js", "module": "axios", "dependencyTypes": ["npm"]}]},
+    {"source": "src/core/model.ts", "dependencies": []}
+  ]
+}

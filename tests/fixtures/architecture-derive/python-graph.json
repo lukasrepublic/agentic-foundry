@@ -1,0 +1,12 @@
+{
+  "root_package": "shop",
+  "edges": [
+    {"from": "shop.interface.http", "to": "shop.application.orders"},
+    {"from": "shop.interface.http", "to": "shop.domain.order"},
+    {"from": "shop.interface.http", "to": "flask"},
+    {"from": "shop.application.orders", "to": "shop.domain.order"},
+    {"from": "shop.application.orders", "to": "sqlalchemy.orm"},
+    {"from": "shop.application.billing", "to": "shop.domain.order"},
+    {"from": "shop.domain.order", "to": "shop.domain.money"}
+  ]
+}

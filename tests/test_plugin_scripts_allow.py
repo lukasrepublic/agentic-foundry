@@ -168,6 +168,8 @@ _WRITERS = [
     ("foundry_epic_issue.py", "publish prog --issue o/r#1 --plan p.yaml"),
     ("foundry_epic_review.py", "run prog --repo o/r --integration b --tag v1.0.0"),   # dl-12: the whole script asks
     ("foundry_epic_review.py", "--help"),
+    ("foundry_architecture_derive.py", "--repo . --dry-run"),   # dl-19: the whole script asks
+    ("foundry_architecture_derive.py", "--help"),
     ("foundry_fleet.py", "claim o/r prog w1-a"),          # dl-11: the whole script asks
     ("foundry_fleet.py", "--help"),
     ("foundry_deck_report.py", "--in t.json --epic-issue /b.md"), ("foundry_deck_report.py", "--in t.json --epic /b.md"),

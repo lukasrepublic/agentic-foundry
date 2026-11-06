@@ -220,11 +220,12 @@ hook_comment_expectation:
 #   7. dl-15 (2026-11-06): paper-guard reads the ticket lists under their agile names (referenced_artifacts, issue_referenced_artifacts) with the old names as aliases.
 #   8. dl-16 (2026-11-06): plugin-scripts-allow follows the renamed scripts (foundry_release_plan, foundry_epic_issue, foundry_epic_review, foundry_retrospective stay in _ASK_SCRIPTS) and asks on `foundry_deck_report.py --epic-issue`; no rule weakened.
 #   5. dl-14 (2026-11-05): plugin-scripts-allow asks on `deck-cost-census.py --append`, `--repo` and `--prs` (the floor row is ask).
+#   9. dl-19 (2026-11-06): plugin-scripts-allow adds foundry_architecture_derive.py to _ASK_SCRIPTS (the whole script asks); no rule weakened.
 gv20_hook_pins:
   foundry-paper-guard.py: 'f750ca7095778dfa7a7724e2ad7f579a705abd3d87447a26b6a97c9681c91213'
   foundry-shell-shape.py: 'de6722ba044b0029040a28b075227317bb0cd988da803c794de426ad414acc60'
   foundry-secret-read-guard.py: 'dbaac7eb5fe017c3088afdc6ca138886ad68211dd369dfe16a113472715a48be'
-  foundry-plugin-scripts-allow.py: '61b370b3748089fc6203ce7a20121edf59579cb1e59fbd8ff0015163b611a2da'
+  foundry-plugin-scripts-allow.py: '78868a43b29836989ee8ee93a41f4c0e1765adca0c55ed0f37ee5dcc80b0c104'
 
 # operator_registry_shape (AC-CRRC-5) — the seeded .claude/foundry-operators.json shape.
 operator_registry_shape:

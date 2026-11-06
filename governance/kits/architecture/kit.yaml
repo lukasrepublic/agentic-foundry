@@ -6,6 +6,7 @@ checks:
   - checks/bindings.yaml
   - checks/bindings.py
   - checks/adr_lint.py
+  - checks/model_source_lint.py
 templates:
   - templates/importlinter.ini
   - templates/dependency-cruiser.cjs
