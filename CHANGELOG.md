@@ -260,6 +260,61 @@ their process group is killed after every run and on SIGTERM. hooks/ and skills/
 operator-applied `security-reviewed` label applies. No clause of the git-discipline hook admits
 anything it previously refused.
 
+### Delivery in programmes: an execution plan, waves of batches, fleet builders and one close-out session
+
+Programme `delivery-2-0` (SDLC 2.0 review, decisions 1 to 8 and amendments b and c). One entry for each atom. Read the
+pages [docs/how-to/execution-plan.md](docs/how-to/execution-plan.md), [docs/how-to/fleet-builders.md](docs/how-to/fleet-builders.md)
+and [docs/how-to/close-out.md](docs/how-to/close-out.md). No release date and no tag: the operator tests, tags and publishes.
+
+- **dl-01 acceptance section.** A ticket can carry `## Acceptance`: EARS bullets with stable `AC-<n>` ids and one
+  `Grounding:` line. In the design-required class, `start` refuses with `acceptance-required` and names the missing piece.
+  A bullet with no id, a repeated id or no SHALL is refused in every class. Builder briefs inline each bullet under its id, and
+  `pr-reviewer` grades the diff for each `AC-<n>`.
+- **dl-02 ticket reviewer.** The new read-only agent `ticket-reviewer` reviews `## Acceptance` and `## Design` before build
+  (dispatch step 0b, design-required class only). One fix round runs, the re-check covers Blocks only, and a remaining Block parks the ticket.
+- **dl-03 whole-ticket digest.** The claim digest now covers Acceptance, Design, Security, Surfaces and Done means, not only
+  the Done means. An edit to any of them gives `ticket_changed` and stops dispatch. A hand edit of the claims file gives
+  `claim_unverified`. Migration step: a claim made before 2.0 has no `ticket_digest` and no signature, so it reads
+  `claim_unverified` and dispatch stops until the operator runs `foundry-ticket.py claim <n> --rebase-acceptance` once for each claimed ticket.
+- **dl-04 execution plan.** New verb `/foundry:execution-plan <programme>`. It reads the atoms and their `blocked_by` edges
+  from the GitHub Project and writes `execution-plan.yaml`: waves of batches, the critical path and the total float of each
+  batch. Atoms that share a path never share a wave. A dependency cycle is refused and every atom of the cycle is named.
+- **dl-05 wave dispatch.** The command deck runs the batches of the open wave in one Workflow: one worktree for each batch,
+  the critical path first, a limit on concurrent batches, and a wave barrier that fails closed while a lower wave holds an unmerged batch.
+- **dl-06 programme issue.** The deck publishes one programme issue and a Project status update each tick. Override
+  checkboxes are read back and never cleared by the deck. A report without the cost line is refused. During a GitHub outage
+  the issue renders from the cached plan.
+- **dl-07 provenance and Learned.** In a product repo that a workspace binding names, `governance-trace` needs a
+  `Built-from: <workspace sha>` trailer that resolves in the workspace repo. It fails closed. Single-repo adopters skip the
+  check with a named reason. Dispatch asks each worker for a `## Learned` comment at completion.
+- **dl-08 review delta pass.** One full review for each pull request. If it raised Blocks, one fresh-context delta review
+  of the fix commits follows. Risks are filed, not re-argued. The head-bound security label comes after a clean delta pass.
+  Reviewers do not poll CI.
+- **dl-09 cut-release cadence.** `foundry-cut-release.py` no longer refuses a cut inside a 30-day window, and the
+  `--hotfix` flag is gone. The `hotfix/<id>` branch rule stays. The READY output lists one line for each programme and a
+  count of other pull requests since the previous tag, taken from the close-out draft Release when one exists.
+- **dl-10 Learned distill.** New `foundry_learned_distill.py collect|propose`. It groups `## Learned` comments by governance
+  category and writes proposed rule edits. Adopter-private lessons become a draft pull request and a patch for
+  `governance/local/rules.yaml`. Upstream lessons become kit-fix ticket bodies with no atom id and no URL. It opens nothing
+  unless you pass `--open-prs` or `--open-tickets`.
+- **dl-11 fleet builders.** Builders on more than one machine or container claim a batch by creating the ref
+  `claim/<programme>/<batch>`. The lease lasts `claims.expires_after`. A worker id has the form
+  `<operator>@<machine>/<container>/<session>` and refuses to build when a part is missing. Commit trailers and a hidden
+  PR marker record the worker. The ticket CLI writing verbs refuse with `session-id-missing` unless `CLAUDE_CODE_SESSION_ID` or
+  `FOUNDRY_SESSION_ID` is set (read-only verbs still run), and `foundry_fleet.py` refuses with `session-missing`. There is no
+  per-clone fallback. The GitHub App token is held by the operator, so the CLI stops with `external-provisioning` without it.
+- **dl-12 close-out.** New verb `/foundry:close-out <programme>`. It runs once, after the last wave merged. It takes a
+  lease, closes the atom issues, publishes `programme/acceptance` on the integration head, checks the milestone, runs the
+  Learned distill and creates a DRAFT Release pinned to the integration head. After acceptance passes it also creates the
+  repository ruleset `programme-acceptance-<programme>` on the target branch, which requires `programme/acceptance`; the report
+  prints its delete command. It never tags and never publishes.
+- **dl-13 dogfood.** The planner, the worker identity function and close-out are run offline on the `delivery-2-0` corpus
+  itself (`tests/test_dogfood_self.py`). This section and `docs/governance.md` are reconciled with the merged code. The pages in
+  `docs/how-to/` were reviewed and needed no change.
+- **dl-14 token cost.** The deck policy keys `deck.max_agent_calls`, `deck.max_wait_s`, `deck.note_max_tokens` and
+  `deck.stall_after_ticks` drive section S5 of the tick prompt. `scripts/deck-cost-census.py` counts agent starts. Each report carries a cost line. The
+  blocker lint gains the stall class `cost-without-progress`.
+
 ### The npx upgrade path to 2.0: the report says what happened, history is no longer rewritten by default
 
 `npx update-agentic-workspace` is the 2.0 upgrade path (no new installer, ledger or migration platform).
