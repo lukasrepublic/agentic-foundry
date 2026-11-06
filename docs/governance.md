@@ -160,10 +160,10 @@ tickets through the platform.
    batch. An atom sits in a wave after every atom that blocks it. Atoms that share a path never share a wave. See
    [plan a programme](how-to/execution-plan.md).
 2. **Wave dispatch.** The command deck builds the batches of the open wave in one Workflow, within the
-   concurrency limit of the policy key `deck.max_builders`. A **programme issue** and a Project status update show the
+   concurrency limit: the smaller of the policy key `deck.max_builders` and the `max_concurrent` of the plan. A **programme issue** and a Project status update show the
    state each tick.
 3. **Fleet builders.** A builder on another machine or container takes a batch by a **claim** (a ref create) under a
-   **lease**. Its worker id differs from the lead's in the machine or container part. See
+   **lease**. Its worker id has the form `<operator>@<machine>/<container>/<session>` and differs from the lead's in the machine or container part. See
    [run builders across machines](how-to/fleet-builders.md).
 4. **Review.** One full review round runs for each pull request. If it raised Blocks, one fresh-context delta review of the
    fix commits follows, and only then the head-bound security label. See

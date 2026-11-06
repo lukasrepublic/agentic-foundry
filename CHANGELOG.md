@@ -274,7 +274,8 @@ and [docs/how-to/close-out.md](docs/how-to/close-out.md). No release date and no
   (dispatch step 0b, design-required class only). One fix round runs, the re-check covers Blocks only, and a remaining Block parks the ticket.
 - **dl-03 whole-ticket digest.** The claim digest now covers Acceptance, Design, Security, Surfaces and Done means, not only
   the Done means. An edit to any of them gives `ticket_changed` and stops dispatch. A hand edit of the claims file gives
-  `claim_unverified`. Older claims keep the old checks.
+  `claim_unverified`. Migration step: a claim made before 2.0 has no `ticket_digest` and no signature, so it reads
+  `claim_unverified` and dispatch stops until the operator runs `foundry-ticket.py claim <n> --rebase-acceptance` once for each claimed ticket.
 - **dl-04 execution plan.** New verb `/foundry:execution-plan <programme>`. It reads the atoms and their `blocked_by` edges
   from the GitHub Project and writes `execution-plan.yaml`: waves of batches, the critical path and the total float of each
   batch. Atoms that share a path never share a wave. A dependency cycle is refused and every atom of the cycle is named.
@@ -299,13 +300,17 @@ and [docs/how-to/close-out.md](docs/how-to/close-out.md). No release date and no
 - **dl-11 fleet builders.** Builders on more than one machine or container claim a batch by creating the ref
   `claim/<programme>/<batch>`. The lease lasts `claims.expires_after`. A worker id has the form
   `<operator>@<machine>/<container>/<session>` and refuses to build when a part is missing. Commit trailers and a hidden
-  PR marker record the worker. The GitHub App token is held by the operator, so the CLI stops with `external-provisioning` without it.
+  PR marker record the worker. The ticket CLI writing verbs refuse with `session-id-missing` unless `CLAUDE_CODE_SESSION_ID` or
+  `FOUNDRY_SESSION_ID` is set (read-only verbs still run), and `foundry_fleet.py` refuses with `session-missing`. There is no
+  per-clone fallback. The GitHub App token is held by the operator, so the CLI stops with `external-provisioning` without it.
 - **dl-12 close-out.** New verb `/foundry:close-out <programme>`. It runs once, after the last wave merged. It takes a
   lease, closes the atom issues, publishes `programme/acceptance` on the integration head, checks the milestone, runs the
-  Learned distill and creates a DRAFT Release pinned to the integration head. It never tags and never publishes.
+  Learned distill and creates a DRAFT Release pinned to the integration head. After acceptance passes it also creates the
+  repository ruleset `programme-acceptance-<programme>` on the target branch, which requires `programme/acceptance`; the report
+  prints its delete command. It never tags and never publishes.
 - **dl-13 dogfood.** The planner, the worker identity function and close-out are run offline on the `delivery-2-0` corpus
-  itself (`tests/test_dogfood_self.py`). This section and the pages `docs/governance.md` and `docs/how-to/` are reconciled
-  with the merged code.
+  itself (`tests/test_dogfood_self.py`). This section and `docs/governance.md` are reconciled with the merged code. The pages in
+  `docs/how-to/` were reviewed and needed no change.
 - **dl-14 token cost.** The deck policy keys `deck.max_agent_calls`, `deck.max_wait_s`, `deck.note_max_tokens` and
   `deck.stall_after_ticks` drive section S5 of the tick prompt. `scripts/deck-cost-census.py` counts agent starts. Each report carries a cost line. The
   blocker lint gains the stall class `cost-without-progress`.

@@ -217,7 +217,7 @@ def test_a_cycle_in_the_fixture_is_refused():
 
 
 def test_path_overlap_is_detected_when_a_plan_is_forced_into_one_wave():
-    """RED control for the overlap half: dl-02 and dl-05 both write skills/dispatch/SKILL.md."""
+    """RED control for the overlap half: dl-02 and dl-08 both write skills/dispatch/SKILL.md."""
     plan = ep.build_plan("delivery-2-0", corpus())
     wv = wave_of(plan)
     wv_forced = dict(wv, **{"dl-08-review-delta-pass": wv["dl-02-ticket-reviewer"]})
@@ -278,6 +278,7 @@ class StubGH:
     def __init__(self):
         self.writes = []
         self.releases = []
+        self.statuses = []
         self.lease = False
 
     def __call__(self, args, payload=None):
@@ -302,9 +303,10 @@ class StubGH:
         if path.startswith(f"repos/{REPO}/rulesets"):
             return {"id": 11} if method == "POST" else []
         if path.startswith(f"repos/{REPO}/statuses/") and method == "POST":
+            self.statuses.insert(0, {"context": payload["context"], "state": payload["state"]})
             return {}
         if "/statuses?" in path:
-            return [{"context": co.CHECK, "state": "success"}]
+            return list(self.statuses)
         if path == f"repos/{REPO}/milestones/7":
             return {"open_issues": 0}
         if path.startswith(f"repos/{REPO}/releases") and method == "GET":
@@ -340,9 +342,12 @@ def test_close_out_leaves_a_draft_release_pinned_to_the_integration_head(tmp_pat
     (tmp_path / "states.json").write_text(json.dumps({"states": {"a-one": "merged", "a-two": "merged"}}))
     (tmp_path / "atoms.json").write_text(json.dumps({"atoms": [{"id": "a-one", "issue": 1}, {"id": "a-two", "issue": 2}]}))
     (tmp_path / "learned.json").write_text(json.dumps({"atoms": []}))
+    monkeypatch.setattr(co, "read_programme_issue", lambda ref, trust: {"done_trusted": True, "done": "true"})
+    monkeypatch.setattr(co, "git_head", lambda d: SHA)
     rc = co.main(["run", "prog", "--repo", REPO, "--integration", "release/2.0.0", "--tag", "v2.0.0",
                   "--plan", str(tmp_path / "plan.yaml"), "--states", str(tmp_path / "states.json"),
                   "--atoms", str(tmp_path / "atoms.json"), "--milestone", "7", "--project", "acme/3",
+                  "--programme-issue", f"{REPO}#9",
                   "--learned-json", str(tmp_path / "learned.json")], FixedClock(), lambda a, t, c=None: 0)
     out, err = capsys.readouterr()
     assert rc == 0, err
@@ -357,3 +362,22 @@ def test_close_out_leaves_a_draft_release_pinned_to_the_integration_head(tmp_pat
     assert not any(isinstance(w[2], dict) and w[2].get("draft") is False for w in stub.writes)
     assert not any("git/tags" in w[1] or w[1].endswith("/tags") for w in stub.writes)
     assert stub.lease is False
+    # the write sequence, parsed: each atom issue is closed, then the acceptance status, then the ruleset, then the release
+    seq = [(m, p) for m, p, _ in stub.writes]
+
+    def at(m, p):
+        assert (m, p) in seq, f"missing write {m} {p}"
+        return seq.index((m, p))
+
+    closes = [at("PATCH", f"repos/{REPO}/issues/{n}") for n in (1, 2)]
+    for n in (1, 2):
+        payload = next(w[2] for w in stub.writes if w[:2] == ("PATCH", f"repos/{REPO}/issues/{n}"))
+        assert payload["state"] == "closed"
+    status_i = at("POST", f"repos/{REPO}/statuses/{SHA}")
+    status = next(w[2] for w in stub.writes if w[:2] == ("POST", f"repos/{REPO}/statuses/{SHA}"))
+    assert status["context"] == "programme/acceptance" and status["state"] == "success"
+    ruleset_i = at("POST", f"repos/{REPO}/rulesets")
+    ruleset = next(w[2] for w in stub.writes if w[:2] == ("POST", f"repos/{REPO}/rulesets"))
+    assert ruleset["name"] == "programme-acceptance-prog"
+    release_i = at("POST", f"repos/{REPO}/releases")
+    assert max(closes) < status_i < ruleset_i < release_i
