@@ -149,18 +149,18 @@ Two honest notes on that job:
 `agents/security-reviewer.md` is the separate security lens. It triggers on the security-tagged paths: the kit's static
 globs, and your declared trust boundaries once `declare` has run.
 
-## Delivery of a programme
+## Delivery of an epic
 
-A **programme** is the whole body of work. An **atom** is one ticket with a runnable Done means. A **batch** is the atoms
+A **epic** is the whole body of work. An **atom** is one ticket with a runnable Done means. A **batch** is the atoms
 that land as one pull request. The rules of the kits reach the agent through the ticket; the delivery verbs below move the
 tickets through the platform.
 
-1. **Execution plan.** `/foundry:execution-plan <programme>` reads the atoms and their `blocked_by` edges from the GitHub
-   Project and writes `execution-plan.yaml`: **waves** of batches, the **critical path** and the **total float** of each
-   batch. An atom sits in a wave after every atom that blocks it. Atoms that share a path never share a wave. See
-   [plan a programme](how-to/execution-plan.md).
-2. **Wave dispatch.** The command deck builds the batches of the open wave in one Workflow, within the
-   concurrency limit: the smaller of the policy key `deck.max_builders` and the `max_concurrent` of the plan. A **programme issue** and a Project status update show the
+1. **Release plan.** `/foundry:release-plan <epic>` reads the atoms and their `blocked_by` edges from the GitHub
+   Project and writes `release-plan.yaml`: **increments** of batches, the **critical path** and the **total float** of each
+   batch. An atom sits in an increment after every atom that blocks it. Atoms that share a path never share an increment. See
+   [plan an epic](how-to/release-plan.md).
+2. **Increment dispatch.** The command deck builds the batches of the open increment in one Workflow, within the
+   concurrency limit: the smaller of the policy key `deck.max_builders` and the `wip_limit` of the plan. A **epic issue** and a Project status update show the
    state each tick.
 3. **Fleet builders.** A builder on another machine or container takes a batch by a **claim** (a ref create) under a
    **lease**. Its worker id has the form `<operator>@<machine>/<container>/<session>` and differs from the lead's in the machine or container part. See
@@ -170,8 +170,8 @@ tickets through the platform.
    [recover from a failed gate](how-to/recover-from-a-failed-gate.md).
 5. **Learned.** Each atom ends with a `## Learned` comment. The Learned distill turns the comments into proposed rule
    edits: a draft pull request for your private layer, a kit-fix ticket for upstream. It proposes and never merges.
-6. **Close-out.** `/foundry:close-out <programme>` is the single final session. It leaves a draft Release pinned to the
-   integration head. The operator tests, tags and publishes. See [close out a programme](how-to/close-out.md).
+6. **Epic review.** `/foundry:epic-review <epic>` is the single final session. It leaves a draft Release pinned to the
+   integration head. The operator tests, tags and publishes. See [close out an epic](how-to/epic-review.md).
 
 The deck token cost is bounded by the keys `deck.max_agent_calls`, `deck.max_wait_s`, `deck.note_max_tokens` and
 `deck.stall_after_ticks`; see [the operating-model policy](operating-model-policy.md). The operator's own test pass is a
@@ -215,6 +215,6 @@ Detection is a signature table plus your one-word confirmation, never an inferen
 - [Operator hand-off files](how-to/operator-handoff-files.md)
 - [Never read a secret value](how-to/secrets-never-read.md)
 - [Use the shared message log](how-to/shared-message-log.md)
-- [Plan a programme](how-to/execution-plan.md)
+- [Plan an epic](how-to/release-plan.md)
 - [Run builders across machines](how-to/fleet-builders.md)
-- [Close out a programme](how-to/close-out.md)
+- [Close out an epic](how-to/epic-review.md)

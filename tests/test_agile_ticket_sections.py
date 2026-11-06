@@ -77,7 +77,7 @@ def test_the_digest_payload_keys_are_frozen_so_an_older_signed_claim_still_verif
 
 
 def test_the_retrospective_heading_and_the_old_learned_heading_both_distil():
-    dist = _load("foundry_learned_distill", "scripts/foundry_learned_distill.py")
+    dist = _load("foundry_retrospective", "scripts/foundry_retrospective.py")
     lines = ["friction: the guard was slow", "success: the hook held"]
     for head in ("Retrospective", "Learned"):
         assert dist._learned_lines(f"## {head}\n" + "\n".join(lines) + "\n## Other\nnot this") == lines
@@ -107,7 +107,7 @@ def test_the_paper_guard_reads_both_key_names():
 def test_the_view_uses_the_ready_check_and_acceptance_criteria_keys():
     view = ft.design_view(NEW, [], root=Path(__import__("os").environ.get("CLAUDE_PROJECT_DIR") or ROOT))
     assert view["acceptance_criteria"]["bullets"] and view["ready_check_reasons"] == []
-    assert view["ready_check_required"] is False and view["design_required"] is view["ready_check_required"]   # old alias still emitted
+    assert view["ready_check_required"] is False and "design_required" not in view and "design_required_reasons" not in view   # dl-16: the old pair is gone
     assert "acceptance_criteria" in view and "acceptance" not in view
 
 
@@ -152,7 +152,7 @@ def test_old_and_new_heading_for_one_section_resolve_first_wins_in_parse_and_dig
 
 
 def test_the_worker_brief_names_the_new_sections_in_a_rendered_brief(tmp_path):
-    from test_wave_dispatch import brief_fields, make_args, run_workflow, starts
+    from test_increment_dispatch import brief_fields, make_args, run_workflow, starts
     out = run_workflow(tmp_path, make_args({"b0": ["a0"]}))
     f = brief_fields(starts(out)[0]["prompt"])
     assert f["Retrospective rule"].split(":")[0].endswith("headed ## Retrospective")

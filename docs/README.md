@@ -31,9 +31,9 @@ Four kinds of page, four kinds of question. Start where your question lives:
 - [Run author/approver separation with CODEOWNERS](how-to/team-review-with-codeowners.md)
 - [Run a multi-repo control plane](how-to/multi-repo-control-plane.md) — **the mode Foundry is built for**: one workspace governing several code repos, and why you run Claude from the control plane rather than inside a repo
 - [Cut a release](how-to/cut-a-release.md)
-- [Plan a programme](how-to/execution-plan.md) — waves, batches, critical path and total float from the live programme issues
+- [Plan an epic](how-to/release-plan.md) — increments, batches, critical path and total float from the live epic issues
 - [Run builders across machines](how-to/fleet-builders.md) — ref-create claims, leases, worker identity, deck slots and fleet capacity
-- [Close out a programme](how-to/close-out.md) — the one final session: atom close, `programme/acceptance`, milestone check, Learned distill, draft Release
+- [Review an epic](how-to/epic-review.md) — the one final session: atom close, `epic/acceptance`, milestone check, Learned distill, draft Release
 - [Use the shared message log](how-to/shared-message-log.md) — the append-only machine channel on `foundry/messages`, the issue-per-topic people channel, and the pairing audit
 - [Finish a plugin upgrade](how-to/post-upgrade.md) — `npx update-agentic-workspace@latest` (the script half), then `/foundry:post-upgrade` (the judgement half)
 - [Govern a workspace: intake and upgrade](how-to/governance-intake-and-upgrade.md) — `discover`, `select`, `declare`, `apply`, `baseline`, then `upgrade` (three-way, by pull request) and the upstream leak guard

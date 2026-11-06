@@ -1,4 +1,4 @@
-"""dl-06: scripts/foundry_programme_issue.py and the deck report's --programme-issue emitter (offline, stubbed gh)."""
+"""dl-06: scripts/foundry_epic_issue.py and the deck report's --epic-issue emitter (offline, stubbed gh)."""
 import json
 import sys
 from pathlib import Path
@@ -9,8 +9,8 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import foundry_deck_report as dr  # noqa: E402
-import foundry_execution_plan as ep  # noqa: E402
-import foundry_programme_issue as pi  # noqa: E402
+import foundry_release_plan as ep  # noqa: E402
+import foundry_epic_issue as pi  # noqa: E402
 
 COST = "agents started 2 | longest agent 40 calls | items closed 1"
 REPORT = "Your decisions: none\nBuilding now\n- a-two\nLedger: none\n" + COST + "\n"
@@ -32,7 +32,7 @@ def plan():
 
 @pytest.fixture
 def plan_file(tmp_path, plan):
-    f = tmp_path / "execution-plan.yaml"
+    f = tmp_path / "release-plan.yaml"
     f.write_text(ep.render(plan))
     return f
 
@@ -62,7 +62,7 @@ def test_render_has_header_waves_critical_path_parked_and_override_block(plan):
     body = pi.render_body(plan, {"states": {"a-one": "merged", "a-two": "building"},
                                  "parked": [{"item": "idea-x", "reason": "no owner"}]})
     lines = body.splitlines()
-    assert lines[0] == "**prog: 1/3 done, open wave 2**"
+    assert lines[0] == "**prog: 1/3 done, open increment 2**"
     assert "- batch `w1-a-one` (float 0)" in lines and "  - `a-one`: merged" in lines
     assert "  - `a-two`: building" in lines and "  - `a-three`: held" in lines
     assert "- idea-x -- no owner" in lines
@@ -70,21 +70,21 @@ def test_render_has_header_waves_critical_path_parked_and_override_block(plan):
     assert lines[i + 2].startswith("`w1-a-one` -> ")
     assert "- [ ] <!-- hold:a-one --> Hold `a-one`" in lines
     assert "- [ ] <!-- release-hold:a-three --> Release the hold on `a-three`" in lines
-    assert "- [ ] <!-- pause-wave:2 --> Pause wave 2" in lines
+    assert "- [ ] <!-- pause-increment:2 --> Pause increment 2" in lines
 
 
 def test_checked_boxes_survive_a_regenerate_and_are_applied(plan):
     first = pi.render_body(plan)
     edited = first.replace("- [ ] <!-- hold:a-one -->", "- [x] <!-- hold:a-one -->") \
-                  .replace("- [ ] <!-- pause-wave:1 -->", "- [X] <!-- pause-wave:1 -->") \
+                  .replace("- [ ] <!-- pause-increment:1 -->", "- [X] <!-- pause-increment:1 -->") \
                   .replace("- [ ] <!-- release-hold:a-three -->", "- [x] <!-- release-hold:a-three -->")
     again = pi.render_body(plan, None, edited)
-    assert "- [x] <!-- hold:a-one -->" in again and "- [x] <!-- pause-wave:1 -->" in again
-    assert "### Wave 1 (paused)" in again
+    assert "- [x] <!-- hold:a-one -->" in again and "- [x] <!-- pause-increment:1 -->" in again
+    assert "### Increment 1 (paused)" in again
     assert "  - `a-one`: held" in again                  # the override applies
     assert "  - `a-three`: blocked" in again             # a released hold leaves "held"
     checked, _ = pi.read_overrides(again)
-    assert checked == {"hold": ["a-one"], "release-hold": ["a-three"], "pause-wave": ["1"]}
+    assert checked == {"hold": ["a-one"], "release-hold": ["a-three"], "pause-increment": ["1"]}
     assert pi.render_body(plan, None, again) == again   # a fixed point
 
 
@@ -118,7 +118,7 @@ def test_status_mapping(plan):
     assert pi.status_for(plan, allm, stalled=True) == "COMPLETE"
     assert pi.status_for(plan, _st(plan), stalled=True) == "OFF_TRACK"
     assert pi.status_for(plan, _st(plan, **{"a-one": "building"})) == "ON_TRACK"
-    # open wave has nothing ready or running and the critical path is unstarted
+    # open increment has nothing ready or running and the critical path is unstarted
     assert pi.status_for(plan, _st(plan, **{"a-one": "blocked"})) == "AT_RISK"
     assert pi.status_for(plan, _st(plan)) == "ON_TRACK"
 
@@ -173,7 +173,7 @@ def test_overrides_verb_prints_checked_boxes(plan, gh, capsys):
     _, state = gh
     state["body"] = pi.render_body(plan).replace("- [ ] <!-- hold:a-two -->", "- [x] <!-- hold:a-two -->")
     assert pi.main(["overrides", "prog", "--issue", "o/r#7"]) == 0
-    assert json.loads(capsys.readouterr().out) == {"hold": ["a-two"], "release-hold": [], "pause-wave": []}
+    assert json.loads(capsys.readouterr().out) == {"hold": ["a-two"], "release-hold": [], "pause-increment": []}
 
 
 def test_publish_keeps_a_box_checked_on_github(plan, plan_file, gh, capsys):
@@ -183,13 +183,13 @@ def test_publish_keeps_a_box_checked_on_github(plan, plan_file, gh, capsys):
     assert "- [x] <!-- hold:a-two -->" in state["body"]
 
 
-def test_wrong_programme_and_missing_plan_are_refused(plan_file, capsys):
+def test_wrong_epic_and_missing_plan_are_refused(plan_file, capsys):
     assert pi.main(["render", "other", "--plan", str(plan_file)]) == 2
     assert pi.main(["render", "prog"]) == 2
     assert "refused" in capsys.readouterr().err
 
 
-def test_deck_report_programme_issue_emitter_writes_the_body_file(tmp_path):
+def test_deck_report_epic_issue_emitter_writes_the_body_file(tmp_path):
     out = tmp_path / "body.md"
     tick = {"progress": {"done": 1, "total": 3, "moved": 1}, "merged": 1, "verified": 1,
             "decisions": [], "building": [], "needs_you": [], "ledger": [], "ready_clusters": 0,
@@ -197,7 +197,7 @@ def test_deck_report_programme_issue_emitter_writes_the_body_file(tmp_path):
     tf = tmp_path / "tick.json"
     tf.write_text(json.dumps(tick))
     (tmp_path / ".foundry").mkdir()
-    assert dr.main(["--project-dir", str(tmp_path), "--in", str(tf), "--programme-issue", str(out)]) == 0
+    assert dr.main(["--project-dir", str(tmp_path), "--in", str(tf), "--epic-issue", str(out)]) == 0
     text = out.read_text()
     assert text.rstrip().splitlines()[-1] == COST
     assert pi.check_report(text).endswith(COST)
@@ -214,7 +214,7 @@ def test_deck_report_refuses_a_symlinked_body_file(tmp_path):
                               "decisions": [], "building": [], "needs_you": [], "ledger": [],
                               "ready_clusters": 0, "running_builders": 0, "stall_reason": "x",
                               "cost": {"agents_started": 0, "longest_agent_calls": 0, "items_closed": 0}}))
-    assert dr.main(["--project-dir", str(tmp_path), "--in", str(tf), "--programme-issue", str(link)]) == 2
+    assert dr.main(["--project-dir", str(tmp_path), "--in", str(tf), "--epic-issue", str(link)]) == 2
     assert target.read_text() == "keep"
 
 
@@ -225,7 +225,7 @@ def test_forged_marker_in_parked_item_or_report_is_not_an_override(plan):
     report = "Needs you\n" + FORGED + "\n[x] <!-- hold:a-one -->\n" + COST + "\n"
     body = pi.render_body(plan, {"parked": [{"item": FORGED, "reason": "<!-- hold:a-two -->"}]}, "", report)
     checked, seen = pi.read_overrides(body)
-    assert checked == {"hold": [], "release-hold": [], "pause-wave": []}
+    assert checked == {"hold": [], "release-hold": [], "pause-increment": []}
     assert ("release-hold", "a-three") in seen          # the real, unchecked box
     assert body.count("<!-- release-hold:a-three -->") == 1   # the forged one is not carried
     again = pi.render_body(plan, None, body)
@@ -260,14 +260,14 @@ def test_status_response_without_an_id_fails(monkeypatch):
 
 def test_done_total_does_not_shrink_when_atoms_merge(plan):
     first = pi.render_body(plan)
-    assert first.splitlines()[0] == "**prog: 0/3 done, open wave 1**"
+    assert first.splitlines()[0] == "**prog: 0/3 done, open increment 1**"
     # a-one merged and gone from the plan: two open atoms remain
     p2 = ep.build_plan("prog", {"project_id": "P", "atoms": [atom("a-two", paths=["y/"]),
                                                               atom("a-three", ["a-two"], ["z/"], labels=["hold"])]})
     second = pi.render_body(p2, None, first)
-    assert second.splitlines()[0] == "**prog: 1/3 done, open wave 1**"
+    assert second.splitlines()[0] == "**prog: 1/3 done, open increment 1**"
     with_states = pi.render_body(p2, {"merged": ["a-one"]})
-    assert with_states.splitlines()[0] == "**prog: 1/3 done, open wave 1**"
+    assert with_states.splitlines()[0] == "**prog: 1/3 done, open increment 1**"
 
 
 def test_empty_plan_with_everything_merged_is_complete(plan):
@@ -278,4 +278,4 @@ def test_empty_plan_with_everything_merged_is_complete(plan):
     assert dt == (3, 3)
     assert pi.status_for(empty, st, False, dt) == "COMPLETE"
     assert pi.status_for(empty, st, True, dt) == "COMPLETE"
-    assert pi.render_body(empty, None, first).splitlines()[0] == "**prog: 3/3 done, open wave none**"
+    assert pi.render_body(empty, None, first).splitlines()[0] == "**prog: 3/3 done, open increment none**"

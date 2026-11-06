@@ -1,19 +1,19 @@
 export const meta = {
-  name: 'foundry-wave-dispatch',
-  description: 'Build every batch of the open wave of an execution plan in one run: one worktree per batch, one build agent per atom, the concurrency limit from the plan, a wave barrier; ends at review_ready and never waits on CI',
+  name: 'foundry-increment-dispatch',
+  description: 'Build every batch of the open increment of a release plan in one run: one worktree per batch, one build agent per atom, the concurrency limit from the plan, an increment barrier; ends at review_ready and never waits on CI',
   phases: [
-    { title: 'Build', detail: 'one build agent per atom, one worktree per batch, at most max_concurrent batches at once' },
+    { title: 'Build', detail: 'one build agent per atom, one worktree per batch, at most wip_limit batches at once' },
   ],
 }
 
-// dl-05 (decision 4, amendment c of the SDLC review). Ported from the 1.x release-wave workflow, which fanned out
-// per atom with a per-wave barrier; this one fans out per BATCH of the plan's open wave, because a batch is the
+// dl-05 (decision 4, amendment c of the SDLC review). Ported from the 1.x release-increment workflow, which fanned out
+// per atom with a per-increment barrier; this one fans out per BATCH of the plan's open increment, because a batch is the
 // unit that owns a worktree and one PR (the batch holds atoms whose paths overlap).
 //
 // args (object, or its JSON string):
-//   programme        string                the programme id
-//   plan             object                execution-plan.yaml as JSON: { waves:[{n,batches:[{id,atoms,paths,total_float}]}],
-//                                          open_wave, max_concurrent, held:[atom] }
+//   epic        string                the epic id
+//   plan             object                release-plan.yaml as JSON: { increments:[{n,batches:[{id,atoms,paths,total_float}]}],
+//                                          open_increment, wip_limit, held:[atom] }
 //   briefs           { [atom]: { done_when, deliverable?, repo?, issue?, spec_ref? } }
 //   job_dir          string                absolute path of the deck job dir; notes go to <job_dir>/notes/<atom>.md
 //   worktree_root    string                absolute path; worktrees go to <worktree_root>/<repo|workspace>/<batch>
@@ -26,7 +26,7 @@ export const meta = {
 //   done_atoms       [atom] (optional)     atoms already finished in an earlier run: never started again
 //   resume           { [atom]: statePath } (optional) the state note of an atom that stopped at its cap: only that path
 //                                          goes into the continuing agent's brief
-//   concurrency      integer (optional)    builder cap from the machine check; the smaller of this and plan.max_concurrent wins
+//   concurrency      integer (optional)    builder cap from the machine check; the smaller of this and plan.wip_limit wins
 //   merged_batches   [batchId]  (optional) batches already merged (skipped)
 //   running_batches  [batchId]  (optional) batches that a build agent already runs (skipped, and they hold a slot)
 //   workspace_commit string (optional)     for the Built-from trailer on a product-repo PR
@@ -36,7 +36,7 @@ export const meta = {
 // merge queue or a rollout: merge-when-green runs in the deck session. Every agent(...) call below carries NO
 // `name` field, on purpose (see the 1.x note: a named agent becomes a teammate when agent teams are on).
 
-// === WD-PURE-BEGIN (planning, brief rendering and result normalisation: pure, extracted by tests/test_wave_dispatch.py) ===
+// === WD-PURE-BEGIN (planning, brief rendering and result normalisation: pure, extracted by tests/test_increment_dispatch.py) ===
 const SAFE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 const SAFE_PATH_RE = /^\/[A-Za-z0-9._\/-]{1,400}$/
 
@@ -53,14 +53,14 @@ function oneLine(x, limit) {
   return s.slice(0, limit)
 }
 
-// The open wave and its startable batches. The barrier: a wave after the open one never starts, and the open
-// wave itself is refused (fail closed) when a lower wave still holds a batch that is neither held nor merged.
+// The open increment and its startable batches. The barrier: an increment after the open one never starts, and the open
+// increment itself is refused (fail closed) when a lower increment still holds a batch that is neither held nor merged.
 function selectOpenWave(plan, mergedBatches, runningBatches, briefs) {
-  const out = { wave: null, batches: [], skipped: [], refused: null }
-  const waves = plan && Array.isArray(plan.waves) ? plan.waves : []
-  const open = plan ? plan.open_wave : null
+  const out = { increment: null, batches: [], skipped: [], refused: null }
+  const increments = plan && Array.isArray(plan.increments) ? plan.increments : []
+  const open = plan ? plan.open_increment : null
   if (!Number.isInteger(open)) {
-    out.refused = 'no-open-wave'
+    out.refused = 'no-open-increment'
     return out
   }
   const held = new Set(Array.isArray(plan.held) ? plan.held : [])
@@ -68,26 +68,26 @@ function selectOpenWave(plan, mergedBatches, runningBatches, briefs) {
   const running = new Set(runningBatches || [])
   const isLive = (b) => !merged.has(b.id)
   const isHeld = (b) => (b.atoms || []).some((a) => held.has(a))
-  for (const w of waves) {
+  for (const w of increments) {
     if (w.n < open && (w.batches || []).some((b) => isLive(b) && !isHeld(b))) {
-      out.refused = `barrier: wave ${w.n} still holds an unmerged batch below the open wave ${open}`
+      out.refused = `barrier: increment ${w.n} still holds an unmerged batch below the open increment ${open}`
       return out
     }
-    // A held batch below the open wave blocks it too: the plan carries no edges, so a dependent or path-overlapping
+    // A held batch below the open increment blocks it too: the plan carries no edges, so a dependent or path-overlapping
     // batch cannot be told from an independent one. Fail closed until the hold is released or the batch merges.
     if (w.n < open && (w.batches || []).some((b) => isLive(b) && isHeld(b))) {
-      out.refused = `barrier: wave ${w.n} holds a held batch below the open wave ${open}`
+      out.refused = `barrier: increment ${w.n} holds a held batch below the open increment ${open}`
       return out
     }
   }
-  out.wave = open
-  const wave = waves.find((w) => w.n === open)
-  if (!wave) {
-    out.refused = 'open-wave-not-in-plan'
+  out.increment = open
+  const increment = increments.find((w) => w.n === open)
+  if (!increment) {
+    out.refused = 'open-increment-not-in-plan'
     return out
   }
   const seenAtoms = new Set()
-  for (const b of wave.batches || []) {
+  for (const b of increment.batches || []) {
     if (!isSafeId(b.id)) { out.skipped.push({ id: String(b.id), reason: 'unsafe-batch-id' }); continue }
     if (merged.has(b.id)) { out.skipped.push({ id: b.id, reason: 'merged' }); continue }
     if (running.has(b.id)) { out.skipped.push({ id: b.id, reason: 'running' }); continue }
@@ -132,9 +132,9 @@ function reviewGate(brief) {
   return null
 }
 
-// min(N, M): M is the plan's max_concurrent, lowered by the caller's cap; running batches hold a slot.
+// min(N, M): M is the plan's wip_limit, lowered by the caller's cap; running batches hold a slot.
 function slotsFree(plan, concurrency, runningCount) {
-  let m = plan && Number.isInteger(plan.max_concurrent) ? plan.max_concurrent : 0
+  let m = plan && Number.isInteger(plan.wip_limit) ? plan.wip_limit : 0
   if (Number.isInteger(concurrency) && concurrency >= 0) m = Math.min(m, concurrency)
   return Math.max(0, m - (runningCount || 0))
 }
@@ -144,8 +144,8 @@ function repoOf(brief) {
   return brief && typeof brief.repo === 'string' && brief.repo !== '' ? brief.repo : 'workspace'
 }
 
-function worktreePath(worktreeRoot, repo, programme, batchId) {
-  return `${worktreeRoot.replace(/\/+$/, '')}/${repo}/${programme}/${batchId}`
+function worktreePath(worktreeRoot, repo, epic, batchId) {
+  return `${worktreeRoot.replace(/\/+$/, '')}/${repo}/${epic}/${batchId}`
 }
 
 function engineerType(brief) {
@@ -216,8 +216,8 @@ const BUILD_SCHEMA = {
 
 const _args = (typeof args === 'string') ? (() => { try { return JSON.parse(args) } catch { return null } })() : args
 const A = _args && typeof _args === 'object' && !Array.isArray(_args) ? _args : null
-if (!A || !isSafeId(A.programme) || !A.plan || !isSafePath(A.job_dir) || !isSafePath(A.worktree_root)) {
-  log('foundry-wave-dispatch: refused: args need programme, plan, job_dir and worktree_root (absolute, safe paths)')
+if (!A || !isSafeId(A.epic) || !A.plan || !isSafePath(A.job_dir) || !isSafePath(A.worktree_root)) {
+  log('foundry-increment-dispatch: refused: args need epic, plan, job_dir and worktree_root (absolute, safe paths)')
   return { refused: 'bad-args', batches: [] }
 }
 const repos = A.repos && typeof A.repos === 'object' ? A.repos : {}
@@ -229,12 +229,12 @@ const resume = A.resume && typeof A.resume === 'object' ? A.resume : {}
 
 const sel = selectOpenWave(A.plan, A.merged_batches, A.running_batches, briefs)
 if (sel.refused) {
-  log(`foundry-wave-dispatch: nothing started: ${sel.refused}`)
-  return { programme: A.programme, open_wave: sel.wave, refused: sel.refused, batches: [], deferred: [], skipped: sel.skipped }
+  log(`foundry-increment-dispatch: nothing started: ${sel.refused}`)
+  return { epic: A.epic, open_increment: sel.increment, refused: sel.refused, batches: [], deferred: [], skipped: sel.skipped }
 }
 const free = slotsFree(A.plan, A.concurrency, (A.running_batches || []).length)
 const limit = Math.min(free, sel.batches.length)
-log(`foundry-wave-dispatch: open wave ${sel.wave}, ${sel.batches.length} batch(es) ready, ${limit} at once`)
+log(`foundry-increment-dispatch: open increment ${sel.increment}, ${sel.batches.length} batch(es) ready, ${limit} at once`)
 
 const startedAtoms = new Set()   // rule 4: at most one build agent per atom
 
@@ -251,8 +251,8 @@ async function runBatch(batch) {
   }
   const results = []
   for (const [repo, atoms] of byRepo) {
-    const worktree = worktreePath(A.worktree_root, repo, A.programme, batch.id)
-    const branch = `dl/${A.programme}/${batch.id}`
+    const worktree = worktreePath(A.worktree_root, repo, A.epic, batch.id)
+    const branch = `dl/${A.epic}/${batch.id}`
     const issues = atoms.map((a) => briefs[a] && briefs[a].issue).filter((n) => Number.isInteger(n))
     const pending = atoms.filter((a) => !doneAtoms.has(a))
     for (const a of atoms) if (doneAtoms.has(a)) results.push({ atom: a, repo, status: 'done', resumed_done: true })
@@ -307,10 +307,10 @@ for (let l = 0; l < limit; l += 1) {
 await Promise.all(lanes)
 
 const ready = out.filter((b) => b.status === 'review_ready').length
-log(`foundry-wave-dispatch: ${ready}/${out.length} batches review_ready`)
+log(`foundry-increment-dispatch: ${ready}/${out.length} batches review_ready`)
 return {
-  programme: A.programme,
-  open_wave: sel.wave,
+  epic: A.epic,
+  open_increment: sel.increment,
   batches: out,
   deferred: queue.slice(cursor).map((b) => b.id),
   skipped: sel.skipped,

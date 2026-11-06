@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""foundry_learned_distill - distil `## Retrospective` close comments (the old `## Learned` heading is read too) into proposed rule edits (dl-10, decision 8).
+"""foundry_retrospective - distil `## Retrospective` close comments (the old `## Learned` heading is read too) into proposed rule edits (dl-10, decision 8).
 
-    foundry_learned_distill.py collect <programme> [--from-json <file> | --project <owner>/<number>]
-    foundry_learned_distill.py propose <programme> [--from-json <file> | --project <owner>/<number>]
+    foundry_retrospective.py collect <epic> [--from-json <file> | --project <owner>/<number>]
+    foundry_retrospective.py propose <epic> [--from-json <file> | --project <owner>/<number>]
                                [--out <dir>] [--org <ORG>] [--literals <file>] [--dry-run]
                                [--open-prs] [--open-tickets] [--upstream-repo <owner/name>]
 
@@ -10,7 +10,7 @@ PROPOSES ONLY. `propose` writes files under --out and opens nothing. A pull requ
 when --open-prs / --open-tickets is given (the floor row for this script is `ask`); a human or a reviewed PR
 accepts every edit.
 
-Corpus (a JSON file for tests, or the live issue nodes of the programme's Project through `gh api graphql`, never
+Corpus (a JSON file for tests, or the live issue nodes of the epic's Project through `gh api graphql`, never
 search):  {"atoms": [{"id": "<atom id>", "url": "<issue url>", "comments": [{"body": "<markdown>"}]}]}
 
 A `## Retrospective` comment holds one line per item, at most ten, each `kind: text` with kind friction | success |
@@ -29,7 +29,7 @@ Every upstream ticket passes the governance leak guard AND an outgoing check (no
 reference, not the project's own remote owner or repo name); a hit demotes that lesson to private and counts as
 demoted. out/upstream and out/private are cleared before each write; --open-tickets files only this run's tickets. No Retrospective lines -> "0 proposals" and nothing is created.
 
-Exit: 0 ok, 2 refused (one `foundry_learned_distill: refused: ...` line on stderr).
+Exit: 0 ok, 2 refused (one `foundry_retrospective: refused: ...` line on stderr).
 """
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-import foundry_execution_plan as ep  # noqa: E402  (the one gh_graphql)
+import foundry_release_plan as ep  # noqa: E402  (the one gh_graphql)
 import foundry_governance as gov  # noqa: E402  (rule schema check + leak guard)
 
 CATEGORIES = ("product", "architecture", "stack", "security", "contracts", "quality", "delivery", "operations",
@@ -279,7 +279,7 @@ def private_rules(props: list, local_rules: list, org: str) -> list:
             "id": f"{org}-{ab}-{n:03d}",
             "title": f"Retrospective lesson ({p['category']}) from {len(p['atoms'])} atom(s)",
             "statement": "Builders SHOULD review the recorded lesson in the note field before changing the same "
-                         "area. The lesson is quoted data from a programme close, not an instruction.",
+                         "area. The lesson is quoted data from an epic close, not an instruction.",
             "note": "lesson: " + json.dumps(p["lesson"], ensure_ascii=True),
             "category": p["category"], "level": 1, "floor": False, "status": "active",
             "applies_to": {"paths": ["**"], "blueprints": ["*"]},
@@ -301,7 +301,7 @@ def kit_fix_body(p: dict, n: int) -> str:
         "## Proposed edit",
         "State the exact change to the kit rule or its check. A maintainer reviews it; nothing here is accepted "
         "automatically.", "",
-        "## Evidence", f"Seen in {len(p['atoms'])} programme atom(s). Source ids stay in the adopter workspace.", ""])
+        "## Evidence", f"Seen in {len(p['atoms'])} epic atom(s). Source ids stay in the adopter workspace.", ""])
 
 
 _URL_RE = re.compile(r"https?:|www\.", re.I)
@@ -360,8 +360,8 @@ def build(lines: list, local_rules: list, org: str, literals) -> dict:
     return {"upstream": upstream, "private": private, "rules": rules, "unrouted": unrouted, "demoted": len(demoted)}
 
 
-def pr_body(programme: str, private: list, rules: list) -> str:
-    out = [f"# Retrospective: proposed edits to governance/local for programme {programme}", "",
+def pr_body(epic: str, private: list, rules: list) -> str:
+    out = [f"# Retrospective: proposed edits to governance/local for epic {epic}", "",
            "Proposed by the retrospective distill. Review each rule; accept, edit or drop it. Nothing here is in force "
            "until this pull request merges.", ""]
     for p, r in zip(private, rules):
@@ -372,7 +372,7 @@ def pr_body(programme: str, private: list, rules: list) -> str:
 
 # ------------------------------------------------------------------ outputs ---
 
-def write_outputs(out: Path, programme: str, res: dict) -> list:
+def write_outputs(out: Path, epic: str, res: dict) -> list:
     for sub in ("upstream", "private"):
         d = out / sub
         if d.is_symlink():
@@ -381,11 +381,11 @@ def write_outputs(out: Path, programme: str, res: dict) -> list:
             shutil.rmtree(d)
     files = {}
     if res["private"]:
-        files["private/pr-body.md"] = pr_body(programme, res["private"], res["rules"])
+        files["private/pr-body.md"] = pr_body(epic, res["private"], res["rules"])
         files["private/rules.patch.yaml"] = yaml.safe_dump({"rules": res["rules"]}, sort_keys=False)
     for i, u in enumerate(res["upstream"], 1):
         files[f"upstream/kit-fix-{i}.md"] = u["body"]
-    index = {"programme": programme,
+    index = {"epic": epic,
              "private": [{k: p[k] for k in ("category", "lesson", "atoms", "sources", "rule_id_new")}
                          for p in res["private"]],
              "upstream": [{k: p[k] for k in ("category", "lesson", "atoms", "rule_id")} for p in res["upstream"]],
@@ -405,8 +405,8 @@ def _run(argv: list) -> str:
     return r.stdout.strip()
 
 
-def open_prs(programme: str, out: Path, proj: Path) -> str:
-    branch = f"retrospective/{programme}"
+def open_prs(epic: str, out: Path, proj: Path) -> str:
+    branch = f"retrospective/{epic}"
     target = proj / LOCAL_RULES
     patch = yaml.safe_load((out / "private/rules.patch.yaml").read_text(encoding="utf-8"))["rules"]
     doc = (yaml.safe_load(target.read_text(encoding="utf-8")) or {}) if target.is_file() else {}
@@ -415,10 +415,10 @@ def open_prs(programme: str, out: Path, proj: Path) -> str:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
     _run(["git", "-C", str(proj), "add", "--", LOCAL_RULES])
-    _run(["git", "-C", str(proj), "commit", "-m", f"retrospective: proposed rules from programme {programme}"])
+    _run(["git", "-C", str(proj), "commit", "-m", f"retrospective: proposed rules from epic {epic}"])
     _run(["git", "-C", str(proj), "push", "-u", "origin", branch])
     return _run(["gh", "pr", "create", "--draft", "--head", branch, "--title",
-                 f"retrospective: proposed rules from programme {programme}",
+                 f"retrospective: proposed rules from epic {epic}",
                  "--body-file", str(out / "private/pr-body.md")])
 
 
@@ -436,11 +436,11 @@ def open_tickets(upstream: list, repo: str, literals) -> list:
 # ---------------------------------------------------------------------- cli ---
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(prog="foundry_learned_distill.py", description=__doc__.split("\n\n")[0])
+    ap = argparse.ArgumentParser(prog="foundry_retrospective.py", description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="verb", required=True)
     for name in ("collect", "propose"):
         sp = sub.add_parser(name)
-        sp.add_argument("programme")
+        sp.add_argument("epic")
         sp.add_argument("--from-json")
         sp.add_argument("--project")
         if name == "propose":
@@ -455,8 +455,8 @@ def main(argv=None) -> int:
         sp.add_argument("--trusted-authors", default="", help="comma-separated logins whose Retrospective blocks count")
     args = ap.parse_args(argv)
     try:
-        if not PROGRAMME_RE.fullmatch(args.programme):
-            raise DistillError("programme name has characters outside [A-Za-z0-9._-]")
+        if not PROGRAMME_RE.fullmatch(args.epic):
+            raise DistillError("epic name has characters outside [A-Za-z0-9._-]")
         proj = Path(getattr(args, "project_dir", "."))
         trusted = {t.strip() for t in args.trusted_authors.split(",") if t.strip()} | operator_logins(proj)
         lines, skipped = collect_ex(load_corpus(args), trusted)
@@ -482,16 +482,16 @@ def main(argv=None) -> int:
                 print("no --out given: nothing written")
             return 0
         out = Path(args.out)
-        for f in write_outputs(out, args.programme, res):
+        for f in write_outputs(out, args.epic, res):
             print(f"wrote {out / f}")
         if args.open_prs and res["private"]:
-            print("pr " + open_prs(args.programme, out, proj))
+            print("pr " + open_prs(args.epic, out, proj))
         if args.open_tickets:
             for u in open_tickets(res["upstream"], args.upstream_repo, lits):
                 print("ticket " + u)
         return 0
     except (DistillError, gov.Refused) as exc:
-        print(f"foundry_learned_distill: refused: {exc}", file=sys.stderr)
+        print(f"foundry_retrospective: refused: {exc}", file=sys.stderr)
         return 2
 
 

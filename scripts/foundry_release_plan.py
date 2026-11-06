@@ -1,32 +1,32 @@
 #!/usr/bin/env python3
-"""foundry_execution_plan — plan a programme into waves and batches (dl-04, /foundry:execution-plan).
+"""foundry_release_plan — plan an epic into increments and batches (dl-04, /foundry:release-plan).
 
-    foundry_execution_plan.py plan    <programme> [--from-json <file> | --project <owner>/<number>]
-    foundry_execution_plan.py publish <programme> [--from-json <file> | --project <owner>/<number>]
+    foundry_release_plan.py plan    <epic> [--from-json <file> | --project <owner>/<number>]
+    foundry_release_plan.py publish <epic> [--from-json <file> | --project <owner>/<number>]
                                       [--remote origin] [--dry-run]
 
 PLANS ONLY. It claims nothing and dispatches nothing.
 
-Atoms are read from a corpus: a JSON file (tests), or the programme's GitHub Project through LIVE issue nodes
+Atoms are read from a corpus: a JSON file (tests), or the epic's GitHub Project through LIVE issue nodes
 (`gh api graphql`, never search). Corpus shape:
     {"project_id": "...", "atoms": [{"id", "node_id", "item_id", "blocked_by": [ids], "sub_issues": [ids],
                                      "paths": [...], "labels": [...], "state": "open|closed",
                                      "component": "<optional>", "head": "<optional sha>"}]}
 Edges: native issue dependencies (`blocked_by`) plus sub-issue order. The order of an atom's own sub-issues
-is a sequence (each is blocked_by the one before it); the sub-issues of a programme issue (a parent that is not
+is a sequence (each is blocked_by the one before it); the sub-issues of an epic issue (a parent that is not
 an atom) carry no order. Paths come from each issue body's `## Design` -> `Components:` line. A closed atom
-satisfies its dependents. An atom with the `hold` label stays in the plan and leaves the open wave; the label
+satisfies its dependents. An atom with the `hold` label stays in the plan and leaves the open increment; the label
 is only read, never written.
 
-Pipeline: wave planner (foundry_wave_plan) -> merge-plan batching within each wave (foundry_merge_plan) ->
+Pipeline: increment planner (foundry_wave_plan) -> merge-plan batching within each increment (foundry_merge_plan) ->
 critical path and total float per batch (CPM; weight = `size:` label weight, else 1 per atom) ->
-execution-plan.yaml, validated against schema/execution-plan.schema.json. Same corpus, byte-identical output.
+release-plan.yaml, validated against schema/release-plan.schema.json. Same corpus, byte-identical output.
 
-`publish` commits the plan to refs/heads/plan/<programme> by git plumbing (private index, never the work tree)
-and sets the Project fields `wave` (Number) and `batch` (Text) on each item, creating them when absent.
+`publish` commits the plan to refs/heads/plan/<epic> by git plumbing (private index, never the work tree)
+and sets the Project fields `increment` (Number) and `batch` (Text) on each item, creating them when absent.
 Every network call goes through the one function `gh_graphql`.
 
-Exit: 0 ok, 2 refused (one `foundry_execution_plan: refused: ...` line on stderr).
+Exit: 0 ok, 2 refused (one `foundry_release_plan: refused: ...` line on stderr).
 """
 from __future__ import annotations
 
@@ -50,10 +50,10 @@ import foundry_merge_plan as mp  # noqa: E402
 import foundry_message_log as fml  # noqa: E402  (the hardened git adapter)
 import foundry_wave_plan as wp  # noqa: E402
 
-SCHEMA_PATH = HERE.parent / "schema" / "execution-plan.schema.json"
+SCHEMA_PATH = HERE.parent / "schema" / "release-plan.schema.json"
 SIZE_WEIGHT = {"xs": 1, "s": 2, "m": 3, "l": 5, "xl": 8}
 PROGRAMME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$")
-PLAN_FILE = "execution-plan.yaml"
+PLAN_FILE = "release-plan.yaml"
 MAX_PAGES = 600            # Project item pages (100 each)
 MAX_PATHS_PER_ATOM = 200   # Components paths per atom
 
@@ -122,14 +122,14 @@ def _planned_atoms(corpus) -> list:
 # ---------------------------------------------------------------------------------------------
 # the plan
 # ---------------------------------------------------------------------------------------------
-def build_plan(programme: str, corpus: dict) -> dict:
+def build_plan(epic: str, corpus: dict) -> dict:
     atoms = _planned_atoms(corpus)
     by_id = {a["id"]: a for a in atoms}
-    waves = wp.plan_waves(atoms)
+    increments = wp.plan_waves(atoms)
 
-    wave_batches = []          # [[{id, atoms, paths, weight}]]
+    increment_batches = []          # [[{id, atoms, paths, weight}]]
     batch_of = {}
-    for n, ids in enumerate(waves, 1):
+    for n, ids in enumerate(increments, 1):
         paths = {i: by_id[i]["paths"] for i in ids}
         ready = [{"id": i, "component": by_id[i]["component"]} for i in ids]
         clusters = mp.plan(ready, paths, None, ())["clusters"]
@@ -142,29 +142,29 @@ def build_plan(programme: str, corpus: dict) -> dict:
             for i in members:
                 batch_of[i] = b["id"]
             batches.append(b)
-        wave_batches.append(batches)
+        increment_batches.append(batches)
 
-    preds = {b["id"]: set() for w in wave_batches for b in w}
+    preds = {b["id"]: set() for w in increment_batches for b in w}
     for a in atoms:
         for d in a["blocked_by"]:
             if batch_of[d] == batch_of[a["id"]]:
                 raise PlanError(f"atoms {d!r} and {a['id']!r} share a batch but one blocks the other")
             preds[batch_of[a["id"]]].add(batch_of[d])
-    # Overlap-induced ordering: an atom sits after every earlier-wave atom whose paths overlap its own, so that
+    # Overlap-induced ordering: an atom sits after every earlier-increment atom whose paths overlap its own, so that
     # atom is a predecessor too (total float must never be optimistic about work that cannot run in parallel).
-    wave_of_atom = {i: n for n, ids in enumerate(waves) for i in ids}
+    increment_of_atom = {i: n for n, ids in enumerate(increments) for i in ids}
     for x in atoms:
         for y in atoms:
-            if wave_of_atom[y["id"]] < wave_of_atom[x["id"]] and any(
+            if increment_of_atom[y["id"]] < increment_of_atom[x["id"]] and any(
                     wp.paths_overlap(p, q) for p in x["paths"] for q in y["paths"]):
                 preds[batch_of[x["id"]]].add(batch_of[y["id"]])
-    flat = [b for w in wave_batches for b in w]
-    wave_index = {b["id"]: n for n, w in enumerate(wave_batches) for b in w}
+    flat = [b for w in increment_batches for b in w]
+    increment_index = {b["id"]: n for n, w in enumerate(increment_batches) for b in w}
     for bid, ps in preds.items():
-        if any(wave_index[p] >= wave_index[bid] for p in ps):
-            raise PlanError(f"batch {bid!r} sits in a wave with, or before, a batch it depends on")
+        if any(increment_index[p] >= increment_index[bid] for p in ps):
+            raise PlanError(f"batch {bid!r} sits in an increment with, or before, a batch it depends on")
 
-    # critical path method over the batch graph (flat is in wave order = topological order)
+    # critical path method over the batch graph (flat is in increment order = topological order)
     es, ef = {}, {}
     for b in flat:
         es[b["id"]] = max((ef[p] for p in preds[b["id"]]), default=0)
@@ -190,17 +190,17 @@ def build_plan(programme: str, corpus: dict) -> dict:
         critical.reverse()
 
     held = {a["id"] for a in atoms if "hold" in a["labels"]}
-    out_waves, open_wave, max_concurrent = [], None, 0
-    for n, batches in enumerate(wave_batches, 1):
-        out_waves.append({"n": n, "batches": [
+    out_increments, open_increment, wip_limit = [], None, 0
+    for n, batches in enumerate(increment_batches, 1):
+        out_increments.append({"n": n, "batches": [
             {"id": b["id"], "atoms": b["atoms"], "paths": b["paths"], "total_float": ls[b["id"]] - es[b["id"]]}
             for b in batches]})
     # A batch is startable only when it holds no held atom and has no predecessor at all: every atom in the plan is
     # open (not merged), so a batch behind any open or held batch must wait (a hold propagates to its dependents).
     startable = [b for b in flat if not held & set(b["atoms"]) and not preds[b["id"]]]
     if startable:
-        open_wave = min(wave_index[b["id"]] for b in startable) + 1
-        max_concurrent = len(startable)
+        open_increment = min(increment_index[b["id"]] for b in startable) + 1
+        wip_limit = len(startable)
 
     canon = json.dumps([{k: a[k] for k in ("id", "node_id", "blocked_by", "paths", "labels", "component", "weight")}
                         for a in atoms], sort_keys=True, separators=(",", ":"))
@@ -209,8 +209,8 @@ def build_plan(programme: str, corpus: dict) -> dict:
     heads = {a["id"]: a["head"] for a in atoms if a["head"]}
     if heads:
         gen["heads"] = heads
-    plan = {"programme": programme, "generated_from": gen, "waves": out_waves, "critical_path": critical,
-            "held": sorted(held), "open_wave": open_wave, "max_concurrent": max_concurrent}
+    plan = {"epic": epic, "generated_from": gen, "increments": out_increments, "critical_path": critical,
+            "held": sorted(held), "open_increment": open_increment, "wip_limit": wip_limit}
     validate(plan)
     return plan
 
@@ -221,7 +221,7 @@ def validate(plan: dict) -> None:
     try:
         jsonschema.validate(plan, schema)
     except jsonschema.ValidationError as e:
-        raise PlanError(f"plan fails schema/execution-plan.schema.json: {e.message}")
+        raise PlanError(f"plan fails schema/release-plan.schema.json: {e.message}")
 
 
 def render(plan: dict) -> str:
@@ -300,7 +300,7 @@ def fetch_corpus(owner: str, number: int) -> dict:
     pid, fields, items = _project_pages(owner, number)
     issues = [(it["id"], it["content"]) for it in items if (it.get("content") or {}).get("id")]
     labels_of = {c["id"]: [l["name"] for l in _complete(c["labels"], f"labels of {c['id']}")] for _, c in issues}
-    issues = [(i, c) for i, c in issues if "programme" not in labels_of[c["id"]]]
+    issues = [(i, c) for i, c in issues if "epic" not in labels_of[c["id"]]]
     key = {c["id"]: f"{c['repository']['nameWithOwner']}#{c['number']}" for _, c in issues}
     atoms = []
     for item_id, c in issues:
@@ -323,11 +323,11 @@ _SET_Q = """mutation($project:ID!,$item:ID!,$field:ID!,$value:ProjectV2FieldValu
 input:{projectId:$project,itemId:$item,fieldId:$field,value:$value}){projectV2Item{id}}}"""
 _CLEAR_Q = """mutation($project:ID!,$item:ID!,$field:ID!){clearProjectV2ItemFieldValue(
 input:{projectId:$project,itemId:$item,fieldId:$field}){projectV2Item{id}}}"""
-_FIELD_TYPES = (("wave", "NUMBER"), ("batch", "TEXT"))
+_FIELD_TYPES = (("increment", "NUMBER"), ("batch", "TEXT"))
 
 
 def project(plan: dict, corpus: dict) -> int:
-    """Set Number field `wave` and Text field `batch` on each planned item, and clear them on closed atoms.
+    """Set Number field `increment` and Text field `batch` on each planned item, and clear them on closed atoms.
     Refuses a pre-existing field of the wrong type. Returns the count of planned items set."""
     pid = corpus.get("project_id")
     if not pid:
@@ -346,16 +346,16 @@ def project(plan: dict, corpus: dict) -> int:
             made.add(name)
     item_of = {a["id"]: a.get("item_id") for a in corpus["atoms"]}
     count = 0
-    for w in plan["waves"]:
+    for w in plan["increments"]:
         for b in w["batches"]:
             for aid in b["atoms"]:
                 item = item_of.get(aid)
                 if not item:
                     continue
-                for fname, val in (("wave", {"number": w["n"]}), ("batch", {"text": b["id"]})):
+                for fname, val in (("increment", {"number": w["n"]}), ("batch", {"text": b["id"]})):
                     gh_graphql(_SET_Q, {"project": pid, "item": item, "field": fields[fname], "value": val})
                 count += 1
-    planned = {aid for w in plan["waves"] for b in w["batches"] for aid in b["atoms"]}
+    planned = {aid for w in plan["increments"] for b in w["batches"] for aid in b["atoms"]}
     for a in corpus["atoms"]:
         if a["id"] not in planned and a.get("item_id") and str(a.get("state", "open")).lower() != "open":
             for fname, _ in _FIELD_TYPES:
@@ -374,16 +374,16 @@ def _ok(ad, repo, args, what, env=None, input_text=None):
     return r.stdout
 
 
-def publish_ref(repo, remote: str, programme: str, text: str, before_push=None) -> str:
-    """Commit `text` as execution-plan.yaml onto refs/heads/plan/<programme> and push (never forced). Returns the
+def publish_ref(repo, remote: str, epic: str, text: str, before_push=None) -> str:
+    """Commit `text` as release-plan.yaml onto refs/heads/plan/<epic> and push (never forced). Returns the
     tip sha; an unchanged plan makes no new commit. `before_push()` runs after the commit is built and before the
     push (and before returning for an unchanged plan), so a failure there leaves the ref untouched. Refuses when the
-    existing tip holds any path other than execution-plan.yaml."""
-    if not PROGRAMME_RE.match(programme or "") or programme.endswith((".lock", ".")) or ".." in programme:
-        raise PlanError(f"programme name {programme!r} is not a plain ref-safe name")
+    existing tip holds any path other than release-plan.yaml."""
+    if not PROGRAMME_RE.match(epic or "") or epic.endswith((".lock", ".")) or ".." in epic:
+        raise PlanError(f"epic name {epic!r} is not a plain ref-safe name")
     if not fml.valid_remote(remote):
         raise PlanError(f"remote {remote!r} is not a plain remote name or URL")
-    ad, ref = fml.Adapter(), f"refs/heads/plan/{programme}"
+    ad, ref = fml.Adapter(), f"refs/heads/plan/{epic}"
     mine = f"refs/foundry/plan-fetched-{os.getpid()}"
     try:
         tip = None
@@ -407,7 +407,7 @@ def publish_ref(repo, remote: str, programme: str, text: str, before_push=None) 
             unchanged = bool(tip) and _ok(ad, repo, ["rev-parse", f"{tip}^{{tree}}"], "rev-parse tree").strip() == tree
             commit = tip
             if not unchanged:
-                args = ["-c", "commit.gpgsign=false", "commit-tree", tree, "-m", f"execution-plan: {programme}"]
+                args = ["-c", "commit.gpgsign=false", "commit-tree", tree, "-m", f"release-plan: {epic}"]
                 if tip:
                     args += ["-p", tip]
                 commit = _ok(ad, repo, args, "commit-tree", env=env).strip()
@@ -445,11 +445,11 @@ def _load(args) -> dict:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(prog="foundry_execution_plan.py", description=__doc__.split("\n")[0])
+    ap = argparse.ArgumentParser(prog="foundry_release_plan.py", description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="verb", required=True)
     for name in ("plan", "publish"):
         p = sub.add_parser(name)
-        p.add_argument("programme")
+        p.add_argument("epic")
         p.add_argument("--from-json")
         p.add_argument("--project")
         if name == "publish":
@@ -457,10 +457,10 @@ def main(argv=None) -> int:
             p.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
     try:
-        if not PROGRAMME_RE.match(a.programme):
-            raise PlanError(f"programme name {a.programme!r} is not a plain name")
+        if not PROGRAMME_RE.match(a.epic):
+            raise PlanError(f"epic name {a.epic!r} is not a plain name")
         corpus = _load(a)
-        plan = build_plan(a.programme, corpus)
+        plan = build_plan(a.epic, corpus)
         text = render(plan)
         if a.verb == "plan" or a.dry_run:
             sys.stdout.write(text)
@@ -468,15 +468,15 @@ def main(argv=None) -> int:
         counted = []
         # Only an explicit --project may mutate a Project: a corpus file never carries that authority.
         has_project = bool(a.project) and bool(corpus.get("project_id"))
-        sha = publish_ref(os.getcwd(), a.remote, a.programme, text,
+        sha = publish_ref(os.getcwd(), a.remote, a.epic, text,
                           before_push=(lambda: counted.append(project(plan, corpus))) if has_project else None)
-        msg = f"published plan/{a.programme} at {sha}; "
+        msg = f"published plan/{a.epic} at {sha}; "
         msg += f"{counted[0]} Project item(s) set" if counted else "Project fields skipped (no --project)"
         print(msg)
         return 0
     except (PlanError, wp.WavePlanError, mp.Refused, KeyError, TypeError, AttributeError, ValueError,
             subprocess.TimeoutExpired, OSError) as e:
-        print(f"foundry_execution_plan: refused: {fml.redact(str(e)).splitlines()[0] if str(e) else type(e).__name__}",
+        print(f"foundry_release_plan: refused: {fml.redact(str(e)).splitlines()[0] if str(e) else type(e).__name__}",
               file=sys.stderr)
         return 2
 

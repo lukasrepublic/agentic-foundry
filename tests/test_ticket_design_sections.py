@@ -222,4 +222,4 @@ def test_read_issue_json_exposes_sections_and_applicable_ids(repo, monkeypatch):
     assert doc["security"]["ids"] == ["FG-SEC-006"]
     assert doc["surfaces"]["lines"][0]["surface"] == "cli"
     assert isinstance(doc["applicable_ids"], list) and "FG-SEC-006" in doc["applicable_ids"]
-    assert doc["design_required"] is False          # DESIGN_OK names hooks/ and skills/, but no policy lists them in this workspace
+    assert doc["ready_check_required"] is False          # DESIGN_OK names hooks/ and skills/, but no policy lists them in this workspace

@@ -1,4 +1,4 @@
-"""dl-10: scripts/foundry_learned_distill.py (offline; GitHub never called)."""
+"""dl-10: scripts/foundry_retrospective.py (offline; GitHub never called)."""
 import json
 import subprocess
 import sys
@@ -8,9 +8,9 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts" / "foundry_learned_distill.py"
+SCRIPT = ROOT / "scripts" / "foundry_retrospective.py"
 sys.path.insert(0, str(ROOT / "scripts"))
-import foundry_learned_distill as ld  # noqa: E402
+import foundry_retrospective as ld  # noqa: E402
 import foundry_governance as gov  # noqa: E402
 
 
@@ -184,7 +184,7 @@ def test_live_corpus_uses_graphql_nodes_not_search(monkeypatch):
     assert "search" not in seen[0].lower()
 
 
-def test_bad_programme_and_missing_corpus_refuse(tmp_path):
+def test_bad_epic_and_missing_corpus_refuse(tmp_path):
     assert run("collect", "bad name", "--from-json", write(tmp_path)).returncode == 2
     r = run("collect", "prog")
     assert r.returncode == 2 and "refused" in r.stderr

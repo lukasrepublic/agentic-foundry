@@ -4,16 +4,16 @@
     foundry_fleet.py identity
     foundry_fleet.py trailers
     foundry_fleet.py marker
-    foundry_fleet.py claim      <owner/repo> <programme> <batch>
-    foundry_fleet.py heartbeat  <owner/repo> <programme> <batch>
-    foundry_fleet.py transition <owner/repo> <programme> <batch> <state> [--pr <url>]
-    foundry_fleet.py status     <owner/repo> <programme> <batch>
+    foundry_fleet.py claim      <owner/repo> <epic> <batch>
+    foundry_fleet.py heartbeat  <owner/repo> <epic> <batch>
+    foundry_fleet.py transition <owner/repo> <epic> <batch> <state> [--pr <url>]
+    foundry_fleet.py status     <owner/repo> <epic> <batch>
     foundry_fleet.py arm-deck   <owner/repo>
     foundry_fleet.py capacity   --workers <n[,n...]> --reviewers <n> [--plan-max <n>]
-    foundry_fleet.py build-next <owner/repo> <programme> (--plan-file <f> | --plan-ref [--remote origin])
+    foundry_fleet.py build-next <owner/repo> <epic> (--plan-file <f> | --plan-ref [--remote origin])
                                 --workers <n[,n...]> --reviewers <n>
 
-A CLAIM is the creation of the ref refs/heads/claim/<programme>/<batch>. The ref points at a commit whose message
+A CLAIM is the creation of the ref refs/heads/claim/<epic>/<batch>. The ref points at a commit whose message
 carries the claim record (worker, state, heartbeat). HTTP 201 = won, HTTP 422 = lost. A heartbeat or a state
 change moves the ref with the GraphQL mutation `updateRefs` and a `beforeOid`: when the tip moved, the call
 re-reads the ref and never overwrites it. A claim whose last heartbeat is older than the policy value
@@ -31,7 +31,7 @@ configures no App and no credential. The CLI reads the token from the file named
 The worker id is ATTRIBUTION ONLY (trailers, marker, claim record). It is never an authorization input. `--workers` and
 `--reviewers` are CLI flags, not policy keys.
 
-BUILDER MODE (`build-next`) reads the plan, claims ONE batch of the open wave inside the fleet capacity and prints
+BUILDER MODE (`build-next`) reads the plan, claims ONE batch of the open increment inside the fleet capacity and prints
 it. It never plans and never edits the plan.
 
 Exit: 0 ok, 2 refused or lost (one `foundry_fleet: <reason>: ...` line on stderr).
@@ -65,7 +65,7 @@ OID_RE = re.compile(r"^[0-9a-f]{40}$")
 CONTAINER_RE = re.compile(r"(?<![0-9a-f])([0-9a-f]{64})(?![0-9a-f])")
 STATES = ("claimed", "building", "review_ready", "stopped")
 DECK_SLOTS = 2
-DECK_PROGRAMME = "decks"
+DECK_EPIC = "decks"
 CLAIM_PREFIX = "refs/heads/claim/"
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbd4904"
 TOKEN_RE = re.compile(r"(gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}|[Bb]earer\s+[A-Za-z0-9._~+/=-]{16,})")
@@ -102,9 +102,9 @@ def check_segment(value, what: str) -> str:
     return value
 
 
-def claim_ref(programme: str, batch: str) -> str:
-    """refs/heads/claim/<programme>/<batch>, both segments validated; nothing else is ever built."""
-    return f"{CLAIM_PREFIX}{check_segment(programme, 'programme')}/{check_segment(batch, 'batch')}"
+def claim_ref(epic: str, batch: str) -> str:
+    """refs/heads/claim/<epic>/<batch>, both segments validated; nothing else is ever built."""
+    return f"{CLAIM_PREFIX}{check_segment(epic, 'epic')}/{check_segment(batch, 'batch')}"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -354,16 +354,16 @@ class Fleet:
     def _live(self, rec: dict, now: float) -> bool:
         return store.lease_state(rec, now, self.expires)["state"] == "live"
 
-    def _new_record(self, worker: dict, programme: str, batch: str, now: float, kind: str = "batch") -> dict:
-        title = f"deck: {worker['id']}" if kind == "deck" else f"batch: {programme}/{batch}"
-        return {"v": 1, "kind": kind, "programme": programme, "batch": batch, "worker": worker["id"],
+    def _new_record(self, worker: dict, epic: str, batch: str, now: float, kind: str = "batch") -> dict:
+        title = f"deck: {worker['id']}" if kind == "deck" else f"batch: {epic}/{batch}"
+        return {"v": 1, "kind": kind, "epic": epic, "batch": batch, "worker": worker["id"],
                 "machine12": worker["machine12"], "title": title, "state": "claimed",
                 "claimed_at": store.iso(now), "heartbeat_at": store.iso(now), "expires_after_s": self.expires}
 
     # -- operations
-    def claim(self, worker: dict, programme: str, batch: str, kind: str = "batch") -> dict:
-        ref, now = claim_ref(programme, batch), self.clock()
-        rec = self._new_record(worker, programme, batch, now, kind)
+    def claim(self, worker: dict, epic: str, batch: str, kind: str = "batch") -> dict:
+        ref, now = claim_ref(epic, batch), self.clock()
+        rec = self._new_record(worker, epic, batch, now, kind)
         sha = self._commit(rec, None)
         st, doc = self.t.rest("POST", f"repos/{self.repo}/git/refs", {"ref": ref, "sha": sha})
         if st == 201:
@@ -386,8 +386,8 @@ class Fleet:
         return {"result": "lost", "ref": ref, "tip": new_tip,
                 "holder": self._record(new_tip)["worker"] if new_tip else None}
 
-    def _update(self, worker: dict, programme: str, batch: str, change: dict) -> dict:
-        ref, now = claim_ref(programme, batch), self.clock()
+    def _update(self, worker: dict, epic: str, batch: str, change: dict) -> dict:
+        ref, now = claim_ref(epic, batch), self.clock()
         tip = self._tip(ref)
         if tip is None:
             return {"result": "missing", "ref": ref}
@@ -401,10 +401,10 @@ class Fleet:
         holder = self._record(new_tip)["worker"] if new_tip else None
         return {"result": "conflict", "ref": ref, "tip": new_tip, "holder": holder}
 
-    def heartbeat(self, worker: dict, programme: str, batch: str) -> dict:
-        return self._update(worker, programme, batch, {})
+    def heartbeat(self, worker: dict, epic: str, batch: str) -> dict:
+        return self._update(worker, epic, batch, {})
 
-    def transition(self, worker: dict, programme: str, batch: str, state: str, pr: str | None = None) -> dict:
+    def transition(self, worker: dict, epic: str, batch: str, state: str, pr: str | None = None) -> dict:
         if state not in STATES:
             raise FleetError("bad-state", f"{state!r} is not one of {', '.join(STATES)}")
         change = {"state": state}
@@ -412,10 +412,10 @@ class Fleet:
             if not re.fullmatch(r"https://github\.com/[A-Za-z0-9._/-]{1,200}/pull/[0-9]{1,9}", pr):
                 raise FleetError("bad-pr", "the PR must be a https://github.com/<owner>/<repo>/pull/<n> URL")
             change["pr"] = pr
-        return self._update(worker, programme, batch, change)
+        return self._update(worker, epic, batch, change)
 
-    def status(self, programme: str, batch: str) -> dict:
-        ref, now = claim_ref(programme, batch), self.clock()
+    def status(self, epic: str, batch: str) -> dict:
+        ref, now = claim_ref(epic, batch), self.clock()
         tip = self._tip(ref)
         if tip is None:
             return {"result": "unclaimed", "ref": ref}
@@ -424,9 +424,9 @@ class Fleet:
         return {"result": "claimed", "ref": ref, "tip": tip, "holder": rec["worker"], "state": rec.get("state"),
                 "lease": st["state"]}
 
-    def claims_under(self, programme: str) -> list:
-        """[(batch, record)] for every claim ref of the programme (matching-refs, never a search)."""
-        prefix = f"heads/claim/{check_segment(programme, 'programme')}/"
+    def claims_under(self, epic: str) -> list:
+        """[(batch, record)] for every claim ref of the epic (matching-refs, never a search)."""
+        prefix = f"heads/claim/{check_segment(epic, 'epic')}/"
         st, doc = self.t.rest("GET", f"repos/{self.repo}/git/matching-refs/{prefix}")
         if st != 200 or not isinstance(doc, list):
             raise FleetError("claim-unreadable", f"matching-refs answered HTTP {st}")
@@ -434,14 +434,14 @@ class Fleet:
         for item in doc:
             name = item.get("ref", "") if isinstance(item, dict) else ""
             sha = (item.get("object") or {}).get("sha") if isinstance(item, dict) else None
-            if name.startswith(CLAIM_PREFIX + programme + "/") and isinstance(sha, str):
+            if name.startswith(CLAIM_PREFIX + epic + "/") and isinstance(sha, str):
                 out.append((name.rsplit("/", 1)[-1], self._record(sha)))
         return out
 
     def arm_deck(self, worker: dict) -> dict:
         """Take one of the two deck slots of this machine, or report `deck-slot-full`."""
         for n in range(1, DECK_SLOTS + 1):
-            r = self.claim(worker, DECK_PROGRAMME, f"deck-{worker['machine12']}-{n}", kind="deck")
+            r = self.claim(worker, DECK_EPIC, f"deck-{worker['machine12']}-{n}", kind="deck")
             if r["result"] in ("won", "held", "taken_over"):
                 return {**r, "result": "armed", "slot": n}
         return {"result": "deck-slot-full", "machine12": worker["machine12"], "slots": DECK_SLOTS}
@@ -457,28 +457,28 @@ def _count(v, what: str, minimum: int = 0) -> int:
 
 
 def fleet_capacity(workers: list, reviewers: int, plan_max: int | None = None) -> int:
-    """min(sum of max_concurrent_per_worker, reviewer capacity), and the plan's max_concurrent when given."""
+    """min(sum of max_concurrent_per_worker, reviewer capacity), and the plan's wip_limit when given."""
     cap = min(sum(_count(w, "max_concurrent_per_worker", 1) for w in workers), _count(reviewers, "reviewer capacity"))
-    return min(cap, _count(plan_max, "plan max_concurrent")) if plan_max is not None else cap
+    return min(cap, _count(plan_max, "plan wip_limit")) if plan_max is not None else cap
 
 
-def open_wave_batches(plan: dict) -> list:
-    """The startable batches of the plan's open wave, in plan order: no held atom, wave == open_wave."""
-    n, held = plan.get("open_wave"), set(plan.get("held") or [])
-    for w in plan.get("waves") or []:
+def open_increment_batches(plan: dict) -> list:
+    """The startable batches of the plan's open increment, in plan order: no held atom, increment == open_increment."""
+    n, held = plan.get("open_increment"), set(plan.get("held") or [])
+    for w in plan.get("increments") or []:
         if w.get("n") == n:
             return [b for b in w.get("batches") or [] if not held & set(b.get("atoms") or [])]
     return []
 
 
 def build_next(fleet: Fleet, worker: dict, plan: dict, cap: int) -> dict:
-    """Claim ONE batch of the open wave, inside `cap`. Reads the plan; never plans or edits it."""
-    programme = plan.get("programme")
-    cands = open_wave_batches(plan)
+    """Claim ONE batch of the open increment, inside `cap`. Reads the plan; never plans or edits it."""
+    epic = plan.get("epic")
+    cands = open_increment_batches(plan)
     if not cands:
-        return {"result": "none", "why": "no startable batch in the open wave"}
+        return {"result": "none", "why": "no startable batch in the open increment"}
     live, done = {}, set()
-    for b, rec in fleet.claims_under(programme):
+    for b, rec in fleet.claims_under(epic):
         if rec.get("state") == "review_ready":
             done.add(b)                  # built and handed to review: neither held nor counted against capacity
         elif rec.get("state") != "stopped" and fleet._live(rec, fleet.clock()):
@@ -492,7 +492,7 @@ def build_next(fleet: Fleet, worker: dict, plan: dict, cap: int) -> dict:
     for b in cands:
         if b["id"] in live or b["id"] in done:
             continue
-        r = fleet.claim(worker, programme, b["id"])
+        r = fleet.claim(worker, epic, b["id"])
         if r["result"] in ("won", "taken_over"):
             return {"result": "claimed", "batch": b["id"], "atoms": b["atoms"], "ref": r["ref"]}
     return {"result": "none", "why": "every startable batch is held by a live claim"}
@@ -503,7 +503,7 @@ def build_next(fleet: Fleet, worker: dict, plan: dict, cap: int) -> dict:
 # ---------------------------------------------------------------------------------------------
 def _plan_from(args) -> dict:
     import yaml
-    import foundry_execution_plan as fep
+    import foundry_release_plan as fep
     if args.plan_file:
         root = Path(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve()
         target = (root / args.plan_file).resolve()
@@ -513,12 +513,12 @@ def _plan_from(args) -> dict:
     else:
         if not fml.valid_remote(args.remote):
             raise FleetError("bad-remote", f"{args.remote!r} is not a plain remote name or URL")
-        prog = check_segment(args.programme, "programme")
+        prog = check_segment(args.epic, "epic")
         f = subprocess.run(["git", "fetch", "--no-tags", "--quiet", "--", args.remote, f"refs/heads/plan/{prog}"],
                            capture_output=True, text=True, timeout=120)
         if f.returncode != 0:
             raise FleetError("plan-unreadable", redact(f.stderr.strip()[:200]))
-        s = subprocess.run(["git", "show", "FETCH_HEAD:execution-plan.yaml"], capture_output=True, text=True, timeout=60)
+        s = subprocess.run(["git", "show", "FETCH_HEAD:release-plan.yaml"], capture_output=True, text=True, timeout=60)
         if s.returncode != 0:
             raise FleetError("plan-unreadable", redact(s.stderr.strip()[:200]))
         text = s.stdout
@@ -527,8 +527,8 @@ def _plan_from(args) -> dict:
         fep.validate(plan)
     except Exception as e:
         raise FleetError("plan-invalid", redact(str(e).splitlines()[0] if str(e) else type(e).__name__))
-    if plan.get("programme") != args.programme:
-        raise FleetError("plan-invalid", "the plan names another programme")
+    if plan.get("epic") != args.epic:
+        raise FleetError("plan-invalid", "the plan names another epic")
     return plan
 
 
@@ -550,7 +550,7 @@ def main(argv=None, transport=None, env=None, identity=None) -> int:
         sub.add_parser(v)
     for v in ("claim", "heartbeat", "status", "transition"):
         p = sub.add_parser(v)
-        p.add_argument("repo"), p.add_argument("programme"), p.add_argument("batch")
+        p.add_argument("repo"), p.add_argument("epic"), p.add_argument("batch")
         if v == "transition":
             p.add_argument("state")
             p.add_argument("--pr")
@@ -560,7 +560,7 @@ def main(argv=None, transport=None, env=None, identity=None) -> int:
     p.add_argument("--workers", required=True), p.add_argument("--reviewers", type=int, required=True)
     p.add_argument("--plan-max", type=int)
     p = sub.add_parser("build-next")
-    p.add_argument("repo"), p.add_argument("programme")
+    p.add_argument("repo"), p.add_argument("epic")
     p.add_argument("--plan-file"), p.add_argument("--plan-ref", action="store_true"), p.add_argument("--remote", default="origin")
     p.add_argument("--workers", required=True), p.add_argument("--reviewers", type=int, required=True)
     a = ap.parse_args(argv)
@@ -586,18 +586,18 @@ def main(argv=None, transport=None, env=None, identity=None) -> int:
         if a.verb == "arm-deck":
             out = fleet.arm_deck(worker)
         elif a.verb == "claim":
-            out = fleet.claim(worker, a.programme, a.batch)
+            out = fleet.claim(worker, a.epic, a.batch)
         elif a.verb == "heartbeat":
-            out = fleet.heartbeat(worker, a.programme, a.batch)
+            out = fleet.heartbeat(worker, a.epic, a.batch)
         elif a.verb == "transition":
-            out = fleet.transition(worker, a.programme, a.batch, a.state, a.pr)
+            out = fleet.transition(worker, a.epic, a.batch, a.state, a.pr)
         elif a.verb == "status":
-            out = fleet.status(a.programme, a.batch)
+            out = fleet.status(a.epic, a.batch)
         else:
             if bool(a.plan_file) == bool(a.plan_ref):
                 raise FleetError("bad-plan", "give exactly one of --plan-file or --plan-ref")
             plan = _plan_from(a)
-            cap = fleet_capacity(_ints(a.workers), a.reviewers, plan.get("max_concurrent"))
+            cap = fleet_capacity(_ints(a.workers), a.reviewers, plan.get("wip_limit"))
             out = build_next(fleet, worker, plan, cap)
         print(json.dumps(out, sort_keys=True))
         return 2 if out.get("result") in ("lost", "deck-slot-full", "conflict", "not_holder", "missing") else 0

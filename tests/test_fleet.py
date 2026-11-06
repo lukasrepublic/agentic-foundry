@@ -235,20 +235,20 @@ def test_transitions_record_review_ready_and_a_pr_and_only_the_holder_may_make_t
     assert e.value.reason == "bad-pr"
 
 
-@pytest.mark.parametrize("programme,batch,reason", [
-    ("../x", "b", "bad-programme"), ("p", "a/b", "bad-batch"), ("p", "..", "bad-batch"), ("p", "x.lock", "bad-batch"),
-    ("p q", "b", "bad-programme"), ("", "b", "bad-programme"), ("p", "b\nrefs/heads/main", "bad-batch"),
+@pytest.mark.parametrize("epic,batch,reason", [
+    ("../x", "b", "bad-epic"), ("p", "a/b", "bad-batch"), ("p", "..", "bad-batch"), ("p", "x.lock", "bad-batch"),
+    ("p q", "b", "bad-epic"), ("", "b", "bad-epic"), ("p", "b\nrefs/heads/main", "bad-batch"),
     ("p", "-rf", "bad-batch"),
 ])
-def test_claim_refs_are_confined_to_validated_segments(programme, batch, reason):
+def test_claim_refs_are_confined_to_validated_segments(epic, batch, reason):
     gh = FakeGitHub()
     f, _ = mk_fleet(gh)
     with pytest.raises(ff.FleetError) as e:
-        f.claim(worker(), programme, batch)
+        f.claim(worker(), epic, batch)
     assert e.value.reason == reason and gh.calls == [] and gh.refs == {}
 
 
-def test_every_ref_the_fleet_writes_is_under_claim_programme_batch():
+def test_every_ref_the_fleet_writes_is_under_claim_epic_batch():
     gh = FakeGitHub()
     f, _ = mk_fleet(gh)
     f.claim(worker(), "prog", "w1-x")
@@ -382,15 +382,15 @@ def test_capacity_refuses_bad_numbers(workers, reviewers):
         ff.fleet_capacity(workers, reviewers)
 
 
-PLAN = {"programme": "prog", "open_wave": 1, "max_concurrent": 3, "held": ["z"], "critical_path": [],
+PLAN = {"epic": "prog", "open_increment": 1, "wip_limit": 3, "held": ["z"], "critical_path": [],
         "generated_from": {"node_ids": [], "corpus_sha256": "0" * 64},
-        "waves": [{"n": 1, "batches": [{"id": "w1-a", "atoms": ["a"], "paths": ["a"], "total_float": 0},
+        "increments": [{"n": 1, "batches": [{"id": "w1-a", "atoms": ["a"], "paths": ["a"], "total_float": 0},
                                         {"id": "w1-b", "atoms": ["b"], "paths": ["b"], "total_float": 0},
                                         {"id": "w1-z", "atoms": ["z"], "paths": ["z"], "total_float": 0}]},
                   {"n": 2, "batches": [{"id": "w2-c", "atoms": ["c"], "paths": ["c"], "total_float": 0}]}]}
 
 
-def test_builder_mode_claims_one_batch_of_the_open_wave_skips_held_and_never_touches_the_plan():
+def test_builder_mode_claims_one_batch_of_the_open_increment_skips_held_and_never_touches_the_plan():
     gh = FakeGitHub()
     f, _ = mk_fleet(gh)
     import copy
@@ -403,7 +403,7 @@ def test_builder_mode_claims_one_batch_of_the_open_wave_skips_held_and_never_tou
     assert plan == PLAN                                       # never re-plans or edits the plan
     assert sorted(gh.refs) == ["refs/heads/claim/prog/w1-a", "refs/heads/claim/prog/w1-b"]
     assert ff.build_next(f, w1, plan, 2)["result"] == "held"
-    assert ff.build_next(f, w3, {**plan, "open_wave": 9}, 5)["result"] == "none"
+    assert ff.build_next(f, w3, {**plan, "open_increment": 9}, 5)["result"] == "none"
 
 
 def test_builder_mode_cap_comes_from_the_fleet_capacity_on_the_cli(tmp_path, monkeypatch):
@@ -532,7 +532,7 @@ def test_token_file_with_group_bits_is_refused_on_the_descriptor(tmp_path):
 
 @pytest.mark.parametrize("fn", [
     lambda: ff.check_repo(REPO + "\n"), lambda: ff.check_segment("w1-a\n", "batch"),
-    lambda: ff.check_segment("prog\n", "programme"), lambda: ff.claim_ref("prog", "w1-a\n"),
+    lambda: ff.check_segment("prog\n", "epic"), lambda: ff.claim_ref("prog", "w1-a\n"),
 ])
 def test_a_value_with_a_final_newline_is_refused(fn):
     with pytest.raises(ff.FleetError):

@@ -339,7 +339,7 @@ def run_checks(pr: dict, ticket: dict, project: Path, plugin: Path, today: str |
     view = ft.design_view(body, (ticket or {}).get("labels") or [], gv=gv, root=base)
     design = view["design"]
     governed = [f for f in changed if ft._matches_any(gv, f, gv["design_globs"]) or ft._matches_any(gv, f, gv["sec_globs"])]
-    needs_design = bool(governed) or view["design_required"]
+    needs_design = bool(governed) or view["ready_check_required"]
     if needs_design:
         defects = ft.design_defects(ft.parse_sections(body), gv)
         add("design-present", not any(d.startswith(("no `## Design`", "`## Design` cites no")) for d in defects),

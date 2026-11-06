@@ -1,20 +1,20 @@
 # How to run builders across machines (`foundry_fleet.py`)
 
-A **programme** can have builders on more than one machine. Each builder is one worker session. A worker claims
-one **batch** of the execution plan, builds it, opens one PR and records `review_ready`. This page covers the
+A **epic** can have builders on more than one machine. Each builder is one worker session. A worker claims
+one **batch** of the release plan, builds it, opens one PR and records `review_ready`. This page covers the
 claim, the lease, the worker id, the deck slots and the fleet capacity.
 
 ## The claim
 
-A claim is the creation of the ref `refs/heads/claim/<programme>/<batch>`. GitHub makes the create atomic:
+A claim is the creation of the ref `refs/heads/claim/<epic>/<batch>`. GitHub makes the create atomic:
 the create status `201` means you won the batch, and `422` means somebody else holds it (report `lost`).
 
 ```
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_fleet.py" claim <owner>/<repo> <programme> <batch>
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_fleet.py" claim <owner>/<repo> <epic> <batch>
 ```
 
 The ref points at a commit. The commit message holds the claim record: worker id, state, heartbeat time.
-The programme and batch names are checked before any ref name is built. Only refs under `claim/<programme>/<batch>`
+The epic and batch names are checked before any ref name is built. Only refs under `claim/<epic>/<batch>`
 are ever written.
 
 ## Heartbeat, transitions and takeover
@@ -52,15 +52,15 @@ the script stops with `external-provisioning`. The operator holds the App identi
 - `arm-deck` takes one of two slots of this machine. A deck claim title starts with `deck:`. When both slots hold a
   live claim, it reports `deck-slot-full` and the deck does not arm.
 - `--workers` and `--reviewers` are CLI flags, not policy keys. `capacity --workers 2,2 --reviewers 3` prints `min(sum of max_concurrent_per_worker, reviewer capacity)`. The open
-  group of the plan never runs more batches than this value or the plan's `max_concurrent`.
+  group of the plan never runs more batches than this value or the plan's `wip_limit`.
 
 ## Builder mode
 
 ```
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_fleet.py" build-next <owner>/<repo> <programme> --plan-ref --workers 2,2 --reviewers 3
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_fleet.py" build-next <owner>/<repo> <epic> --plan-ref --workers 2,2 --reviewers 3
 ```
 
-It reads the plan, skips held atoms, claims one batch of the `open_wave` inside the capacity and prints it. It
+It reads the plan, skips held atoms, claims one batch of the `open_increment` inside the capacity and prints it. It
 never re-plans and never edits the plan. Results: `claimed`, `held` (you already hold one), `at-capacity` and `none`.
 After the build and the PR, run `transition ... review_ready --pr <url>`.
 

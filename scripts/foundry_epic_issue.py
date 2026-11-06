@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
-"""foundry_programme_issue -- the programme issue and the Project status update (dl-06, /foundry:command-deck).
+"""foundry_epic_issue -- the epic issue and the Project status update (dl-06, /foundry:command-deck).
 
-    foundry_programme_issue.py render        <programme> (--plan <execution-plan.yaml> | --plan-ref) [options]
-    foundry_programme_issue.py publish       <programme> --issue <owner/repo#N> (--plan F | --plan-ref) [options]
-    foundry_programme_issue.py overrides     <programme> --issue <owner/repo#N>
-    foundry_programme_issue.py status-update <programme> --project <owner/number> (--plan F | --plan-ref) [options]
+    foundry_epic_issue.py render        <epic> (--plan <release-plan.yaml> | --plan-ref) [options]
+    foundry_epic_issue.py publish       <epic> --issue <owner/repo#N> (--plan F | --plan-ref) [options]
+    foundry_epic_issue.py overrides     <epic> --issue <owner/repo#N>
+    foundry_epic_issue.py status-update <epic> --project <owner/number> (--plan F | --plan-ref) [options]
 
 Options: --states <json>   {"states": {atom: merged|in review|building|ready|blocked|held|parked},
                             "parked": [{"item", "reason"}]}  (the tick's view; absent: held / ready / blocked from the plan)
-         --report <md>     the four-block report text (written by `foundry_deck_report.py --programme-issue`); it MUST end
+         --report <md>     the four-block report text (written by `foundry_deck_report.py --epic-issue`); it MUST end
                            with the cost line, or the render is refused (S5 rule 7)
          --existing-body <md>   the current issue body (render only; publish reads it from GitHub)
          --cost-log <log>  the deck cost log; a cost-without-progress stall there makes the status OFF_TRACK
          --dry-run         print what would be sent; send nothing
 
-RENDER rebuilds the parent-issue body from the execution plan: a header line (done/total, open wave), the waves with
+RENDER rebuilds the parent-issue body from the release plan: a header line (done/total, open increment), the increments with
 their batches and atom states, the critical path, the parked items, the latest report, and an override block of
 checkboxes with hidden markers: `- [ ] <!-- hold:<atom> -->`, `- [ ] <!-- release-hold:<atom> -->`,
-`- [ ] <!-- pause-wave:<n> -->`. A box the operator checked is read from the existing body and kept checked; a
+`- [ ] <!-- pause-increment:<n> -->`. A box the operator checked is read from the existing body and kept checked; a
 regenerate never clears it (a marker that left the plan stays, checked). PUBLISH edits the issue body only when the
 rendered body differs from the live one. STATUS-UPDATE posts ONE Project status update: COMPLETE (every atom merged),
-OFF_TRACK (a stall is recorded), AT_RISK (the critical path has an unstarted batch and the open wave is empty), else
+OFF_TRACK (a stall is recorded), AT_RISK (the critical path has an unstarted batch and the open increment is empty), else
 ON_TRACK; the body is the report text. OVERRIDES prints the checked boxes as JSON (the tick reads it before dispatch).
 
 OUTAGE. When GitHub is unreachable, the plan file (or the local planner ref) is the only source: render from it, keep
@@ -45,18 +45,18 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import foundry_deck_report as _dr  # noqa: E402
-import foundry_execution_plan as _ep  # noqa: E402
+import foundry_release_plan as _ep  # noqa: E402
 import foundry_message_log as _fml  # noqa: E402
 
 STATES = ("merged", "in review", "building", "ready", "blocked", "held", "parked")
 STATUSES = ("ON_TRACK", "AT_RISK", "OFF_TRACK", "COMPLETE")
 OUTAGE_LINE = "outage: rendered from cached plan"
-MARK_RE = re.compile(r"^- \[([ xX])\] <!-- (hold|release-hold|pause-wave):([A-Za-z0-9._#/-]+) -->", re.M)
+MARK_RE = re.compile(r"^- \[([ xX])\] <!-- (hold|release-hold|pause-increment):([A-Za-z0-9._#/-]+) -->", re.M)
 ISSUE_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._-]+)#(\d+)$")
 PROJECT_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9-]*)/(\d+)$")
 MAX_BODY = 60000           # GitHub's issue body limit is 65536
 TOTAL_RE = re.compile(r"<!-- foundry-total:(\d+) -->")
-BODY_BEGIN = "<!-- foundry-programme-issue:begin -->"
+BODY_BEGIN = "<!-- foundry-epic-issue:begin -->"
 
 
 class IssueError(Exception):
@@ -95,17 +95,17 @@ def gh_api(args, payload=None):
 # ---------------------------------------------------------------------------------------------
 # inputs
 # ---------------------------------------------------------------------------------------------
-def load_plan(programme, plan_path=None, plan_ref=False, cwd=None):
+def load_plan(epic, plan_path=None, plan_ref=False, cwd=None):
     if plan_path:
         try:
             plan = yaml.safe_load(Path(plan_path).read_text(encoding="utf-8"))
         except (OSError, yaml.YAMLError) as e:
             raise IssueError(f"cannot read plan {plan_path!r}: {type(e).__name__}")
     elif plan_ref:
-        r = subprocess.run(["git", "show", f"refs/heads/plan/{programme}:{_ep.PLAN_FILE}"], cwd=cwd or os.getcwd(),
+        r = subprocess.run(["git", "show", f"refs/heads/plan/{epic}:{_ep.PLAN_FILE}"], cwd=cwd or os.getcwd(),
                            capture_output=True, text=True, timeout=30)
         if r.returncode != 0:
-            raise IssueError(f"plan ref plan/{programme} is not readable (fail closed: no plan, no issue)")
+            raise IssueError(f"plan ref plan/{epic} is not readable (fail closed: no plan, no issue)")
         plan = yaml.safe_load(r.stdout)
     else:
         raise IssueError("give --plan <file> or --plan-ref")
@@ -115,8 +115,8 @@ def load_plan(programme, plan_path=None, plan_ref=False, cwd=None):
         _ep.validate(plan)
     except _ep.PlanError as e:
         raise IssueError(str(e))
-    if plan.get("programme") != programme:
-        raise IssueError(f"the plan is for {plan.get('programme')!r}, not {programme!r}")
+    if plan.get("epic") != epic:
+        raise IssueError(f"the plan is for {plan.get('epic')!r}, not {epic!r}")
     return plan
 
 
@@ -143,8 +143,8 @@ def _neutral(text):
 
 
 def read_overrides(body):
-    """-> {"hold": [...], "release-hold": [...], "pause-wave": [...]} for the CHECKED boxes, plus "all" markers."""
-    checked = {"hold": [], "release-hold": [], "pause-wave": []}
+    """-> {"hold": [...], "release-hold": [...], "pause-increment": [...]} for the CHECKED boxes, plus "all" markers."""
+    checked = {"hold": [], "release-hold": [], "pause-increment": []}
     seen = []
     for m in MARK_RE.finditer(_override_section(body)):
         seen.append((m.group(2), m.group(3)))
@@ -154,7 +154,7 @@ def read_overrides(body):
 
 
 def _atoms(plan):
-    return [(w["n"], b, a) for w in plan["waves"] for b in w["batches"] for a in b["atoms"]]
+    return [(w["n"], b, a) for w in plan["increments"] for b in w["batches"] for a in b["atoms"]]
 
 
 def prior_total(body):
@@ -177,7 +177,7 @@ def totals(plan, st, states=None, prior=0):
 
 
 def atom_states(plan, states=None, checked=None):
-    """-> {atom: state}. The caller's `states` win; a missing atom is held / ready (open wave) / blocked. A checked
+    """-> {atom: state}. The caller's `states` win; a missing atom is held / ready (open increment) / blocked. A checked
     `hold:` box holds the atom, a checked `release-hold:` box releases a plan hold."""
     given = dict((states or {}).get("states") or {})
     held = set(plan.get("held") or [])
@@ -192,13 +192,13 @@ def atom_states(plan, states=None, checked=None):
         if a in held and s in (None, "ready", "blocked"):
             s = "held"
         elif s is None:
-            s = "ready" if n == plan.get("open_wave") else "blocked"
+            s = "ready" if n == plan.get("open_increment") else "blocked"
         out[a] = s
     return out
 
 
-def _open_wave(plan, st):
-    for w in plan["waves"]:
+def _open_increment(plan, st):
+    for w in plan["increments"]:
         if any(st[a] != "merged" for b in w["batches"] for a in b["atoms"]):
             return w["n"]
     return None
@@ -211,13 +211,13 @@ def status_for(plan, st, stalled=False, done_total=None):
         return "COMPLETE"
     if stalled:
         return "OFF_TRACK"
-    n = _open_wave(plan, st)
-    wave_atoms = [a for w in plan["waves"] if w["n"] == n for b in w["batches"] for a in b["atoms"]]
+    n = _open_increment(plan, st)
+    wave_atoms = [a for w in plan["increments"] if w["n"] == n for b in w["batches"] for a in b["atoms"]]
     empty = not any(st[a] in ("ready", "building", "in review") for a in wave_atoms)
     crit = set(plan.get("critical_path") or [])
     unstarted = any(b["id"] in crit and all(st[a] in ("ready", "blocked", "held", "parked") for a in b["atoms"])
                     and not all(st[a] == "merged" for a in b["atoms"])
-                    for w in plan["waves"] for b in w["batches"])
+                    for w in plan["increments"] for b in w["batches"])
     return "AT_RISK" if (unstarted and empty) else "ON_TRACK"
 
 
@@ -240,14 +240,14 @@ def render_body(plan, states=None, existing_body="", report=None):
     checked, seen = read_overrides(existing_body)
     st = atom_states(plan, states, checked)
     done, total = totals(plan, st, states, prior_total(existing_body))
-    wave = _open_wave(plan, st)
-    paused = {int(n) for n in checked["pause-wave"] if n.isdigit()}
-    out = [f"**{plan['programme']}: {done}/{total} done, open wave {wave if wave is not None else 'none'}**", "",
-           "_This body is rewritten each tick from the execution plan. Tick a box in the override block to give the "
-           "deck an instruction; a ticked box is never cleared._", "", "## Waves", ""]
-    for w in plan["waves"]:
+    increment = _open_increment(plan, st)
+    paused = {int(n) for n in checked["pause-increment"] if n.isdigit()}
+    out = [f"**{plan['epic']}: {done}/{total} done, open increment {increment if increment is not None else 'none'}**", "",
+           "_This body is rewritten each tick from the release plan. Tick a box in the override block to give the "
+           "deck an instruction; a ticked box is never cleared._", "", "## Increments", ""]
+    for w in plan["increments"]:
         tag = " (paused)" if w["n"] in paused else ""
-        out.append(f"### Wave {w['n']}{tag}")
+        out.append(f"### Increment {w['n']}{tag}")
         for b in w["batches"]:
             out.append(f"- batch `{b['id']}` (float {b['total_float']})")
             for a in b["atoms"]:
@@ -266,14 +266,14 @@ def render_body(plan, states=None, existing_body="", report=None):
         out.append("- " + _neutral(_clean(item)) + (f" -- {_neutral(_clean(why))}" if why else ""))
     out += ["", "## Overrides", ""]
     wanted = [("hold", a) for a in st] + [("release-hold", a) for a in sorted(set(plan.get("held") or []))] \
-        + [("pause-wave", str(w["n"])) for w in plan["waves"]]
+        + [("pause-increment", str(w["n"])) for w in plan["increments"]]
     for kind, name in seen:                       # a marker that left the plan stays (checked or not)
         if (kind, name) not in wanted:
             wanted.append((kind, name))
     for kind, name in wanted:
         box = "x" if name in checked[kind] else " "
         label = {"hold": f"Hold `{name}`", "release-hold": f"Release the hold on `{name}`",
-                 "pause-wave": f"Pause wave {name}"}[kind]
+                 "pause-increment": f"Pause increment {name}"}[kind]
         out.append(f"- [{box}] <!-- {kind}:{name} --> {label}")
     if report is not None:
         out += ["", "## Latest tick report", "", "```text", _neutral(check_report(report)).replace("```", "'''"), "```"]
@@ -350,11 +350,11 @@ def _read_text(path):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="foundry_programme_issue.py", description=__doc__.split("\n")[0])
+    ap = argparse.ArgumentParser(prog="foundry_epic_issue.py", description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="verb", required=True)
     for name in ("render", "publish", "overrides", "status-update"):
         p = sub.add_parser(name)
-        p.add_argument("programme")
+        p.add_argument("epic")
         p.add_argument("--plan")
         p.add_argument("--plan-ref", action="store_true")
         p.add_argument("--states")
@@ -366,13 +366,13 @@ def main(argv=None):
         p.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
     try:
-        if not _ep.PROGRAMME_RE.match(a.programme):
-            raise IssueError(f"programme name {a.programme!r} is not a plain name")
+        if not _ep.PROGRAMME_RE.match(a.epic):
+            raise IssueError(f"epic name {a.epic!r} is not a plain name")
         if a.verb == "overrides":
             checked, _ = read_overrides(fetch_issue_body(_issue_ref(a.issue)))
             print(json.dumps(checked, sort_keys=True))
             return 0
-        plan = load_plan(a.programme, a.plan, a.plan_ref)
+        plan = load_plan(a.epic, a.plan, a.plan_ref)
         states = _read_json(a.states) if a.states else None
         report = _read_text(a.report) if a.report else None
         if a.verb == "render":
@@ -411,7 +411,7 @@ def main(argv=None):
         return 0
     except (IssueError, _dr.Refused, _ep.PlanError, OSError, subprocess.TimeoutExpired, KeyError, TypeError) as e:
         msg = "; ".join(getattr(e, "errors", None) or [str(e)]) or type(e).__name__
-        print(f"foundry_programme_issue: refused: {_fml.redact(msg).splitlines()[0]}", file=sys.stderr)
+        print(f"foundry_epic_issue: refused: {_fml.redact(msg).splitlines()[0]}", file=sys.stderr)
         return 2
 
 
