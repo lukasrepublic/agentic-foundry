@@ -594,3 +594,21 @@ def test_the_claim_cli_refuses_with_session_id_missing_when_no_session_id_is_set
     assert ft.load_claims(ws) == {}
     monkeypatch.setenv("FOUNDRY_SESSION_ID", "test-terminal")      # an explicit human-terminal id is accepted
     assert run_cli(["claim", "2", "--trust-author"], gh)[0] == 0
+
+
+def test_reconcile_runs_and_prints_verdicts_with_no_session_id_set(ws, monkeypatch):
+    gh = td.claimed(ws)
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.delenv("FOUNDRY_SESSION_ID", raising=False)
+    rc, out, err = run_cli(["reconcile", "2", "--json"], with_perm(gh, "write"))
+    assert rc == 0 and "session-id-missing" not in err
+    r = json.loads(out)["results"][0]
+    assert (r["stop_dispatch"], r["reason"], r["issue"]) == (False, "authorized", td.KEY)
+
+
+def test_lead_check_runs_without_a_session_id_and_owns_no_lease(ws, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.delenv("FOUNDRY_SESSION_ID", raising=False)
+    rc, out, err = run_cli(["lead", "check"], None)
+    assert rc == 0 and json.loads(out)["lease"] == "none"
+    assert run_cli(["lead", "acquire", "--op-id", "op_example"], None)[0] == 2        # a writing action still refuses

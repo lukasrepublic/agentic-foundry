@@ -1796,7 +1796,12 @@ def cmd_reconcile(args: list[str], run, now: float) -> int:
         print(f"reconcile: {hb_refused}", file=sys.stderr)
     else:
         try:   # B5: a reconcile is a heartbeat for every claim THIS session holds (never another session's)
-            beat = store.heartbeat_claims(root, _session_id(root, a.session_id, socket.gethostname()), now)
+            sid_hb = _session_id(root, a.session_id, socket.gethostname(), required=False)
+            if sid_hb:
+                beat = store.heartbeat_claims(root, sid_hb, now)
+            else:       # read-only without a session id: this caller owns no lease, so there is nothing to refresh
+                print("reconcile: no session id is set, so no heartbeat was written; the verdicts below are still reported",
+                      file=sys.stderr)
         except store.ClaimsUnreadable as e:
             print(f"reconcile: claims-unreadable - not heartbeating ({store.redact(str(e))})", file=sys.stderr)
     results, cause = [], None
@@ -1889,12 +1894,12 @@ def _epoch(iso) -> float:
         return 0.0
 
 
-def _session_id(root: Path, flag: str | None, host: str) -> str:
+def _session_id(root: Path, flag: str | None, host: str, required: bool = True) -> str:
     """--session-id (explicit beats ambient), else CLAUDE_CODE_SESSION_ID, else an explicit FOUNDRY_SESSION_ID (a human
     terminal). dl-11: with none of them the verb refuses with `session-id-missing`; there is no per-clone or host:user id."""
     sid = flag or store.current_session_id(root)
-    if sid:
-        return sid
+    if sid or not required:
+        return sid          # a read-only verb passes required=False: no session id means it owns no lease
     print("foundry-ticket: session-id-missing: set CLAUDE_CODE_SESSION_ID (a Claude Code session) or FOUNDRY_SESSION_ID "
           "(a human terminal), or pass --session-id. There is no per-clone fallback. Nothing was recorded.", file=sys.stderr)
     raise SystemExit(2)
@@ -1931,7 +1936,7 @@ def cmd_lead(args: list[str], now: float) -> int:
     root = project_root()
     path = store.lease_file(root)
     host = socket.gethostname()
-    sid = _session_id(root, a.session_id, host)
+    sid = _session_id(root, a.session_id, host, required=a.action != "check")
     if a.action in ("acquire", "renew"):
         try:
             store.ensure_runtime_dir(root)     # confined to the workspace + a `*` .gitignore, like the inbox runtime file

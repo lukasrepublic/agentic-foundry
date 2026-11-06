@@ -571,6 +571,7 @@ def test_claim_refuses_when_the_claims_file_is_unreadable(tmp_path, monkeypatch,
 
 
 def test_claim_emits_the_start_marker_with_the_canonical_case_target(tmp_path, monkeypatch):
+    monkeypatch.setenv("FOUNDRY_SESSION_ID", "test-terminal")      # fixture: claim is a writing verb
     root = _repo(tmp_path)
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(root))
     target = {"repo": "o/r", "number": 7, "assignees": ["me"], "status": "ready", "blocked_by": [], "state": "OPEN"}
