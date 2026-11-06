@@ -76,7 +76,7 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_architecture_derive.py:*)",
       "tier": "ask",
-      "rationale": "writes draft files (an ecosystem layers contract, docs/architecture/workspace.dsl, docs/decisions drafts) into the working tree and runs the ecosystem extraction tools (depcruise, tofu show -json of a given plan, helm template); --dry-run prints the plan only; it never writes a baseline and never applies infrastructure (dl-19)"
+      "rationale": "writes draft files (an ecosystem layers contract, docs/architecture/workspace.dsl, docs/decisions drafts) into the working tree and runs the ecosystem extraction tools (depcruise, tofu show -json of a given plan, helm template); --dry-run prints the plan only; --helm-chart and --kustomize take only a local directory inside the repo, but kustomize may still follow remote resources named in a kustomization, so the operator approves each run; it never writes a baseline and never applies infrastructure (dl-19)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_resources.py:*)",

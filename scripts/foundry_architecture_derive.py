@@ -17,11 +17,14 @@ the contract (`.importlinter` or `.dependency-cruiser.cjs`), docs/architecture/w
 with a `source` property), retroactive MADR drafts and a confirmation checklist. This script never writes a baseline,
 never applies infrastructure and refuses a dirty tracked tree.
 
-Exit: 0 ok, 1 a tool was missing or failed (a reported gap), 2 refused (dirty tree, not a git repo, bad input).
+Exit: 0 ok, 1 a tool was missing or failed (a reported gap), 2 refused (dirty tree, not a git repo, bad or malformed input).
+Names with quotes, backticks, backslashes or control characters are rejected and reported; drafts are never written through a symlink.
 """
 import argparse
 import datetime
 import importlib
+import importlib.util
+import os
 import json
 import re
 import shutil
@@ -70,6 +73,46 @@ class CouldNotLook(Exception):
         self.tool, self.why = tool, why
 
 
+_BAD_NAME = re.compile("[\\x00-\\x1f\\x7f\\x85\\u2028\\u2029\"'`\\\\]")
+
+
+def clean(name, rejected, where):
+    """True when NAME is a safe, non-empty string. A rejected name is recorded, never silently dropped."""
+    if isinstance(name, str) and name and not _BAD_NAME.search(name):
+        return True
+    rejected.append((where, repr(name)[:80]))
+    return False
+
+
+def display_path(repo, p):
+    """A repo-relative path, or the basename when the file lies outside the repo (never an absolute local path)."""
+    try:
+        return Path(p).resolve().relative_to(Path(repo).resolve()).as_posix()
+    except (ValueError, OSError):
+        return Path(p).name
+
+
+def option_value(flag, value):
+    if value is not None and str(value).startswith("-"):
+        raise Refused(f"refused: {flag} value {value!r} starts with '-'")
+    return value
+
+
+def local_dir(repo, flag, value):
+    """A directory inside the repo, as a repo-relative path. No remote references."""
+    option_value(flag, value)
+    if "://" in str(value):
+        raise Refused(f"refused: {flag} must be a local directory inside the repo, not {value!r}")
+    p = (Path(repo) / value).resolve()
+    try:
+        rel = p.relative_to(Path(repo).resolve())
+    except ValueError:
+        raise Refused(f"refused: {flag} {value!r} is outside the repo")
+    if not p.is_dir():
+        raise Refused(f"refused: {flag} {value!r} is not a directory in the repo")
+    return rel.as_posix() or "."
+
+
 # ------------------------------------------------------------------------------------------ tools / git ----------
 
 def run_tool(argv, cwd=None):
@@ -100,7 +143,11 @@ def check_tree(repo):
         git(repo, "rev-parse", "--is-inside-work-tree")
     except CouldNotLook:
         raise Refused(f"refused: {repo} is not a git work tree")
-    if git(repo, "status", "--porcelain", "--untracked-files=no").strip():
+    try:
+        dirty = git(repo, "status", "--porcelain", "--untracked-files=no").strip()
+    except CouldNotLook as e:
+        raise Refused(f"refused: cannot read the git status ({e.why})")
+    if dirty:
         raise Refused("refused: the tracked tree is dirty; commit or stash first")
 
 
@@ -112,10 +159,26 @@ def tracked_files(repo):
 
 
 def import_grimp():
+    """Presence check only. Grimp itself runs in an isolated subprocess (see python_from_grimp)."""
     try:
-        return importlib.import_module("grimp")   # optional: the ecosystem tool, not a plugin dependency
-    except ImportError:
+        return importlib.util.find_spec("grimp")
+    except (ImportError, ValueError):
         return None
+
+
+_GRIMP_SCRIPT = (
+    "import json, sys\n"
+    "pkg, repo = sys.argv[1], sys.argv[2]\n"
+    "sys.path.append(repo)\n"
+    "sys.path.append(repo + '/src')\n"
+    "try:\n"
+    "    import grimp\n"
+    "except ImportError:\n"
+    "    sys.exit(3)\n"
+    "g = grimp.build_graph(pkg, include_external_packages=True, cache_dir=None)\n"
+    "edges = [{'from': m, 'to': d} for m in sorted(g.modules) for d in sorted(g.find_modules_directly_imported_by(m))]\n"
+    "json.dump({'root_package': pkg, 'edges': edges}, sys.stdout)\n"
+)
 
 
 # ------------------------------------------------------------------------------------------ extraction ----------
@@ -128,33 +191,38 @@ def load_json(path):
 
 
 def python_from_grimp(pkg, repo):
-    grimp = import_grimp()
-    if grimp is None:
+    option_value("--python-package", pkg)
+    if import_grimp() is None:
         raise CouldNotLook("grimp", "not importable")
-    sys.path.insert(0, str(repo))
-    sys.path.insert(0, str(Path(repo) / "src"))
+    # -I: no PYTHON* environment, no user site, no cwd on the path; -B: no bytecode; cache_dir=None: Grimp writes no cache.
     try:
-        g = grimp.build_graph(pkg, include_external_packages=True)
-    except Exception as e:  # grimp raises several error types
-        raise CouldNotLook("grimp", str(e)[:200])
-    finally:
-        del sys.path[:2]
-    edges = []
-    for m in sorted(g.modules):
-        for d in sorted(g.find_modules_directly_imported_by(m)):
-            edges.append({"from": m, "to": d})
-    return {"root_package": pkg, "edges": edges}
+        p = subprocess.run([sys.executable, "-I", "-B", "-c", _GRIMP_SCRIPT, pkg, str(repo)], cwd=str(repo),
+                           capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise CouldNotLook("grimp", str(e))
+    if p.returncode != 0:
+        raise CouldNotLook("grimp", "not importable" if p.returncode == 3 else f"exit {p.returncode}: {p.stderr.strip()[:200]}")
+    try:
+        return json.loads(p.stdout)
+    except ValueError:
+        raise CouldNotLook("grimp", "output is not JSON")
 
 
-def normalise_python(doc):
+def normalise_python(doc, rejected):
     root = doc.get("root_package")
-    if not root or not isinstance(doc.get("edges"), list):
-        raise Refused("refused: python graph needs root_package and edges")
+    if not clean(root, rejected, "python root package"):
+        raise Refused("refused: python graph needs a plain root_package")
+    if not isinstance(doc.get("edges"), list):
+        raise Refused("refused: python graph needs edges")
     internal, external = {}, {}
     mods = set()
     for e in doc["edges"]:
+        if not isinstance(e, dict) or not isinstance(e.get("from"), str) or not isinstance(e.get("to"), str):
+            raise Refused("refused: every python graph edge needs a string from and to")
         a, b = e["from"], e["to"]
         if not (a == root or a.startswith(root + ".")):
+            continue
+        if not (clean(a, rejected, "python module") and clean(b, rejected, "python module")):
             continue
         mods.add(a)
         if b == root or b.startswith(root + "."):
@@ -163,8 +231,9 @@ def normalise_python(doc):
         else:
             external.setdefault(a, set()).add(b.split(".")[0])
     for m in doc.get("modules", []):
-        if m == root or m.startswith(root + "."):
+        if isinstance(m, str) and (m == root or m.startswith(root + ".")) and clean(m, rejected, "python module"):
             mods.add(m)
+
     def unit(m):
         parts = m.split(".")
         return f"{root}.{parts[1]}" if len(parts) > 1 else ROOT_UNIT
@@ -177,25 +246,34 @@ def js_pkg(name):
     return "/".join(parts[:2]) if name.startswith("@") and len(parts) > 1 else parts[0]
 
 
-def normalise_js(doc, source_dir):
+def normalise_js(doc, source_dir, rejected):
     if not isinstance(doc.get("modules"), list):
         raise Refused("refused: depcruise JSON needs a modules list")
+    if source_dir not in ("", ".") and not clean(source_dir, rejected, "js source dir"):
+        raise Refused("refused: --js-source must be a plain path")
     prefix = (source_dir.rstrip("/") + "/") if source_dir not in ("", ".") else ""
     internal, external, mods = {}, {}, set()
     for m in doc["modules"]:
+        if not isinstance(m, dict):
+            raise Refused("refused: every depcruise module must be an object")
         src = m.get("source", "")
-        if "node_modules/" in src or not src:
+        if "node_modules/" in src or not src or not clean(src, rejected, "js module"):
             continue
         mods.add(src)
         for d in m.get("dependencies", []):
+            if not isinstance(d, dict):
+                raise Refused("refused: every depcruise dependency must be an object")
             types = set(d.get("dependencyTypes", []))
             if types & {"npm", "npm-dev", "npm-optional", "npm-peer", "npm-bundled", "npm-no-pkg", "npm-unknown"}:
-                external.setdefault(src, set()).add(js_pkg(d.get("module") or d.get("resolved", "")))
+                pk = js_pkg(d.get("module") or d.get("resolved", ""))
+                if clean(pk, rejected, "js package specifier"):
+                    external.setdefault(src, set()).add(pk)
             elif "core" in types or d.get("coreModule"):
                 continue
-            elif d.get("resolved") and "node_modules/" not in d["resolved"]:
+            elif d.get("resolved") and "node_modules/" not in d["resolved"] and clean(d["resolved"], rejected, "js module"):
                 internal[(src, d["resolved"])] = internal.get((src, d["resolved"]), 0) + 1
                 mods.add(d["resolved"])
+
     def unit(m):
         rel = m[len(prefix):] if prefix and m.startswith(prefix) else m
         parts = rel.split("/")
@@ -297,21 +375,22 @@ def layer_externals(ext, plan):
 
 # ------------------------------------------------------------------------------------------ infra -----------------
 
-def tofu_resources(doc):
+def tofu_resources(doc, rejected):
     root = (doc.get("planned_values") or doc.get("values") or {}).get("root_module") or {}
     out = []
 
     def walk(mod):
         for r in mod.get("resources", []):
-            out.append({"address": r.get("address"), "type": r.get("type"), "name": r.get("name")})
+            if clean(r.get("address"), rejected, "tofu address") and clean(r.get("type"), rejected, "tofu type"):
+                out.append({"address": r["address"], "type": r["type"], "name": r.get("name")})
         for c in mod.get("child_modules", []):
             walk(c)
 
     walk(root)
-    return sorted((r for r in out if r["address"] and r["type"]), key=lambda r: r["address"])
+    return sorted(out, key=lambda r: r["address"])
 
 
-def read_manifests(paths):
+def read_manifests(paths, repo):
     docs = []
     files = []
     for p in paths:
@@ -320,43 +399,57 @@ def read_manifests(paths):
     for f in files:
         try:
             for d in yaml.safe_load_all(f.read_text(encoding="utf-8")):
-                if isinstance(d, dict) and d.get("kind") and d.get("metadata"):
-                    docs.append((str(f), d))
+                if isinstance(d, dict) and d.get("kind") and isinstance(d.get("metadata"), dict):
+                    docs.append((display_path(repo, f), d))
         except (OSError, yaml.YAMLError) as e:
-            raise Refused(f"refused: cannot read manifest {f}: {e}")
+            raise Refused(f"refused: cannot read manifest {display_path(repo, f)}: {type(e).__name__}")
     return docs
 
 
-def manifest_nodes(docs):
+def rendered_docs(tool, text, label):
+    try:
+        return [(label, d) for d in yaml.safe_load_all(text) if isinstance(d, dict) and d.get("kind")
+                and isinstance(d.get("metadata"), dict)]
+    except yaml.YAMLError:
+        raise CouldNotLook(tool, "output is not valid YAML")
+
+
+def manifest_nodes(docs, rejected):
     nodes = []
     for f, d in docs:
         kind, name = d["kind"], d["metadata"].get("name")
         ns = d["metadata"].get("namespace", "default")
-        if not name or kind not in WORKLOAD_KINDS | NETWORK_KINDS:
+        if kind not in WORKLOAD_KINDS | NETWORK_KINDS:
+            continue
+        if not (clean(kind, rejected, "manifest kind") and clean(name, rejected, "manifest name")
+                and clean(ns, rejected, "manifest namespace")):
             continue
         nodes.append({"kind": kind, "name": name, "ns": ns, "workload": kind in WORKLOAD_KINDS, "file": f})
     return sorted(nodes, key=lambda n: (n["ns"], n["kind"], n["name"]))
 
 
-def find_deployables(repo, files):
+def find_deployables(repo, files, rejected):
     out = []
     for f in files:
+        if not clean(f, rejected, "tracked file name"):
+            continue
         base = Path(f).name
         if base == "Dockerfile" or base.startswith("Dockerfile.") or base.endswith(".Dockerfile"):
             out.append({"name": (Path(f).parent.name or "root") + "-image", "technology": "Docker", "source": f})
         elif re.fullmatch(r"(docker-)?compose(\.[\w-]+)?\.ya?ml", base):
             try:
                 svcs = (yaml.safe_load((Path(repo) / f).read_text(encoding="utf-8")) or {}).get("services") or {}
-            except (OSError, yaml.YAMLError):
+            except (OSError, yaml.YAMLError, AttributeError):
                 svcs = {}
-            for s in sorted(svcs):
-                out.append({"name": s, "technology": "Docker Compose", "source": f"{f}#services.{s}"})
+            for s in sorted(svcs, key=str):
+                if clean(s, rejected, "compose service"):
+                    out.append({"name": s, "technology": "Docker Compose", "source": f"{f}#services.{s}"})
         elif base == "Chart.yaml":
             try:
                 n = (yaml.safe_load((Path(repo) / f).read_text(encoding="utf-8")) or {}).get("name")
-            except (OSError, yaml.YAMLError):
+            except (OSError, yaml.YAMLError, AttributeError):
                 n = None
-            if n:
+            if n and clean(str(n), rejected, "helm chart name"):
                 out.append({"name": str(n), "technology": "Helm", "source": f})
     return sorted(out, key=lambda d: (d["name"], d["source"]))
 
@@ -364,6 +457,7 @@ def find_deployables(repo, files):
 # ------------------------------------------------------------------------------------------ writers ---------------
 
 def q(s):
+    s = re.sub("[\\x00-\\x1f\\x7f\\x85\\u2028\\u2029]", " ", str(s))
     return '"' + str(s).replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
@@ -381,33 +475,39 @@ def render_importlinter(ext, plan, ext_by_layer):
     root = ext["root"]
     lines = ["# DRAFT import-linter contract derived by foundry_architecture_derive.py. Nothing enforces it until a human",
              "# confirms the layer order and names. Layers are listed top (may import the rest) to bottom.",
-             "# `a : b` marks units of one layer that may import each other (a detected cycle or equal-level siblings).",
+             "# `a : b` marks units that may import each other (a detected cycle); `a | b` marks independent units of one layer.",
              "[importlinter]", f"root_package = {root}", "include_external_packages = True", "",
              "[importlinter:contract:layers]", "name = Layers and allowed direction (DRAFT)", "type = layers", "layers ="]
     for layer in plan["layers"]:
-        lines.append("    " + " : ".join(layer["units"]))
+        # `:` only inside one cycle group (units that import each other); `|` between independent groups
+        lines.append("    " + " | ".join(" : ".join(g) for g in layer["groups"]))
     lines += ["", "# Observed external packages per layer (allowed-externals draft; confirm before enforcing):"]
     for i, layer in enumerate(plan["layers"]):
-        lines.append(f"#   {' : '.join(layer['units'])}: {', '.join(ext_by_layer[i]) or '(none observed)'}")
+        lines.append(f"#   {', '.join(layer['units'])}: {', '.join(ext_by_layer[i]) or '(none observed)'}")
     return "\n".join(lines) + "\n"
 
 
+def js(s):
+    """A JavaScript string literal. json.dumps output is valid JS and escapes quotes, backslashes, newlines and U+2028/9."""
+    return json.dumps(s)
+
+
 def render_depcruise(ext, plan, ext_by_layer):
-    prefix = (ext["root"].rstrip("/") + "/") if ext["root"] not in ("", ".") else ""
+    prefix = re.escape(ext["root"].rstrip("/") + "/") if ext["root"] not in ("", ".") else ""
     rules = ['    { name: "no-circular", severity: "error", from: {}, to: { circular: true } },']
     layers = plan["layers"]
     for i, layer in enumerate(layers):
         higher = [u for l in layers[:i] for u in l["units"]]
-        frm = "|".join(re.escape(u) for u in layer["units"])
+        frm = js(f"^{prefix}(" + "|".join(re.escape(u) for u in layer["units"]) + ")/")
         if higher:
-            to = "|".join(re.escape(u) for u in higher)
-            rules.append(f'    {{ name: "layer-{i + 1}-not-to-higher", severity: "error", '
-                         f'from: {{ path: "^{prefix}({frm})/" }}, to: {{ path: "^{prefix}({to})/" }} }},')
+            to = js(f"^{prefix}(" + "|".join(re.escape(u) for u in higher) + ")/")
+            rules.append(f'    {{ name: "layer-{i + 1}-not-to-higher", severity: "error", from: {{ path: {frm} }}, to: {{ path: {to} }} }},')
         allowed = ext_by_layer[i]
-        pat = "|".join(re.escape(p) for p in allowed) if allowed else None
-        to_ext = '{ dependencyTypes: ["npm"]' + (f', pathNot: "node_modules/({pat})(/|$)"' if pat else "") + " }"
-        rules.append(f'    {{ name: "layer-{i + 1}-external-allowlist", severity: "error", '
-                     f'from: {{ path: "^{prefix}({frm})/" }}, to: {to_ext} }},')
+        to_ext = '{ dependencyTypes: ["npm"]'
+        if allowed:
+            to_ext += ", pathNot: " + js("node_modules/(" + "|".join(re.escape(p) for p in allowed) + ")(/|$)")
+        to_ext += " }"
+        rules.append(f'    {{ name: "layer-{i + 1}-external-allowlist", severity: "error", from: {{ path: {frm} }}, to: {to_ext} }},')
     return ("// DRAFT dependency-cruiser rules derived by foundry_architecture_derive.py. Not enforced until a human confirms\n"
             "// the layer order and the allowed external packages per layer. Layers are listed top to bottom in rule order.\n"
             "module.exports = {\n  forbidden: [\n" + "\n".join(rules) + "\n  ],\n  options: { doNotFollow: { path: \"node_modules\" } },\n};\n")
@@ -445,7 +545,9 @@ def render_dsl(repo_name, codebases, deployables, nodes, tofu, tofu_src):
         dn += element("deploymentNode", f"{n['ns']}/{n['kind']}/{n['name']}", f"{n['file']}#{n['kind']}/{n['name']}", 3,
                       [n["kind"]], ident_=ident("k8s", f"{n['ns']}_{n['kind']}_{n['name']}", used))
     if dn:
-        envs += element("deploymentEnvironment", "Live", "derive:infra-extraction", 2, children=dn)
+        # Structurizr DSL allows only group, deploymentGroup, deploymentNode and relationships inside an environment:
+        # no tags and no properties here. The deployment nodes carry the source.
+        envs += ['        deploymentEnvironment "Live" {'] + dn + ["        }"]
     views = ["    views {", f"        systemContext {sysid} {{", "            include *", "            autolayout lr", "        }",
              f"        container {sysid} {{", "            include *", "            autolayout lr", "        }"]
     if dn:
@@ -553,76 +655,137 @@ def autodetect_python_pkg(repo, files):
     return sorted(ok, key=lambda c: (-cands[c], c))
 
 
+def plan_target(repo, rel):
+    """The path a draft will be written to, inside the repo. Refuses symlinked parents and symlinked targets; an
+    existing target is never overwritten (the draft goes to <name>.derived)."""
+    repo = Path(repo)
+    root = repo.resolve()
+    cur = repo
+    for part in Path(rel).parts[:-1]:
+        cur = cur / part
+        if cur.is_symlink():
+            raise Refused(f"refused: {cur.relative_to(repo).as_posix()} is a symlink")
+        if os.path.lexists(cur) and not cur.is_dir():
+            raise Refused(f"refused: {cur.relative_to(repo).as_posix()} is not a directory")
+    if os.path.lexists(cur):
+        r = cur.resolve()
+        if r != root and root not in r.parents:
+            raise Refused(f"refused: {rel} resolves outside the repo")
+    final = rel
+    target = repo / rel
+    if target.is_symlink():
+        raise Refused(f"refused: {rel} is a symlink")
+    if os.path.lexists(target):
+        final = rel + ".derived"
+        if (repo / final).is_symlink():
+            raise Refused(f"refused: {final} is a symlink")
+    return final
+
+
+def write_draft(repo, rel, text):
+    target = Path(repo) / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | (os.O_TRUNC if os.path.lexists(target) else os.O_EXCL)
+    try:
+        fd = os.open(target, flags, 0o644)
+    except OSError as e:
+        raise Refused(f"refused: cannot create {rel}: {e.strerror}")
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(text)
+
+
 def derive(a):
     repo = Path(a.repo).resolve()
     check_tree(repo)
     files = tracked_files(repo)
-    gaps, codebases, notes = [], [], []
+    gaps, codebases, notes, details, rejected = [], [], [], {}, []
+
+    def gap(e):
+        token = f"could-not-look:{e.tool}"
+        gaps.append(token)
+        details[token] = e.why   # console only: tool output never reaches a committed draft
+
     for eco, msg in detect(repo, files).items():
         gaps.append(msg)
+    for flag, v in (("--python-package", a.python_package), ("--js-source", a.js_source), ("--tofu-plan", a.tofu_plan),
+                    ("--helm-chart", a.helm_chart), ("--kustomize", a.kustomize)):
+        option_value(flag, v)
 
     # python
     try:
         if a.python_graph:
-            codebases.append(normalise_python(load_json(a.python_graph)))
+            codebases.append(normalise_python(load_json(a.python_graph), rejected))
         else:
             pkg = a.python_package
             if not pkg and any(Path(f).name in ("pyproject.toml", "setup.py", "setup.cfg") for f in files):
-                cands = autodetect_python_pkg(repo, files)
+                cands = [c for c in autodetect_python_pkg(repo, files) if clean(c, rejected, "python package")]
                 pkg = cands[0] if cands else None
                 notes += [f"python: other packages not derived: {', '.join(cands[1:])}"] if len(cands) > 1 else []
             if pkg:
-                codebases.append(normalise_python(python_from_grimp(pkg, repo)))
+                codebases.append(normalise_python(python_from_grimp(pkg, repo), rejected))
     except CouldNotLook as e:
-        gaps.append(f"could-not-look:{e.tool}" + (f" ({e.why})" if e.why else ""))
+        gap(e)
 
     # js / ts
     try:
         if a.js_graph:
-            codebases.append(normalise_js(load_json(a.js_graph), a.js_source or "src"))
+            codebases.append(normalise_js(load_json(a.js_graph), a.js_source or "src", rejected))
         elif a.js_source or "package.json" in {Path(f).name for f in files} and not detect(repo, files).get("nx"):
-            src = a.js_source or ("src" if (repo / "src").is_dir() else ".")
-            out = run_tool(["depcruise", "-T", "json", "--no-config", src], cwd=str(repo))
+            src = local_dir(repo, "--js-source", a.js_source or ("src" if (repo / "src").is_dir() else "."))
+            out = run_tool(["depcruise", "-T", "json", "--no-config", "--", src], cwd=str(repo))
             try:
-                codebases.append(normalise_js(json.loads(out), src))
+                doc = json.loads(out)
             except ValueError:
                 raise CouldNotLook("depcruise", "output is not JSON")
+            codebases.append(normalise_js(doc, src, rejected))
     except CouldNotLook as e:
-        gaps.append(f"could-not-look:{e.tool}" + (f" ({e.why})" if e.why else ""))
+        gap(e)
 
     # infra
     tofu, tofu_src, docs = [], "", []
     try:
         if a.tofu_plan_json:
-            tofu, tofu_src = tofu_resources(load_json(a.tofu_plan_json)), str(a.tofu_plan_json)
+            tofu, tofu_src = tofu_resources(load_json(a.tofu_plan_json), rejected), display_path(repo, a.tofu_plan_json)
         elif a.tofu_plan:
-            tofu = tofu_resources(json.loads(run_tool(["tofu", "show", "-json", str(a.tofu_plan)], cwd=str(repo))))
-            tofu_src = str(a.tofu_plan)
+            plan_file = str(Path(a.tofu_plan).resolve())
+            tofu = tofu_resources(json.loads(run_tool(["tofu", "show", "-json", "--", plan_file], cwd=str(repo))), rejected)
+            tofu_src = display_path(repo, plan_file)
     except CouldNotLook as e:
-        gaps.append(f"could-not-look:{e.tool}" + (f" ({e.why})" if e.why else ""))
+        gap(e)
     except ValueError:
-        gaps.append("could-not-look:tofu (output is not JSON)")
+        gap(CouldNotLook("tofu", "output is not JSON"))
     try:
         if a.manifests:
-            docs += read_manifests(a.manifests)
+            docs += read_manifests(a.manifests, repo)
         if a.helm_chart:
-            rendered = run_tool(["helm", "template", str(a.helm_chart)], cwd=str(repo))
-            docs += [(f"helm:{a.helm_chart}", d) for d in yaml.safe_load_all(rendered) if isinstance(d, dict) and d.get("kind")]
+            chart = local_dir(repo, "--helm-chart", a.helm_chart)
+            docs += rendered_docs("helm", run_tool(["helm", "template", "--", chart], cwd=str(repo)), f"helm:{chart}")
         if a.kustomize:
-            rendered = run_tool(["kustomize", "build", str(a.kustomize)], cwd=str(repo))
-            docs += [(f"kustomize:{a.kustomize}", d) for d in yaml.safe_load_all(rendered) if isinstance(d, dict) and d.get("kind")]
+            kdir = local_dir(repo, "--kustomize", a.kustomize)
+            docs += rendered_docs("kustomize", run_tool(["kustomize", "build", "--", kdir], cwd=str(repo)), f"kustomize:{kdir}")
     except CouldNotLook as e:
-        gaps.append(f"could-not-look:{e.tool}" + (f" ({e.why})" if e.why else ""))
-    nodes = manifest_nodes(docs)
+        gap(e)
+    nodes = manifest_nodes(docs, rejected)
 
     cb = []
     for ext in codebases:
         plan = propose_layers(ext)
         if plan["layers"]:
             cb.append((ext, plan))
-    deployables = find_deployables(repo, files)
+    deployables = find_deployables(repo, files, rejected)
+    repo_name = repo.name if clean(repo.name, [], "") else "repo"
 
-    report = {"gaps": gaps, "notes": notes, "ecosystems": [], "deployment_nodes": len(tofu) + len(nodes)}
+    # rejected names are counted in the committed checklist and listed (truncated) on the console only
+    by_where = {}
+    for where, shown in rejected:
+        by_where.setdefault(where, []).append(shown)
+    for where in sorted(by_where):
+        token = f"rejected-name:{where} ({len(by_where[where])})"
+        gaps.append(token)
+        details[token] = ", ".join(sorted(set(by_where[where]))[:5])
+
+    report = {"gaps": gaps, "gap_details": details, "notes": notes, "ecosystems": [],
+              "deployment_nodes": len(tofu) + len(nodes)}
     for ext, plan in cb:
         report["ecosystems"].append({"ecosystem": ext["ecosystem"], "tool": ext["tool"], "layers": [l["units"] for l in plan["layers"]],
                                      "layer_detail": plan["layers"], "cycles": plan["cycles"], "unit_edges": plan["unit_edges"],
@@ -636,16 +799,12 @@ def derive(a):
         else:
             writes[".dependency-cruiser.cjs"] = render_depcruise(ext, plan, ebl)
     if cb or tofu or nodes:
-        writes[DSL_PATH] = render_dsl(repo.name, cb, deployables, nodes, tofu, tofu_src)
+        writes[DSL_PATH] = render_dsl(repo_name, cb, deployables, nodes, tofu, tofu_src)
         adrs = build_adrs(repo, cb, tofu, tofu_src)
         for p, t in adrs:
             writes[p] = t
         writes[CHECKLIST_PATH] = render_checklist(cb, report, [p for p, _ in adrs], bool(tofu or nodes))
-    # never overwrite an existing file: write the draft beside it
-    final = {}
-    for rel, text in writes.items():
-        target = repo / rel
-        final[rel + ".derived" if target.exists() else rel] = text
+    final = {plan_target(repo, rel): text for rel, text in writes.items()}
     report["writes"] = sorted(final)
     return repo, report, final
 
@@ -667,14 +826,15 @@ def main(argv=None):
     a = ap.parse_args(argv)
     try:
         repo, report, final = derive(a)
+        if not a.dry_run:
+            for rel, text in final.items():
+                write_draft(repo, rel, text)
     except Refused as e:
         print(str(e), file=sys.stderr)
         return 2
-    if not a.dry_run:
-        for rel, text in final.items():
-            p = repo / rel
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(text, encoding="utf-8")
+    except (KeyError, TypeError, AttributeError, ValueError, IndexError) as e:
+        print(f"refused: malformed input ({type(e).__name__}: {e})", file=sys.stderr)
+        return 2
     if a.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
@@ -684,7 +844,8 @@ def main(argv=None):
             for c in e["cycles"]:
                 print(f"  cycle finding: {', '.join(c['units'])} ({c['internal_edges']} edges); kept in one layer")
         for g in report["gaps"]:
-            print(f"  gap: {g}")
+            why = report["gap_details"].get(g)
+            print(f"  gap: {g}" + (f" ({why})" if why else ""))
         for n in report["notes"]:
             print(f"  note: {n}")
         for rel in report["writes"]:

@@ -4,8 +4,8 @@
   model_source_lint.py [FILE]      (default docs/architecture/workspace.dsl)
 
 Fails (exit 1, one line per finding naming the element and its line) on:
-  - an element (person, softwareSystem, container, component, deploymentEnvironment, deploymentNode,
-    infrastructureNode, containerInstance, softwareSystemInstance) with no non-empty `source` property
+  - an element (person, softwareSystem, container, component, deploymentNode, infrastructureNode,
+    containerInstance, softwareSystemInstance, element; keywords match case-insensitively) with no non-empty `source` property
   - an element still tagged `draft` once the workspace is marked confirmed
     (workspace-level `properties { "model-status" "confirmed" }`)
 An element is a model element the extraction produced; a name or description may be written by a person or a model,
@@ -15,10 +15,16 @@ import re
 import sys
 from pathlib import Path
 
-KINDS = ("person", "softwareSystem", "container", "component", "deploymentEnvironment", "deploymentNode",
-         "infrastructureNode", "containerInstance", "softwareSystemInstance")
-ELEMENT_RE = re.compile(r"^\s*(?:([\w.-]+)\s*=\s*)?(" + "|".join(KINDS) + r")\b\s*(\"(?:[^\"\\]|\\.)*\")?")
-QUOTED = re.compile(r"\"((?:[^\"\\]|\\.)*)\"")
+# deploymentEnvironment is not an element here: Structurizr DSL allows no tags or properties inside it.
+KINDS = ("person", "softwareSystem", "container", "component", "deploymentNode", "infrastructureNode",
+         "containerInstance", "softwareSystemInstance", "element")
+ELEMENT_RE = re.compile(r"^\s*(?:([\w.-]+)\s*=\s*)?(" + "|".join(KINDS) + r")\b\s*(\"(?:[^\"\\]|\\.)*\")?", re.I)
+TOKEN = re.compile(r"\"((?:[^\"\\]|\\.)*)\"|([^\s\",]+)")
+
+
+def tokens(line):
+    """Quoted and unquoted tokens alike (`tags draft` is the same as `tags "draft"`)."""
+    return [a if b == "" else b for a, b in TOKEN.findall(line)]
 
 
 def strip_comment(line):
@@ -48,7 +54,7 @@ def lint_text(text):
         if not line:
             continue
         opens, closes = line.count("{"), line.count("}")
-        m = None if any(fr.get("kind") in ("views", "configuration") for fr in stack) else ELEMENT_RE.match(line)
+        m = None if any(fr.get("kind", "").lower() in ("views", "configuration") for fr in stack) else ELEMENT_RE.match(line)
         if m:
             fr = {"kind": m.group(2), "name": (m.group(3) or '""').strip('"') or m.group(1) or m.group(2),
                   "line": no, "source": False, "draft": False, "element": True}
@@ -58,7 +64,7 @@ def lint_text(text):
             continue
         if opens and not closes:
             head = line.split("{")[0].strip().split()
-            stack.append({"kind": head[0] if head else "", "element": False})
+            stack.append({"kind": head[0].lower() if head else "", "element": False})
             continue
         if closes and not opens:
             for _ in range(closes):
@@ -69,16 +75,16 @@ def lint_text(text):
         top = stack[-1] if stack else None
         if top is None:
             continue
-        toks = QUOTED.findall(line)
-        word = line.split()[0]
-        if word == "tags" and len(stack) >= 1 and top.get("element"):
-            if "draft" in {t.strip() for tok in toks for t in tok.split(",")}:
+        toks = tokens(line)
+        word = toks[0].lower() if toks else ""
+        if word == "tags" and top.get("element"):
+            if "draft" in {y.strip().lower() for x in toks[1:] for y in x.split(",")}:
                 top["draft"] = True
-        elif top.get("kind") == "properties" and len(stack) >= 2:
+        elif top.get("kind") == "properties" and len(stack) >= 2 and len(toks) >= 2:
             parent = stack[-2]
-            if parent.get("element") and len(toks) >= 2 and toks[0] == "source" and toks[1].strip():
+            if parent.get("element") and toks[0] == "source" and toks[1].strip():
                 parent["source"] = True
-            elif not parent.get("element") and len(stack) == 2 and len(toks) >= 2 and toks[0] == "model-status" \
+            elif not parent.get("element") and len(stack) == 2 and toks[0].lower() == "model-status" \
                     and toks[1].strip().lower() == "confirmed":
                 confirmed = True
     for e in elements:

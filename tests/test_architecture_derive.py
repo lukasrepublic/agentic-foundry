@@ -4,6 +4,7 @@ plans come in as pre-computed JSON through the flags."""
 import importlib.util
 import json
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -129,7 +130,7 @@ def test_missing_depcruise_is_could_not_look_and_writes_no_contract(repo, monkey
     monkeypatch.setattr(D.shutil, "which", lambda name: None if name == "depcruise" else real(name))
     rc, rep = derive(repo, capsys=capsys)
     assert rc == 1
-    assert "could-not-look:depcruise (not installed)" in rep["gaps"]
+    assert "could-not-look:depcruise" in rep["gaps"] and rep["gap_details"]["could-not-look:depcruise"] == "not installed"
     assert not (repo / ".dependency-cruiser.cjs").exists()
 
 
@@ -192,7 +193,7 @@ def test_every_generated_element_is_draft_and_has_a_source(repo, capsys):
     _git(repo, "commit", "-q", "-m", "d")
     derive(repo, "--python-graph", FX / "python-graph.json", "--tofu-plan-json", FX / "tofu-plan.json", capsys=capsys)
     text = (repo / "docs/architecture/workspace.dsl").read_text()
-    n_el = len(re.findall(r"^\s*(?:[\w.]+ = )?(softwareSystem|container|component|deploymentEnvironment|deploymentNode) \"", text, re.M))
+    n_el = len(re.findall(r"^\s*(?:[\w.]+ = )?(softwareSystem|container|component|deploymentNode) \"", text, re.M))
     assert n_el >= 8
     assert len(re.findall(r'tags "draft"', text)) == n_el
     assert len(re.findall(r'"source" "[^"]+"', text)) == n_el
@@ -336,3 +337,314 @@ def test_intake_skill_runs_the_derive_step_between_select_and_baseline():
     pos = {k: sec.index(k) for k in ("**Select.**", "foundry_architecture_derive.py", "**Baseline.**")}
     assert pos["**Select.**"] < pos["foundry_architecture_derive.py"] < pos["**Baseline.**"]
     assert (ROOT / "docs/how-to/derive-architecture.md").is_file()
+
+
+# =============================================================================================================
+# Fix round (PR #327 review): B1 B2 and risks R-a to R-i
+# =============================================================================================================
+
+def write_json(tmp_path, name, doc):
+    p = tmp_path / name
+    p.write_text(json.dumps(doc))
+    return p
+
+
+def js_graph(units, ext=None):
+    """units: {"ui": ["services"], ...}; every unit is one file src/<unit>/f.ts."""
+    mods = []
+    for u, deps in units.items():
+        d = [{"resolved": f"src/{x}/f.ts", "dependencyTypes": ["local"]} for x in deps]
+        for pk in (ext or {}).get(u, []):
+            d.append({"resolved": f"node_modules/{pk}/i.js", "module": pk, "dependencyTypes": ["npm"]})
+        mods.append({"source": f"src/{u}/f.ts", "dependencies": d})
+    return {"modules": mods}
+
+
+def js_literals(cjs):
+    return [json.loads('"' + m + '"') for m in re.findall(r'"((?:[^"\\]|\\.)*)"', cjs)]
+
+
+# ---- B1: every JS string literal is built with json.dumps ----------------------------------------------------------
+
+def test_b1_js_patterns_round_trip_and_match_exactly_what_the_python_pattern_matches(repo, tmp_path, capsys):
+    g = write_json(tmp_path, "g.json", js_graph({"ui": ["a.b"], "a.b": ["c-d"], "c-d": []}, {"a.b": ["lodash.merge"]}))
+    rc, rep = derive(repo, "--js-graph", g, "--js-source", "src", capsys=capsys)
+    assert rep["ecosystems"][0]["layers"] == [["ui"], ["a.b"], ["c-d"]]
+    cjs = (repo / ".dependency-cruiser.cjs").read_text()
+    pats = [p for p in js_literals(cjs) if p.startswith("^src/") or p.startswith("node_modules/")]   # every literal parses back
+    assert "^src/(a\\.b)/" in pats and "^src/(c\\-d)/" in pats and "^src/(ui|a\\.b)/" in pats
+    for p in pats:
+        re.compile(p)                                                   # every literal parses back to a valid regex
+    dot = next(p for p in pats if p == "^src/(a\\.b)/")
+    assert re.search(dot, "src/a.b/f.ts") and not re.search(dot, "src/aXb/f.ts")
+    ext = next(p for p in pats if p.startswith("node_modules/"))
+    assert re.search(ext, "node_modules/lodash.merge/x.js") and not re.search(ext, "node_modules/lodashXmerge/x.js")
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="node is not installed")
+def test_b1_the_generated_cjs_loads_in_node(repo, tmp_path, capsys):
+    g = write_json(tmp_path, "g.json", js_graph({"ui": ["a.b"], "a.b": []}))
+    derive(repo, "--js-graph", g, "--js-source", "src", capsys=capsys)
+    r = subprocess.run(["node", "-e", "const c=require('./.dependency-cruiser.cjs');"
+                        "console.log(c.forbidden.map(r=>r.from&&r.from.path).filter(Boolean).join('\\n'))"],
+                       cwd=repo, capture_output=True, text=True)
+    assert r.returncode == 0 and "^src/(ui)/" in r.stdout
+
+
+@pytest.mark.parametrize("name", ['src/ev"il/f.ts', "src/ev`il/f.ts", "src/ev'il/f.ts", "src/ev\\il/f.ts", "src/ev\nil/f.ts"])
+def test_b1_ra_hostile_js_unit_names_never_reach_the_contract(repo, tmp_path, capsys, name):
+    doc = js_graph({"ui": ["core"], "core": []})
+    doc["modules"].append({"source": name, "dependencies": [{"resolved": "src/core/f.ts", "dependencyTypes": ["local"]}]})
+    g = write_json(tmp_path, "g.json", doc)
+    rc, rep = derive(repo, "--js-graph", g, "--js-source", "src", capsys=capsys)
+    cjs = (repo / ".dependency-cruiser.cjs").read_text()
+    assert "ev" not in cjs.replace("forbidden", "").replace("severity", "").replace("level", "")
+    assert any(x.startswith("rejected-name:js module") for x in rep["gaps"])
+
+
+def test_ra_hostile_npm_specifier_is_rejected(repo, tmp_path, capsys):
+    doc = js_graph({"ui": ["core"], "core": []}, {"ui": ['x");process.exit(1);//']})
+    rc, rep = derive(repo, "--js-graph", write_json(tmp_path, "g.json", doc), "--js-source", "src", capsys=capsys)
+    assert "process.exit" not in (repo / ".dependency-cruiser.cjs").read_text()
+    assert any(x.startswith("rejected-name:js package specifier") for x in rep["gaps"])
+
+
+# ---- B2: deploymentEnvironment carries no tags or properties; the lint does not treat it as an element --------------
+
+def test_b2_deployment_environment_has_no_tags_or_properties(repo, capsys):
+    derive(repo, "--tofu-plan-json", FX / "tofu-plan.json", capsys=capsys)
+    text = (repo / "docs/architecture/workspace.dsl").read_text()
+    lines = text.splitlines()
+    i = next(n for n, l in enumerate(lines) if l.strip().startswith("deploymentEnvironment"))
+    indent = len(lines[i]) - len(lines[i].lstrip())
+    children = []
+    for l in lines[i + 1:]:
+        if len(l) - len(l.lstrip()) <= indent:
+            break
+        if len(l) - len(l.lstrip()) == indent + 4 and l.strip() != "}":
+            children.append(re.sub(r"^\w+ = ", "", l.strip()).split()[0])
+    assert children and set(children) == {"deploymentNode"}      # only group, deploymentGroup, deploymentNode and relationships are legal
+    assert L.lint_text(text) == []
+
+
+def test_b2_lint_does_not_demand_a_source_on_the_environment():
+    t = 'workspace "x" {\n model {\n  deploymentEnvironment "Live" {\n  }\n }\n}\n'
+    assert L.lint_text(t) == []
+    assert "deploymentEnvironment" not in L.KINDS
+
+
+# ---- R-a: injection through names -----------------------------------------------------------------------------------
+
+def test_ra_hostile_python_module_names_are_rejected_and_reported(repo, tmp_path, capsys):
+    doc = json.loads((FX / "python-graph.json").read_text())
+    doc["edges"].append({"from": 'shop.x"\n!script groovy {', "to": "shop.domain.order"})
+    doc["edges"].append({"from": "shop.interface.http", "to": "shop.dom\nain.y\n[evil]"})
+    g = write_json(tmp_path, "g.json", doc)
+    rc, rep = derive(repo, "--python-graph", g, capsys=capsys)
+    assert rc == 0 and any(x.startswith("rejected-name:python module") for x in rep["gaps"])
+    for rel in (".importlinter", "docs/architecture/workspace.dsl", "docs/architecture/DERIVE-CONFIRM.md"):
+        text = (repo / rel).read_text()
+        assert "!script" not in text and "[evil]" not in text, rel
+    assert rep["ecosystems"][0]["layers"] == [["shop.interface"], ["shop.application"], ["shop.domain"]]
+
+
+def test_ra_hostile_infra_names_are_rejected(repo, tmp_path, capsys):
+    plan = {"planned_values": {"root_module": {"resources": [
+        {"address": 'aws_instance.a"\n!script x', "type": "aws_instance", "name": "a"},
+        {"address": "aws_instance.ok", "type": "aws_instance", "name": "ok"}]}}}
+    rc, rep = derive(repo, "--tofu-plan-json", write_json(tmp_path, "p.json", plan), capsys=capsys)
+    text = (repo / "docs/architecture/workspace.dsl").read_text()
+    assert "!script" not in text and "aws_instance.ok" in text
+    assert any(x.startswith("rejected-name:tofu address") for x in rep["gaps"])
+    assert "!script" not in (repo / "docs/architecture/DERIVE-CONFIRM.md").read_text()
+
+
+# ---- R-b: draft writes stay inside the repo ------------------------------------------------------------------------
+
+def tracked_symlink(repo, rel, target):
+    p = repo / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.symlink_to(target)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "symlink")
+
+
+@pytest.mark.parametrize("link", ["docs", "docs/architecture", ".importlinter"])
+def test_rb_symlinked_targets_and_parents_are_refused(repo, tmp_path, capsys, link):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    if link == "docs/architecture":
+        (repo / "docs").mkdir()
+        tracked_symlink(repo, link, outside)
+    elif link == "docs":
+        tracked_symlink(repo, link, outside)
+    else:
+        (outside / "target").write_text("keep")
+        tracked_symlink(repo, link, outside / "target")
+    rc = D.main(["--repo", str(repo), "--python-graph", str(FX / "python-graph.json")])
+    assert rc == 2 and "symlink" in capsys.readouterr().err
+    assert sorted(p.name for p in outside.iterdir()) in ([], ["target"])
+    assert not (outside / "target").exists() or (outside / "target").read_text() == "keep"
+
+
+def test_rb_symlinked_derived_sibling_is_refused(repo, tmp_path, capsys):
+    outside = tmp_path / "o"
+    outside.write_text("keep")
+    (repo / ".importlinter").write_text("[x]\n")
+    tracked_symlink(repo, ".importlinter.derived", outside)
+    rc = D.main(["--repo", str(repo), "--python-graph", str(FX / "python-graph.json")])
+    assert rc == 2 and outside.read_text() == "keep"
+
+
+def test_rb_new_files_are_created_exclusively(repo, monkeypatch, capsys):
+    seen = []
+    real = D.os.open
+    monkeypatch.setattr(D.os, "open", lambda p, flags, mode=0o777: (seen.append(flags), real(p, flags, mode))[1])
+    derive(repo, "--python-graph", FX / "python-graph.json", capsys=capsys)
+    assert seen and all(f & D.os.O_NOFOLLOW and f & D.os.O_EXCL for f in seen)
+
+
+# ---- R-c / R-d: option values --------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("flag", ["--js-source", "--tofu-plan", "--helm-chart", "--kustomize", "--python-package"])
+def test_rc_option_values_starting_with_a_dash_are_refused(repo, capsys, flag):
+    assert D.main(["--repo", str(repo), f"{flag}=-x"]) == 2
+    assert "starts with '-'" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("flag", ["--helm-chart", "--kustomize"])
+@pytest.mark.parametrize("value", ["oci://registry/chart", "https://example.org/k", "../outside", "nodir", "github.com/org/repo//path"])
+def test_rd_helm_and_kustomize_take_only_local_directories_inside_the_repo(repo, capsys, flag, value):
+    assert D.main(["--repo", str(repo), f"{flag}={value}"]) == 2
+    assert "refused" in capsys.readouterr().err
+
+
+def test_rc_rd_tools_get_double_dash_and_a_repo_relative_path(repo, monkeypatch, capsys):
+    (repo / "charts" / "web").mkdir(parents=True)
+    (repo / "charts" / "web" / "x").write_text("")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "chart")
+    calls = []
+    real_run = D.run_tool
+    rendered = "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: web, namespace: s}\n"
+    monkeypatch.setattr(D, "run_tool", lambda argv, cwd=None: (calls.append(argv), rendered)[1]
+                        if argv[0] in ("helm", "kustomize") else real_run(argv, cwd))
+    rc, rep = derive(repo, "--helm-chart", "charts/web", "--kustomize", "charts/web", capsys=capsys)
+    assert rc == 0
+    assert ["helm", "template", "--", "charts/web"] in calls and ["kustomize", "build", "--", "charts/web"] in calls
+    assert "helm:charts/web#Deployment/web" in (repo / "docs/architecture/workspace.dsl").read_text()
+
+
+# ---- R-e: Grimp runs isolated and writes nothing into the repo --------------------------------------------------------
+
+def test_re_grimp_runs_in_an_isolated_subprocess_without_a_cache(repo, monkeypatch, capsys):
+    monkeypatch.setattr(D, "import_grimp", lambda: object())
+    seen = {}
+
+    def fake_run(argv, **kw):
+        seen["argv"] = argv
+        return subprocess.CompletedProcess(argv, 0, stdout=(FX / "python-graph.json").read_text(), stderr="")
+    real = subprocess.run
+    monkeypatch.setattr(D.subprocess, "run", lambda argv, **kw: fake_run(argv, **kw) if "-I" in argv else real(argv, **kw))
+    rc, rep = derive(repo, "--python-package", "shop", capsys=capsys)
+    argv = seen["argv"]
+    assert argv[0] == sys.executable and "-I" in argv[:3] and "-B" in argv[:4]
+    script = argv[argv.index("-c") + 1]
+    assert "cache_dir=None" in script and "sys.path.append" in script and "sys.path.insert" not in script
+    assert rep["ecosystems"][0]["layers"][0] == ["shop.interface"]
+    assert "sys.path.insert" not in (ROOT / "scripts" / "foundry_architecture_derive.py").read_text()
+
+
+# ---- R-f: tool stderr and local paths stay out of committed drafts ------------------------------------------------------
+
+def test_rf_tool_stderr_is_console_only(repo, tmp_path, monkeypatch, capsys):
+    (repo / "package.json").write_text("{}")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "js")
+    real = D.run_tool
+
+    def boom(argv, cwd=None):
+        if argv[0] == "depcruise":
+            raise D.CouldNotLook("depcruise", "SECRET-STDERR /home/someone/token")
+        return real(argv, cwd)
+    monkeypatch.setattr(D, "run_tool", boom)
+    rc, rep = derive(repo, "--python-graph", FX / "python-graph.json", capsys=capsys)
+    assert "SECRET-STDERR" in rep["gap_details"]["could-not-look:depcruise"]
+    for p in repo.rglob("*"):
+        if p.is_file() and ".git/" not in p.as_posix():
+            assert "SECRET-STDERR" not in p.read_text(errors="ignore"), p
+    D.main(["--repo", str(repo), "--dry-run", "--python-graph", str(FX / "python-graph.json")])
+    assert "SECRET-STDERR" in capsys.readouterr().out
+
+
+def test_rf_plan_paths_are_repo_relative_or_a_basename(repo, tmp_path, capsys):
+    outside = tmp_path / "elsewhere" / "plan.json"
+    outside.parent.mkdir()
+    outside.write_text((FX / "tofu-plan.json").read_text())
+    derive(repo, "--tofu-plan-json", outside, capsys=capsys)
+    text = (repo / "docs/architecture/workspace.dsl").read_text() + "".join(p.read_text() for p in (repo / "docs/decisions").glob("*.md"))
+    assert str(tmp_path) not in text and "plan.json#aws_instance.web" in text
+
+
+# ---- R-g: malformed input is a named gap or a refusal, never a traceback -------------------------------------------------
+
+def test_rg_malformed_rendered_yaml_is_a_named_gap(repo, monkeypatch, capsys):
+    (repo / "c").mkdir()
+    (repo / "c" / "x").write_text("")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "c")
+    real = D.run_tool
+    monkeypatch.setattr(D, "run_tool", lambda argv, cwd=None: "a: [unclosed\n  - : :" if argv[0] == "helm" else real(argv, cwd))
+    rc, rep = derive(repo, "--helm-chart", "c", capsys=capsys)
+    assert rc == 1 and "could-not-look:helm" in rep["gaps"]
+
+
+@pytest.mark.parametrize("edge", [{"from": "shop.a.x"}, {"to": "shop.a.x"}, "shop.a.x", {"from": 1, "to": 2}])
+def test_rg_a_graph_edge_without_from_or_to_is_refused(repo, tmp_path, capsys, edge):
+    g = write_json(tmp_path, "g.json", {"root_package": "shop", "edges": [edge]})
+    assert D.main(["--repo", str(repo), "--python-graph", str(g)]) == 2
+    assert "refused" in capsys.readouterr().err
+
+
+def test_rg_malformed_manifest_yaml_is_refused(repo, tmp_path, capsys):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("a: [unclosed\n")
+    assert D.main(["--repo", str(repo), "--manifests", str(bad)]) == 2
+
+
+def test_rg_a_git_failure_while_reading_the_status_is_exit_2(repo, monkeypatch, capsys):
+    real = D.run_tool
+
+    def flaky(argv, cwd=None):
+        if argv[:2] == ["git", "status"]:
+            raise D.CouldNotLook("git", "exit 128")
+        return real(argv, cwd)
+    monkeypatch.setattr(D, "run_tool", flaky)
+    assert D.main(["--repo", str(repo), "--python-graph", str(FX / "python-graph.json")]) == 2
+    assert "refused" in capsys.readouterr().err
+
+
+# ---- R-h: ':' within a cycle group, '|' between independent groups -------------------------------------------------------
+
+def test_rh_siblings_use_pipe_and_cycle_members_use_colon(repo, capsys):
+    derive(repo, "--python-graph", FX / "python-graph-siblings.json", capsys=capsys)
+    lines = (repo / ".importlinter").read_text().splitlines()
+    block = lines[lines.index("layers =") + 1:lines.index("layers =") + 4]
+    assert block == ["    shop.web", "    shop.api | shop.billing : shop.orders", "    shop.core"]
+
+
+# ---- R-i: lint keyword case, the generic element keyword, unquoted tokens -------------------------------------------------
+
+@pytest.mark.parametrize("kw", ["Container", "COMPONENT", "SoftwareSystem", "element", "Person", "DeploymentNode", "INFRASTRUCTURENODE"])
+def test_ri_keywords_match_case_insensitively(kw):
+    t = f'workspace "x" {{\n model {{\n  {kw} "N" {{\n   tags "draft"\n  }}\n }}\n}}\n'
+    assert L.lint_text(t) == [f"line 3: {kw} 'N' has no source property"]
+
+
+def test_ri_unquoted_tags_and_model_status_are_read_like_quoted():
+    t = ('workspace "x" {\n properties {\n  "model-status" confirmed\n }\n model {\n  container "N" {\n   tags draft\n'
+         '   properties {\n    source "f"\n   }\n  }\n }\n}\n')
+    assert L.lint_text(t) == ["line 6: container 'N' is still tagged draft in a confirmed model"]
+    t2 = t.replace('"model-status" confirmed', 'model-status "Confirmed"').replace("tags draft", 'tags "a, Draft"')
+    assert len(L.lint_text(t2)) == 1
+    assert L.lint_text(t.replace("tags draft", "tags other")) == []

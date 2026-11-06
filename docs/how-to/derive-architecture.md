@@ -26,8 +26,16 @@ The script parses no source code. It runs the ecosystem's own tool, or reads tha
 | OpenTofu | `tofu show -json <plan>` (`--tofu-plan`) | `--tofu-plan-json FILE` |
 | Kubernetes | `helm template` (`--helm-chart`), `kustomize build` (`--kustomize`) | `--manifests PATH...` |
 
+`--helm-chart` and `--kustomize` take only a directory inside the repo (no `oci://`, no URL, no value that starts with `-`).
+Kustomize can still fetch remote resources that a `kustomization.yaml` names, so check the kustomization before you approve the
+run. The tool asks you each time. Grimp runs in an isolated Python subprocess with no cache, so it writes nothing into the repo.
+
 A tool that is not installed, or that fails, is reported as `could-not-look:<tool>`. The script then writes nothing for
 that ecosystem. It never reads a missing tool as an empty graph. Java and Nx report `no-derive:java` and `no-derive:nx`.
+
+A name that contains a quote, a backtick, a backslash or a control character is rejected and reported (`rejected-name:...`).
+It never reaches a generated file. Tool error text is shown on the console only, never written into a draft. The script
+refuses to write through a symlink.
 
 ## What it proposes
 
