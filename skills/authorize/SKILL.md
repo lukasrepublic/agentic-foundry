@@ -6,7 +6,7 @@ description: The Foundry front-authorization gate (/foundry:authorize). Display 
 # /foundry:authorize
 
 > **Opt-in since v2.0.0 (the delivery rebase).** The default unit of work is a ticket with a
-> runnable `Done means` (`context/operating-model.md`); the operator's standing grant in
+> runnable `Definition of Done` (`context/operating-model.md`); the operator's standing grant in
 > `.claude/foundry-operators.json` (`standing_authorization: true`) **is** the authorization and
 > ticket assignment is the act. This verb runs only when the operator chooses the spec lane —
 > `security: true` work (auth / secrets / custody / production data) or a design too large for a

@@ -19,8 +19,8 @@ workspace's artifacts.
 Intent lives in the workspace. By default it is the smallest thing that can be checked:
 
 ```
-a ticket                        ← a GitHub issue: What / Why / Done means (a command) /
-                                   Paper allowed — one screen, the unit of work
+a ticket                        ← a GitHub issue: What / Why / Definition of Done (a command) /
+                                   Referenced Artifacts — one screen, the unit of work
 ```
 
 When the operator opts in (or the change is `security: true`), the same intent is refined
@@ -41,7 +41,7 @@ The workspace also holds everything project-specific and *accumulated* around th
 governance posture (the both-modes floor), cross-repo coordination (workspace ↔ code-repo),
 runbooks, the operator's registry, and the decision records under `.foundry/decisions/`.
 
-**The ticket's `Done means` command is the definition of done on the default path; on the spec
+**The ticket's `Definition of Done` command is the definition of done on the default path; on the spec
 lane, the frozen contract is.** Either way the instruction set lives in the workspace and is
 authored with the factory's verbs. The default path in full:
 [context/operating-model.md](../context/operating-model.md).
@@ -56,7 +56,7 @@ ticket → dispatch (worktree · local-green) → MERGE FLOOR → merge → sign
  (the unit)   (how to build + prove locally)   (how to admit)
 ```
 
-Every "how" names what enforces it: the Stop hook (the session does not end while `Done means`
+Every "how" names what enforces it: the Stop hook (the session does not end while `Definition of Done`
 fails), local-green before push, the honestly-tiered merge floor (your branch protection + CI, see
 [merge-floor.md](merge-floor.md)), the security lane for auth / secrets / custody changes, and the
 operator's terminal sign-off. The factory is the same for every project; only the *what*

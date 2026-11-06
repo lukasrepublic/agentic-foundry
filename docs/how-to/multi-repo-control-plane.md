@@ -1,7 +1,7 @@
 # How to run a multi-repo control plane
 
 One workspace can govern several code repos — an app repo, an infra repo, services — with
-specs living in the workspace and each atom's code landing in its declared target repo.
+specs living in the workspace and each Story's code landing in its declared target repo.
 
 ```
   the workspace (specs + governance)          the hosted repos (code)
@@ -40,7 +40,7 @@ The control plane hosts each code repo as an **independent, gitignored sibling c
 path the manifest declares — never a git submodule. A submodule pins the parent repository to
 one exact child commit and entangles the two histories together; a control plane wants each
 hosted repo evolving under its own origin, its own history, and its own release cadence, with
-the workspace only ever recording *where* it lives and *which* atom is authorized to touch it.
+the workspace only ever recording *where* it lives and *which* Story is authorized to touch it.
 That is why this pattern is plain clones plus a manifest — not a submodule, deliberately.
 
 (Google `repo`'s `manifest.xml`, the `meta` tool's `.meta`, vcstool's `.repos` and `myrepos`
@@ -66,8 +66,8 @@ reads.
 This example validates against the shipped `schema/foundry-project.schema.json` — its one
 required members are `schema_version` at the top level and `path` on every `repos.<key>` record. Field ledger for the example above, inline against each
 field: `path` is read, by `foundry-wt`'s resolver. `kind` and `role` are **inert** in this
-example — declared schema properties since the registry-formalization atom: `kind` stays free-form tech-shape prose, `role` is a **closed set** (`product`, `handbook`, `infra`, `app`, `workspace`) with prose belonging in `description`; no shipped code branches on either one today (readers arrive with a later
-registry-formalization atom).
+example — declared schema properties since the registry-formalization Story: `kind` stays free-form tech-shape prose, `role` is a **closed set** (`product`, `handbook`, `infra`, `app`, `workspace`) with prose belonging in `description`; no shipped code branches on either one today (readers arrive with a later
+registry-formalization Story).
 
 The key `workspace` is **not** a `repos{}` row you add yourself: `foundry-wt` resolves it
 **itself**, to the control-plane root, so a single-repo adopter's manifest needs no
@@ -111,7 +111,7 @@ hosted repo, nor a remedy for a session that was started in the wrong place to b
 `--add-dir` onto a session rooted inside `api/` still never loads the control plane's own wiring.
 
 **State the consequence honestly: a control-plane-root session holds read/write reach over
-every hosted repo's working tree — that is its blast radius, not just the repo an atom
+every hosted repo's working tree — that is its blast radius, not just the repo a Story
 targets.** The control plane's own `.gitignore` *hides* those edits from the control plane's
 own `git status`; it does not confine them. A contract's `target_repo` and
 `scope.allowed_paths` bind the **jailed worker** dispatched into a worktree — never the root
@@ -145,10 +145,10 @@ trees. You just drive it from one session, at the top.
 
 ## `target_repo` and provenance
 
-Every acceptance contract's `target_repo:` field names a `repos{}` key — the atom's code lands
-in that repo, and nowhere else. Each atom built this way writes a
+Every acceptance contract's `target_repo:` field names a `repos{}` key — the Story's code lands
+in that repo, and nowhere else. Each Story built this way writes a
 `.foundry/build-provenance.yaml` file in its own code repo, pinning the exact control-plane
-commit the atom was authorized against — the cross-repo audit trail an operator can always walk
+commit the Story was authorized against — the cross-repo audit trail an operator can always walk
 back.
 
 Re-pointing `target_repo` after authorization is not a quiet edit: it lives inside the
@@ -167,7 +167,7 @@ asserted from memory; drift here fails this plugin's own test suite.
   workspace root.
 - **dispatch bind-check** — machine-enforced. `hooks/foundry-worktree-create.sh` calls
   `foundry-wt bind-check` on its redirect path; when the dispatch manifest's `target_repo`
-  disagrees with the atom's authorized contract, the bind check fails and **no worktree is
+  disagrees with the Story's authorized contract, the bind check fails and **no worktree is
   created** — the dispatch is dropped fail-closed.
 - **target_repo freeze** — machine-enforced. `target_repo` sits inside the region
   `contract_sha256` covers, above the trailer sentinel, so re-pointing it after authorization
@@ -217,7 +217,7 @@ observed. See `skills/repos/SKILL.md` for the full verb reference and its securi
 2. **Declare it** in `.claude/foundry-project.json` — see the registry section above for the
    field reference and a schema-valid example.
 
-3. **Target atoms at it.** The acceptance contract's `target_repo:` names the repo key — see
+3. **Target Stories at it.** The acceptance contract's `target_repo:` names the repo key — see
    the `target_repo` and provenance section above.
 
 4. **Dispatch as usual.** The worker is redirected into the hosted repo's working tree; its
@@ -228,13 +228,13 @@ observed. See `skills/repos/SKILL.md` for the full verb reference and its securi
 
 ## Defaults and doctor
 
-An atom whose contract names no `target_repo` is workspace-targeted — the single-repo default.
+A Story whose contract names no `target_repo` is workspace-targeted — the single-repo default.
 Nothing multi-repo activates until you add a hosted-repo entry to `repos{}`.
 
 ## The rules
 
-- **One atom, one target repo.** A change spanning two repos is two atoms with an
-  explicit dependency, not one atom with two targets.
+- **One Story, one target repo.** A change spanning two repos is two Stories with an
+  explicit dependency, not one Story with two targets.
 - **The merge floor is per-repo** — check each hosted repo's tier honestly
   ([merge-floor.md](../merge-floor.md)); a Tier-A workspace does not confer Tier A on a
   hosted repo.
@@ -243,5 +243,5 @@ Nothing multi-repo activates until you add a hosted-repo entry to `repos{}`.
 ---
 
 **Setting up a project from scratch this way?** The workspace template carries the full
-step-by-step guide — layout, per-repo merge floors, shipping an atom across two repos, and
+step-by-step guide — layout, per-repo merge floors, shipping a Story across two repos, and
 day-two operations: [agentic-handbook → docs/control-plane.md](https://github.com/lukasrepublic/agentic-handbook/blob/main/docs/control-plane.md).

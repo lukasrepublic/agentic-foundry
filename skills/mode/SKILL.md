@@ -45,7 +45,7 @@ the latter two is a downstream atom — M1 stores and surfaces the posture only)
 
 ## What each posture means in practice (the three-mode model)
 
-- **`factory`** — the default posture: a ticket with a runnable `Done means` is the unit of work
+- **`factory`** — the default posture: a ticket with a runnable `Definition of Done` is the unit of work
   (`context/operating-model.md`); branch protection + CI is the gate; the operator merges.
 - **`noninteractive`** — one ticket built in an isolated worktree → PR (CI green + fresh-context
   review) → operator merges (or `/foundry:merge-when-green` on an explicit instruction). A

@@ -25,15 +25,15 @@ data** — it never tags, never pushes, never closes issues itself. You execute 
 
 ## When to cut
 
-A release follows epic readiness and the operator's judgement. There is no minimum time between
+A release follows Epic readiness and the operator's judgement. There is no minimum time between
 releases. One cut can combine several epics and the ad-hoc tickets merged since the previous tag.
-The cut-release playbook prints the release notes: one line per epic and a count of the other PRs
-since the previous tag. It uses the epic review draft Release for `HEAD` as input when one exists. You
+The cut-release playbook prints the release notes: one line per Epic and a count of the other PRs
+since the previous tag. It uses the Epic review draft Release for `HEAD` as input when one exists. You
 run the version tag and the publish yourself.
 
 Where the notes come from, in order:
 
-1. The epic review draft Release whose tag is `v<version>` and that is still a draft.
+1. The Epic review draft Release whose tag is `v<version>` and that is still a draft.
 2. The merged PRs on the default branch since the previous tag (`gh pr list --state merged`).
 3. With `--offline`, or when `gh` is unavailable, the git history (merge commits and squash `(#N)` subjects).
 
@@ -41,10 +41,10 @@ A PR from a branch `<epic>/<name>` belongs to that epic. A PR from `hotfix/`, `r
 `dependabot/` or `renovate/`, a branch with no prefix, or a squash commit with an unknown branch counts
 as other.
 
-The draft Release body that epic review writes uses this grammar, one item per line:
+The draft Release body that Epic review writes uses this grammar, one item per line:
 
 ```
-- epic: <epic-id>
+- Epic: <epic-id>
 - other: <n>
 ```
 

@@ -155,7 +155,7 @@ def test_new_findings_in_fix_commits_are_not_capped_at_risk():
 
 def test_step_0b_parks_on_block_in_protected_sections():
     step = _flat(_dispatch_steps()["0b"])
-    assert "A Block located in `## Definition of Done` or `## Referenced Artifacts`, which the fix round may not edit, parks the atom at once." in step
+    assert "A Block located in `## Definition of Done` or `## Referenced Artifacts`, which the fix round may not edit, parks the Story at once." in step
 
 
 def test_step_5_and_mwg_bound_waits_to_60_seconds():

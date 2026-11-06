@@ -87,7 +87,7 @@ the table as "every floor rule is mechanical".
 
 ## One ticket carries the rules to the agent
 
-The ticket is the unit of work. Besides `## Done means` and `## Paper allowed`, a ticket has three sections that
+The ticket is the unit of work. Besides `## Definition of Done` and `## Referenced Artifacts`, a ticket has three sections that
 connect it to governance, and a fourth that states what done looks like (parsed by `scripts/foundry-ticket.py`):
 
 - `## Design`: the components the change touches, the pattern it reuses, and the rule ids it cites.
@@ -97,7 +97,7 @@ connect it to governance, and a fourth that states what done looks like (parsed 
   each with a stable id (`- AC-1: ...`), and one `Grounding:` line that names the research-gate source. A bullet
   with no id, a repeated id, or a bullet without `SHALL` is refused and named; ids are `AC-<n>`; the script caps the id length, the bullet count and the bullet length (see `AC_MAX_BULLETS` and `AC_MAX_BULLET_CHARS`). `## Acceptance criteria` names the same section. Below the design-required class a malformed section is a checklist line, not a refusal. `read-issue --json` exposes the
   parsed bullets and the grounding line. The brief renderer inlines every bullet under its id, and `pr-reviewer`
-  reports a pass or a Block per id. Done means stays the machine check; the bullets are the review target.
+  reports a pass or a Block per id. Definition of Done stays the machine check; the bullets are the review target.
 
 A ticket in the **design-required class** is refused with `design-required` until its Design cites at least one rule id
 that exists, and with `acceptance-required` until it has an `## Acceptance` section with at least one EARS bullet and
@@ -123,7 +123,7 @@ a trailer inside a code fence or a `>` quote is ignored. The sha must exist in t
 to) the workspace default branch.
 
 What the rule proves: the pull request names a real commit that is on the workspace's default branch. It does not prove that
-the atom was built from that commit, or that the commit is the one the ticket was planned against; the author states that, and
+the Story was built from that commit, or that the commit is the one the ticket was planned against; the author states that, and
 the operator's own test pass is the practice that judges it. The lookup uses the secret `FOUNDRY_WORKSPACE_READ_TOKEN` (a
 fine-grained or App token with `contents: read` on the workspace only, ideally in a protected environment; the operator provisions
 it, and its value is never written to a file). If the secret is unset and the default job token cannot read the workspace repo, the
@@ -149,18 +149,18 @@ Two honest notes on that job:
 `agents/security-reviewer.md` is the separate security lens. It triggers on the security-tagged paths: the kit's static
 globs, and your declared trust boundaries once `declare` has run.
 
-## Delivery of an epic
+## Delivery of an Epic
 
-A **epic** is the whole body of work. An **atom** is one ticket with a runnable Done means. A **batch** is the atoms
+A **Epic** is the whole body of work. An **Story** is one ticket with a runnable Definition of Done. A **batch** is the Stories
 that land as one pull request. The rules of the kits reach the agent through the ticket; the delivery verbs below move the
 tickets through the platform.
 
-1. **Release plan.** `/foundry:release-plan <epic>` reads the atoms and their `blocked_by` edges from the GitHub
+1. **Release plan.** `/foundry:release-plan <epic>` reads the Stories and their `blocked_by` edges from the GitHub
    Project and writes `release-plan.yaml`: **increments** of batches, the **critical path** and the **total float** of each
-   batch. An atom sits in an increment after every atom that blocks it. Atoms that share a path never share an increment. See
-   [plan an epic](how-to/release-plan.md).
+   batch. A Story sits in an increment after every Story that blocks it. Atoms that share a path never share an increment. See
+   [plan an Epic](how-to/release-plan.md).
 2. **Increment dispatch.** The command deck builds the batches of the open increment in one Workflow, within the
-   concurrency limit: the smaller of the policy key `deck.max_builders` and the `wip_limit` of the plan. A **epic issue** and a Project status update show the
+   WIP limit: the smaller of the policy key `deck.max_builders` and the `wip_limit` of the plan. A **Epic issue** and a Project status update show the
    state each tick.
 3. **Fleet builders.** A builder on another machine or container takes a batch by a **claim** (a ref create) under a
    **lease**. Its worker id has the form `<operator>@<machine>/<container>/<session>` and differs from the lead's in the machine or container part. See
@@ -168,10 +168,10 @@ tickets through the platform.
 4. **Review.** One full review round runs for each pull request. If it raised Blocks, one fresh-context delta review of the
    fix commits follows, and only then the head-bound security label. See
    [recover from a failed gate](how-to/recover-from-a-failed-gate.md).
-5. **Learned.** Each atom ends with a `## Learned` comment. The Learned distill turns the comments into proposed rule
+5. **Retrospective.** Each Story ends with a `## Retrospective` comment. The Retrospective distill turns the comments into proposed rule
    edits: a draft pull request for your private layer, a kit-fix ticket for upstream. It proposes and never merges.
 6. **Epic review.** `/foundry:epic-review <epic>` is the single final session. It leaves a draft Release pinned to the
-   integration head. The operator tests, tags and publishes. See [close out an epic](how-to/epic-review.md).
+   integration head. The operator tests, tags and publishes. See [run the Epic review](how-to/epic-review.md).
 
 The deck token cost is bounded by the keys `deck.max_agent_calls`, `deck.max_wait_s`, `deck.note_max_tokens` and
 `deck.stall_after_ticks`; see [the operating-model policy](operating-model-policy.md). The operator's own test pass is a
@@ -215,6 +215,6 @@ Detection is a signature table plus your one-word confirmation, never an inferen
 - [Operator hand-off files](how-to/operator-handoff-files.md)
 - [Never read a secret value](how-to/secrets-never-read.md)
 - [Use the shared message log](how-to/shared-message-log.md)
-- [Plan an epic](how-to/release-plan.md)
+- [Plan an Epic](how-to/release-plan.md)
 - [Run builders across machines](how-to/fleet-builders.md)
-- [Close out an epic](how-to/epic-review.md)
+- [Run the Epic review](how-to/epic-review.md)

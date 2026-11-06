@@ -2,7 +2,7 @@
 
 **Do I have to use all thirty-odd verbs?**
 No. The core loop is three: `init → dispatch → merge-when-green`, with a ticket (a GitHub issue
-with a runnable `Done means`) as the unit of work. Everything else is an optional catalog you can
+with a runnable `Definition of Done`) as the unit of work. Everything else is an optional catalog you can
 ignore forever.
 
 **Can I skip authorization for a small change?**
@@ -39,9 +39,9 @@ Foundry adds no network calls of its own beyond `gh` (your GitHub) — the plugi
 are local Python/bash. Your Claude Code data handling is unchanged.
 
 **Why does the session keep going when I think it is done?**
-Because the Stop hook runs the ticket's `Done means` command, and while it fails the work is not
+Because the Stop hook runs the ticket's `Definition of Done` command, and while it fails the work is not
 done: "status ≠ functional". After three refusals the session may end with the failure named, so
-a wrong `Done means` cannot trap you.
+a wrong `Definition of Done` cannot trap you.
 
 **Who is the "operator"?**
 The human who holds the standing grant, authorizes specs on the opt-in lane, and signs off releases — registered in
@@ -51,5 +51,5 @@ your review process designates (see the
 
 **How do I keep agents from touching paper outside the task?**
 The paper guard refuses a write under `specs/`, `docs/`, `.foundry/`, `status-reports/` or
-`charters/` unless the active ticket's `Paper allowed` list names the path; dispatch runs in an
+`charters/` unless the active ticket's `Referenced Artifacts` list names the path; dispatch runs in an
 isolated worktree. Code, infra, tests and config are never gated.

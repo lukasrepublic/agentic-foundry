@@ -16,7 +16,7 @@ in the ticket or in the request.
 
 - **Durable instructions stay in the repository as Markdown.** A runbook that others will need again belongs in the repo,
   for example under `docs/runbooks/`. It is reviewed, versioned and searchable. A ticket can allow the path in its
-  `## Paper allowed` list.
+  `## Referenced Artifacts` list.
 - **A hand-off file is a one-off.** It names the exact command, the working directory, why it is needed and what a good
   result looks like. The blocker candidate has the same four fields (`cwd`, `command`, `why`, `expect`); see
   `scripts/foundry_blocker_check.py`.

@@ -45,7 +45,7 @@ prints a `notice` saying so, and imported records carry `source`.
 
 Kinds: `FINDING`, `CHALLENGE` (need an evidence line: an `evidence:` line, a URL, a path, or captured command
 output), `NEEDS-INTERFACE`, `HANDOFF` (needs a fenced json block with `cwd`, `command`, `why`, `expect`),
-`TICK` (body `<programme> <UTC-stamp>`), `PROD-BEFORE`, `PROD-AFTER`, and `STOP` (a lane stopped; the body is
+`TICK` (body `<epic> <UTC-stamp>`), `PROD-BEFORE`, `PROD-AFTER`, and `STOP` (a lane stopped; the body is
 the reason). The three production kinds need a `corr`.
 
 ## The verbs

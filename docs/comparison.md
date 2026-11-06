@@ -22,7 +22,7 @@ They generate excellent spec/plan/task documents; several have far larger commun
 we do. **They all stop at the documents.** No enforcement at the merge seam, no local-green gate
 before the push — with Kiro's honorable exception (property-based tests from specs; its approvals
 stay IDE-local and its specs stay mutable). Foundry's default path is deliberately lighter than
-theirs: one artifact per change, a ticket whose `Done means` is a command, with the platform as the
+theirs: one artifact per change, a ticket whose `Definition of Done` is a command, with the platform as the
 gate. Measured on two adopter workspaces, spec-and-contract paper outweighed shipped
 code several times over, so Foundry made the spec an **opt-in lane** (frozen, hash-bound contracts and an
 operator authorization with no skip, for `security: true` work). If you already use Spec Kit-shaped
@@ -64,7 +64,7 @@ both.
 
 | Capability | SDD tools | Review bots | Agent platforms | Bare Claude Code | **Foundry** |
 |---|---|---|---|---|---|
-| Unit of work | spec/plan artifacts | — | ephemeral plans | CLAUDE.md conventions | ✅ a ticket with a runnable `Done means`; a spec is opt-in |
+| Unit of work | spec/plan artifacts | — | ephemeral plans | CLAUDE.md conventions | ✅ a ticket with a runnable `Definition of Done`; a spec is opt-in |
 | Keeps going while the check fails | — | — | varies | — | ✅ Stop hook (three refusals, then it may end) |
 | Local-green before push | — | — | — | hooks (DIY) | ✅ push and non-draft PR refused until recorded for HEAD |
 | Merge-seam enforcement | prompt packs | advisory | — | hooks (DIY) | ✅ tiered floor, honestly labeled |

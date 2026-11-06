@@ -39,13 +39,13 @@ puts one mechanical check in front of the submission (design 5.6): **it refuses;
 ## The kit-fix ticket (input from the learned distill)
 
 At epic close, `scripts/foundry_retrospective.py propose <epic> --from-json <comments.json> --out <dir>`
-(dl-10) turns the `## Learned` comments of the epic's atoms into proposals. A lesson that names an `FG-` rule
+(dl-10) turns the `## Retrospective` comments of the epic's atoms into proposals. A lesson that names an `FG-` rule
 id, or carries `[upstream]`, becomes a kit-fix ticket body, `<dir>/upstream/kit-fix-<n>.md`, with exactly these
 sections: `## Kit` (the category), `## Rule` (the `FG-` id, or `none (new rule proposed)`), `## Lesson`,
 `## Proposed edit`, `## Evidence`. A lesson routes upstream only when its author tagged it `[upstream]`; an `FG-` id
 alone keeps it private. A ticket carries no atom id and no issue URL. Its `## Lesson` is the author's own line, so the
 distill refuses any lesson that holds a URL, an `owner/repo` shape, a `#<n>` reference or the project's remote owner
-or repo name, and keeps it private. Source ids stay in the private `<dir>/proposals.json`. Only `## Learned`
+or repo name, and keeps it private. Source ids stay in the private `<dir>/proposals.json`. Only `## Retrospective`
 blocks from the atom closer, a registered operator or `--trusted-authors` are read.
 
 The distill runs the leak guard over every ticket itself. A lesson that names a private rule id, or fails the

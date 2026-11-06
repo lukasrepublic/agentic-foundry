@@ -1,6 +1,6 @@
 # How to run builders across machines (`foundry_fleet.py`)
 
-A **epic** can have builders on more than one machine. Each builder is one worker session. A worker claims
+A **Epic** can have builders on more than one machine. Each builder is one worker session. A worker claims
 one **batch** of the release plan, builds it, opens one PR and records `review_ready`. This page covers the
 claim, the lease, the worker id, the deck slots and the fleet capacity.
 
@@ -14,7 +14,7 @@ python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_fleet.py" claim <owner>/<repo> <e
 ```
 
 The ref points at a commit. The commit message holds the claim record: worker id, state, heartbeat time.
-The epic and batch names are checked before any ref name is built. Only refs under `claim/<epic>/<batch>`
+The Epic and batch names are checked before any ref name is built. Only refs under `claim/<epic>/<batch>`
 are ever written.
 
 ## Heartbeat, transitions and takeover
@@ -60,7 +60,7 @@ the script stops with `external-provisioning`. The operator holds the App identi
 python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_fleet.py" build-next <owner>/<repo> <epic> --plan-ref --workers 2,2 --reviewers 3
 ```
 
-It reads the plan, skips held atoms, claims one batch of the `open_increment` inside the capacity and prints it. It
+It reads the plan, skips held Stories, claims one batch of the `open_increment` inside the capacity and prints it. It
 never re-plans and never edits the plan. Results: `claimed`, `held` (you already hold one), `at-capacity` and `none`.
 After the build and the PR, run `transition ... review_ready --pr <url>`.
 

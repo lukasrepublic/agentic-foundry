@@ -6,8 +6,8 @@ each refusal to its recovery, in the order you'll meet them in the loop.
 ```
  where it failed          what refused              your move
  ──────────────           ────────────              ─────────
- edit a doc      ──▶      paper guard               add the path to the ticket's `Paper allowed`
- stop            ──▶      Stop hook                 `Done means` failed: fix the work (3 refusals max)
+ edit a doc      ──▶      paper guard               add the path to the ticket's `Referenced Artifacts`
+ stop            ──▶      Stop hook                 `Definition of Done` failed: fix the work (3 refusals max)
  push / PR       ──▶      git-discipline clause (j) run scripts/foundry-test.sh until green
  PR checks       ──▶      security-path-base        run the security reviewer, apply the label
  merge           ──▶      git-discipline hook       fix the red check; no bypass exists
@@ -18,13 +18,13 @@ each refusal to its recovery, in the order you'll meet them in the loop.
 
 A write under `specs/`, `intake/`, `.foundry/`, `docs/`, `status-reports/` or `charters/` (or to a
 contract / manifest file) needs the active ticket to allow it. Either the path belongs in the
-ticket's `## Paper allowed` list (`scripts/foundry-ticket.py allow <path>`), or — usually — the
+ticket's `## Referenced Artifacts` list (`scripts/foundry-ticket.py allow <path>`), or — usually — the
 document should not be written at all. Code, infra, tests and config are never gated.
 
 ## 2. The Stop hook would not let the session end
 
-The ticket's `Done means` command is failing. Read its output and fix the work. After three
-refusals per ticket the session may end with the failure named, so a wrong `Done means` cannot
+The ticket's `Definition of Done` command is failing. Read its output and fix the work. After three
+refusals per ticket the session may end with the failure named, so a wrong `Definition of Done` cannot
 trap you; correct the ticket instead.
 
 ## 3. The push or the PR was refused

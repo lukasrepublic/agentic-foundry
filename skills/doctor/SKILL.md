@@ -52,7 +52,7 @@ lane signal — Tier B advisory) plus `hooks/foundry-git-discipline.sh`'s determ
       repo — a mistake-catcher, not a floor.
 
    The standalone `permission-floor` drift probe (feat-foundry-doctor-permission-floor-check,
-   AC-DPF-1..8) was retired by subtraction-wave (autonomy-continuation R4, AC-SUB-1c). Nothing
+   AC-DPF-1..8) was retired by subtraction pass (autonomy-continuation R4, AC-SUB-1c). Nothing
    replaces it, and nothing needs to: since v1.18.0 the floor writes only its deny rows, and the
    plugin's own scripts run through the `foundry-plugin-scripts-allow.py` PreToolUse hook (Bash
    rules naming a script path never matched a real invocation — measured).

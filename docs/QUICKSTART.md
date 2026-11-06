@@ -13,7 +13,7 @@ What you'll produce, artifact by artifact:
  /foundry:init            ──▶  .claude/foundry-operators.json   (who may authorize; standing grant)
                                .claude/foundry-project.json     (project config)
 
- gh issue create          ──▶  a ticket: What / Why / Done means (a command) / Paper allowed
+ gh issue create          ──▶  a ticket: What / Why / Definition of Done (a command) / Referenced Artifacts
 
  foundry-ticket.py start  ──▶  <git-dir>/foundry-ticket.json   (not in the tree; scopes the paper guard
                                                                   and the Stop hook)
@@ -151,16 +151,16 @@ A GitHub issue, one screen at most:
 Users can export their data as CSV.
 ## Why
 Support is hand-exporting it every week.
-## Done means
+## Definition of Done
 ```
 python -m pytest tests/test_export_csv.py -q
 ```
-## Paper allowed
+## Referenced Artifacts
 docs/runbooks/export.md
 ````
 
-`Done means` is a **command**, not a sentence: it is what the agent runs before it stops, what the
-reviewer runs, and what you run for sign-off. `Paper allowed` lists the only documents the change may
+`Definition of Done` is a **command**, not a sentence: it is what the agent runs before it stops, what the
+reviewer runs, and what you run for sign-off. `Referenced Artifacts` lists the only documents the change may
 touch under `specs/`, `docs/`, `.foundry/`, `status-reports/` or `charters/`; code, infra, tests and
 config are never gated. Not sure what the ticket should say? `/foundry:intake` walks you through it.
 
@@ -187,7 +187,7 @@ has no skip.
 An implementer persona builds the ticket in an **isolated git worktree**, runs
 `scripts/foundry-test.sh` until your repo's own CI command is green locally, pushes once and opens
 one PR. The git-discipline hook refuses the push and a non-draft PR until local-green is recorded for
-HEAD. While `Done means` fails, the Stop hook keeps the session working. Merges wait on your repo's
+HEAD. While `Definition of Done` fails, the Stop hook keeps the session working. Merges wait on your repo's
 own checks — details in **the full install**, below.
 
 Prefer hands-on? Plain Claude Code on a branch is the zero-ceremony lane (`/foundry:mode
@@ -205,7 +205,7 @@ Deploy on promote (a tag or a label), not on every merge.
 
 ## 6. Sign off — you, not the machine
 
-Close the ticket with the `Done means` output; then run the thing yourself. Your own test pass is the
+Close the ticket with the `Definition of Done` output; then run the thing yourself. Your own test pass is the
 last step of delivery — a practice, deliberately **not** a machine gate: the automation's job ends at
 making problems visible; the judgment is yours.
 
