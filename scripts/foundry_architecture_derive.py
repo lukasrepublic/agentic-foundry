@@ -602,11 +602,11 @@ def build_adrs(repo, codebases, tofu, tofu_src):
     n = next_adr_number(repo)
     existing = {re.sub(r"^\d{4}-", "", p.stem) for p in (Path(repo) / DECISIONS_DIR).glob("*.md")} if (Path(repo) / DECISIONS_DIR).is_dir() else set()
     out = []
-    for title, conf, ev, ctx, check in adrs:
+    for title, conf, ev, context, check in adrs:
         s = slug(title)
         if s in existing:
             continue
-        text = adr_text(title, conf, ev, ctx, check)
+        text = adr_text(title, conf, ev, context, check)
         if check == "none":
             text = text.replace("check_id: none", "check_id: none\n  reason: no automated check yet; the human names one when confirming")
         out.append((f"{DECISIONS_DIR}/{n:04d}-{s}.md", text))
