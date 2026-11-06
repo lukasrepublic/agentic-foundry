@@ -707,7 +707,12 @@ def cmd_start(args: list[str]) -> int:
     editors = None
     edited_at = None
     live = None
-    if done or paper:
+    try:
+        claimed_ticket = store.claim_ticket_digest(project_root(), issue_repo or "", issue["number"])
+    except store.ClaimsUnreadable as e:
+        sys.exit(f"foundry-ticket: claims-unreadable — the local claim record cannot be read ({e}); nothing was "
+                 "recorded. Repair or remove the claims file in the git common dir.")
+    if done or paper or claimed_ticket:
         # the same reader the claim path uses (never a second GraphQL shape): who edited the body
         try:
             live = read_issue(default_run, issue_repo or "", int(issue["number"]), trust_author=True)
@@ -721,6 +726,15 @@ def cmd_start(args: list[str]) -> int:
             editors = live.get("editors")
             edited_at = live.get("last_edited_at")
             issue_repo = live.get("name_with_owner") or issue_repo
+    if claimed_ticket:
+        # dl-11: the whole-ticket digest recorded at `claim` time must still match the live ticket, not only Done means
+        if live is None or not live.get("ticket_digest"):
+            sys.exit("foundry-ticket: could not read the issue to compare it with the claimed ticket; nothing was "
+                     "recorded. Retry `start`.")
+        if live["ticket_digest"] != claimed_ticket:
+            sys.exit("foundry-ticket: ticket_changed — the ticket (Acceptance, Design, Security, Surfaces or Done means) "
+                     "differs from the one recorded at `claim` time; it will not start. Re-read it and run " + RECOVERY +
+                     " (--trust-author does not override this). Nothing was recorded.")
     if done:
         try:
             vetted = store.claim_done_digest(project_root(), issue_repo or "", issue["number"])
@@ -1350,27 +1364,31 @@ def judge(issue: dict, login: str, claim: dict | None, withdrawn_by: tuple | Non
         return {**base, "stop_dispatch": True, "reason": "closed"}
     if issue["status"] not in STARTED_STATUSES:       # Ready / blocked / none / unknown: nothing was started
         return {**base, "stop_dispatch": True, "reason": "not_started"}
-    if claim:
-        # dl-03: every claim is judged on the signed whole-ticket digest. A record with no ticket_digest or no valid
-        # signature never authorizes (no downgrade to the unsigned body-hash check)
-        if not claim.get("ticket_digest") or not store.verify_claim(claim, root):
-            return {**base, "stop_dispatch": True, "reason": "claim_unverified",
-                    "cause": f"the claim record for {key} has no valid signed ticket digest (hand-edited, or recorded before "
-                             f"dl-03); run `claim {issue['number']} --rebase-acceptance` once to record a signed one"}
-        moved = claim["ticket_digest"] != issue.get("ticket_digest")
-        done_moved = bool(claim.get("done_digest")) and claim["done_digest"] != issue.get("done_digest")
-        if moved or done_moved:
-            old, new = claim.get("ticket_sections") or {}, issue.get("ticket_sections") or {}
-            changed = [k for k in store.TICKET_SECTIONS if old.get(k) != new.get(k)]
-            if done_moved and "done_means" not in changed:
-                changed.append("done_means")
-            reason = "acceptance_changed" if changed == ["acceptance"] else "ticket_changed"
-            return {**base, "stop_dispatch": True, "reason": reason, "changed_sections": changed}
+    if claim is None:
+        # an issue that was never claimed through this store (started by hand): no baseline, nothing to compare.
+        # (dl-11 follow-up: a DELETED record looks the same; tests/test_owned_queue.py still pins this as authorized)
         return {**base, "stop_dispatch": False, "reason": "authorized"}
-    if claim and claim.get("body_sha256") and claim["body_sha256"] != issue["body_sha256"]:
-        return {**base, "stop_dispatch": True, "reason": "acceptance_changed"}
-    if claim and claim.get("done_digest") and claim["done_digest"] != issue.get("done_digest"):
-        return {**base, "stop_dispatch": True, "reason": "acceptance_changed"}
+    if not isinstance(claim, dict) or not claim:
+        # dl-11: a claim record that is present but emptied to {} (or is not an object) has no ticket baseline to
+        # judge against, so it never authorizes
+        return {**base, "stop_dispatch": True, "reason": "claim_unverified",
+                "cause": f"the claim record for {key} is empty, so no signed ticket baseline exists; run "
+                         f"`claim {issue['number']} --rebase-acceptance` once to record a signed one"}
+    # dl-03: every claim is judged on the signed whole-ticket digest. A record with no ticket_digest or no valid
+    # signature never authorizes (no downgrade to the unsigned body-hash check)
+    if not claim.get("ticket_digest") or not store.verify_claim(claim, root):
+        return {**base, "stop_dispatch": True, "reason": "claim_unverified",
+                "cause": f"the claim record for {key} has no valid signed ticket digest (hand-edited, or recorded before "
+                         f"dl-03); run `claim {issue['number']} --rebase-acceptance` once to record a signed one"}
+    moved = claim["ticket_digest"] != issue.get("ticket_digest")
+    done_moved = bool(claim.get("done_digest")) and claim["done_digest"] != issue.get("done_digest")
+    if moved or done_moved:
+        old, new = claim.get("ticket_sections") or {}, issue.get("ticket_sections") or {}
+        changed = [k for k in store.TICKET_SECTIONS if old.get(k) != new.get(k)]
+        if done_moved and "done_means" not in changed:
+            changed.append("done_means")
+        reason = "acceptance_changed" if changed == ["acceptance"] else "ticket_changed"
+        return {**base, "stop_dispatch": True, "reason": reason, "changed_sections": changed}
     return {**base, "stop_dispatch": False, "reason": "authorized"}
 
 
@@ -1778,7 +1796,12 @@ def cmd_reconcile(args: list[str], run, now: float) -> int:
         print(f"reconcile: {hb_refused}", file=sys.stderr)
     else:
         try:   # B5: a reconcile is a heartbeat for every claim THIS session holds (never another session's)
-            beat = store.heartbeat_claims(root, _session_id(root, a.session_id, socket.gethostname()), now)
+            sid_hb = _session_id(root, a.session_id, socket.gethostname(), required=False)
+            if sid_hb:
+                beat = store.heartbeat_claims(root, sid_hb, now)
+            else:       # read-only without a session id: this caller owns no lease, so there is nothing to refresh
+                print("reconcile: no session id is set, so no heartbeat was written; the verdicts below are still reported",
+                      file=sys.stderr)
         except store.ClaimsUnreadable as e:
             print(f"reconcile: claims-unreadable - not heartbeating ({store.redact(str(e))})", file=sys.stderr)
     results, cause = [], None
@@ -1871,34 +1894,15 @@ def _epoch(iso) -> float:
         return 0.0
 
 
-def _session_id(root: Path, flag: str | None, host: str) -> str:
-    """Stable across invocations of the CLI: --session-id (explicit beats ambient), else CLAUDE_CODE_SESSION_ID, else a per-user id
-    generated once and kept in the git dir (`foundry-lead-session`). Never derived from a parent pid."""
-    sid = flag or os.environ.get("CLAUDE_CODE_SESSION_ID")
-    if sid:
-        return sid
-    p = store._git_path("foundry-lead-session", root)
-    if p is None:
-        return f"{host}:{getpass.getuser()}"
-    try:
-        got = p.read_text(encoding="utf-8").strip()
-        if got:
-            return got
-    except OSError:
-        pass
-    new = uuid.uuid4().hex
-    try:
-        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(new + "\n")
-        return new
-    except FileExistsError:
-        try:
-            return p.read_text(encoding="utf-8").strip() or new
-        except OSError:
-            return new
-    except OSError:
-        return new
+def _session_id(root: Path, flag: str | None, host: str, required: bool = True) -> str:
+    """--session-id (explicit beats ambient), else CLAUDE_CODE_SESSION_ID, else an explicit FOUNDRY_SESSION_ID (a human
+    terminal). dl-11: with none of them the verb refuses with `session-id-missing`; there is no per-clone or host:user id."""
+    sid = flag or store.current_session_id(root)
+    if sid or not required:
+        return sid          # a read-only verb passes required=False: no session id means it owns no lease
+    print("foundry-ticket: session-id-missing: set CLAUDE_CODE_SESSION_ID (a Claude Code session) or FOUNDRY_SESSION_ID "
+          "(a human terminal), or pass --session-id. There is no per-clone fallback. Nothing was recorded.", file=sys.stderr)
+    raise SystemExit(2)
 
 
 def _create_exclusive(path: Path, rec: dict) -> bool:
@@ -1932,7 +1936,7 @@ def cmd_lead(args: list[str], now: float) -> int:
     root = project_root()
     path = store.lease_file(root)
     host = socket.gethostname()
-    sid = _session_id(root, a.session_id, host)
+    sid = _session_id(root, a.session_id, host, required=a.action != "check")
     if a.action in ("acquire", "renew"):
         try:
             store.ensure_runtime_dir(root)     # confined to the workspace + a `*` .gitignore, like the inbox runtime file

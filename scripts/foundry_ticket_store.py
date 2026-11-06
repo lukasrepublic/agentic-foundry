@@ -187,6 +187,26 @@ def claim_done_digest(root: Path | None, repo: str, number) -> str | None:
     return dd
 
 
+def claim_ticket_digest(root: Path | None, repo: str, number) -> str | None:
+    """dl-11: the whole-ticket digest a `claim` recorded for repo#number, or None when there is no file / no record /
+    no ticket_digest in it (a pre-dl-03 or unclaimed path). Raises ClaimsUnreadable when the file is present but
+    unusable or the record carries a malformed ticket_digest."""
+    claims, found = read_claims(root)
+    if not found:
+        return None
+    rec = claims.get(claim_key(repo, number))
+    if rec is None:
+        return None
+    if not isinstance(rec, dict):
+        raise ClaimsUnreadable(f"record for {claim_key(repo, number)} is malformed")
+    if "ticket_digest" not in rec:
+        return None
+    td = rec["ticket_digest"]
+    if not isinstance(td, str) or not td:
+        raise ClaimsUnreadable(f"record for {claim_key(repo, number)} has a malformed ticket_digest")
+    return td
+
+
 def lease_file(root: Path | None = None) -> Path:
     return (root or project_root()) / LEASE_RELPATH
 
@@ -499,16 +519,9 @@ def _team_scope(root: Path):
 
 
 def current_session_id(root: Path | None = None) -> str:
-    """The caller's session id as the claim CLI derives it, WITHOUT creating anything: CLAUDE_CODE_SESSION_ID,
-    else the per-user id kept in the git dir; "" when neither exists."""
-    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
-    if sid:
-        return sid
-    p = _git_path("foundry-lead-session", root)
-    try:
-        return p.read_text(encoding="utf-8").strip() if p else ""
-    except OSError:
-        return ""
+    """The caller's session id: CLAUDE_CODE_SESSION_ID, else an explicit FOUNDRY_SESSION_ID (a human terminal);
+    "" when neither is set. dl-11: there is no per-clone or host:user fallback."""
+    return os.environ.get("CLAUDE_CODE_SESSION_ID", "") or os.environ.get("FOUNDRY_SESSION_ID", "")
 
 
 def claim_gate(cwd=None, now: float | None = None, explicit: bool = False,

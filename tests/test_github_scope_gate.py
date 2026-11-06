@@ -65,7 +65,8 @@ def _proj(tmp_path, manifest, raw=None):
 
 
 def _run(root, stub, script, args):
-    env = dict(os.environ, CLAUDE_PROJECT_DIR=str(root), PATH=f"{stub}:{os.environ['PATH']}")
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=str(root), PATH=f"{stub}:{os.environ['PATH']}",
+               FOUNDRY_SESSION_ID="test-terminal")      # fixture: writing verbs (claim, lead renew) need a session id
     return subprocess.run([sys.executable, os.path.join(S, script), *args], capture_output=True, text=True,
                           env=env, cwd=str(root))
 
