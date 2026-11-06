@@ -121,10 +121,14 @@ function selectOpenWave(plan, mergedBatches, runningBatches, briefs) {
 function reviewGate(brief) {
   if (!brief || typeof brief !== 'object') return 'no-brief'
   // the Definition of Ready check: `ready_check_required` (the old key `design_required` stays readable on input)
-  const viaNew = brief.ready_check_required !== undefined
-  const required = viaNew ? brief.ready_check_required : brief.design_required
-  if (required !== undefined && required !== null && typeof required !== 'boolean') return viaNew ? 'bad-ready-check-required' : 'bad-design-required'
-  if (required === true && !(brief.design_verdict === 'clear' && brief.ticket_verdict === 'clear')) return 'review-required'
+  // Fail closed: required when EITHER key is true; two present keys that disagree are refused.
+  const isSet = (v) => v !== undefined && v !== null
+  const nk = brief.ready_check_required, ok = brief.design_required
+  if (isSet(nk) && typeof nk !== 'boolean') return 'bad-ready-check-required'
+  if (isSet(ok) && typeof ok !== 'boolean') return isSet(nk) ? 'bad-ready-check-required' : 'bad-design-required'
+  if (isSet(nk) && isSet(ok) && nk !== ok) return 'bad-ready-check-required'
+  const required = nk === true || ok === true
+  if (required && !(brief.design_verdict === 'clear' && brief.ticket_verdict === 'clear')) return 'review-required'
   return null
 }
 

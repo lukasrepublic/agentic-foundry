@@ -119,8 +119,8 @@ def norm_path(entry: str, root: Path | None = None) -> str:
     return "/".join(parts)
 
 
-_DONE_RE = re.compile(r"^##+[ \t]*(?:definition[ \t]+of[ \t]+done|done[ \t]+means)\b.*?$", re.I | re.M)   # new heading + old alias, one section
-_PAPER_RE = re.compile(r"^##+[ \t]*(?:referenced[ \t]+artifacts?|paper[ \t]+allowed)\b.*?$", re.I | re.M)   # new heading + old alias
+_DONE_RE = re.compile(r"^##+[ \t]*(?:" + store.DONE_HEADING_ALT + r")\b.*?$", re.I | re.M)   # new heading + old alias, one section
+_PAPER_RE = re.compile(r"^##+[ \t]*(?:" + store.PAPER_HEADING_ALT + r")\b.*?$", re.I | re.M)   # new heading + old alias
 _FENCE_RE = re.compile(r"^(```+|~~~+)[^\n]*\n(.*?)^\1[ \t]*$", re.S | re.M)
 _HEADING_RE = re.compile(r"^##+[ \t]", re.M)
 _ISSUE_URL_RE = re.compile(r"https?://[^/]+/([^/]+/[^/]+)/issues/\d+")
@@ -848,6 +848,8 @@ def cmd_allow(args: list[str], ci: bool = False) -> int:
                  "permission-floor row, which asks the operator)")
     if not args:
         sys.exit("usage: foundry-ticket.py %s <path> [<path>...]" % ("ci-allow" if ci else "allow"))
+    if "issue_referenced_artifacts" not in doc and "issue_paper_allowed" in doc:
+        doc["issue_referenced_artifacts"] = doc.pop("issue_paper_allowed")   # same signed payload, so the signature still verifies
     key = "ci_allowed" if ci else "referenced_artifacts"
     if key not in doc:
         doc[key] = list(doc.get("paper_allowed") or []) if not ci else []   # an old-name list carries over

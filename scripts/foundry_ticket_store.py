@@ -286,6 +286,10 @@ SIG_FIELD = "lists_sig"
 # dl-15: the ticket record keys carry agile names (`referenced_artifacts`, `issue_referenced_artifacts`,
 # `definition_of_done`); the old names (`paper_allowed`, `issue_paper_allowed`, `done_means`) stay readable on input.
 # The signed payload below keeps its original field name so a list signed before the rename still verifies.
+# The heading spellings the ticket tool parses (one source: foundry-ticket.py builds `_DONE_RE` / `_PAPER_RE` from these and
+# foundry_migrate.py builds its body guard from them, so a spelling can never be executed by one and unguarded by the other).
+DONE_HEADING_ALT = r"definition[ \t]+of[ \t]+done|done[ \t]+means"
+PAPER_HEADING_ALT = r"referenced[ \t]+artifacts?|paper[ \t]+allowed"
 KEY_ALIASES = {"referenced_artifacts": "paper_allowed", "issue_referenced_artifacts": "issue_paper_allowed",
                "definition_of_done": "done_means"}
 

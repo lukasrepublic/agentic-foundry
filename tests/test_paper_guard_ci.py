@@ -53,7 +53,7 @@ def guard(root, rel, tool="Edit"):
 
 def ticket(root, **lists):
     tf = Path(_git(root, "rev-parse", "--absolute-git-dir")) / "foundry-ticket.json"
-    doc = {"issue": 7, "title": "t", "done": "true", "paper_allowed": [], "status": "open",
+    doc = {"issue": 7, "title": "t", "done": "true", "referenced_artifacts": [], "status": "open",
            "stop_blocks": 0, "trusted_by": "author"}
     doc.update(lists)
     store.sign_ticket_lists(doc, root, create=True)     # gv-16: ci_allowed / issue_paper_allowed count only when signed
@@ -116,7 +116,7 @@ def test_plain_allow_of_a_ci_path_is_refused_by_the_cli(repo, path, probe):
                          capture_output=True, text=True, env=_env(repo), cwd=str(repo), timeout=60)
     assert cli.returncode != 0 and "ci-path-needs-ci-flag" in cli.stderr + cli.stdout
     doc = json.loads((Path(_git(repo, "rev-parse", "--absolute-git-dir")) / "foundry-ticket.json").read_text())
-    assert (doc.get("referenced_artifacts") or doc.get("paper_allowed")) == [] and not doc.get("ci_allowed")
+    assert store.rec_get(doc, "referenced_artifacts") == [] and not doc.get("ci_allowed")
     assert guard(repo, probe).returncode == 2
 
 
@@ -163,7 +163,7 @@ def test_the_ticket_cli_writes_ci_allowed_and_the_guard_honours_it(repo):
                          capture_output=True, text=True, env=_env(repo), cwd=str(repo), timeout=60)
     assert cli.returncode == 0, cli.stdout + cli.stderr
     doc = json.loads((Path(_git(repo, "rev-parse", "--absolute-git-dir")) / "foundry-ticket.json").read_text())
-    assert doc["ci_allowed"] == ["setup.cfg"] and (doc.get("referenced_artifacts") or doc.get("paper_allowed")) == []
+    assert doc["ci_allowed"] == ["setup.cfg"] and store.rec_get(doc, "referenced_artifacts") == []
     assert guard(repo, "setup.cfg").returncode == 0
 
 
@@ -203,3 +203,30 @@ def test_a_trusted_authors_paper_allowed_does_lift_it_control(repo, monkeypatch)
     doc = _start_with_issue(repo, monkeypatch, "alice", trusted=("alice",))
     assert doc["issue_referenced_artifacts"] == [".github/workflows"]
     assert guard(repo, ".github/workflows/ci.yml").returncode == 0
+
+
+def _doc(repo):
+    return json.loads((Path(_git(repo, "rev-parse", "--absolute-git-dir")) / "foundry-ticket.json").read_text())
+
+
+def test_an_old_key_ticket_still_allows_paper_and_the_guard_reads_it(repo):
+    ticket(repo, referenced_artifacts=None, paper_allowed=["docs"])      # a ticket recorded before the rename
+    doc = _doc(repo)
+    doc.pop("referenced_artifacts")
+    (Path(_git(repo, "rev-parse", "--absolute-git-dir")) / "foundry-ticket.json").write_text(json.dumps(doc))
+    assert guard(repo, "docs/a.md").returncode == 0
+    assert guard(repo, "specs/a.md").returncode == 2
+
+
+def test_cmd_allow_migrates_the_old_keys_to_the_agile_names_and_keeps_the_signature(repo):
+    ticket(repo, referenced_artifacts=None, paper_allowed=["docs"], issue_paper_allowed=["pyproject.toml"])
+    doc = _doc(repo)
+    doc.pop("referenced_artifacts")
+    (Path(_git(repo, "rev-parse", "--absolute-git-dir")) / "foundry-ticket.json").write_text(json.dumps(doc))
+    cli = subprocess.run([sys.executable, str(SCRIPTS / "foundry-ticket.py"), "allow", "specs"],
+                         capture_output=True, text=True, env=_env(repo), cwd=str(repo), timeout=60)
+    assert cli.returncode == 0, cli.stderr
+    doc = _doc(repo)
+    assert "paper_allowed" not in doc and "issue_paper_allowed" not in doc
+    assert doc["referenced_artifacts"] == ["docs", "specs"] and doc["issue_referenced_artifacts"] == ["pyproject.toml"]
+    assert guard(repo, "pyproject.toml").returncode == 0      # the signed list still verifies under the new key
