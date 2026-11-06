@@ -104,6 +104,38 @@ def test_absent_enumeration_includes_branch_protection_applier(tmp_path):
     assert present == [applier], "a tree with the deleted applier present must fail the sweep"
 
 
+# ==================================================================== dl-18 ====================
+# The whole absence enumeration is enforced, not one sample of it. Before dl-18 only the applier
+# above was checked, so a deleted module re-added with neutral content (no self-naming token for
+# the text sweep to find) passed. The citation graph is the named case: its builder, its MCP
+# server and its skill must stay gone in 2.0.
+
+GRAPH_PATHS = [
+    "scripts/foundry_graph.py",
+    "scripts/foundry-build-citation-graph.py",
+    "scripts/foundry-graph-mcp.py",
+    "skills/report-citation-graph",
+    ".mcp.json",
+]
+
+
+def test_every_absent_path_is_absent_from_the_tree():
+    present = absent_check(REPO_ROOT, FIXTURE["absent_paths"])
+    assert present == [], f"deleted paths are present again: {present}"
+
+
+def test_citation_graph_paths_are_enumerated():
+    missing = [p for p in GRAPH_PATHS if p not in FIXTURE["absent_paths"]]
+    assert missing == [], f"the citation-graph retirement is not enumerated: {missing}"
+
+
+def test_planted_graph_server_fails_the_absence_check(tmp_path):
+    (tmp_path / "scripts").mkdir()
+    planted = "scripts/foundry-graph-mcp.py"
+    (tmp_path / planted).write_text("x = 1\n", encoding="utf-8")  # neutral content: no token to sweep
+    assert absent_check(tmp_path, FIXTURE["absent_paths"]) == [planted]
+
+
 # ==================================================================== AC-SCW-7 ==================
 
 # Independently-authored copy of the FROZEN SWEEP DEFINITION from the sibling

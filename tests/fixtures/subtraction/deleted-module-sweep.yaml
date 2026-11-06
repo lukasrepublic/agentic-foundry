@@ -112,6 +112,9 @@ surface_set:
 # their test retired by autonomy-continuation R4's subtraction-wave (AC-SUB-1b, →
 # fleet-is-listagents, R3). Every entry SHALL NOT exist in the candidate tree.
 absent_paths:
+# 2.0 restorations, removed from this list: skills/command-deck (gn-10, the slim operator lead) and
+# skills/upstream-submit (gv-15, the leak-guarded upstream verb). tests/test_subtraction_absence.py now
+# asserts EVERY entry below is absent, so a restoration must leave this list in the same PR (dl-18).
   - scripts/foundry-fleet-roster.py
   - scripts/foundry-fleet-session-registry.py
   - scripts/foundry-fleet-session-machinery.py
@@ -207,7 +210,6 @@ absent_paths:
   - skills/certify-local
   - skills/certify-staging
   - skills/coherence-check
-  - skills/command-deck
   - skills/dashboards-as-code
   - skills/data-tier-cutover
   - skills/decommission-gate
@@ -238,7 +240,6 @@ absent_paths:
   - skills/sd-verify
   - skills/skill-authoring
   - skills/spec-review
-  - skills/upstream-submit
 
 # allowlist — AC-SCW-9's approved exceptions. Every occurrence the widened sweep would
 # otherwise flag over (surface_set x token_set) is covered by exactly one entry below: `path`
