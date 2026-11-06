@@ -212,7 +212,7 @@ is a tracked follow-on rather than a change made here.
   it is never a command).
 - **`not_invoked` is a deliberate classification, not an escape hatch — and now it is checked.** The
   `scripts/` tree mixes CLIs with imported library modules (`foundry_authz.py`, `foundry_contract.py`,
-  `foundry_graph.py`, `foundry_id_apply.py`, …). A module that is never a command is recorded with a one-line
+  `foundry_id_apply.py`, …). A module that is never a command is recorded with a one-line
   reason, and AC-PFM-2's disjointness means "forgot to classify" is indistinguishable from "failed the test".
   The new command-position cross-check closes the other half: a script the workflow actually instructs cannot
   be parked in `not_invoked` to dodge a tier decision. Note the check's live consequence — at the
