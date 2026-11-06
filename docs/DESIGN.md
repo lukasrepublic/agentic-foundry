@@ -17,7 +17,7 @@ the constraint is verification, not generation.
 Four floors, none ever relaxed; each names exactly what it enforces:
 
 1. **Front-authorization — the opt-in spec lane.** The default unit of work is a ticket with a
-   runnable `Done means` (see [context/operating-model.md](../context/operating-model.md)); the
+   runnable `Definition of Done` (see [context/operating-model.md](../context/operating-model.md)); the
    operator's standing grant is the authorization. For `security: true` work, or a design the
    operator chooses to spec, specs are authored atomically (stable AC-IDs, a hard 14-AC/8k-word
    ceiling) and **authorized by the operator**: the spec + acceptance-contract hashes are
@@ -38,7 +38,7 @@ deliberately **not** machine-enforced.
 ```
         what the machine enforces                what stays human
  ┌────────────────────────────────────┐   ┌──────────────────────────────┐
- │ 1. Done means + local-green        │   │  the sign-off after testing  │
+ │ 1. Definition of Done + local-green        │   │  the sign-off after testing  │
  │    (Stop hook · push guard)        │   │  every scope/risk judgment   │
  │    spec lane: front-authorization  │   │  the choice to use a spec    │
  │ 2. the merge floor      (tiered)   │   │                              │

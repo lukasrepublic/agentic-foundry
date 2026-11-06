@@ -2,10 +2,10 @@
 
 The vocabulary, in one place. Terms link to the doc that owns them.
 
-- **Ticket** — the default unit of work: a GitHub issue with a runnable `## Done means`
-  command and a `## Paper allowed` list. Assignment is the authorization. See
+- **Ticket** — the default unit of work: a GitHub issue with a runnable `## Definition of Done`
+  command and a `## Referenced Artifacts` list. Assignment is the authorization. See
   [context/operating-model.md](../context/operating-model.md).
-- **Atom / atomic spec** — the unit of work on the opt-in spec lane: one capability, one spec file
+- **Atomic spec** — the unit of work on the opt-in spec lane: one capability, one spec file
   with stable AC-IDs, small enough to review honestly. Hard ceiling: 14 acceptance criteria / 8,000
   words (no override — oversize means decompose).
 - **AC-ID** — a stable identifier for one acceptance criterion (`AC-EXPORT-3`). Checkpoints,
@@ -38,7 +38,7 @@ The vocabulary, in one place. Terms link to the doc that owns them.
   checks (labeled as such), per your platform plan. See [merge-floor.md](merge-floor.md).
 - **Paper guard** — the PreToolUse hook that refuses a write under `specs/`, `intake/`, `.foundry/`,
   `docs/`, `status-reports/`, `charters/`, or to a contract / manifest file unless the active
-  ticket's `Paper allowed` list names the path. Code, infra, tests and config are never gated.
+  ticket's `Referenced Artifacts` list names the path. Code, infra, tests and config are never gated.
 - **Local-green** — `scripts/foundry-test.sh` ran the repository's own CI command and recorded
   success for HEAD; the git-discipline hook refuses a push and a non-draft PR until it exists.
 - **Sign-off** — the operator's own test pass, the last step of delivery. A practice, deliberately
@@ -61,3 +61,29 @@ The vocabulary, in one place. Terms link to the doc that owns them.
   intake) that every ticket PR targets instead of `main`, so a per-merge deploy trigger fires
   once per release rather than once per atom. See
   [branching-and-cleanup.md](how-to/branching-and-cleanup.md).
+
+## Agile terms (2.0)
+
+One row for each agile term, with the term it replaces. The 1.x opt-in spec lane keeps its own "atomic spec".
+Critical path, total float, claim/lease and `blocked_by` are unchanged: they are scheduling and coordination terms.
+
+<!-- vocab-allow:start -->
+| Agile term | Replaces | Meaning |
+|---|---|---|
+| **Epic** | programme | The whole body of work. One Epic has one Epic issue and one Release plan. |
+| **Epic issue** | programme issue | The parent issue of an Epic. Its sub-issues are the Stories. |
+| **Story** | atom | One ticket: a GitHub issue with a runnable Definition of Done. |
+| **Batch** | batch (unchanged) | Stories that touch the same code, built in one pull request. |
+| **Increment** | wave | A dependency-ordered group of Batches. It is not time-boxed. |
+| **Release plan** | execution plan | The plan file `release-plan.yaml`: Increments, Batches, critical path, total float. |
+| **WIP limit** | concurrency limit | The most Batches in progress at one time (`wip_limit`, `deck.max_builders`). |
+| **Epic review** | close-out | The single final session of an Epic. It runs the Epic's Definition of Done. |
+| **Definition of Ready check** | design-reviewer + ticket-reviewer gate | The refinement check before build (`ticket-reviewer`, `design-reviewer`). |
+| **Acceptance Criteria** | `## Acceptance` | The ticket section of EARS bullets with stable `AC-<n>` ids. |
+| **Definition of Done** | `## Done means` | The ticket section with the one fenced command that exits 0 when the work is done. |
+| **Referenced Artifacts** | `## Paper allowed` | The ticket section that lists the documents the change may edit. |
+| **Retrospective** | `## Learned` | The comment each Story ends with. The Retrospective distill turns it into proposed rule edits. |
+<!-- vocab-allow:end -->
+
+A Scrum Definition of Done is a team-wide quality standard. Here, the per-ticket Definition of Done is that standard made
+executable for one item, and the Epic review runs the Epic's own Definition of Done.

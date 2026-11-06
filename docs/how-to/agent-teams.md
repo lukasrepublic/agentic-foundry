@@ -61,7 +61,7 @@ the swarm documentation. Price that in before arming a team, not after.
 
 ## Foundry's own posture
 
-- Foundry ships no wave orchestrator and no recurring watcher; fan-out is several `Agent` calls in
+- Foundry ships no Increment orchestrator and no recurring watcher; fan-out is several `Agent` calls in
   one message (`/foundry:dispatch`), which stay ordinary subagents whether or not the operator has
   this flag on. Foundry's own machinery never spawns teammates.
 

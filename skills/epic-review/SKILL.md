@@ -1,11 +1,11 @@
 ---
 name: epic-review
-description: Close out an epic (/foundry:epic-review). The single final session after the last increment has merged into the integration branch - it closes the atom issues, runs the epic's Done means as the required check epic/acceptance on the integration head, confirms the milestone open count is zero, runs the Learned distill, creates a DRAFT Release pinned to that SHA and posts the final Project status update. It never tags or publishes. Trigger on "close out the epic", "/foundry:epic-review", or when the deck sees every batch of the last increment merged.
+description: Run the Epic review (/foundry:epic-review). The single final session after the last increment has merged into the integration branch - it closes the Story issues, runs the Epic's Definition of Done as the required check epic/acceptance on the integration head, confirms the milestone open count is zero, runs the Retrospective distill, creates a DRAFT Release pinned to that SHA and posts the final Project status update. It never tags or publishes. Trigger on "close out the Epic", "/foundry:epic-review", or when the deck sees every batch of the last increment merged.
 ---
 
 # /foundry:epic-review
 
-The one final session of a **epic**. The operator tests, tags and publishes after it. A draft
+The one final session of a **Epic**. The operator tests, tags and publishes after it. A draft
 Release is the hand-off. Procedure: `docs/how-to/epic-review.md`.
 
 The work is done by `${CLAUDE_PLUGIN_ROOT}/scripts/foundry_epic_review.py`. This skill only runs it and
@@ -34,14 +34,14 @@ foundry_epic_review.py run <epic> --repo <owner/name> --integration <branch> --t
   is red or not published; the milestone open count is not zero; the ruleset cannot be created with this token
   (`external-provisioning`: hand the operator the exact ruleset call).
 - `3` pending. A check was still pending after 60 seconds. The JSON `pending` list names each check and the
-  `recheck_at` time. The lease is dropped. Do not wait. The next tick re-runs epic review at that time.
+  `recheck_at` time. The lease is dropped. Do not wait. The next tick re-runs Epic review at that time.
 
 ## Rules
 
-- The Done means come from the epic issue and must pass the trust check (author and every editor). An untrusted
+- The Definition of Done come from the Epic issue and must pass the trust check (author and every editor). An untrusted
   one refuses with `done-means-untrusted`. A local `--done-means` file must be committed and unmodified. Run from a
   work tree at the integration head.
 - The ruleset is created only after acceptance and the milestone pass. The report prints its delete command.
-- At most 60 seconds are spent waiting on checks in the whole session. Running the Done means has its own timeout.
+- At most 60 seconds are spent waiting on checks in the whole session. Running the Definition of Done has its own timeout.
 - It never tags and never publishes. The Release is a draft pinned to the integration head SHA.
 - If a lease is stale, the operator deletes the ref `refs/foundry/claims/epic-review/<epic>`.

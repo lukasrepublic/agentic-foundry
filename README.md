@@ -2,7 +2,7 @@
 
 **Ticket-first delivery for agent-built software — as a Claude Code plugin.**
 
-One artifact per change: **a ticket with a runnable "Done means".** The agent builds it on a
+One artifact per change: **a ticket with a runnable "Definition of Done".** The agent builds it on a
 branch, runs the repository's own tests locally until green, opens one PR, and your platform —
 branch protection and CI — decides the merge. A separate security lane covers auth, secrets and
 custody changes. Specs, acceptance contracts and per-change authorization still exist, but they
@@ -21,18 +21,18 @@ The default path is on one page: **[context/operating-model.md](context/operatin
  YOU (operator)          THE AGENT                 YOUR PLATFORM (GitHub/CI)
  ──────────────          ─────────                 ─────────────────────────
       │
-      │  a ticket: what / why / Done means (a command) / Paper allowed
+      │  a ticket: what / why / Definition of Done (a command) / Referenced Artifacts
       ▼
  ┌──────────────┐    ┌─────────────────────────┐
  │ foundry-ticket│───▶│ active ticket recorded; │   the paper guard refuses writes to
- │ start <issue> │    │ Done means = the check  │   specs/, docs/, .foundry/ … unless
+ │ start <issue> │    │ Definition of Done = the check  │   specs/, docs/, .foundry/ … unless
  └──────────────┘    └─────────────────────────┘   the ticket allows them
                                 │
                                 ▼
                   ┌─────────────────────┐
                   │ dispatch: build it  │       isolated git worktree;
                   │ on a branch, run    │──────▶ foundry-test.sh until green
-                  │ `Done means`        │           │ (local-green recorded for HEAD)
+                  │ `Definition of Done`        │           │ (local-green recorded for HEAD)
                   └─────────────────────┘           ▼
                                           ┌──────────────────────┐
                                           │   one PR per ticket  │
@@ -54,7 +54,7 @@ The default path is on one page: **[context/operating-model.md](context/operatin
  └───────────────┘
 ```
 
-The Stop hook runs `Done means`: while it fails the session keeps working (three refusals, then it
+The Stop hook runs `Definition of Done`: while it fails the session keeps working (three refusals, then it
 may stop with the failure named). The platform is the gate; the operator's own test pass is the last
 step.
 
@@ -64,7 +64,7 @@ The default loop, as you'd actually run it:
 
 ```text
 > gh issue create --title "Repoint beta DNS" --body-file ticket.md
-  … ticket.md: ## What / ## Why / ## Done means (one fenced command) / ## Paper allowed
+  … ticket.md: ## What / ## Why / ## Definition of Done (one fenced command) / ## Referenced Artifacts
 
 > python3 "$CLAUDE_PLUGIN_ROOT/scripts/foundry-ticket.py" start 42
   … records the ticket in the repository's git dir (`git rev-parse --git-path foundry-ticket.json`), never in the tree
@@ -84,11 +84,11 @@ And the artifact the whole loop pivots on — a ticket you can read in one scree
 ````markdown
 ## What
 Rate-limit the public API.
-## Done means
+## Definition of Done
 ```
 npx playwright test tests/rate-limit.spec.ts
 ```
-## Paper allowed
+## Referenced Artifacts
 docs/runbooks/rate-limit.md
 ````
 
@@ -230,8 +230,8 @@ is the heart of the [trust model](docs/DESIGN.md). Full mechanics: **[docs/merge
 
 | | Spec Kit / OpenSpec / BMAD | Review bots (CodeRabbit…) | Agent platforms (Devin, Cursor…) | **Foundry** |
 |---|---|---|---|---|
-| Unit of work | spec documents | — | plans, ephemeral | ✅ a ticket with a runnable `Done means`; a spec only if you opt in |
-| Stops early? | — | — | often | ✅ the Stop hook runs `Done means`; the session keeps going while it fails |
+| Unit of work | spec documents | — | plans, ephemeral | ✅ a ticket with a runnable `Definition of Done`; a spec only if you opt in |
+| Stops early? | — | — | often | ✅ the Stop hook runs `Definition of Done`; the session keeps going while it fails |
 | Merge enforcement | prompt packs | advisory comments | — | ✅ tiered floor, honestly labeled |
 | Local-green before push | — | — | — | ✅ push and non-draft PR refused until `foundry-test.sh` is green for HEAD |
 | Human authority | varies | — | sandbox-level | ✅ operator sign-off is terminal, by design |

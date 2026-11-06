@@ -165,7 +165,7 @@ standalone plugin repo) so the gates are live + fail-closed.
 
 6. **App-exercise binding.** Declare the adopter's boot command (the generic analog of
    `make dev`) and how each surface is exercised (`ui:`/`api:`/`cli:`/`pipeline:`/`binary:`/…) so a
-   ticket's `Done means` command can drive the running app; `/foundry:verify` runs the stack
+   ticket's `Definition of Done` command can drive the running app; `/foundry:verify` runs the stack
    profile's commands (the thin doctor carries no driver check).
 7. **Env/identity mapping.** Map the adopter's own vars onto `FOUNDRY_*` (Foundry owns
    the `FOUNDRY_*` namespace; never bake a project-specific var into a primitive).
@@ -243,7 +243,7 @@ standalone plugin repo) so the gates are live + fail-closed.
    authoritative only when its author is trusted: the authenticated `gh` login, a listed operator, or, only when
    no operators are listed, the repository owner or a login with a write/maintain/admin permission lookup. A
    bare member or read-level collaborator is foreign: its marker is shown as `unparsed` / `foreign_author`,
-   visible but never authoritative. Likewise an issue's `## Done means` command is run by the dispatch path only
+   visible but never authoritative. Likewise an issue's `## Definition of Done` command is run by the dispatch path only
    when its author (and last editor) has write access: `foundry-ticket.py read-issue <issue> --json` reports
    `done_trusted`, `claim` refuses an untrusted one (`done-means-untrusted`) unless the operator, having read it,
    passes `--trust-author`, and `next` skips such issues.
@@ -331,7 +331,7 @@ standalone plugin repo) so the gates are live + fail-closed.
     need it for something that matters:
 
     - **Open an issue** — describe one trivial capability (e.g. "print a greeting") with a
-      `## Done means` fenced command that exits 0 when it works.
+      `## Definition of Done` fenced command that exits 0 when it works.
     - **`scripts/foundry-ticket.py start <issue>`** — make it the active ticket.
     - **`/foundry:dispatch`** — an implementer builds it on its own branch and runs the
       local-green step until it passes.

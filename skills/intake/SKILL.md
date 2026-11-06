@@ -6,7 +6,7 @@ description: The front door (/foundry:intake, phase 0 of the pipeline). Ingest a
 # /foundry:intake
 
 Phase 0 — the front door. Turns fuzzy inputs into a routed unit of work: a **ticket** (the
-default: a GitHub issue with a runnable `## Done means`, see `context/operating-model.md`) or, when
+default: a GitHub issue with a runnable `## Definition of Done`, see `context/operating-model.md`) or, when
 the operator opts in or the change is `security: true`, a deterministic atomic **spec** (the spec
 lane, see "Lane routing" below). The spec-lane pipeline is `intake → authorize → implement → the
 merge floor`. The ticket lane skips straight to the build (`/foundry:dispatch`).
@@ -37,8 +37,8 @@ downstream pipeline.
 4. **Research gate (before authoring)** — for a non-trivial approach decision, run the
    research gate (see below) BEFORE authoring; carry its outcome into the spec.
 5. **Author the work.**
-   - **Ticket lane (default)** — open a GitHub issue with `## Done means` (one fenced command
-     that exits 0 when the work is done) and, only if the work needs paper, `## Paper allowed`
+   - **Ticket lane (default)** — open a GitHub issue with `## Definition of Done` (one fenced command
+     that exits 0 when the work is done) and, only if the work needs paper, `## Referenced Artifacts`
      (the paths it may write). The issue is the record — no frozen acceptance-contract, no audit.
    - **Spec lane (opt-in, security set)** — author the atomic spec, one atom = one
      capability-behavior: `specs/features/<product>/<domain>/<capability>/feat-….md`, from
@@ -89,7 +89,7 @@ Route every atom by **Beck's game test** — most work is "the plumbing game" (l
 to redo, ship and learn); a minority is "the mortgage game" (irreversible, high consequence,
 warrants ceremony before the fact). Foundry's two lanes implement that split:
 
-- **Ticket lane — the default.** A ticket with a runnable `Done means`, no frozen
+- **Ticket lane — the default.** A ticket with a runnable `Definition of Done`, no frozen
   acceptance-contract, no audit. This is the lane for ordinary product work: it is cheap to redo,
   reviewed live in the PR, and the platform (branch protection + CI) is the gate.
 - **Spec lane — opt-in, and the security set.** Route to the full spec + frozen
@@ -126,7 +126,7 @@ CONSTITUTION.md §III names as the checked standard:
   smaller atoms now**, at authoring time, rather than authoring one large spec and
   discovering the ceiling at review. the review REFUSES an oversize
   spec unconditionally; there is no `--allow-oversize` escape hatch to reach for. The spec is
-  written to **wave-1 depth** — the depth needed to build wave 1, not the depth needed to
+  written to **Increment-1 depth** — the depth needed to build Increment 1, not the depth needed to
   survive review (CONSTITUTION §12; `.foundry/decisions/2026-09-18-spec-is-a-living-document.md`).
 - **`## Amendments`** — a required non-normative section (the spec is a living document,
   adjusted during implementation when reality requires it; an amendment that widens scope

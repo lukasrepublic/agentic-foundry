@@ -319,7 +319,7 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
    cut, where the plugin sat at 1.4.0 through several "successful" update runs. For this repo's own adopters
    that is `claude plugin marketplace update agentic-foundry` → `claude plugin update foundry@agentic-foundry`
    (`claude plugin list` prints the qualified id if you are unsure).
-   Afterward, **verify the SHIPPED artifact, not the source tree** — run `/foundry:doctor` and any atom's
+   Afterward, **verify the SHIPPED artifact, not the source tree** — run `/foundry:doctor` and any Story's
    `--selftest` against `~/.claude/plugins/cache/<marketplace>/<plugin>/<version>/`. A green source tree
    does not prove the published one is green. (When invoking a cached script by hand, set
    `CLAUDE_PROJECT_DIR` — without it, `stack-profile-lock` reports a misleading "not applicable".)
@@ -327,7 +327,7 @@ The `READY` plan's tail carries the **ER-reconciliation backstop** — see below
 
 ## The ER-reconciliation backstop
 
-Enhancement-request issues should close when their implementing atom merges (the PR-level `Closes #<n>`
+Enhancement-request issues should close when their implementing Story merges (the PR-level `Closes #<n>`
 control). That control depends on the GitHub-Projects `project-map.json` cache, which is
 **absent when projection is disabled** — so ERs silently slip and the backlog fills with shipped-yet-open
 issues (this is why past releases have shipped enhancement requests that stayed OPEN in the tracker).
@@ -359,11 +359,11 @@ lands in the cut-release playbook specifically — for the plugin's own repo AND
 - Every ticket's own PR targets `release/<version>`, not `main`.
 - The R / R2 cut-release commits described above land ON `release/<version>`, exactly as before —
   this playbook's own procedure is unchanged; only the branch they land on moves.
-- **The ONE PR to `main`** is `release/<version>` → `main`, opened once every atom in the release
+- **The ONE PR to `main`** is `release/<version>` → `main`, opened once every Story in the release
   has landed on the release branch and this playbook's `READY` plan is in hand. It is what makes a
-  per-merge deploy trigger fire once per release instead of once per atom (the observed failure).
+  per-merge deploy trigger fire once per release instead of once per Story (the observed failure).
 - **After the tag exists** on the resulting `main` commit, the release branch itself is deleted —
-  the same "delete after `origin` contains the merge, never before" rule as any atom branch. Run
+  the same "delete after `origin` contains the merge, never before" rule as any Story branch. Run
   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry-worktree-gc.py" --dry-run --repo <dir>` (add `--include '<prefix>/*'` for any branch prefix outside the built-in set; check `filtered_out_refs`; after `--apply`, read `status` — `partial` lists every deletion that did not happen in `failed`, while the exit code stays 0) first
   (mode flag BEFORE `--repo` — the permission-floor row is an argv prefix rule), then `--apply
   --repo <dir>` to sweep every already-merged atom/release branch and its worktree in one pass
@@ -377,8 +377,8 @@ There is no calendar rule. The operator decides what ships through the version t
 can follow any previous tag at any age. A cut can combine several epics and the ad-hoc tickets
 that merged since the previous tag.
 
-On `READY` the script prints a release-notes block: one line per merged epic and a count of the
-other PRs since the previous tag. If epic review left a draft GitHub Release pinned to `HEAD`, the notes
+On `READY` the script prints a release-notes block: one line per merged Epic and a count of the
+other PRs since the previous tag. If Epic review left a draft GitHub Release pinned to `HEAD`, the notes
 use that draft as input. Otherwise the notes come from the merged PRs in git history. The playbook
 never tags, pushes, or publishes. The operator does that.
 

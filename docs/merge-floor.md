@@ -82,7 +82,7 @@ so the checks above continue to run advisory-only.
 There is no merge-time lane signal. Until v2.0.0 a `spec-link-base` job required a code-change PR
 to carry a `Spec:` trailer or a `lane:light` label; it measured *"a lane was declared"*, not *"a
 frozen contract authorized this diff"*, and its required-check status was removed from branch
-protection before the job was deleted. The default path is a ticket with a runnable `Done means`
+protection before the job was deleted. The default path is a ticket with a runnable `Definition of Done`
 ([context/operating-model.md](../context/operating-model.md)); the opt-in spec lane
 (`security: true` work, or an operator-chosen spec) enforces front-authorization where the freeze
 happens — `/foundry:authorize` binding `spec_sha256` + `contract_sha256` — not at merge time.
@@ -176,7 +176,7 @@ happens — `/foundry:authorize` binding `spec_sha256` + `contract_sha256` — n
 
 4. **The paper guard's `ci` class** (`hooks/foundry-paper-guard.py`). A write to a CI path is
    refused unless the active ticket names the path (or a parent directory) in `ci_allowed`, or in the
-   issue author's own `## Paper allowed` list recorded at `start`. The CLI-writable `paper_allowed` never
+   issue author's own `## Referenced Artifacts` list recorded at `start`. The CLI-writable `referenced_artifacts` never
    lifts a CI path, and `foundry-ticket.py allow <ci-path>` without `--ci` is refused
    (`ci-path-needs-ci-flag`; the lift is the separate verb `ci-allow`). CI paths are the files under `.github/workflows/` and `.github/actions/`
    (the rest of `.github/` is not gated); the other CI systems' files (`.gitlab-ci.yml`, `.circleci/**`,
@@ -218,7 +218,7 @@ happens — `/foundry:authorize` binding `spec_sha256` + `contract_sha256` — n
 - **Front-authorization is not a merge-time check.** On the opt-in spec lane it is enforced where
   the freeze happens — `/foundry:authorize` binding `spec_sha256` + `contract_sha256`. No gate job
   reads it; the merge floor admits on checks, and the operator's review is what reads the spec.
-- The floor governs **admission**. Whether the change actually works is the ticket's `Done means`
+- The floor governs **admission**. Whether the change actually works is the ticket's `Definition of Done`
   command plus CI (local-green before push, CI to confirm), and whether it is delivered is the
   operator's own test pass. Three different questions, three different mechanisms, none
   pretending to be the others.

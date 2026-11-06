@@ -1,4 +1,4 @@
-# How to keep branch/worktree hygiene: one push per atom, one deploy per release
+# How to keep branch/worktree hygiene: one push per Story, one deploy per release
 
 `context/branch-discipline.md` is the full discipline (cited by
 `skills/dispatch/SKILL.md`). This page is the
@@ -7,7 +7,7 @@ v1.16.0).
 
 ## The failure this closes
 
-An agent landing a release as one PR-to-`main` PER ATOM triggers one staging build+deploy per atom
+An agent landing a release as one PR-to-`main` PER ATOM triggers one staging build+deploy per Story
 on any adopter whose CI deploys from `main`. Quoted, never paraphrased, from an adopter's own app
 repo (never a client name in a shipped file):
 
@@ -23,8 +23,8 @@ repo (never a client name in a shipped file):
   deploys the new images)"* — trigger: `workflow_run: workflows: ["Build & push app image"]`.
 
 Three workflows, chained on `push: main`: an atom-per-PR-to-`main` release fires the whole chain —
-build, push, GitOps writeback, ArgoCD deploy — once per atom instead of once per release. Separately,
-worktrees and branches accumulate: after one programme the plugin repo itself carried
+build, push, GitOps writeback, ArgoCD deploy — once per Story instead of once per release. Separately,
+worktrees and branches accumulate: after one Epic the plugin repo itself carried
 **sixty-three** remote branches, most already merged, because the manual cleanup step
 (`foundry-work-isolation.sh cleanup`) is a step nobody runs, and a squash merge leaves the remote
 branch behind even when it is run.
@@ -33,11 +33,11 @@ branch behind even when it is run.
 
 1. When opening a new release, create `release/<version>` from `main` (`/foundry:intake`'s last
    step does it).
-2. Every atom builds on `atom/<id>` cut from `release/<version>`, and its own PR targets
-   `release/<version>` — **not** `main`. Per-atom CI checks still run (they gate the atom PR); the
-   `push: main` chain above simply never fires per atom, because no atom PR ever merges into
+2. Every Story builds on `atom/<id>` cut from `release/<version>`, and its own PR targets
+   `release/<version>` — **not** `main`. Per-atom CI checks still run (they gate the Story PR); the
+   `push: main` chain above simply never fires per Story, because no Story PR ever merges into
    `main`.
-3. Once every atom has landed on `release/<version>`, **one** PR — `release/<version>` → `main` —
+3. Once every Story has landed on `release/<version>`, **one** PR — `release/<version>` → `main` —
    merges the whole release at once. The `push: main` chain fires exactly once.
 4. A hotfix is the one exception: `hotfix/<id>` → `main` directly (stated in the hotfix PR's own
    body) — it cannot wait for the next release to cut.
@@ -51,7 +51,7 @@ the merge gate. No script checks a PR's base.
 
 ### The security-review label re-pins on retarget, and the release branch's own merge-floor tier
 
-Learned dogfooding this flow (recorded here, not as a new acceptance criterion): `btb-gates`'s
+Dogfooding this flow (recorded here, not as a new acceptance criterion): `btb-gates`'s
 `security-path` review label is `security-reviewed:<head12>-<base8>`, where `base8` is
 derived from the **base ref name itself** (`.github/workflows/btb-gates-base.yml`):
 

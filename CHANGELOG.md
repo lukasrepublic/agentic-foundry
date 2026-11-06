@@ -12,7 +12,7 @@ All notable changes to Agentic Foundry are documented here (SemVer).
 
 ### Foundry Governance, one operating mode, the operating-model policy, the shared message log and the guard hooks
 
-Programme `governance-2-0`. Read the map in [docs/governance.md](docs/governance.md) and the keys in
+Epic `governance-2-0`. Read the map in [docs/governance.md](docs/governance.md) and the keys in
 [docs/operating-model-policy.md](docs/operating-model-policy.md). Each change below that removes or alters behavior names
 what replaces it.
 
@@ -42,7 +42,7 @@ what replaces it.
   [CI budgets](docs/how-to/ci-budgets-are-tools.md), [the evidence and baseline rule](docs/how-to/evidence-baseline-rule.md)
   and [operator hand-off files](docs/how-to/operator-handoff-files.md). `scripts/foundry_om_trace.py --markdown` prints the
   rule-to-criterion table; a test regenerates it and compares it with the policy page.
-- CI: the `selftests` job runs a name census over the programme's change set (`tests/test_name_census.py`), with a planted
+- CI: the `selftests` job runs a name census over the Epic's change set (`tests/test_name_census.py`), with a planted
   name as its control, on top of the existing leak gate.
 - Dogfood (gv-19): the plugin ran governance intake on its own tree with the `claude-plugin` blueprint. `.foundry/governance.lock`
   is committed, `foundry_governance.py check` is clean (zero drift, zero expired exceptions), the four kit CI workflows are
@@ -89,14 +89,14 @@ for the GitHub-backed verbs, which otherwise refuse with `github-scope-missing`.
 message log exist for every workspace. A workspace that already has a `github_scope` gets the GitHub-backed surfaces on
 upgrade; removing `github_scope` turns them off.
 
-**Changed: restored by this programme.** The list of removed skills, scripts and hooks further down names `command-deck`, `upstream-submit`,
+**Changed: restored by this Epic.** The list of removed skills, scripts and hooks further down names `command-deck`, `upstream-submit`,
 `foundry_message_kind.py` and `foundry_blocker_check.py` as removed. Governance brings each back in a new form: the
 command-deck skill runs the policy-driven tick and report (its tick prompt template,
 `skills/command-deck/tick-prompt.template.md`, is back and is filled from the policy by `render-tick-section`), `upstream-submit` carries the upstream leak guard for the
 adopter layer, and the message-kind lint and the blocker lint serve the shared message log and the operator-ask rules. Read
 the current files, not that list, for what they do.
 
-### One artifact per change: a ticket with a runnable "Done means". The platform is the gate.
+### One artifact per change: a ticket with a runnable "Definition of Done". The platform is the gate.
 
 `create-agentic-workspace` and `update-agentic-workspace` ship with this release (versions set at the cut).
 **Upgrading:** run the `npx update-agentic-workspace@<version>` the cut names, then start a new session on a ticket.
@@ -112,7 +112,7 @@ default path.
 
 **Added (ticket-first default, PR 1):**
 - `scripts/foundry-ticket.py start|allow|done|status|clear` — the GitHub issue is the ticket;
-  its `## Done means` fenced command and `## Paper allowed` list are recorded in the repository's
+  its `## Definition of Done` fenced command and `## Referenced Artifacts` list are recorded in the repository's
   git dir (`git rev-parse --git-path foundry-ticket.json`, per worktree — never in the work tree,
   so a fork branch cannot ship one). A command is adopted only from an issue author with write
   access to the issue's repository; `--trust-author` is the operator's override and such a ticket
@@ -121,7 +121,7 @@ default path.
 - `hooks/foundry-paper-guard.py` (PreToolUse Edit/Write) — a write under `specs/`, `intake/`,
   `.foundry/`, `docs/`, `status-reports/`, `charters/`, or to a contract / manifest file, is
   refused unless the active ticket allows the path. Code, infra, tests and config are never gated.
-- `hooks/foundry-ticket-stop.py` (Stop) — while the ticket's `Done means` fails, the session may
+- `hooks/foundry-ticket-stop.py` (Stop) — while the ticket's `Definition of Done` fails, the session may
   not stop (three refusals per ticket, then it may end with the failure named). The
   "don't stop on reversible work" rule, mechanical at last.
 - `scripts/foundry-test.sh` — runs the repository's own CI command locally and records
@@ -167,7 +167,7 @@ events 11 → 6. Each line names what replaces it.
   - `audit` — the ticket's review pass and `/code-review`.
   - `authorize-release` — the ticket; branch protection.
   - `certify-local` (+ `certify_local.py`) — the CI e2e job; `npx playwright test`.
-  - `certify-staging` — the ticket's `Done means`; CD promotion.
+  - `certify-staging` — the ticket's `Definition of Done`; CD promotion.
   - `coherence-check` — nothing (an advisory citation sweep).
   - `command-deck` (+ tick prompt template) — native `/loop` and `/schedule`; GitHub Projects.
   - `dashboards-as-code` (+ `foundry-dashboard-fidelity.py`) — the adopter's own CI.
@@ -190,7 +190,7 @@ events 11 → 6. Each line names what replaces it.
   - `report-citation-graph` (+ graph builder, graph MCP server, `.mcp.json`) — grep and native search.
   - `research-capture` (+ template) — a ticket comment.
   - `revert` — `git revert` and a PR.
-  - `sd-debug`, `sd-discover`, `sd-document`, `sd-plan-tests`, `sd-review`, `sd-test`, `sd-verify` — the ticket's `Done means`, CI, the review agents.
+  - `sd-debug`, `sd-discover`, `sd-document`, `sd-plan-tests`, `sd-review`, `sd-test`, `sd-verify` — the ticket's `Definition of Done`, CI, the review agents.
   - `skill-authoring` — skill-creator and the plugin docs.
   - `spec-review` — the ticket's review pass.
   - `upstream-submit` (+ `foundry-upstream-submit.py`) — `gh issue create`.
@@ -200,7 +200,7 @@ events 11 → 6. Each line names what replaces it.
 - *Hooks (7) and their `hooks.json` entries:* `foundry-harvest-learnings.sh`,
   `foundry-session-learnings.sh`, `foundry-learnings-lib.sh` (+ `bin/foundry-learn-capture`) — native
   memory; `foundry-task-created.py`, `foundry-task-completed.py`, `foundry-teammate-idle.py` and the
-  SessionStart `foundry-native-todo-discipline.py --session-start` — the Stop hook running `Done means`;
+  SessionStart `foundry-native-todo-discipline.py --session-start` — the Stop hook running `Definition of Done`;
   `foundry-cloud-cli-exec-guard.sh` — native sandbox credential masking (inert by default, its
   purpose left with the removed session-context framework, 55 of 61 sampled blocks were false positives).
 - *Scripts (non-skill):* `foundry-wave-plan.py`, `foundry_command_deck.py`,
@@ -241,79 +241,99 @@ events 11 → 6. Each line names what replaces it.
 - `/foundry:merge-when-green` drops `--release` and the release-manifest base-branch refusal.
 - The SessionStart re-inject keeps the posture line and the active worktree's contract path; the
   programme-state and release summaries are gone.
-- `/foundry:dispatch` dispatches a ticket (a `Done means` command) and runs the `security-reviewer`
+- `/foundry:dispatch` dispatches a ticket (a `Definition of Done` command) and runs the `security-reviewer`
   agent when the ticket is `security: true` or touches auth, secrets or custody paths — as does
   `/foundry:merge-when-green`.
 - `plugin.json` `description` and `keywords` describe the ticket-first model.
 - `cli/retired-artifacts.json` gains 11 `.foundry/` entries the removed machinery wrote into adopter
   workspaces (`retired_in: 2.0.0`); `cli/permission-floor.json` and `docs/permission-floor.json` lose
   the rows of every deleted script.
-- `tests/test_subtraction_absence.py` pins this wave's deleted modules so they cannot creep back.
+- `tests/test_subtraction_absence.py` pins this pass's deleted modules so they cannot creep back.
 - `btb-gates.yml`'s `shell-parse-bash32` discovery floor for `hooks/*.sh` moved 11 → 7, the shipped
   count after the four shell hooks above went; a collapsed discovery still fails the job.
 
 **Security review (separate context, two rounds):** the ticket moved from `.claude/` into the git dir
 (a committed ticket on a fork branch would otherwise have run on `gh pr checkout`); `foundry-test.sh`,
 `foundry-ticket.py done` and `--trust-author` are never silently allowed by the plugin-scripts hook —
-the session's own permission flow decides (floor tier `ask`); Done-means runs are clamped to 300 s,
+the session's own permission flow decides (floor tier `ask`); Definition of Done runs are clamped to 300 s,
 their process group is killed after every run and on SIGTERM. hooks/ and skills/ are touched; the
 operator-applied `security-reviewed` label applies. No clause of the git-discipline hook admits
 anything it previously refused.
 
-### Delivery in programmes: an execution plan, waves of batches, fleet builders and one close-out session
+### Delivery in Epics: a Release plan, Increments of batches, fleet builders and one Epic review session
 
-Programme `delivery-2-0` (SDLC 2.0 review, decisions 1 to 8 and amendments b and c). One entry for each atom. Read the
-pages [docs/how-to/execution-plan.md](docs/how-to/execution-plan.md), [docs/how-to/fleet-builders.md](docs/how-to/fleet-builders.md)
-and [docs/how-to/close-out.md](docs/how-to/close-out.md). No release date and no tag: the operator tests, tags and publishes.
+Epic `delivery-2-0` (SDLC 2.0 review, decisions 1 to 8 and amendments b and c). One entry for each Story. Read the
+pages [docs/how-to/release-plan.md](docs/how-to/release-plan.md), [docs/how-to/fleet-builders.md](docs/how-to/fleet-builders.md)
+and [docs/how-to/epic-review.md](docs/how-to/epic-review.md). No release date and no tag: the operator tests, tags and publishes.
 
-- **dl-01 acceptance section.** A ticket can carry `## Acceptance`: EARS bullets with stable `AC-<n>` ids and one
+- **dl-01 Acceptance Criteria section.** A ticket can carry `## Acceptance Criteria`: EARS bullets with stable `AC-<n>` ids and one
   `Grounding:` line. In the design-required class, `start` refuses with `acceptance-required` and names the missing piece.
   A bullet with no id, a repeated id or no SHALL is refused in every class. Builder briefs inline each bullet under its id, and
   `pr-reviewer` grades the diff for each `AC-<n>`.
-- **dl-02 ticket reviewer.** The new read-only agent `ticket-reviewer` reviews `## Acceptance` and `## Design` before build
+- **dl-02 ticket reviewer.** The new read-only agent `ticket-reviewer` reviews `## Acceptance Criteria` and `## Design` before build
   (dispatch step 0b, design-required class only). One fix round runs, the re-check covers Blocks only, and a remaining Block parks the ticket.
-- **dl-03 whole-ticket digest.** The claim digest now covers Acceptance, Design, Security, Surfaces and Done means, not only
-  the Done means. An edit to any of them gives `ticket_changed` and stops dispatch. A hand edit of the claims file gives
+- **dl-03 whole-ticket digest.** The claim digest now covers Acceptance Criteria, Design, Security, Surfaces and Definition of Done, not only
+  the Definition of Done. An edit to any of them gives `ticket_changed` and stops dispatch. A hand edit of the claims file gives
   `claim_unverified`. Migration step: a claim made before 2.0 has no `ticket_digest` and no signature, so it reads
   `claim_unverified` and dispatch stops until the operator runs `foundry-ticket.py claim <n> --rebase-acceptance` once for each claimed ticket.
-- **dl-04 execution plan.** New verb `/foundry:execution-plan <programme>`. It reads the atoms and their `blocked_by` edges
-  from the GitHub Project and writes `execution-plan.yaml`: waves of batches, the critical path and the total float of each
-  batch. Atoms that share a path never share a wave. A dependency cycle is refused and every atom of the cycle is named.
-- **dl-05 wave dispatch.** The command deck runs the batches of the open wave in one Workflow: one worktree for each batch,
-  the critical path first, a limit on concurrent batches, and a wave barrier that fails closed while a lower wave holds an unmerged batch.
-- **dl-06 programme issue.** The deck publishes one programme issue and a Project status update each tick. Override
+- **dl-04 Release plan.** New verb `/foundry:release-plan <epic>`. It reads the atoms and their `blocked_by` edges
+  from the GitHub Project and writes `release-plan.yaml`: Increments of batches, the critical path and the total float of each
+  batch. Atoms that share a path never share an Increment. A dependency cycle is refused and every atom of the cycle is named.
+- **dl-05 Increment dispatch.** The command deck runs the batches of the open Increment in one Workflow: one worktree for each batch,
+  the critical path first, a WIP limit, and an Increment barrier that fails closed while a lower Increment holds an unmerged batch.
+- **dl-06 Epic issue.** The deck publishes one Epic issue and a Project status update each tick. Override
   checkboxes are read back and never cleared by the deck. A report without the cost line is refused. During a GitHub outage
   the issue renders from the cached plan.
-- **dl-07 provenance and Learned.** In a product repo that a workspace binding names, `governance-trace` needs a
+- **dl-07 provenance and Retrospective.** In a product repo that a workspace binding names, `governance-trace` needs a
   `Built-from: <workspace sha>` trailer that resolves in the workspace repo. It fails closed. Single-repo adopters skip the
-  check with a named reason. Dispatch asks each worker for a `## Learned` comment at completion.
+  check with a named reason. Dispatch asks each worker for a `## Retrospective` comment at completion.
 - **dl-08 review delta pass.** One full review for each pull request. If it raised Blocks, one fresh-context delta review
   of the fix commits follows. Risks are filed, not re-argued. The head-bound security label comes after a clean delta pass.
   Reviewers do not poll CI.
 - **dl-09 cut-release cadence.** `foundry-cut-release.py` no longer refuses a cut inside a 30-day window, and the
-  `--hotfix` flag is gone. The `hotfix/<id>` branch rule stays. The READY output lists one line for each programme and a
-  count of other pull requests since the previous tag, taken from the close-out draft Release when one exists.
-- **dl-10 Learned distill.** New `foundry_learned_distill.py collect|propose`. It groups `## Learned` comments by governance
+  `--hotfix` flag is gone. The `hotfix/<id>` branch rule stays. The READY output lists one line for each Epic and a
+  count of other pull requests since the previous tag, taken from the Epic review draft Release when one exists.
+- **dl-10 Retrospective distill.** New `foundry_retrospective.py collect|propose`. It groups `## Retrospective` comments by governance
   category and writes proposed rule edits. Adopter-private lessons become a draft pull request and a patch for
-  `governance/local/rules.yaml`. Upstream lessons become kit-fix ticket bodies with no atom id and no URL. It opens nothing
+  `governance/local/rules.yaml`. Upstream lessons become kit-fix ticket bodies with no Story id and no URL. It opens nothing
   unless you pass `--open-prs` or `--open-tickets`.
 - **dl-11 fleet builders.** Builders on more than one machine or container claim a batch by creating the ref
-  `claim/<programme>/<batch>`. The lease lasts `claims.expires_after`. A worker id has the form
+  `claim/<epic>/<batch>`. The lease lasts `claims.expires_after`. A worker id has the form
   `<operator>@<machine>/<container>/<session>` and refuses to build when a part is missing. Commit trailers and a hidden
   PR marker record the worker. The ticket CLI writing verbs refuse with `session-id-missing` unless `CLAUDE_CODE_SESSION_ID` or
   `FOUNDRY_SESSION_ID` is set (read-only verbs still run), and `foundry_fleet.py` refuses with `session-missing`. There is no
   per-clone fallback. The GitHub App token is held by the operator, so the CLI stops with `external-provisioning` without it.
-- **dl-12 close-out.** New verb `/foundry:close-out <programme>`. It runs once, after the last wave merged. It takes a
-  lease, closes the atom issues, publishes `programme/acceptance` on the integration head, checks the milestone, runs the
-  Learned distill and creates a DRAFT Release pinned to the integration head. After acceptance passes it also creates the
-  repository ruleset `programme-acceptance-<programme>` on the target branch, which requires `programme/acceptance`; the report
+- **dl-12 Epic review.** New verb `/foundry:epic-review <epic>`. It runs once, after the last Increment merged. It takes a
+  lease, closes the Story issues, publishes `epic/acceptance` on the integration head, checks the milestone, runs the
+  Retrospective distill and creates a DRAFT Release pinned to the integration head. After acceptance passes it also creates the
+  repository ruleset `epic-acceptance-<epic>` on the target branch, which requires `epic/acceptance`; the report
   prints its delete command. It never tags and never publishes.
-- **dl-13 dogfood.** The planner, the worker identity function and close-out are run offline on the `delivery-2-0` corpus
+- **dl-13 dogfood.** The planner, the worker identity function and the Epic review are run offline on the `delivery-2-0` corpus
   itself (`tests/test_dogfood_self.py`). This section and `docs/governance.md` are reconciled with the merged code. The pages in
   `docs/how-to/` were reviewed and needed no change.
 - **dl-14 token cost.** The deck policy keys `deck.max_agent_calls`, `deck.max_wait_s`, `deck.note_max_tokens` and
   `deck.stall_after_ticks` drive section S5 of the tick prompt. `scripts/deck-cost-census.py` counts agent starts. Each report carries a cost line. The
   blocker lint gains the stall class `cost-without-progress`.
+- **dl-15, dl-16, dl-17 agile vocabulary (breaking, 2.0.0 is unreleased).** Epic `delivery-2-0`, amendment (d). Names, headings,
+  keys and prose now use agile terms. The glossary ([docs/glossary.md](docs/glossary.md)) maps each term to the one it replaces.
+  `tests/test_agile_vocabulary.py` fails when a retired term appears in a guarded surface.
+  <!-- vocab-allow:start -->
+  - Ticket headings: `## Acceptance` is now `## Acceptance Criteria`, `## Done means` is `## Definition of Done`,
+    `## Paper allowed` is `## Referenced Artifacts`, and `## Learned` is `## Retrospective`. Old ticket headings still parse.
+    Old config keys stay readable as aliases.
+  - `foundry-ticket.py read-issue --json` output keys are renamed with no output alias. Consumers must read the new keys.
+    The `acceptance*` keys are now `acceptance_criteria`, `acceptance_criteria_defects` and `acceptance_criteria_refuses`.
+    `paper_allowed` is `referenced_artifacts`. `design_required` is removed; read `ready_check_required` and
+    `ready_check_reasons`.
+  - Claim records write `definition_of_done`. A plugin from before this change reads no `done_means` from a new claim.
+  - GitHub-side names changed, and nothing migrates them. The commit status `programme/acceptance` is now `epic/acceptance`.
+    The ruleset `programme-acceptance-<programme>` is now `epic-acceptance-<epic>`: delete the legacy
+    `programme-acceptance-*` rulesets by hand. The lease ref `claims/close-out/<programme>` is now
+    `claims/epic-review/<epic>`; a legacy lease is not seen, so finish or drop an old close-out session before you upgrade.
+    The plan file `execution-plan.yaml` is now `release-plan.yaml`, and the box marker `pause-wave` is now `pause-increment`.
+  - Verbs and files: `/foundry:execution-plan` is `/foundry:release-plan`, `/foundry:close-out` is `/foundry:epic-review`,
+    and `foundry_learned_distill.py` is `foundry_retrospective.py`. The policy term "concurrency limit" is "WIP limit".
+  <!-- vocab-allow:end -->
 
 ### The npx upgrade path to 2.0: the report says what happened, history is no longer rewritten by default
 

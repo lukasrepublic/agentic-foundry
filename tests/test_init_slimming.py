@@ -73,7 +73,7 @@ UNTOUCHED_STEPS = (1, 3, 5, 6, 7, 8, 9, 11, 14)   # gv-02: new step 10 (GitHub s
 # once this atom is in the merge base, comparing against that base is comparing text to itself, so
 # the standing anchor becomes this literal. A legitimate edit to any of the nine steps MUST update
 # it in the SAME reviewed diff — the MERGE_BASE_ENTRIES_DIGEST convention, applied here.
-UNTOUCHED_STEPS_DIGEST = "deedfe54bb9e64272f1e0c6bdbd73e68cb12b21898dab2d3583411477afc033e"  # gv-15: step 9 gains the governance-intake block (9a)
+UNTOUCHED_STEPS_DIGEST = "bb29848ed648f7d86456d1ea2d4842cba56b672d51ea484d944216dbbeae0439"  # dl-17: init prose uses Definition of Done and Referenced Artifacts; gv-15: step 9 gains the governance-intake block (9a)
 
 BYPASS_TOKENS = ["--yes", "--dangerously", "bypassPermissions", "acceptEdits", "auto-approve", "allow rule"]
 # v2.0.0 (the delivery rebase): the hello-loop walks a throwaway TICKET, not a spec — the four stages
@@ -227,7 +227,7 @@ def check_hello_loop_stages_in_order_and_cleanup(text):
     assert "Guided first ticket (the hello-loop)" in slice_
     positions = [slice_.index(s) for s in HELLO_VERBS_IN_ORDER]
     assert positions == sorted(positions), f"hello-loop stages out of order: {positions}"
-    assert "Done means" in slice_
+    assert "Definition of Done" in slice_
     assert "scratch branch" in slice_
     assert "delete it" in slice_
     return slice_
