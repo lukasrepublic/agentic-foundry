@@ -116,7 +116,7 @@ def test_plain_allow_of_a_ci_path_is_refused_by_the_cli(repo, path, probe):
                          capture_output=True, text=True, env=_env(repo), cwd=str(repo), timeout=60)
     assert cli.returncode != 0 and "ci-path-needs-ci-flag" in cli.stderr + cli.stdout
     doc = json.loads((Path(_git(repo, "rev-parse", "--absolute-git-dir")) / "foundry-ticket.json").read_text())
-    assert doc["paper_allowed"] == [] and not doc.get("ci_allowed")
+    assert (doc.get("referenced_artifacts") or doc.get("paper_allowed")) == [] and not doc.get("ci_allowed")
     assert guard(repo, probe).returncode == 2
 
 
@@ -163,7 +163,7 @@ def test_the_ticket_cli_writes_ci_allowed_and_the_guard_honours_it(repo):
                          capture_output=True, text=True, env=_env(repo), cwd=str(repo), timeout=60)
     assert cli.returncode == 0, cli.stdout + cli.stderr
     doc = json.loads((Path(_git(repo, "rev-parse", "--absolute-git-dir")) / "foundry-ticket.json").read_text())
-    assert doc["ci_allowed"] == ["setup.cfg"] and doc["paper_allowed"] == []
+    assert doc["ci_allowed"] == ["setup.cfg"] and (doc.get("referenced_artifacts") or doc.get("paper_allowed")) == []
     assert guard(repo, "setup.cfg").returncode == 0
 
 
@@ -195,11 +195,11 @@ def _start_with_issue(repo, monkeypatch, author, trusted):
 
 def test_an_untrusted_authors_paper_allowed_does_not_lift_the_ci_guard(repo, monkeypatch):
     doc = _start_with_issue(repo, monkeypatch, "mallory", trusted=("alice",))
-    assert doc["issue_paper_allowed"] == [] and doc["paper_allowed"] == [".github/workflows"]
+    assert doc["issue_referenced_artifacts"] == [] and doc["referenced_artifacts"] == [".github/workflows"]
     assert guard(repo, ".github/workflows/ci.yml").returncode == 2
 
 
 def test_a_trusted_authors_paper_allowed_does_lift_it_control(repo, monkeypatch):
     doc = _start_with_issue(repo, monkeypatch, "alice", trusted=("alice",))
-    assert doc["issue_paper_allowed"] == [".github/workflows"]
+    assert doc["issue_referenced_artifacts"] == [".github/workflows"]
     assert guard(repo, ".github/workflows/ci.yml").returncode == 0

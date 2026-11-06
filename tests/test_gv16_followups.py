@@ -182,15 +182,15 @@ BODY = "## Done means\n```\ntrue\n```\n## Paper allowed\n.github/workflows\n"
 def test_trust_author_does_not_copy_an_untrusted_authors_paper_list_and_says_so(repo, monkeypatch):
     code, out, err, doc = _start(repo, monkeypatch, "mallory", BODY, trust=True)
     assert code == 0, err
-    assert doc["issue_paper_allowed"] == [] and doc["paper_allowed"] == [".github/workflows"]
-    assert "NOT copied into issue_paper_allowed" in out and ".github/workflows" in out
+    assert doc["issue_referenced_artifacts"] == [] and doc["referenced_artifacts"] == [".github/workflows"]
+    assert "NOT copied into issue_referenced_artifacts" in out and ".github/workflows" in out
     assert edit(repo, ".github/workflows/ci.yml").returncode == 2                 # the CI guard is still in force
 
 
 def test_a_trusted_authors_paper_list_is_copied_with_trust_author_control(repo, monkeypatch):
     code, out, err, doc = _start(repo, monkeypatch, "alice", BODY, trust=True)
     assert code == 0, err
-    assert doc["issue_paper_allowed"] == [".github/workflows"] and "NOT copied" not in out
+    assert doc["issue_referenced_artifacts"] == [".github/workflows"] and "NOT copied" not in out
     assert edit(repo, ".github/workflows/ci.yml").returncode == 0
 
 
@@ -200,7 +200,7 @@ def test_an_untrusted_earlier_editor_blocks_the_paper_lift_and_the_command(repo,
     assert code != 0 and "mallory" in err and doc is None           # the command is not adopted at all
     code, out, err, doc = _start(repo, monkeypatch, "alice", "## Paper allowed\n.github/workflows\n", trust=False,
                                  editors=["alice", "mallory", "alice"], trusted=("alice",))
-    assert code == 0 and doc["issue_paper_allowed"] == [] and "NOT copied" in out
+    assert code == 0 and doc["issue_referenced_artifacts"] == [] and "NOT copied" in out
 
 
 # =============================================================================================== (b) signing
@@ -235,9 +235,9 @@ def test_a_hand_edit_of_issue_paper_allowed_lifts_nothing_and_a_signed_one_does(
     assert edit(repo, "pyproject.toml").returncode == 2
     code, out, err, doc = _start(repo, monkeypatch, "alice", "## Paper allowed\npyproject.toml\n", trust=False)
     assert code == 0, err
-    assert doc["issue_paper_allowed"] == ["pyproject.toml"] and doc.get("lists_sig")
+    assert doc["issue_referenced_artifacts"] == ["pyproject.toml"] and doc.get("lists_sig")
     assert edit(repo, "pyproject.toml").returncode == 0                              # control: start signed it
-    doc["issue_paper_allowed"].append("setup.cfg")
+    doc["issue_referenced_artifacts"].append("setup.cfg")
     (gitdir(repo) / "foundry-ticket.json").write_text(json.dumps(doc))
     assert edit(repo, "setup.cfg").returncode == 2 and edit(repo, "pyproject.toml").returncode == 2
 

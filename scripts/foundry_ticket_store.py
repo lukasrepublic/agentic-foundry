@@ -273,7 +273,7 @@ def command_digest(cmd: str) -> str:
 
 
 # ---- gv-16: the signed CI-allow lists --------------------------------------------------------------------------
-# `ci_allowed` (written by the ask-gated `ci-allow` verb) and `issue_paper_allowed` (a trusted issue author's list,
+# `ci_allowed` (written by the ask-gated `ci-allow` verb) and `issue_referenced_artifacts` (old name `issue_paper_allowed`; a trusted issue author's list,
 # recorded by `start`) lift the paper guard's CI class. They live in <git-dir>/foundry-ticket.json, a file an agent
 # can edit by hand, so both are covered by an HMAC-SHA256 under a per-git-dir secret (<git-dir>/foundry-ticket.key,
 # mode 0600, created by those two verbs). The guard honours the lists only when the signature verifies; a hand
@@ -283,12 +283,28 @@ KEY_BASENAME = "foundry-ticket.key"
 SIG_FIELD = "lists_sig"
 
 
+# dl-15: the ticket record keys carry agile names (`referenced_artifacts`, `issue_referenced_artifacts`,
+# `definition_of_done`); the old names (`paper_allowed`, `issue_paper_allowed`, `done_means`) stay readable on input.
+# The signed payload below keeps its original field name so a list signed before the rename still verifies.
+KEY_ALIASES = {"referenced_artifacts": "paper_allowed", "issue_referenced_artifacts": "issue_paper_allowed",
+               "definition_of_done": "done_means"}
+
+
+def rec_get(doc, new_key: str, default=None):
+    """Read a record field by its agile name, falling back to the old name (new name wins when both exist)."""
+    if not isinstance(doc, dict):
+        return default
+    if new_key in doc:
+        return doc[new_key]
+    return doc.get(KEY_ALIASES.get(new_key, new_key), default)
+
+
 def _lists_payload(doc: dict) -> bytes:
     def lst(k):
-        v = doc.get(k)
+        v = rec_get(doc, k) if k in KEY_ALIASES else doc.get(k)
         return [str(x) for x in v] if isinstance(v, list) else []
     return json.dumps({"v": 1, "issue": doc.get("issue"), "repo": str(doc.get("repo") or ""),
-                       "ci_allowed": lst("ci_allowed"), "issue_paper_allowed": lst("issue_paper_allowed")},
+                       "ci_allowed": lst("ci_allowed"), "issue_paper_allowed": lst("issue_referenced_artifacts")},
                       sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 

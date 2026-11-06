@@ -30,7 +30,7 @@ def test_agent_frontmatter():
 
 def test_agent_covers_both_lenses_and_output_contract():
     body = _flat(AGENT.read_text())
-    for needle in ("steel-man", "adversarial", "## Acceptance", "## Design",
+    for needle in ("steel-man", "adversarial", "## Acceptance Criteria", "## Design",
                    "Block", "Risk", "Nit", "locator", "fail open", "vacuous"):
         assert needle in body, needle
     assert "A Block without a locator is a Risk" in body
@@ -55,12 +55,12 @@ def test_agent_avoids_banned_vocabulary():
 
 def test_skill_step_0b_present_after_step_0_before_resolve():
     body = SKILL.read_text()
-    i0 = body.index("\n0. **Design review")
+    i0 = body.index("\n0. **Definition of Ready check, part 1: design review")
     i0b = body.index("\n0b.")
     i1 = body.index("\n1. **Resolve**")
     assert i0 < i0b < i1
     step = _flat(body[i0b:i1])
-    for needle in ("ticket-reviewer", "foundry:ticket-reviewer", "design_required",
+    for needle in ("ticket-reviewer", "foundry:ticket-reviewer", "ready_check_required",
                    "read-issue", "--json", "foundry_brief.py render", "review:<atom>",
                    "Deliverable:", "Done when:", "one fix round", "Blocks only change the ticket",
                    "park", "Risks"):
@@ -71,4 +71,4 @@ def test_skill_step_0b_present_after_step_0_before_resolve():
 def test_skill_keeps_dl07_lines():
     body = SKILL.read_text()
     assert "Built-from: <workspace sha>" in body
-    assert "## Learned" in body
+    assert "## Retrospective" in body

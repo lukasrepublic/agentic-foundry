@@ -435,7 +435,7 @@ def test_brief_has_learned_rule_ticket_pointer_and_engineer_type(tmp_path):
     by = {e["atom"]: e for e in starts(out)}
     f = brief_fields(by["a0"]["prompt"])
     assert f["Ticket"] == "https://github.com/o/r/issues/7"
-    assert f["Learned rule"].startswith("when you close the atom, post one comment on the ticket headed ## Learned")
+    assert f["Retrospective rule"].startswith("when you close the atom, post one comment on the ticket headed ## Retrospective")
     assert f["Claim-check rule"].startswith("read the ticket")
     assert brief_fields(by["a1"]["prompt"])["Ticket"] == "(none)"
     assert [by[a]["opts"]["subagent_type"] for a in ("a0", "a1", "a2")] == [

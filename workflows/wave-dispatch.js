@@ -18,7 +18,7 @@ export const meta = {
 //   job_dir          string                absolute path of the deck job dir; notes go to <job_dir>/notes/<atom>.md
 //   worktree_root    string                absolute path; worktrees go to <worktree_root>/<repo|workspace>/<batch>
 //   repos            { [key]: absolutePath }  multi-repo path: the MAIN clone of each product repo (optional)
-//                    review gate: a brief with design_required: true starts only with design_verdict: 'clear' AND
+//                    Definition of Ready check: a brief with ready_check_required: true (old key design_required) starts only with design_verdict: 'clear' AND
 //                    ticket_verdict: 'clear' (the recorded results of step 0 and step 0b of /foundry:dispatch, run by the
 //                    deck BEFORE this call). Otherwise the atom is skipped with reason review-required. An atom with no
 //                    brief is skipped with reason no-brief: the deck leaves a parked atom out of `briefs`.
@@ -120,8 +120,11 @@ function selectOpenWave(plan, mergedBatches, runningBatches, briefs) {
 // The review gate (step 0 design-reviewer, step 0b ticket-reviewer of /foundry:dispatch). Returns a skip reason or null.
 function reviewGate(brief) {
   if (!brief || typeof brief !== 'object') return 'no-brief'
-  if (brief.design_required !== undefined && brief.design_required !== null && typeof brief.design_required !== 'boolean') return 'bad-design-required'
-  if (brief.design_required === true && !(brief.design_verdict === 'clear' && brief.ticket_verdict === 'clear')) return 'review-required'
+  // the Definition of Ready check: `ready_check_required` (the old key `design_required` stays readable on input)
+  const viaNew = brief.ready_check_required !== undefined
+  const required = viaNew ? brief.ready_check_required : brief.design_required
+  if (required !== undefined && required !== null && typeof required !== 'boolean') return viaNew ? 'bad-ready-check-required' : 'bad-design-required'
+  if (required === true && !(brief.design_verdict === 'clear' && brief.ticket_verdict === 'clear')) return 'review-required'
   return null
 }
 
@@ -152,7 +155,7 @@ function renderBrief(spec) {
   const lines = [
     `Label: build:${spec.atom}`,
     `Deliverable: one PR head for ${spec.atom}${spec.openPr ? ' (the PR for the whole batch ' + spec.batch + ')' : ' (commits on the batch branch; no PR yet)'}`,
-    `Done when: ${oneLine(spec.doneWhen, 1000) || 'the acceptance criteria of the atom pass on your head'}`,
+    `Done when: ${oneLine(spec.doneWhen, 1000) || 'the Acceptance Criteria of the atom pass on your head'}`,
     `Atom: ${spec.atom}`,
     `Batch: ${spec.batch}`,
     `Repository: ${spec.repo}`,
@@ -162,8 +165,8 @@ function renderBrief(spec) {
     `Start from the main clone: ${spec.cloneRoot || '(session repository)'}`,
     `Stop rule: end after ${spec.maxCalls} tool calls by writing a state note of at most ${spec.noteTokens} tokens (branch, head sha, done, next step) to ${spec.notePath}, and return status stopped_at_cap.`,
     spec.resumeNote ? `Resume: read only this state note and continue from it: ${spec.resumeNote}` : 'Resume: none (fresh start)',
-    'Learned rule: when you close the atom, post one comment on the ticket headed ## Learned: friction met, what worked, and distill candidates, one line each, at most ten lines in all.',
-    'Claim-check rule: read the ticket and its Done means from the Ticket URL, not from this brief. Return pointers only (status, branch, head_sha, pr_url, note_path), never a file body.',
+    'Retrospective rule: when you close the atom, post one comment on the ticket headed ## Retrospective: friction met, what worked, and distill candidates, one line each, at most ten lines in all.',
+    'Claim-check rule: read the ticket and its Definition of Done from the Ticket URL, not from this brief. Return pointers only (status, branch, head_sha, pr_url, note_path), never a file body.',
     'CI rule: never wait on CI, the merge queue, a rollout or an observation window. Record what to check and when, then end. The next tick does the check.',
     'Scope rule: you do not merge, you do not authorize, you do not push to the base branch.',
   ]

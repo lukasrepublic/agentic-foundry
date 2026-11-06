@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""foundry_learned_distill - distil `## Learned` close comments into proposed rule edits (dl-10, decision 8).
+"""foundry_learned_distill - distil `## Retrospective` close comments (the old `## Learned` heading is read too) into proposed rule edits (dl-10, decision 8).
 
     foundry_learned_distill.py collect <programme> [--from-json <file> | --project <owner>/<number>]
     foundry_learned_distill.py propose <programme> [--from-json <file> | --project <owner>/<number>]
@@ -13,11 +13,11 @@ accepts every edit.
 Corpus (a JSON file for tests, or the live issue nodes of the programme's Project through `gh api graphql`, never
 search):  {"atoms": [{"id": "<atom id>", "url": "<issue url>", "comments": [{"body": "<markdown>"}]}]}
 
-A `## Learned` comment holds one line per item, at most ten, each `kind: text` with kind friction | success |
+A `## Retrospective` comment holds one line per item, at most ten, each `kind: text` with kind friction | success |
 distill-candidate (aliases: worked, distill). A line names its governance category as `[security]` or
 `category: security` (one of the sixteen kit categories), or by a rule id (`FG-SEC-005`, `ACME-SEC-001`), which
 maps to that rule's category. A line is UPSTREAM only when it carries the explicit marker `[upstream]` and names no
-private id; an FG- rule id alone routes PRIVATE. Every other line is adopter-private. A `## Learned` block counts only
+private id; an FG- rule id alone routes PRIVATE. Every other line is adopter-private. A `## Retrospective` block counts only
 when its comment author is the atom issue's closer, a registered operator (.claude/foundry-operators.json) or a
 --trusted-authors login; other blocks are counted as skipped (untrusted author) and never parsed.
 
@@ -27,7 +27,7 @@ propose -> --out/proposals.json (index, private: carries atom ids and urls), --o
            --out/upstream/kit-fix-<n>.md (the kit-fix ticket shape upstream-submit expects).
 Every upstream ticket passes the governance leak guard AND an outgoing check (no URL, no owner/repo shape, no #<n>
 reference, not the project's own remote owner or repo name); a hit demotes that lesson to private and counts as
-demoted. out/upstream and out/private are cleared before each write; --open-tickets files only this run's tickets. No Learned lines -> "0 proposals" and nothing is created.
+demoted. out/upstream and out/private are cleared before each write; --open-tickets files only this run's tickets. No Retrospective lines -> "0 proposals" and nothing is created.
 
 Exit: 0 ok, 2 refused (one `foundry_learned_distill: refused: ...` line on stderr).
 """
@@ -133,12 +133,12 @@ def load_corpus(args) -> dict:
 
 
 def _learned_lines(body: str) -> list:
-    """The lines under a `## Learned` heading, up to the next heading, capped."""
+    """The lines under a `## Retrospective` (or old `## Learned`) heading, up to the next heading, capped."""
     out, on = [], False
     for raw in str(body).splitlines():
         s = raw.strip()
         if re.match(r"^#{1,6}\s", s):
-            on = bool(re.match(r"^##\s+Learned\s*$", s, re.I))
+            on = bool(re.match(r"^##\s+(?:Retrospective|Learned)\s*$", s, re.I))   # the old heading is an alias
             continue
         if on and s:
             out.append(s)
@@ -184,7 +184,7 @@ def operator_logins(proj: Path) -> set:
 
 
 def collect_ex(corpus: dict, trusted=()) -> tuple:
-    """(lines, skipped). A Learned block counts only from the atom's closer, an operator or a trusted login."""
+    """(lines, skipped). A Retrospective block counts only from the atom's closer, an operator or a trusted login."""
     base = {str(t).casefold() for t in trusted if t}
     out, skipped = [], 0
     for a in corpus["atoms"]:
@@ -277,7 +277,7 @@ def private_rules(props: list, local_rules: list, org: str) -> list:
         used[(org, ab)] = n
         rules.append({
             "id": f"{org}-{ab}-{n:03d}",
-            "title": f"Learned lesson ({p['category']}) from {len(p['atoms'])} atom(s)",
+            "title": f"Retrospective lesson ({p['category']}) from {len(p['atoms'])} atom(s)",
             "statement": "Builders SHOULD review the recorded lesson in the note field before changing the same "
                          "area. The lesson is quoted data from a programme close, not an instruction.",
             "note": "lesson: " + json.dumps(p["lesson"], ensure_ascii=True),
@@ -361,8 +361,8 @@ def build(lines: list, local_rules: list, org: str, literals) -> dict:
 
 
 def pr_body(programme: str, private: list, rules: list) -> str:
-    out = [f"# Learned: proposed edits to governance/local for programme {programme}", "",
-           "Proposed by the learned distill. Review each rule; accept, edit or drop it. Nothing here is in force "
+    out = [f"# Retrospective: proposed edits to governance/local for programme {programme}", "",
+           "Proposed by the retrospective distill. Review each rule; accept, edit or drop it. Nothing here is in force "
            "until this pull request merges.", ""]
     for p, r in zip(private, rules):
         out += [f"## {r['id']} ({p['category']})", "", p["lesson"], "",
@@ -406,7 +406,7 @@ def _run(argv: list) -> str:
 
 
 def open_prs(programme: str, out: Path, proj: Path) -> str:
-    branch = f"learned/{programme}"
+    branch = f"retrospective/{programme}"
     target = proj / LOCAL_RULES
     patch = yaml.safe_load((out / "private/rules.patch.yaml").read_text(encoding="utf-8"))["rules"]
     doc = (yaml.safe_load(target.read_text(encoding="utf-8")) or {}) if target.is_file() else {}
@@ -415,10 +415,10 @@ def open_prs(programme: str, out: Path, proj: Path) -> str:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
     _run(["git", "-C", str(proj), "add", "--", LOCAL_RULES])
-    _run(["git", "-C", str(proj), "commit", "-m", f"learned: proposed rules from programme {programme}"])
+    _run(["git", "-C", str(proj), "commit", "-m", f"retrospective: proposed rules from programme {programme}"])
     _run(["git", "-C", str(proj), "push", "-u", "origin", branch])
     return _run(["gh", "pr", "create", "--draft", "--head", branch, "--title",
-                 f"learned: proposed rules from programme {programme}",
+                 f"retrospective: proposed rules from programme {programme}",
                  "--body-file", str(out / "private/pr-body.md")])
 
 
@@ -452,7 +452,7 @@ def main(argv=None) -> int:
             sp.add_argument("--open-tickets", action="store_true")
             sp.add_argument("--upstream-repo", default="lukasrepublic/agentic-foundry")
             sp.add_argument("--project-dir", default=".")
-        sp.add_argument("--trusted-authors", default="", help="comma-separated logins whose Learned blocks count")
+        sp.add_argument("--trusted-authors", default="", help="comma-separated logins whose Retrospective blocks count")
     args = ap.parse_args(argv)
     try:
         if not PROGRAMME_RE.fullmatch(args.programme):

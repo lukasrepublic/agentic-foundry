@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""foundry-ticket — the unit of work is a GitHub issue with a runnable "Done means".
+"""foundry-ticket — the unit of work is a GitHub issue with a runnable "Definition of Done".
 
     foundry-ticket.py start <issue|url> [--repo OWNER/NAME] [--trust-author]
     foundry-ticket.py allow <path> [<path>...]        permit writing a paper path for this ticket
     foundry-ticket.py ci-allow <path> [<path>...]     permit editing a CI path (workflows, CI scripts, test configs,
                                                       quarantine lists) for this ticket; the operator's call (gv-10)
-    foundry-ticket.py done                            run the ticket's Done-means command
+    foundry-ticket.py done                            run the ticket's Definition of Done command
     foundry-ticket.py status                          print the active ticket
     foundry-ticket.py clear                           forget the active ticket
     foundry-ticket.py next [--json]                   the operator's next item, read from GitHub (gn-08)
@@ -17,16 +17,16 @@
 The active ticket lives in the repository's GIT DIR (per worktree; never checked out, never committed).
 Two hooks read it: `hooks/foundry-paper-guard.py` (a write to specs/, .foundry/, docs/, status-reports/,
 charters/ is refused unless the ticket allows the path) and `hooks/foundry-ticket-stop.py` (the session
-may not stop while the Done-means command fails). That is the whole governance model: one ticket, one
+may not stop while the Definition of Done command fails). That is the whole governance model: one ticket, one
 runnable check, the platform's branch protection + CI as the gate.
 
 Issue body conventions (both optional, both plain Markdown):
 
-    ## Done means
+    ## Definition of Done
     ```
     python3 -m pytest tests/ -q
     ```
-    ## Paper allowed
+    ## Referenced Artifacts
     CHANGELOG.md, docs/how-to/x.md
 
 Three more sections are parsed by `start` and `read-issue --json` (gv-16, design 5.3):
@@ -38,12 +38,12 @@ Three more sections are parsed by `start` and `read-issue --json` (gv-16, design
 
 A ticket in the DESIGN-REQUIRED class (a path in policy `governance.design_required_paths` or the locked blueprint's list, a
 declared trust-boundary path, or a size label `size:L` or larger) is refused with `design-required` unless its Design cites at
-least one rule id that exists. Below the class the sections are a printed checklist. `ci_allowed` and `issue_paper_allowed`
-are signed (HMAC under <git-dir>/foundry-ticket.key, created by `ci-allow` and `start`); the paper guard ignores them
+least one rule id that exists. Below the class the sections are a printed checklist. `ci_allowed` and `issue_referenced_artifacts`
+(old name `issue_paper_allowed`, still read) are signed (HMAC under <git-dir>/foundry-ticket.key, created by `ci-allow` and `start`); the paper guard ignores them
 unless the signature verifies. Trust of an issue author / editor means a login in `github_scope.operators` or the operator
 registry, never the authenticated `gh` user, and EVERY editor of the body is checked (the edit history, else fail closed).
 
-Only the FENCED block under `## Done means` is ever executed, and only after `start` confirmed the
+Only the FENCED block under `## Definition of Done` is ever executed, and only after `start` confirmed the
 issue's author has write access to the issue's own repository. `--trust-author` overrides that for a
 command the OPERATOR has read; it is not silently allowed by the plugin's permission hook, and neither
 is `done` (both execute input). Only stdlib. `gh` must be authenticated for `start`.
@@ -119,15 +119,15 @@ def norm_path(entry: str, root: Path | None = None) -> str:
     return "/".join(parts)
 
 
-_DONE_RE = re.compile(r"^##+[ \t]*done[ \t]+means\b.*?$", re.I | re.M)
-_PAPER_RE = re.compile(r"^##+[ \t]*paper[ \t]+allowed\b.*?$", re.I | re.M)
+_DONE_RE = re.compile(r"^##+[ \t]*(?:definition[ \t]+of[ \t]+done|done[ \t]+means)\b.*?$", re.I | re.M)   # new heading + old alias, one section
+_PAPER_RE = re.compile(r"^##+[ \t]*(?:referenced[ \t]+artifacts?|paper[ \t]+allowed)\b.*?$", re.I | re.M)   # new heading + old alias
 _FENCE_RE = re.compile(r"^(```+|~~~+)[^\n]*\n(.*?)^\1[ \t]*$", re.S | re.M)
 _HEADING_RE = re.compile(r"^##+[ \t]", re.M)
 _ISSUE_URL_RE = re.compile(r"https?://[^/]+/([^/]+/[^/]+)/issues/\d+")
 
 
 def parse_body(body: str) -> tuple[str, list[str]]:
-    """Return (done_cmd, paper_allowed). Only a fenced block directly under `## Done means` counts
+    """Return (done_cmd, referenced_artifacts). Only a fenced block directly under `## Definition of Done` (or the old `## Done means`) counts
     as the command; an unfenced section yields "" (nothing is ever executed from prose)."""
     body = (body or "").replace("\r\n", "\n").replace("\r", "\n")
     done = ""
@@ -194,6 +194,9 @@ def _section(body: str, rx) -> str | None:
     return rest[: nxt.start()] if nxt else rest
 
 
+SECTION_REPORT_NAMES = {"acceptance": "acceptance_criteria", "done_means": "definition_of_done"}
+
+
 def ticket_section_texts(body: str) -> dict:
     """The raw text of the five sections the whole-ticket digest covers (dl-03); "" for an absent one."""
     body = (body or "").replace("\r\n", "\n").replace("\r", "\n")
@@ -204,7 +207,8 @@ def ticket_section_texts(body: str) -> dict:
 
 
 def ticket_digest(body: str) -> tuple[str, dict]:
-    """(whole-ticket digest, per-section digests) over Acceptance + Design + Security + Surfaces + Done means."""
+    """(whole-ticket digest, per-section digests) over Acceptance Criteria + Design + Security + Surfaces + Definition of Done.
+    The digest covers the section text, never the heading spelling (old and new headings digest alike)."""
     return store.ticket_digests(ticket_section_texts(body))
 
 
@@ -312,9 +316,9 @@ def _ac_show(text: str, n: int = 80) -> str:
 
 
 def parse_acceptance(body: str) -> dict:
-    """`## Acceptance` (dl-01): EARS bullets, each `AC-<n>: WHEN ... THE SYSTEM SHALL ...` or
+    """`## Acceptance Criteria` (dl-01; the old `## Acceptance` is an alias): EARS bullets, each `AC-<n>: WHEN ... THE SYSTEM SHALL ...` or
     `THE SYSTEM SHALL ...`, plus one `Grounding:` line. {present, bullets:[{id,text}], grounding, errors}.
-    The heading `## Acceptance criteria` names the same section. A bullet without an id, a repeated id, a bullet
+    The old heading `## Acceptance` names the same section. A bullet without an id, a repeated id, a bullet
     that is not EARS (no `SHALL`, any case), more than 50 bullets, or a bullet over 500 characters is an error
     that names it. Text is stripped of control, zero-width and bidi characters; errors echo it through repr()."""
     sec = _section(body, _ACCEPTANCE_H)
@@ -340,7 +344,7 @@ def parse_acceptance(body: str) -> dict:
     used = [int(_AC_ID_RE.match((ld.group(1) or ld.group(2)).upper()).group(1)) for _, ld in leads if ld]
     nxt, seen = max(used or [0]) + 1, set()
     if len(raw) > AC_MAX_BULLETS:
-        out["errors"].append(f"`## Acceptance` has {len(raw)} bullets; the limit is {AC_MAX_BULLETS} bullets")
+        out["errors"].append(f"`## Acceptance Criteria` has {len(raw)} bullets; the limit is {AC_MAX_BULLETS} bullets")
         return out
     for r, lead in leads:
         text = " ".join([lead.group(3) if lead else r[0]] + r[1:]).strip()
@@ -370,14 +374,14 @@ def _ac_clean_lines(sec: str):
 
 
 def acceptance_defects(acc: dict) -> list:
-    """The pieces a design-required ticket's `## Acceptance` is missing (each names the piece)."""
+    """The pieces a ready-check-required ticket's `## Acceptance Criteria` is missing (each names the piece)."""
     if not acc["present"]:
-        return ["no `## Acceptance` section (EARS bullets with AC ids and a `Grounding:` line)"]
+        return ["no `## Acceptance Criteria` section (EARS bullets with AC ids and a `Grounding:` line)"]
     out = []
     if not acc["bullets"] and not acc["errors"]:
-        out.append("`## Acceptance` has no EARS bullet (`- AC-1: WHEN ..., THE SYSTEM SHALL ...`)")
+        out.append("`## Acceptance Criteria` has no EARS bullet (`- AC-1: WHEN ..., THE SYSTEM SHALL ...`)")
     if not acc["grounding"]:
-        out.append("`## Acceptance` has no `Grounding:` line (the research-gate source)")
+        out.append("`## Acceptance Criteria` has no `Grounding:` line (the research-gate source)")
     return out
 
 
@@ -509,12 +513,12 @@ def checklist(sections: dict, gv: dict) -> list:
         out.append("## Security names no rule id and no `none: <why>`")
     a = sections.get("acceptance") or {"present": False}
     if not a["present"]:
-        out.append("## Acceptance missing (EARS bullets with AC ids, and a `Grounding:` line)")
+        out.append("## Acceptance Criteria missing (EARS bullets with AC ids, and a `Grounding:` line)")
     elif not a["bullets"]:
-        out.append("## Acceptance has no EARS bullet")
+        out.append("## Acceptance Criteria has no EARS bullet")
     elif not a["grounding"]:
-        out.append("## Acceptance has no `Grounding:` line")
-    out += ["## Acceptance: " + e for e in (a.get("errors") or [])]
+        out.append("## Acceptance Criteria has no `Grounding:` line")
+    out += ["## Acceptance Criteria: " + e for e in (a.get("errors") or [])]
     if not f["present"]:
         out.append("## Surfaces missing (one line per surface, or `n/a: <why>`)")
     elif not f["na_reason"]:
@@ -538,9 +542,11 @@ def design_view(body: str, labels, gv: dict | None = None, root: Path | None = N
         probe = [x for c in sec["design"]["components"] for x in (c, c.rstrip("/") + "/_")]
         app |= set(g.applicable(gv["rule_list"], probe))
     return {"design": sec["design"], "security": sec["security"], "surfaces": sec["surfaces"], "scope": sec["scope"],
-            "acceptance": sec["acceptance"],
-            "acceptance_defects": (acceptance_defects(sec["acceptance"]) if reasons else []) + sec["acceptance"]["errors"],
-            "acceptance_refuses": bool(reasons) and bool(acceptance_defects(sec["acceptance"]) + sec["acceptance"]["errors"]),
+            "acceptance_criteria": sec["acceptance"],
+            "acceptance_criteria_defects": (acceptance_defects(sec["acceptance"]) if reasons else []) + sec["acceptance"]["errors"],
+            "acceptance_criteria_refuses": bool(reasons) and bool(acceptance_defects(sec["acceptance"]) + sec["acceptance"]["errors"]),
+            "ready_check_required": bool(reasons), "ready_check_reasons": reasons,
+            # old names, still emitted: governance/kits/delivery/checks/governance-trace.py reads `design_required` (renamed in dl-16)
             "design_required": bool(reasons), "design_required_reasons": reasons,
             "design_defects": design_defects(sec, gv) if reasons else [],
             "applicable_ids": sorted(app), "surfaces_expected": gv.get("surfaces") or [],
@@ -643,7 +649,7 @@ def author_trusted(repo: str | None, login: str, gh_json=_gh_json, operators=Non
 
 def done_trust(repo: str | None, author: str, editor: str | None, gh_json=_gh_json, editors=None,
                edited_at=None) -> tuple[bool, str]:
-    """Trust for a Done-means command: the issue AUTHOR and EVERY editor of the body must be trusted. `editors` is
+    """Trust for a Definition of Done command: the issue AUTHOR and EVERY editor of the body must be trusted. `editors` is
     the issue's edit history (GraphQL `userContentEdits`); when it is not readable (None) the check FAILS CLOSED
     for a body edited by anyone other than the author -- the last editor alone would hide an earlier untrusted
     edit that a trusted last editor re-saved."""
@@ -688,16 +694,16 @@ def cmd_start(args: list[str]) -> int:
     # gv-16: the Design / Security / Surfaces sections. A design-required ticket without a Design that cites an
     # existing rule id is refused BEFORE anything is recorded or fetched further.
     view = design_view(issue.get("body") or "", issue.get("labels") or [])
-    if view["design_required"]:
+    if view["ready_check_required"]:
         if view["design_defects"]:
             sys.exit("foundry-ticket: design-required: this ticket is in the design-required class ("
-                     + "; ".join(view["design_required_reasons"]) + "), and it has a defect in its Design: "
+                     + "; ".join(view["ready_check_reasons"]) + "), and it has a defect in its Design: "
                      + "; ".join(view["design_defects"]) + ". Add a `## Design` section citing at least one existing "
                      "rule id (see `governance/rendered/`), then start again. Nothing was recorded.")
-    if view["acceptance_refuses"]:       # below the class a malformed section is a checklist line, never a refusal
+    if view["acceptance_criteria_refuses"]:       # below the class a malformed section is a checklist line, never a refusal
         sys.exit("foundry-ticket: acceptance-required: this ticket is in the design-required class ("
-                 + "; ".join(view["design_required_reasons"]) + "), and "
-                 + "its `## Acceptance` has a defect: " + "; ".join(view["acceptance_defects"])
+                 + "; ".join(view["ready_check_reasons"]) + "), and "
+                 + "its `## Acceptance Criteria` has a defect: " + "; ".join(view["acceptance_criteria_defects"])
                  + ". Add EARS bullets with ids (`- AC-1: WHEN ..., THE SYSTEM SHALL ...`) and a `Grounding:` line, "
                  "then start again. Nothing was recorded.")
     login = ((issue.get("author") or {}).get("login")) or ""
@@ -727,22 +733,22 @@ def cmd_start(args: list[str]) -> int:
             edited_at = live.get("last_edited_at")
             issue_repo = live.get("name_with_owner") or issue_repo
     if claimed_ticket:
-        # dl-11: the whole-ticket digest recorded at `claim` time must still match the live ticket, not only Done means
+        # dl-11: the whole-ticket digest recorded at `claim` time must still match the live ticket, not only the Definition of Done
         if live is None or not live.get("ticket_digest"):
             sys.exit("foundry-ticket: could not read the issue to compare it with the claimed ticket; nothing was "
                      "recorded. Retry `start`.")
         if live["ticket_digest"] != claimed_ticket:
-            sys.exit("foundry-ticket: ticket_changed — the ticket (Acceptance, Design, Security, Surfaces or Done means) "
+            sys.exit("foundry-ticket: ticket_changed — the ticket (Acceptance Criteria, Design, Security, Surfaces or Definition of Done) "
                      "differs from the one recorded at `claim` time; it will not start. Re-read it and run " + RECOVERY +
                      " (--trust-author does not override this). Nothing was recorded.")
     if done:
         try:
             vetted = store.claim_done_digest(project_root(), issue_repo or "", issue["number"])
         except store.ClaimsUnreadable as e:
-            sys.exit(f"foundry-ticket: claims-unreadable — the local claim record cannot be read ({e}); the Done-means "
+            sys.exit(f"foundry-ticket: claims-unreadable — the local claim record cannot be read ({e}); the Definition of Done "
                      "command will not run. Repair or remove the claims file in the git common dir. Nothing was recorded.")
         if vetted and vetted != store.command_digest(done):
-            sys.exit("foundry-ticket: done-means-changed — the Done-means command differs from the one vetted at "
+            sys.exit("foundry-ticket: done-means-changed — the Definition of Done command differs from the one vetted at "
                      "`claim` time; it will not run. Re-read it and run " + RECOVERY +
                      " (--trust-author does not override this). Nothing was recorded.")
         if vetted is None:
@@ -752,21 +758,21 @@ def cmd_start(args: list[str]) -> int:
                 me = None   # advisory only: a failed login lookup prints nothing and never aborts
             if me and me.lower() in {str(x).lower() for x in (live.get("assignees") or [])}:
                 print(f"foundry-ticket: warning — {issue_repo}#{issue['number']} is assigned to you but has no local claim "
-                      "record; its Done-means command was not vetted at claim time.", file=sys.stderr)
+                      "record; its Definition of Done command was not vetted at claim time.", file=sys.stderr)
     author_ok, author_why = (False, "the issue could not be read")
     if live is not None:
         author_ok, author_why = done_trust(issue_repo, login, editor, editors=editors, edited_at=edited_at)
     if done and not trust:
         if not author_ok:
-            sys.exit("foundry-ticket: the Done-means command in this issue was not adopted — " + author_why +
+            sys.exit("foundry-ticket: the Definition of Done command in this issue was not adopted — " + author_why +
                      ". The Stop hook would run it unattended, so a command from outside the repository's "
                      "write team needs the OPERATOR to read it and start the ticket themselves. Nothing was recorded.")
     elif done and trust:
         trusted_by = "flag"
-    # The issue author's own `## Paper allowed` list may lift the CI-edit guard (issue_paper_allowed) ONLY when the
-    # author AND EVERY editor of the body pass the same trust check as a Done-means command. `--trust-author` vouches
-    # for the Done-means command the operator read; it does NOT vouch for a paper list, so an untrusted author's list is
-    # recorded as paper_allowed (as before) but never reaches the CI guard -- and this output says so (gv-16).
+    # The issue author's own `## Referenced Artifacts` list may lift the CI-edit guard (issue_referenced_artifacts) ONLY when the
+    # author AND EVERY editor of the body pass the same trust check as a Definition of Done command. `--trust-author` vouches
+    # for the Definition of Done command the operator read; it does NOT vouch for a Referenced Artifacts list, so an untrusted author's list is
+    # recorded as referenced_artifacts (as before) but never reaches the CI guard -- and this output says so (gv-16).
     issue_paper = []
     notices = []
     if paper:
@@ -774,8 +780,8 @@ def cmd_start(args: list[str]) -> int:
             issue_paper = list(paper)
         else:
             why = author_why if live is not None else "the issue's editors could not be read"
-            notices.append(("--trust-author does not vouch for the issue's `## Paper allowed` list: " if trust else "")
-                           + "its paths (" + ", ".join(paper) + ") were NOT copied into issue_paper_allowed, so they do "
+            notices.append(("--trust-author does not vouch for the issue's `## Referenced Artifacts` list: " if trust else "")
+                           + "its paths (" + ", ".join(paper) + ") were NOT copied into issue_referenced_artifacts, so they do "
                            "not lift the CI-edit guard (" + why + "); use `foundry-ticket.py ci-allow <path>` for a CI path.")
     doc = {
         "issue": issue["number"],
@@ -787,8 +793,8 @@ def cmd_start(args: list[str]) -> int:
         "done": done,
         "done_sha256": store.command_digest(done),
         "trusted_by": trusted_by,
-        "paper_allowed": paper,
-        "issue_paper_allowed": issue_paper,   # origin: a TRUSTED issue author's list; the CI guard honours this, never CLI-written paper_allowed
+        "referenced_artifacts": paper,
+        "issue_referenced_artifacts": issue_paper,   # origin: a TRUSTED issue author's list; the CI guard honours this, never the CLI-written referenced_artifacts
         "cites": view["design"]["cites"],
         "design": {"components": view["design"]["components"], "reuses": view["design"]["reuses"],
                    "cites": view["design"]["cites"]},
@@ -797,21 +803,21 @@ def cmd_start(args: list[str]) -> int:
         "stop_blocks": 0,
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
-    store.sign_ticket_lists(doc, create=True)   # ci_allowed / issue_paper_allowed are only honoured with a valid signature
+    store.sign_ticket_lists(doc, create=True)   # ci_allowed / issue_referenced_artifacts are only honoured with a valid signature
     p = save(doc)
     print(f"ticket #{doc['issue']} active: {doc['title']}")
-    print(f"  done means : {store.redact(done) or '(none declared — add a fenced block under `## Done means`)'}")
+    print(f"  def. of done : {store.redact(done) or '(none declared — add a fenced block under `## Definition of Done`)'}")
     print(f"  paper      : {', '.join(paper) if paper else '(none — paper writes are refused)'}")
     for n in notices:
         print(f"  notice     : {n}")
     if view["design"]["present"]:
         print(f"  design     : components {', '.join(view['design']['components']) or '(none)'}; cites "
               f"{', '.join(view['design']['cites']) or '(none)'}")
-    if view["design_required"]:
-        print("  class      : design-required (" + "; ".join(view["design_required_reasons"]) + ") — the Design is admitted")
+    if view["ready_check_required"]:
+        print("  class      : design-required (" + "; ".join(view["ready_check_reasons"]) + ") — the Design is admitted")
     items = view["checklist"]
     if items:
-        print("  checklist  : " + ("advisory below the design-required class" if not view["design_required"] else "advisory"))
+        print("  checklist  : " + ("advisory below the design-required class" if not view["ready_check_required"] else "advisory"))
         for it in items:
             print(f"    - {it}")
     print(f"  recorded   : {p}")
@@ -842,14 +848,18 @@ def cmd_allow(args: list[str], ci: bool = False) -> int:
                  "permission-floor row, which asks the operator)")
     if not args:
         sys.exit("usage: foundry-ticket.py %s <path> [<path>...]" % ("ci-allow" if ci else "allow"))
-    key = "ci_allowed" if ci else "paper_allowed"
-    doc.setdefault(key, [])
+    key = "ci_allowed" if ci else "referenced_artifacts"
+    if key not in doc:
+        doc[key] = list(doc.get("paper_allowed") or []) if not ci else []   # an old-name list carries over
+    if not ci:
+        doc.pop("paper_allowed", None)
     dropped = []
     if ci and not store.verify_ticket_lists(doc, root):
         # The signature is checked BEFORE it is renewed: an entry whose signature does not verify (a hand edit, a copied
         # ticket, a missing key) is dropped and named, never laundered into a fresh signature.
-        dropped = [x for k in ("ci_allowed", "issue_paper_allowed") for x in (doc.get(k) or [])]
-        doc["ci_allowed"], doc["issue_paper_allowed"] = [], []
+        dropped = list(doc.get("ci_allowed") or []) + list(store.rec_get(doc, "issue_referenced_artifacts") or [])
+        doc["ci_allowed"], doc["issue_referenced_artifacts"] = [], []
+        doc.pop("issue_paper_allowed", None)
     guard = _paper_guard()
     for a in args:
         n = norm_path(a, root)
@@ -861,14 +871,14 @@ def cmd_allow(args: list[str], ci: bool = False) -> int:
         if n not in doc[key]:
             doc[key].append(n)
     if ci:
-        # gv-16: `ci_allowed` / `issue_paper_allowed` carry an HMAC under a per-git-dir key (created by whichever of `start`
+        # gv-16: `ci_allowed` / `issue_referenced_artifacts` carry an HMAC under a per-git-dir key (created by whichever of `start`
         # or this verb runs first; `start` is allow-tier). It is a VISIBILITY control: a hand edit of the ticket file lifts
         # nothing and shows up as a refusal that says so, but a process that can read the key can sign. The operator's
         # decision is the `ask` on this verb, not the key.
         store.sign_ticket_lists(doc, root, create=True)
     save(doc, root)
     if dropped:
-        print("ci-allow: the existing ci_allowed / issue_paper_allowed lists did not verify, so these entries were "
+        print("ci-allow: the existing ci_allowed / issue_referenced_artifacts lists did not verify, so these entries were "
               "DROPPED (re-allow them if the operator wants them): " + ", ".join(dropped))
     print("%s allowed for #%s: %s" % ("ci" if ci else "paper", doc["issue"], ", ".join(doc[key])))
     return 0
@@ -877,9 +887,9 @@ def cmd_allow(args: list[str], ci: bool = False) -> int:
 def run_done(doc: dict, root: Path, timeout: int = 1800) -> tuple[int, str]:
     cmd = (doc.get("done") or "").strip()
     if not cmd:
-        return 0, "no Done-means command declared"
+        return 0, "no Definition of Done command declared"
     if store.command_digest(cmd) != doc.get("done_sha256"):
-        return 125, "the recorded Done-means command does not match its digest; re-run `start`"
+        return 125, "the recorded Definition of Done command does not match its digest; re-run `start`"
     try:
         vetted = store.claim_done_digest(root, doc.get("repo") or "", doc.get("issue"))
     except store.ClaimsUnreadable as e:
@@ -924,9 +934,9 @@ def cmd_done(_args: list[str]) -> int:
         doc["status"] = "done"
         doc["done_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         save(doc, root)
-        print(f"ticket #{doc['issue']}: Done means PASSED")
+        print(f"ticket #{doc['issue']}: Definition of Done PASSED")
         return 0
-    print(f"ticket #{doc['issue']}: Done means FAILED (rc={rc})\n{tail}")
+    print(f"ticket #{doc['issue']}: Definition of Done FAILED (rc={rc})\n{tail}")
     return 1
 
 
@@ -1116,7 +1126,7 @@ def operator_login(run) -> str:
 
 
 def has_acceptance(body: str) -> bool:
-    """`## Acceptance criteria` with >=1 list item, or a non-empty `## Done means` section."""
+    """`## Acceptance Criteria` with >=1 list item, or a non-empty `## Definition of Done` section."""
     body = (body or "").replace("\r\n", "\n")
     m = _ACCEPT_RE.search(body)
     if m:
@@ -1202,7 +1212,7 @@ def normalize(node: dict, repo: str, project_number: int | None) -> dict:
         "linked_prs": [{"number": x.get("number"), "state": (x.get("state") or "").upper(), "url": x.get("url")}
                        for x in _nodes(node, "closedByPullRequestsReferences")],
         "_has_acceptance": has_acceptance(body),
-        # digest of the raw Done-means command (same value `read_issue` reports as done_digest), "" digest when none
+        # digest of the raw Definition of Done command (same value `read_issue` reports as done_digest), "" digest when none
         "done_digest": store.command_digest(parse_body(body)[0]), "_has_done": bool(parse_body(body)[0]),
         # dl-03: the whole-ticket digest (five sections) + its per-section parts
         "ticket_digest": ticket_digest(body)[0], "ticket_sections": ticket_digest(body)[1],
@@ -1258,7 +1268,7 @@ def read_issue(run, repo: str, number: int, project_number: int | None = None, t
             rec["done"] = store.redact(done)
     rec["done_sha256"] = store.command_digest(done)
     rec["done_digest"] = rec["done_sha256"]
-    rec["paper_allowed"] = paper
+    rec["referenced_artifacts"] = paper
     return rec
 
 
@@ -1345,7 +1355,7 @@ def judge(issue: dict, login: str, claim: dict | None, withdrawn_by: tuple | Non
     issue in a started status (In progress / Review); anything else stops dispatch: `closed` (closed, or Project
     status Done), `cancelled`/`duplicate`, `reassigned`, `withdrawn`, `not_started` (Backlog, Ready, blocked,
     no status, unknown status), `acceptance_changed`, `ticket_changed` (any of Acceptance/Design/Security/Surfaces/
-    Done means moved since the claim; `acceptance_changed` when only Acceptance did), `claim_unverified` (the signed
+    Definition of Done moved since the claim; `acceptance_changed` when only Acceptance did), `claim_unverified` (the signed
     claim record fails HMAC verification). A local claim supplies only the baseline body
     hash to compare against — never an authorization. `withdrawn_by`: (True, actor) when history shows a
     return to Backlog after start."""
@@ -1387,7 +1397,10 @@ def judge(issue: dict, login: str, claim: dict | None, withdrawn_by: tuple | Non
         changed = [k for k in store.TICKET_SECTIONS if old.get(k) != new.get(k)]
         if done_moved and "done_means" not in changed:
             changed.append("done_means")
-        reason = "acceptance_changed" if changed == ["acceptance"] else "ticket_changed"
+        # the digest keeps its original internal section keys (so a claim signed before dl-15 still verifies); the
+        # report names the sections with the agile names
+        changed = [SECTION_REPORT_NAMES.get(k, k) for k in changed]
+        reason = "acceptance_changed" if changed == ["acceptance_criteria"] else "ticket_changed"
         return {**base, "stop_dispatch": True, "reason": reason, "changed_sections": changed}
     return {**base, "stop_dispatch": False, "reason": "authorized"}
 
@@ -1425,7 +1438,7 @@ def select_next(run, root: Path, now: float) -> dict:
     trust_cache: dict = {}
 
     def untrusted_done(i) -> bool:
-        """True when the issue declares a Done-means command whose author/editor is not trusted (never auto-run)."""
+        """True when the issue declares a Definition of Done command whose author/editor is not trusted (never auto-run)."""
         if not i.get("_has_done"):
             return False
         k = (i["repo"], i["author"], i.get("last_edited_by"), tuple(i.get("editors") or ()) if i.get("editors") is not None else None,
@@ -1552,7 +1565,7 @@ def cmd_claim(args: list[str], run, now: float) -> int:
     ap.add_argument("--rebase-acceptance", action="store_true",
                     help="on a re-claim, adopt the issue's CURRENT body as the acceptance baseline")
     ap.add_argument("--trust-author", action="store_true",
-                    help="the OPERATOR has read the issue's Done-means and vouches for it (never auto-run)")
+                    help="the OPERATOR has read the issue's Definition of Done and vouches for it (never auto-run)")
     ap.add_argument("--successor-of", metavar="ID", default=None,
                     help="continue a long chunk: this claim succeeds ID (a claim THIS session holds); not a takeover")
     ap.add_argument("--session-id", default=None, help="the lease owner (default: CLAUDE_CODE_SESSION_ID, else a per-user id)")
@@ -1589,7 +1602,7 @@ def cmd_claim(args: list[str], run, now: float) -> int:
     key = store.claim_key(vetted.get("name_with_owner") or repo, number)   # the canonical GraphQL name wins
     has_done = bool(vetted["_has_done"])
     if has_done and not vetted["done_trusted"]:
-        print(f"done-means-untrusted: claim refused: the Done-means command in {key} is not author-trusted — "
+        print(f"done-means-untrusted: claim refused: the Definition of Done command in {key} is not author-trusted — "
               f"{store.redact(vetted['done_reason'])}. The worker would run it, so the OPERATOR must read it and re-run "
               f"`claim --trust-author`. Nothing was recorded.", file=sys.stderr)
         return 2
@@ -1597,7 +1610,7 @@ def cmd_claim(args: list[str], run, now: float) -> int:
         claims = store.read_claims(root)[0]
     except store.ClaimsUnreadable as e:
         print(f"claims-unreadable: claim refused: the local claim record cannot be read ({store.redact(str(e))}); repair or "
-              "remove the claims file in the git common dir (it holds every vetted Done-means digest). Nothing was recorded.",
+              "remove the claims file in the git common dir (it holds every vetted Definition of Done digest). Nothing was recorded.",
               file=sys.stderr)
         return 2
     # B5 lease: a claim another session holds LIVE is not ours to take; only an EXPIRED lease can be taken over.
@@ -1669,12 +1682,12 @@ def cmd_claim(args: list[str], run, now: float) -> int:
     keep_ticket = keep and bool(prior.get("ticket_digest")) and isinstance(prior.get("ticket_sections"), dict)
     rec = {"issue": key, "number": number, "repo": repo, "operator": login,
            "body_sha256": prior["body_sha256"] if keep else vetted["body_sha256"],
-           # the vetted Done-means: reconcile stops dispatch when the live digest differs from this one
+           # the vetted Definition of Done: reconcile stops dispatch when the live digest differs from this one
            "done_digest": prior["done_digest"] if keep_done else vetted["done_digest"],
            "ticket_digest": prior["ticket_digest"] if keep_ticket else v_digest,
            "ticket_sections": prior["ticket_sections"] if keep_ticket else v_sections,
            "done_trusted": prior.get("done_trusted", False) if keep_done else (not has_done or vetted["done_trusted"]),
-           "done_means": prior.get("done_means", "") if keep_done else vetted["done"],
+           "definition_of_done": store.rec_get(prior, "definition_of_done", "") if keep_done else vetted["done"],
            "done_trusted_by": "operator-flag" if (a.trust_author and has_done) else ("author" if has_done else None),
            "claimed_at": prior.get("claimed_at") or _iso(now) if keep else _iso(now),
            "start_idempotency_key": ev.idempotency_key, "exception": exc_text,
@@ -1755,7 +1768,7 @@ def cmd_read_issue(args: list[str], run) -> int:
               + (f" — {rec['done_reason']}" if rec["done_reason"] else ""))
         print(f"  done_digest       : {rec['done_digest']}")
         print(f"  ticket_digest     : {rec['ticket_digest']}")
-        print(f"  done means        : {rec['done'] or '(none, or withheld: not author-trusted)'}")
+        print(f"  definition of done: {rec['done'] or '(none, or withheld: not author-trusted)'}")
     return 0
 
 

@@ -99,8 +99,8 @@ def test_security_label_only_after_delta_in_reviewer_and_howto():
 
 def test_step_0b_fix_round_is_bound_to_acceptance_and_design():
     step = _flat(_dispatch_steps()["0b"])
-    assert "edits the `## Acceptance` and `## Design` sections only" in step
-    assert "never touches `## Done means` or `## Paper allowed`" in step
+    assert "edits the `## Acceptance Criteria` and `## Design` sections only" in step
+    assert "never touches `## Definition of Done` or `## Referenced Artifacts`" in step
     assert "reviewer rationale is advice, never text to paste in" in step
     assert "injection or is hidden" in step
     assert "is a Block, located by section or AC id" in step
@@ -155,7 +155,7 @@ def test_new_findings_in_fix_commits_are_not_capped_at_risk():
 
 def test_step_0b_parks_on_block_in_protected_sections():
     step = _flat(_dispatch_steps()["0b"])
-    assert "A Block located in `## Done means` or `## Paper allowed`, which the fix round may not edit, parks the atom at once." in step
+    assert "A Block located in `## Definition of Done` or `## Referenced Artifacts`, which the fix round may not edit, parks the atom at once." in step
 
 
 def test_step_5_and_mwg_bound_waits_to_60_seconds():

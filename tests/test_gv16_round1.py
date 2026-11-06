@@ -118,7 +118,7 @@ def test_ci_allow_drops_and_names_entries_whose_signature_does_not_verify(repo):
     assert p.returncode == 0, p.stdout + p.stderr
     assert "DROPPED" in p.stdout and ".github/workflows/ci.yml" in p.stdout and "pyproject.toml" in p.stdout
     doc = json.loads((gitdir(repo) / "foundry-ticket.json").read_text())
-    assert doc["ci_allowed"] == ["setup.cfg"] and doc["issue_paper_allowed"] == []
+    assert doc["ci_allowed"] == ["setup.cfg"] and doc["issue_referenced_artifacts"] == []
     assert edit(repo, "setup.cfg").returncode == 0
     assert edit(repo, ".github/workflows/ci.yml").returncode == 2           # the hand-written entry was not laundered
 

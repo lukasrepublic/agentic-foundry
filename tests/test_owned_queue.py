@@ -729,7 +729,7 @@ def test_claim_stores_the_vetted_done_means_digest_and_text(ws):
     rec = ft.load_claims(ws)["example-org/app#2"]
     assert rec["done_trusted"] is True and rec["done_trusted_by"] == "author"
     assert rec["done_digest"] == ft.store.command_digest("python3 -m pytest -q")
-    assert rec["done_means"] == "python3 -m pytest -q"
+    assert rec["definition_of_done"] == "python3 -m pytest -q"
     assert rec["body_sha256"] == ft.store.command_digest(DONE_BODY)
 
 
