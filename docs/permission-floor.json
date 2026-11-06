@@ -74,6 +74,11 @@
       "rationale": "run closes the atom issues, creates the lease ref, ensures the epic/acceptance ruleset, posts the epic/acceptance commit status, creates a DRAFT Release and posts the final Project status update: remote writes, so the whole script asks; it never tags and never publishes (dl-12)"
     },
     {
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_architecture_derive.py:*)",
+      "tier": "ask",
+      "rationale": "writes draft files (an ecosystem layers contract, docs/architecture/workspace.dsl, docs/decisions drafts) into the working tree and runs the ecosystem extraction tools (depcruise, tofu show -json of a given plan, helm template); --dry-run prints the plan only; --helm-chart and --kustomize take only a local directory inside the repo, but kustomize may still follow remote resources named in a kustomization, so the operator approves each run; it never writes a baseline and never applies infrastructure (dl-19)"
+    },
+    {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_resources.py:*)",
       "tier": "allow",
       "rationale": "reads /proc/loadavg, /proc/meminfo, /proc/uptime, the boot id, cgroup memory limits, statvfs of / and --path, the kernel log (/dev/kmsg or journalctl -k) when readable, the OOM-baseline file and the policy file; prints a verdict. The two verbs that read a named file or write (--from-json, --reset-oom-baseline) are never silent: the plugin-scripts-allow hook leaves them to ask (gv-12)"

@@ -48,7 +48,15 @@ The script is `scripts/foundry_governance.py`. Exit codes everywhere: zero is ok
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_governance.py" apply --pr
    ```
 
-5. **baseline** - freeze the violations that already exist, per check, so only new ones fail:
+   **Derive the architecture** (between select and baseline, for the architecture kit). The kit installs checks, but
+   a brownfield tree has no layers declared yet. This step proposes them as DRAFTS from the tree itself. It never
+   writes a baseline. See [derive-architecture.md](derive-architecture.md).
+
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_architecture_derive.py" --repo . --dry-run
+   ```
+
+5. **baseline** - after you confirm the drafts, freeze the violations that already exist, per check, so only new ones fail:
 
    ```bash
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/foundry_governance.py" baseline --check <name> --findings <file>

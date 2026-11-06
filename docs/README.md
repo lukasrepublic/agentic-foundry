@@ -31,6 +31,7 @@ Four kinds of page, four kinds of question. Start where your question lives:
 - [Run author/approver separation with CODEOWNERS](how-to/team-review-with-codeowners.md)
 - [Run a multi-repo control plane](how-to/multi-repo-control-plane.md) — **the mode Foundry is built for**: one workspace governing several code repos, and why you run Claude from the control plane rather than inside a repo
 - [Cut a release](how-to/cut-a-release.md)
+- [Derive an architecture draft](how-to/derive-architecture.md) — layers contract, `workspace.dsl` and retroactive ADR drafts from an existing codebase; run by `intake existing`
 - [Plan an Epic](how-to/release-plan.md) — increments, batches, critical path and total float from the live Epic issues
 - [Run builders across machines](how-to/fleet-builders.md) — ref-create claims, leases, worker identity, deck slots and fleet capacity
 - [Review an Epic](how-to/epic-review.md) — the one final session: Story close, `epic/acceptance`, milestone check, Retrospective distill, draft Release

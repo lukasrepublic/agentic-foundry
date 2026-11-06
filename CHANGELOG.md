@@ -334,6 +334,17 @@ and [docs/how-to/epic-review.md](docs/how-to/epic-review.md). No release date an
   - Verbs and files: `/foundry:execution-plan` is `/foundry:release-plan`, `/foundry:close-out` is `/foundry:epic-review`,
     and `foundry_learned_distill.py` is `foundry_retrospective.py`. The policy term "concurrency limit" is "WIP limit".
   <!-- vocab-allow:end -->
+- **dl-19 derive the architecture (draft).** `/foundry:intake existing` now runs `scripts/foundry_architecture_derive.py` between select
+  and baseline. It reads the ecosystem's own tool output (Grimp, `depcruise -T json`, `tofu show -json`, rendered Helm or Kustomize
+  manifests), collapses cycles, levels the graph and writes DRAFTS only: the layers contract (`.importlinter` or
+  `.dependency-cruiser.cjs`), `docs/architecture/workspace.dsl` (every element tagged `draft` with a `source` property), retroactive
+  ADR drafts (`retroactive: true`, a confidence level, an evidence list, rationale `TODO(human)`) and a confirmation checklist.
+  A missing tool is `could-not-look:<tool>`; Java and Nx are the named gap `no-derive:<ecosystem>`. The step refuses a dirty
+  tracked tree, never writes a baseline and never applies infrastructure. The architecture kit gains
+  `checks/model_source_lint.py`, which fails an element with no `source` and any `draft` element once the model is confirmed.
+  Names with quotes, backticks or control characters are rejected and reported; drafts are written without following symlinks; the
+  `.dependency-cruiser.cjs` strings are built with `json.dumps`.
+  Guide: [docs/how-to/derive-architecture.md](docs/how-to/derive-architecture.md).
 
 ### The npx upgrade path to 2.0: the report says what happened, history is no longer rewritten by default
 

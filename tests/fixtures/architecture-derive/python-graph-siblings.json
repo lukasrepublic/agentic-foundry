@@ -1,0 +1,11 @@
+{
+  "root_package": "shop",
+  "edges": [
+    {"from": "shop.web.views", "to": "shop.orders.service"},
+    {"from": "shop.api.routes", "to": "shop.core.base"},
+    {"from": "shop.orders.service", "to": "shop.billing.invoice"},
+    {"from": "shop.billing.invoice", "to": "shop.orders.service"},
+    {"from": "shop.orders.service", "to": "shop.core.base"},
+    {"from": "shop.billing.invoice", "to": "shop.core.base"}
+  ]
+}

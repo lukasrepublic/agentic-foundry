@@ -1,0 +1,11 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: web, namespace: shop}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: web, namespace: shop}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: db, namespace: shop}
