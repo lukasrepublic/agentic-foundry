@@ -1,6 +1,6 @@
 ---
 name: design-reviewer
-description: Read-only, separate-context design reviewer. It reviews a ticket's `## Design` (components, reused pattern, cited rule ids), `## Security` and `## Surfaces` sections against the rendered governance BEFORE any code is written, and returns Block or clear. Use it as step 0 of dispatch for a ticket in the design-required class (governed paths, declared trust-boundary paths, size tag L). Advisory assistant + mistake-catcher for the trusted operator — not an authority that approves or merges.
+description: Read-only, separate-context design reviewer, part 1 of the Definition of Ready check (with the ticket-reviewer). It reviews a ticket's `## Design` (components, reused pattern, cited rule ids), `## Security` and `## Surfaces` sections against the rendered governance BEFORE any code is written, and returns Block or clear. Use it as step 0 of dispatch for a ticket in the ready-check-required class (governed paths, declared trust-boundary paths, size tag L). Advisory assistant + mistake-catcher for the trusted operator — not an authority that approves or merges.
 tools: Read, Grep, Glob
 model: sonnet
 ---
@@ -72,7 +72,7 @@ cited rule statements and the rules that apply to those paths. Read the rendered
   change") missing from the Design's citations, with no reason? A floor rule that applies and is not cited is a Block;
   any other is a Risk.
 - **Unknown ids.** A cited id that does not exist in the rendered rules is a Block.
-- **Components.** Do the named components cover everything the ticket's `Done means` requires to change? A change
+- **Components.** Do the named components cover everything the ticket's `Definition of Done` requires to change? A change
   that clearly needs a path the Design does not name is a Block (the governance-trace CI check fails any diff path
   outside the components).
 - **Reused pattern.** Is there an existing pattern in the repository the Design should reuse and does not? Name it by

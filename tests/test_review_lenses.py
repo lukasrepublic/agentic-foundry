@@ -82,10 +82,10 @@ def test_security_reviewer_triggers_on_declared_boundaries_and_gets_the_rule_blo
 def test_dispatch_step_zero_runs_the_design_review_for_the_class():
     secs = sections(ROOT / "skills" / "dispatch" / "SKILL.md")
     steps = re.findall(r"^(\d+)\.\s+\*\*(.+?)\*\*", secs["Procedure (single ticket)"], re.M)
-    assert steps[0][0] == "0" and steps[0][1].startswith("Design review")
+    assert steps[0][0] == "0" and steps[0][1].startswith("Definition of Ready check, part 1: design review")
     assert [s[0] for s in steps[:3]] == ["0", "1", "2"]
     body = secs["Procedure (single ticket)"]
-    assert "foundry:design-reviewer" in body and "design_required" in body and "one word" in body
+    assert "foundry:design-reviewer" in body and "ready_check_required" in body and "one word" in body
 
 
 def _lens_refs():

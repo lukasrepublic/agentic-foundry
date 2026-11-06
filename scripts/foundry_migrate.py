@@ -56,6 +56,7 @@ if str(HERE) not in sys.path:
 import yaml  # noqa: E402
 
 import foundry_yaml_load as yl  # noqa: E402
+import foundry_ticket_store as _ticket_store  # noqa: E402
 
 TOOL_VERSION = "1"
 SCHEMA_VERSION = 1
@@ -70,7 +71,7 @@ REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9_.-]+$")
 # Guard pattern G (any run of hashes: the ticket tool's heading regexes take `##+`). The spec quotes `(?i)^\s{0,3}(#{1,6}\s+)?(done means|paper allowed)`; this is a strict
 # superset of it (optional whitespace after the hashes, any run of blanks inside the phrase), so it also
 # covers every heading the ticket tool's own `^##+[ \t]*done[ \t]+means\b` / paper-allowed regexes match.
-GUARD_G = re.compile(r"(?i)^\s{0,3}(#+[ \t]*)?(done[ \t]+means|paper[ \t]+allowed)")
+GUARD_G = re.compile(r"(?i)^\s{0,3}(#+[ \t]*)?(?:" + _ticket_store.DONE_HEADING_ALT + "|" + _ticket_store.PAPER_HEADING_ALT + ")")
 MARKER_ANY = re.compile(r"foundry-migrated:")
 FLAG_ORDER = ("likely-shipped", "coupled", "program-closed", "program-unresolved")
 FLOOR_PHRASES = ("front-authoriz", "merge floor", "merge-floor", "security review", "security-review",

@@ -435,7 +435,7 @@ def test_brief_has_learned_rule_ticket_pointer_and_engineer_type(tmp_path):
     by = {e["atom"]: e for e in starts(out)}
     f = brief_fields(by["a0"]["prompt"])
     assert f["Ticket"] == "https://github.com/o/r/issues/7"
-    assert f["Learned rule"].startswith("when you close the atom, post one comment on the ticket headed ## Learned")
+    assert f["Retrospective rule"].startswith("when you close the atom, post one comment on the ticket headed ## Retrospective")
     assert f["Claim-check rule"].startswith("read the ticket")
     assert brief_fields(by["a1"]["prompt"])["Ticket"] == "(none)"
     assert [by[a]["opts"]["subagent_type"] for a in ("a0", "a1", "a2")] == [
@@ -466,3 +466,28 @@ def test_deck_texts_state_the_review_gate():
         text = (ROOT / rel).read_text()
         para = next(p for p in text.split("\n\n") if "workflows/wave-dispatch.js" in p and "design_verdict" in p)
         assert "step 0 (design-reviewer)" in para and "step 0b (ticket-reviewer)" in para and "out of `briefs`" in para
+
+
+def _gate(tmp_path, **brief):
+    args = make_args({"b0": ["a0"]})
+    args["briefs"]["a0"].update(brief)
+    out = run_workflow(tmp_path, args)
+    return [e["atom"] for e in starts(out)], out["result"]["skipped"]
+
+
+@pytest.mark.parametrize("keys", [{"design_required": True}, {"ready_check_required": True},
+                                  {"ready_check_required": True, "design_required": True},
+                                  {"ready_check_required": False, "design_required": True},
+                                  {"ready_check_required": True, "design_required": False}])
+def test_ready_check_is_required_when_either_key_is_true(tmp_path, keys):
+    started, skipped = _gate(tmp_path, **keys)
+    if keys.get("ready_check_required") is not keys.get("design_required") and "ready_check_required" in keys and "design_required" in keys:
+        assert started == [] and {"id": "a0", "reason": "bad-ready-check-required"} in skipped
+    else:
+        assert started == [] and {"id": "a0", "reason": "review-required"} in skipped
+
+
+def test_ready_check_clear_verdicts_admit_it_and_agreeing_false_keys_have_no_gate(tmp_path):
+    assert _gate(tmp_path, ready_check_required=True, design_verdict="clear", ticket_verdict="clear")[0] == ["a0"]
+    assert _gate(tmp_path, ready_check_required=False, design_required=False)[0] == ["a0"]
+    assert _gate(tmp_path, ready_check_required=False)[0] == ["a0"]

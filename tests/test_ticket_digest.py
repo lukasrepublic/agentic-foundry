@@ -98,7 +98,7 @@ def test_reconcile_ticket_changed_per_section(ws, section):
     old, new = EDITS[section]
     gh.node(2)["body"] = BODY.replace(old, new)
     r = reconcile(gh)
-    assert (r["stop_dispatch"], r["reason"], r["changed_sections"]) == (True, "ticket_changed", [section])
+    assert (r["stop_dispatch"], r["reason"], r["changed_sections"]) == (True, "ticket_changed", [{"done_means": "definition_of_done"}.get(section, section)])
 
 
 def test_acceptance_only_change_keeps_the_sub_reason(ws):
@@ -112,7 +112,7 @@ def test_two_sections_changed_is_ticket_changed(ws):
     gh = claimed(ws)
     gh.node(2)["body"] = BODY.replace(*EDITS["acceptance"]).replace(*EDITS["design"])
     r = reconcile(gh)
-    assert r["reason"] == "ticket_changed" and r["changed_sections"] == ["acceptance", "design"]
+    assert r["reason"] == "ticket_changed" and r["changed_sections"] == ["acceptance_criteria", "design"]
 
 
 def test_next_skips_a_ticket_changed_atom(ws):

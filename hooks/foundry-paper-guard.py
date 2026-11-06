@@ -4,7 +4,7 @@
 Paper is written only when the ticket asks for it. A write under a PAPER path — specs/, intake/,
 .foundry/, status-reports/, charters/, docs/, or an acceptance-contract.yaml / release.yaml /
 state.yaml anywhere — is refused unless the active ticket (in the repository's git dir, see
-scripts/foundry-ticket.py) lists that path or a parent directory under `paper_allowed`.
+scripts/foundry-ticket.py) lists that path or a parent directory under `referenced_artifacts` (old name `paper_allowed`, still read).
 
 Measured reason this exists: over 60 days on two adopter workspaces 76% of all agent file edits
 went to paper and the paper:code line ratio ran 1.5:1 to 8:1. The guard makes paper deliberate,
@@ -23,9 +23,9 @@ from `scripts/`/`ci/`/`tools/`, test configs (`pyproject.toml`, `setup.cfg`, `.c
 `.nycrc*` and `karma.conf.*` anywhere; `package.json` when the edit touches its `scripts`, `jest` or `vitest`
 block), and quarantine lists (`quarantine*.json|yaml|yml`). It is refused unless the active ticket names the path
 (or a parent directory) in `ci_allowed` (`foundry-ticket.py ci-allow <path>`, which the permission floor asks on) or
-in `issue_paper_allowed` (the issue author's own `## Paper allowed` list, recorded at `start`) AND those two lists
+in `issue_referenced_artifacts` (old name `issue_paper_allowed`; the issue author's own `## Referenced Artifacts` list, recorded at `start`) AND those two lists
 carry a valid signature (gv-16: an HMAC under a per-git-dir key that `ci-allow` / `start` create, so a hand edit of
-the ticket file lifts nothing). The CLI-writable `paper_allowed` never lifts a CI path. With no ticket it is refused.
+the ticket file lifts nothing). The CLI-writable `referenced_artifacts` never lifts a CI path. With no ticket it is refused.
 The path is resolved as a FILE, symlinks included, so a link into a CI path is a CI path. A `Bash` payload is
 checked too (gv-16): the write targets of `sed -i`, `tee`, a `>`/`>>` redirect, `cp`/`mv`/`rm`/`truncate`/`dd of=`/
 `install` that name a CI path are refused the same way (a visibility control: it reads the command, it does not
@@ -515,10 +515,10 @@ def _load_ticket(root: Path):
 
 
 def _ci_lists(doc, root: Path):
-    """(ci_allowed + issue_paper_allowed, signature_ok). The lists lift nothing without a valid signature."""
+    """(ci_allowed + issue_referenced_artifacts, signature_ok). The lists lift nothing without a valid signature."""
     if not doc:
         return [], True
-    lists = (doc.get("ci_allowed") or []) + (doc.get("issue_paper_allowed") or [])
+    lists = (doc.get("ci_allowed") or []) + (store.rec_get(doc, "issue_referenced_artifacts") or [])
     if not lists:
         return [], True
     return (lists, True) if store.verify_ticket_lists(doc, root) else ([], False)
@@ -529,7 +529,7 @@ def _refuse_ci(rel: Path, doc, sig_ok: bool) -> int:
     base = ("%s is a CI path (workflows, CI scripts, test configs, quarantine lists). Never edit CI "
             "to make a PR pass: fix the code or report the failure. " % p)
     if not sig_ok:
-        base += ("The ticket's ci_allowed / issue_paper_allowed carry no valid signature (a hand edit of the ticket "
+        base += ("The ticket's ci_allowed / issue_referenced_artifacts carry no valid signature (a hand edit of the ticket "
                  "file lifts nothing); the lists are ignored. ")
     if doc:
         return _refuse(base + "Ticket #%s does not allow it. If the operator asked for this CI change, run "
@@ -601,7 +601,7 @@ def main() -> int:
         if is_ci:
             if not _allowed(rel, lists):
                 return _refuse_ci(rel, doc, sig_ok)
-        elif is_paper and not (doc and _allowed(rel, doc.get("paper_allowed") or [])):
+        elif is_paper and not (doc and _allowed(rel, store.rec_get(doc, "referenced_artifacts") or [])):
             return _refuse_paper(rel, doc)
     return 0
 
@@ -615,7 +615,7 @@ def _refuse_paper(rel: Path, doc) -> int:
     return _refuse("no active ticket, and %s is a paper path (specs/, intake/, .foundry/, docs/, "
                    "status-reports/, charters/, contracts, manifests). Start the ticket you are working "
                    "(`python3 \"$CLAUDE_PLUGIN_ROOT/scripts/foundry-ticket.py\" start <issue>`) and list the "
-                   "paper it needs under `## Paper allowed`; a ticket's Done means is a command, not a "
+                   "paper it needs under `## Referenced Artifacts`; a ticket's Definition of Done is a command, not a "
                    "document." % p)
 
 

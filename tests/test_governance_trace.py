@@ -460,8 +460,8 @@ def test_the_installed_workflow_still_carries_the_plugin_ref_placeholder():
 
 def test_dispatch_skill_instructs_the_learned_comment_and_the_trailer_rule():
     text = (ROOT / "skills" / "dispatch" / "SKILL.md").read_text()
-    assert "## Learned" in text and "at most ten lines" in text
+    assert "## Retrospective" in text and "at most ten lines" in text
     assert "Built-from: <workspace sha>" in text
     prompt = text.split("`prompt`: the worker contract")[1].split("3. **Consume")[0]
     quoted = "\n".join(ln for ln in prompt.splitlines() if ln.lstrip().startswith(">"))
-    assert "Built-from: <workspace sha>" in quoted and "## Learned" in quoted and "workspace main sha" in quoted
+    assert "Built-from: <workspace sha>" in quoted and "## Retrospective" in quoted and "workspace main sha" in quoted

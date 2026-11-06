@@ -1185,3 +1185,24 @@ def test_ac_extraction_stops_at_non_continuation_lines(tmp_path, monkeypatch):
     w = W(tmp_path, monkeypatch, files=files)
     body = w.preview("rel-a/a1", "--owner", "o")["items"][0]["body"]
     assert "first thing." in body and "second thing." in body and "SPILLED-TEXT" not in body
+
+
+NEW_SPELLINGS = ["Definition of Done", "definition   of done", "Referenced Artifacts", "Referenced Artifact", "REFERENCED ARTIFACTS"]
+
+
+@pytest.mark.parametrize("spelling", NEW_SPELLINGS)
+def test_guard_refuses_every_new_ticket_heading_spelling(spelling):
+    tk = _load_ticket_tool()
+    marker = "<!-- foundry-migrated: x -->"
+    for prefix in ("## ", "### ", "#### ", "", "  "):
+        body = f"{marker}\n{prefix}{spelling}\n```sh\ntrue\n```\n"
+        assert (tk._DONE_RE.search(body) or tk._PAPER_RE.search(body)) or not prefix.strip()
+        assert not M.guard_body(body, marker), (prefix, spelling)
+
+
+def test_the_guard_and_the_ticket_tool_share_one_heading_pattern_source():
+    tk = _load_ticket_tool()
+    spellings = NEW_SPELLINGS + ["Done means", "Paper allowed", "done   means", "Acceptance", "Design", "Other"]
+    for sp in spellings:
+        line = "## " + sp
+        assert bool(tk._DONE_RE.match(line) or tk._PAPER_RE.match(line)) == bool(M.GUARD_G.match(line)), sp
