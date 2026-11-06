@@ -5,7 +5,7 @@ description: Run the Epic review (/foundry:epic-review). The single final sessio
 
 # /foundry:epic-review
 
-The one final session of a **Epic**. The operator tests, tags and publishes after it. A draft
+The one final session of an **Epic**. The operator tests, tags and publishes after it. A draft
 Release is the hand-off. Procedure: `docs/how-to/epic-review.md`.
 
 The work is done by `${CLAUDE_PLUGIN_ROOT}/scripts/foundry_epic_review.py`. This skill only runs it and
@@ -38,7 +38,7 @@ foundry_epic_review.py run <epic> --repo <owner/name> --integration <branch> --t
 
 ## Rules
 
-- The Definition of Done come from the Epic issue and must pass the trust check (author and every editor). An untrusted
+- The Definition of Done comes from the Epic issue and must pass the trust check (author and every editor). An untrusted
   one refuses with `done-means-untrusted`. A local `--done-means` file must be committed and unmodified. Run from a
   work tree at the integration head.
 - The ruleset is created only after acceptance and the milestone pass. The report prints its delete command.

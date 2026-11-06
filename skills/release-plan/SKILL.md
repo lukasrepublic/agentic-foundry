@@ -5,7 +5,7 @@ description: Plan an Epic into a release plan of increments and batches (/foundr
 
 # /foundry:release-plan
 
-Plans a **Epic**. It claims nothing and dispatches nothing. Workers pick up batches later
+Plans an **Epic**. It claims nothing and dispatches nothing. Workers pick up batches later
 (dl-05 dispatch, dl-11 claims). Vocabulary: `docs/how-to/release-plan.md`.
 
 The work is done by `${CLAUDE_PLUGIN_ROOT}/scripts/foundry_release_plan.py`. This skill only runs it

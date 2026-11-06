@@ -38,7 +38,7 @@ downstream pipeline.
    research gate (see below) BEFORE authoring; carry its outcome into the spec.
 5. **Author the work.**
    - **Ticket lane (default)** — open a GitHub issue with `## Definition of Done` (one fenced command
-     that exits 0 when the work is done) and, only if the work needs paper, `## Referenced Artifacts`
+     that exits 0 when the work is done) and, only if the work needs paper, `## Referenced Artifacts` (a write allowance: each path listed may be edited, and a CI path listed lifts the CI-path guard)
      (the paths it may write). The issue is the record — no frozen acceptance-contract, no audit.
    - **Spec lane (opt-in, security set)** — author the atomic spec, one atom = one
      capability-behavior: `specs/features/<product>/<domain>/<capability>/feat-….md`, from
