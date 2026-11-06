@@ -149,6 +149,34 @@ Two honest notes on that job:
 `agents/security-reviewer.md` is the separate security lens. It triggers on the security-tagged paths: the kit's static
 globs, and your declared trust boundaries once `declare` has run.
 
+## Delivery of a programme
+
+A **programme** is the whole body of work. An **atom** is one ticket with a runnable Done means. A **batch** is the atoms
+that land as one pull request. The rules of the kits reach the agent through the ticket; the delivery verbs below move the
+tickets through the platform.
+
+1. **Execution plan.** `/foundry:execution-plan <programme>` reads the atoms and their `blocked_by` edges from the GitHub
+   Project and writes `execution-plan.yaml`: **waves** of batches, the **critical path** and the **total float** of each
+   batch. An atom sits in a wave after every atom that blocks it. Atoms that share a path never share a wave. See
+   [plan a programme](how-to/execution-plan.md).
+2. **Wave dispatch.** The command deck builds the batches of the open wave in one Workflow, within the
+   concurrency limit of the policy key `deck.max_builders`. A **programme issue** and a Project status update show the
+   state each tick.
+3. **Fleet builders.** A builder on another machine or container takes a batch by a **claim** (a ref create) under a
+   **lease**. Its worker id differs from the lead's in the machine or container part. See
+   [run builders across machines](how-to/fleet-builders.md).
+4. **Review.** One full review round runs for each pull request. If it raised Blocks, one fresh-context delta review of the
+   fix commits follows, and only then the head-bound security label. See
+   [recover from a failed gate](how-to/recover-from-a-failed-gate.md).
+5. **Learned.** Each atom ends with a `## Learned` comment. The Learned distill turns the comments into proposed rule
+   edits: a draft pull request for your private layer, a kit-fix ticket for upstream. It proposes and never merges.
+6. **Close-out.** `/foundry:close-out <programme>` is the single final session. It leaves a draft Release pinned to the
+   integration head. The operator tests, tags and publishes. See [close out a programme](how-to/close-out.md).
+
+The deck token cost is bounded by the keys `deck.max_agent_calls`, `deck.max_wait_s`, `deck.note_max_tokens` and
+`deck.stall_after_ticks`; see [the operating-model policy](operating-model-policy.md). The operator's own test pass is a
+practice, not a control. No script asserts that it ran.
+
 ## Exceptions and baselines
 
 An exception is a record in `governance/local/exceptions.yaml` with the rule, the scope, the reason, the owner and an
@@ -187,3 +215,6 @@ Detection is a signature table plus your one-word confirmation, never an inferen
 - [Operator hand-off files](how-to/operator-handoff-files.md)
 - [Never read a secret value](how-to/secrets-never-read.md)
 - [Use the shared message log](how-to/shared-message-log.md)
+- [Plan a programme](how-to/execution-plan.md)
+- [Run builders across machines](how-to/fleet-builders.md)
+- [Close out a programme](how-to/close-out.md)
