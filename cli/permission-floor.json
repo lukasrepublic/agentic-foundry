@@ -46,22 +46,22 @@
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_wave_plan.py:*)",
       "tier": "allow",
-      "rationale": "pure planner: reads one atoms JSON file, prints waves; writes nothing, no network (dl-04)"
+      "rationale": "pure planner: reads one atoms JSON file, prints increments; writes nothing, no network (dl-04)"
     },
     {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_learned_distill.py:*)",
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_retrospective.py:*)",
       "tier": "ask",
-      "rationale": "collect and propose read a corpus file or the programme's issue comments through read-only GraphQL and write proposal files under --out; --open-prs creates a branch, pushes it and opens a draft pull request, --open-tickets creates upstream issues: remote writes, so the whole script asks (dl-10)"
+      "rationale": "collect and propose read a corpus file or the epic's issue comments through read-only GraphQL and write proposal files under --out; --open-prs creates a branch, pushes it and opens a draft pull request, --open-tickets creates upstream issues: remote writes, so the whole script asks (dl-10)"
     },
     {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_execution_plan.py:*)",
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_release_plan.py:*)",
       "tier": "ask",
-      "rationale": "plan reads a corpus file or the programme's GitHub Project through read-only GraphQL and prints execution-plan.yaml; publish also commits it to the planner ref plan/<programme>, pushes it (never forced) and sets the Project fields wave and batch through GraphQL mutations: a remote write, so the whole script asks (dl-04)"
+      "rationale": "plan reads a corpus file or the epic's GitHub Project through read-only GraphQL and prints release-plan.yaml; publish also commits it to the planner ref plan/<epic>, pushes it (never forced) and sets the Project fields increment and batch through GraphQL mutations: a remote write, so the whole script asks (dl-04)"
     },
     {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_programme_issue.py:*)",
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_epic_issue.py:*)",
       "tier": "ask",
-      "rationale": "render prints the programme issue body from the execution plan; publish edits the programme issue body on GitHub, status-update posts one Project status update and overrides reads the issue: remote writes, so the whole script asks (dl-06)"
+      "rationale": "render prints the epic issue body from the release plan; publish edits the epic issue body on GitHub, status-update posts one Project status update and overrides reads the issue: remote writes, so the whole script asks (dl-06)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_fleet.py:*)",
@@ -69,9 +69,9 @@
       "rationale": "claim, heartbeat, transition, arm-deck and build-next create and move claim refs on GitHub with a per-session App installation token: remote writes, so the whole script asks; it creates no App and no credential (dl-11)"
     },
     {
-      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_close_out.py:*)",
+      "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_epic_review.py:*)",
       "tier": "ask",
-      "rationale": "run closes the atom issues, creates the lease ref, ensures the programme/acceptance ruleset, posts the programme/acceptance commit status, creates a DRAFT Release and posts the final Project status update: remote writes, so the whole script asks; it never tags and never publishes (dl-12)"
+      "rationale": "run closes the atom issues, creates the lease ref, ensures the epic/acceptance ruleset, posts the epic/acceptance commit status, creates a DRAFT Release and posts the final Project status update: remote writes, so the whole script asks; it never tags and never publishes (dl-12)"
     },
     {
       "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_deck_resources.py:*)",

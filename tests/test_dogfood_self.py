@@ -128,10 +128,10 @@ def test_trace_fails_on_a_fixture_pr_that_cites_no_design_or_an_unknown_id(tmp_p
 # containers, and close-out runs on a fake programme against a stubbed GitHub. Deterministic and offline.
 # ===========================================================================================================
 sys.path.insert(0, str(ROOT / "scripts"))
-import foundry_close_out as co  # noqa: E402
-import foundry_execution_plan as ep  # noqa: E402
+import foundry_epic_review as co  # noqa: E402
+import foundry_release_plan as ep  # noqa: E402
 import foundry_fleet as fleet  # noqa: E402
-import foundry_programme_issue as pi  # noqa: E402
+import foundry_epic_issue as pi  # noqa: E402
 import foundry_wave_plan as wp  # noqa: E402
 
 # (id, depends_on, paths) for every atom of the delivery-2-0 manifest.
@@ -139,16 +139,16 @@ DELIVERY_2_0 = [
     ('dl-01-acceptance-section', [], ['scripts/foundry-ticket.py', 'scripts/foundry_brief.py', 'agents/pr-reviewer.md', 'tests/test_acceptance_section.py', 'docs/governance.md']),
     ('dl-02-ticket-reviewer', ['dl-01-acceptance-section'], ['agents/ticket-reviewer.md', 'skills/dispatch/SKILL.md', 'tests/test_ticket_reviewer.py']),
     ('dl-03-whole-ticket-digest', ['dl-01-acceptance-section'], ['scripts/foundry-ticket.py', 'scripts/foundry_ticket_store.py', 'tests/test_ticket_digest.py']),
-    ('dl-04-execution-plan', [], ['scripts/foundry_execution_plan.py', 'scripts/foundry_wave_plan.py', 'skills/execution-plan/SKILL.md', 'schema/execution-plan.schema.json', 'tests/test_execution_plan.py', 'docs/how-to/execution-plan.md']),
-    ('dl-05-wave-dispatch', ['dl-04-execution-plan', 'dl-02-ticket-reviewer'], ['workflows/wave-dispatch.js', 'skills/dispatch/SKILL.md', 'skills/command-deck/SKILL.md', 'skills/command-deck/tick-prompt.template.md', 'scripts/foundry_operating_model.py', 'tests/test_wave_dispatch.py']),
-    ('dl-06-programme-issue', ['dl-04-execution-plan'], ['scripts/foundry_programme_issue.py', 'scripts/foundry_deck_report.py', 'skills/command-deck/SKILL.md', 'tests/test_programme_issue.py']),
+    ('dl-04-execution-plan', [], ['scripts/foundry_release_plan.py', 'scripts/foundry_wave_plan.py', 'skills/release-plan/SKILL.md', 'schema/release-plan.schema.json', 'tests/test_release_plan.py', 'docs/how-to/release-plan.md']),
+    ('dl-05-increment-dispatch', ['dl-04-execution-plan', 'dl-02-ticket-reviewer'], ['workflows/increment-dispatch.js', 'skills/dispatch/SKILL.md', 'skills/command-deck/SKILL.md', 'skills/command-deck/tick-prompt.template.md', 'scripts/foundry_operating_model.py', 'tests/test_increment_dispatch.py']),
+    ('dl-06-programme-issue', ['dl-04-execution-plan'], ['scripts/foundry_epic_issue.py', 'scripts/foundry_deck_report.py', 'skills/command-deck/SKILL.md', 'tests/test_epic_issue.py']),
     ('dl-07-provenance-and-learned', [], ['governance/kits/delivery/checks/governance-trace.py', 'governance/kits/delivery/templates/governance-trace.yml.tmpl', 'governance/kits/delivery/rules.yaml', 'skills/dispatch/SKILL.md', 'tests/test_governance_trace.py']),
     ('dl-08-review-delta-pass', ['dl-01-acceptance-section'], ['skills/merge-when-green/SKILL.md', 'skills/dispatch/SKILL.md', 'agents/pr-reviewer.md', 'agents/security-reviewer.md', 'docs/how-to/recover-from-a-failed-gate.md', 'tests/test_review_delta_pass.py']),
     ('dl-09-cut-release-cadence', [], ['scripts/foundry-cut-release.py', 'skills/cut-release/SKILL.md', 'tests/test_cut_release.py', 'docs/how-to/cut-a-release.md']),
-    ('dl-10-learned-distill', ['dl-07-provenance-and-learned'], ['scripts/foundry_learned_distill.py', 'skills/upstream-submit/SKILL.md', 'tests/test_learned_distill.py']),
-    ('dl-11-fleet-builders', ['dl-04-execution-plan', 'dl-05-wave-dispatch', 'dl-03-whole-ticket-digest'], ['scripts/foundry_fleet.py', 'scripts/foundry-ticket.py', 'scripts/foundry_ticket_store.py', 'skills/command-deck/SKILL.md', 'docs/how-to/fleet-builders.md', 'tests/test_fleet.py']),
-    ('dl-12-close-out', ['dl-04-execution-plan', 'dl-06-programme-issue', 'dl-10-learned-distill'], ['skills/close-out/SKILL.md', 'scripts/foundry_close_out.py', 'tests/test_close_out.py', 'docs/how-to/close-out.md']),
-    ('dl-13-dogfood', ['dl-01-acceptance-section', 'dl-02-ticket-reviewer', 'dl-03-whole-ticket-digest', 'dl-04-execution-plan', 'dl-05-wave-dispatch', 'dl-06-programme-issue', 'dl-07-provenance-and-learned', 'dl-08-review-delta-pass', 'dl-09-cut-release-cadence', 'dl-10-learned-distill', 'dl-11-fleet-builders', 'dl-12-close-out', 'dl-14-token-cost'], ['CHANGELOG.md', 'docs/governance.md', 'docs/how-to/', 'tests/test_dogfood_self.py']),
+    ('dl-10-learned-distill', ['dl-07-provenance-and-learned'], ['scripts/foundry_retrospective.py', 'skills/upstream-submit/SKILL.md', 'tests/test_retrospective.py']),
+    ('dl-11-fleet-builders', ['dl-04-execution-plan', 'dl-05-increment-dispatch', 'dl-03-whole-ticket-digest'], ['scripts/foundry_fleet.py', 'scripts/foundry-ticket.py', 'scripts/foundry_ticket_store.py', 'skills/command-deck/SKILL.md', 'docs/how-to/fleet-builders.md', 'tests/test_fleet.py']),
+    ('dl-12-close-out', ['dl-04-execution-plan', 'dl-06-programme-issue', 'dl-10-learned-distill'], ['skills/epic-review/SKILL.md', 'scripts/foundry_epic_review.py', 'tests/test_epic_review.py', 'docs/how-to/epic-review.md']),
+    ('dl-13-dogfood', ['dl-01-acceptance-section', 'dl-02-ticket-reviewer', 'dl-03-whole-ticket-digest', 'dl-04-execution-plan', 'dl-05-increment-dispatch', 'dl-06-programme-issue', 'dl-07-provenance-and-learned', 'dl-08-review-delta-pass', 'dl-09-cut-release-cadence', 'dl-10-learned-distill', 'dl-11-fleet-builders', 'dl-12-close-out', 'dl-14-token-cost'], ['CHANGELOG.md', 'docs/governance.md', 'docs/how-to/', 'tests/test_dogfood_self.py']),
     ('dl-14-token-cost', [], ['scripts/deck-cost-census.py', 'scripts/foundry_operating_model.py', 'schema/operating-model.schema.json', 'cli/templates/operating-model.yaml.tmpl', 'scripts/foundry_deck_report.py', 'scripts/foundry_blocker_check.py', 'skills/command-deck/tick-prompt.template.md', 'tests/test_deck_cost.py', 'docs/operating-model-policy.md']),
 ]
 
@@ -160,15 +160,15 @@ def corpus(rows=DELIVERY_2_0):
 
 
 def wave_of(plan):
-    return {a: w["n"] for w in plan["waves"] for b in w["batches"] for a in b["atoms"]}
+    return {a: w["n"] for w in plan["increments"] for b in w["batches"] for a in b["atoms"]}
 
 
 def batch_wave_of(plan):
-    return {b["id"]: w["n"] for w in plan["waves"] for b in w["batches"]}
+    return {b["id"]: w["n"] for w in plan["increments"] for b in w["batches"]}
 
 
 def check_plan(plan, rows):
-    """Return the list of violations: an atom not strictly after a blocker, or overlapping atoms in one wave."""
+    """Return the list of violations: an atom not strictly after a blocker, or overlapping atoms in one increment."""
     wv = wave_of(plan)
     bad = []
     for i, deps, _ in rows:
@@ -184,7 +184,7 @@ def check_plan(plan, rows):
     return bad
 
 
-# --- the planner plans the programme that built it ------------------------------------------------------------------
+# --- the planner plans the epic that built it ------------------------------------------------------------------
 
 def test_planner_places_every_atom_after_its_blockers_and_apart_from_overlaps():
     plan = ep.build_plan("delivery-2-0", corpus())
@@ -195,7 +195,7 @@ def test_planner_places_every_atom_after_its_blockers_and_apart_from_overlaps():
     again = yaml.safe_load(ep.render(plan))
     ep.validate(again)
     assert wave_of(again) == wv
-    # dl-13 blocks on every other atom, so it sits in the last wave alone with respect to its blockers
+    # dl-13 blocks on every other atom, so it sits in the last increment alone with respect to its blockers
     assert wv["dl-13-dogfood"] == max(wv.values())
     assert plan["critical_path"] and plan["critical_path"][-1] in batch_wave_of(plan)
 
@@ -221,7 +221,7 @@ def test_path_overlap_is_detected_when_a_plan_is_forced_into_one_wave():
     plan = ep.build_plan("delivery-2-0", corpus())
     wv = wave_of(plan)
     wv_forced = dict(wv, **{"dl-08-review-delta-pass": wv["dl-02-ticket-reviewer"]})
-    forced = {"waves": [{"n": n, "batches": [{"id": f"b{n}", "atoms": sorted(a for a, w in wv_forced.items() if w == n)}]}
+    forced = {"increments": [{"n": n, "batches": [{"id": f"b{n}", "atoms": sorted(a for a, w in wv_forced.items() if w == n)}]}
                         for n in sorted(set(wv_forced.values()))]}
     bad = check_plan(forced, DELIVERY_2_0)
     assert ("overlap", "dl-02-ticket-reviewer", "dl-08-review-delta-pass") in bad
@@ -268,7 +268,7 @@ def test_a_missing_container_part_is_refused_not_defaulted(tmp_path):
     assert ei.value.reason == "container-id-missing"
 
 
-# --- close-out leaves a draft Release pinned to the integration head ------------------------------------------------
+# --- epic review leaves a draft Release pinned to the integration head ------------------------------------------------
 
 SHA = "c" * 40
 REPO = "acme/code"
@@ -333,7 +333,7 @@ class FixedClock:
         return datetime.datetime(2026, 11, 5, 12, 0, 0, tzinfo=datetime.timezone.utc)
 
 
-def test_close_out_leaves_a_draft_release_pinned_to_the_integration_head(tmp_path, monkeypatch, capsys):
+def test_epic_review_leaves_a_draft_release_pinned_to_the_integration_head(tmp_path, monkeypatch, capsys):
     stub = StubGH()
     monkeypatch.setattr(pi, "gh_api", stub)
     rows = [("a-one", [], ["x/"]), ("a-two", ["a-one"], ["y/"])]
@@ -342,12 +342,12 @@ def test_close_out_leaves_a_draft_release_pinned_to_the_integration_head(tmp_pat
     (tmp_path / "states.json").write_text(json.dumps({"states": {"a-one": "merged", "a-two": "merged"}}))
     (tmp_path / "atoms.json").write_text(json.dumps({"atoms": [{"id": "a-one", "issue": 1}, {"id": "a-two", "issue": 2}]}))
     (tmp_path / "learned.json").write_text(json.dumps({"atoms": []}))
-    monkeypatch.setattr(co, "read_programme_issue", lambda ref, trust: {"done_trusted": True, "done": "true"})
+    monkeypatch.setattr(co, "read_epic_issue", lambda ref, trust: {"done_trusted": True, "done": "true"})
     monkeypatch.setattr(co, "git_head", lambda d: SHA)
     rc = co.main(["run", "prog", "--repo", REPO, "--integration", "release/2.0.0", "--tag", "v2.0.0",
                   "--plan", str(tmp_path / "plan.yaml"), "--states", str(tmp_path / "states.json"),
                   "--atoms", str(tmp_path / "atoms.json"), "--milestone", "7", "--project", "acme/3",
-                  "--programme-issue", f"{REPO}#9",
+                  "--epic-issue", f"{REPO}#9",
                   "--learned-json", str(tmp_path / "learned.json")], FixedClock(), lambda a, t, c=None: 0)
     out, err = capsys.readouterr()
     assert rc == 0, err
@@ -375,9 +375,9 @@ def test_close_out_leaves_a_draft_release_pinned_to_the_integration_head(tmp_pat
         assert payload["state"] == "closed"
     status_i = at("POST", f"repos/{REPO}/statuses/{SHA}")
     status = next(w[2] for w in stub.writes if w[:2] == ("POST", f"repos/{REPO}/statuses/{SHA}"))
-    assert status["context"] == "programme/acceptance" and status["state"] == "success"
+    assert status["context"] == "epic/acceptance" and status["state"] == "success"
     ruleset_i = at("POST", f"repos/{REPO}/rulesets")
     ruleset = next(w[2] for w in stub.writes if w[:2] == ("POST", f"repos/{REPO}/rulesets"))
-    assert ruleset["name"] == "programme-acceptance-prog"
+    assert ruleset["name"] == "epic-acceptance-prog"
     release_i = at("POST", f"repos/{REPO}/releases")
     assert max(closes) < status_i < ruleset_i < release_i

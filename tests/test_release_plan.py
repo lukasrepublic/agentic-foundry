@@ -1,4 +1,4 @@
-"""dl-04: scripts/foundry_wave_plan.py + scripts/foundry_execution_plan.py (offline, stubbed GitHub)."""
+"""dl-04: scripts/foundry_wave_plan.py + scripts/foundry_release_plan.py (offline, stubbed GitHub)."""
 import json
 import subprocess
 import sys
@@ -10,10 +10,10 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-import foundry_execution_plan as ep  # noqa: E402
+import foundry_release_plan as ep  # noqa: E402
 import foundry_wave_plan as wp  # noqa: E402
 
-SCHEMA = json.loads((ROOT / "schema" / "execution-plan.schema.json").read_text())
+SCHEMA = json.loads((ROOT / "schema" / "release-plan.schema.json").read_text())
 
 
 def atom(i, blocked_by=(), paths=(), **kw):
@@ -41,16 +41,16 @@ DIAMOND = corpus(
     atom("B", ["A"], ["b/**"], labels=["size:l"]),
     atom("C", ["A"], ["c/**"]),
     atom("D", ["B", "C"], ["d/**"]),
-    atom("E", paths=["a/x.py"]),          # overlaps A -> later wave
+    atom("E", paths=["a/x.py"]),          # overlaps A -> later increment
     atom("F", paths=["f/**"]),
 )
 
 
-# ---- wave planner -----------------------------------------------------------------------------
+# ---- increment planner -----------------------------------------------------------------------------
 def test_waves_follow_dependencies_and_split_path_overlap():
-    waves = wp.plan_waves([{"id": a["id"], "blocked_by": a["blocked_by"], "paths": a["paths"]}
+    increments = wp.plan_waves([{"id": a["id"], "blocked_by": a["blocked_by"], "paths": a["paths"]}
                            for a in DIAMOND["atoms"]])
-    assert waves == [["A", "F"], ["B", "C", "E"], ["D"]]
+    assert increments == [["A", "F"], ["B", "C", "E"], ["D"]]
 
 
 def test_cycle_refuses_and_names_every_atom_in_it_but_not_bystanders():
@@ -67,7 +67,7 @@ def test_self_loop_is_a_cycle():
         wp.plan_waves([{"id": "A", "blocked_by": ["A"], "paths": []}])
 
 
-# ---- execution plan ---------------------------------------------------------------------------
+# ---- release plan ---------------------------------------------------------------------------
 def test_same_corpus_gives_byte_identical_yaml():
     a = ep.render(ep.build_plan("prog", DIAMOND))
     b = ep.render(ep.build_plan("prog", json.loads(json.dumps(DIAMOND))))
@@ -77,7 +77,7 @@ def test_same_corpus_gives_byte_identical_yaml():
 def test_no_two_batches_in_a_wave_share_an_edge_or_a_path():
     plan = ep.build_plan("prog", DIAMOND)
     blocked = {a["id"]: set(a["blocked_by"]) for a in DIAMOND["atoms"]}
-    for w in plan["waves"]:
+    for w in plan["increments"]:
         bs = w["batches"]
         for i, x in enumerate(bs):
             for y in bs[i + 1:]:
@@ -86,49 +86,49 @@ def test_no_two_batches_in_a_wave_share_an_edge_or_a_path():
                 assert not any(wp.paths_overlap(p, q) for p in x["paths"] for q in y["paths"])
 
 
-def test_plan_validates_and_records_critical_path_float_and_max_concurrent():
+def test_plan_validates_and_records_critical_path_float_and_wip_limit():
     plan = ep.build_plan("prog", DIAMOND)
     jsonschema.validate(plan, SCHEMA)
-    assert plan["programme"] == "prog"
-    assert plan["waves"][0]["n"] == 1
+    assert plan["epic"] == "prog"
+    assert plan["increments"][0]["n"] == 1
     # weights: A=1, B=size:l (5), C=1, D=1 -> A,B,D
-    by_atom = {b["atoms"][0]: b for w in plan["waves"] for b in w["batches"]}
+    by_atom = {b["atoms"][0]: b for w in plan["increments"] for b in w["batches"]}
     assert plan["critical_path"] == [by_atom["A"]["id"], by_atom["B"]["id"], by_atom["D"]["id"]]
     assert by_atom["C"]["total_float"] == 4
     assert by_atom["A"]["total_float"] == 0 and by_atom["B"]["total_float"] == 0
-    assert plan["max_concurrent"] == 2          # open wave 1 = {A, F}
+    assert plan["wip_limit"] == 2          # open increment 1 = {A, F}
     assert plan["generated_from"]["node_ids"] == sorted(f"N_{x}" for x in "ABCDEF")
 
 
 def test_critical_path_by_atom_count_without_size_labels():
     c = corpus(atom("A"), atom("B", ["A"]), atom("C", ["B"]), atom("X"))
     plan = ep.build_plan("p", c)
-    ids = {b["atoms"][0]: b["id"] for w in plan["waves"] for b in w["batches"]}
+    ids = {b["atoms"][0]: b["id"] for w in plan["increments"] for b in w["batches"]}
     assert plan["critical_path"] == [ids["A"], ids["B"], ids["C"]]
-    assert {b["atoms"][0]: b["total_float"] for w in plan["waves"] for b in w["batches"]}["X"] == 2
+    assert {b["atoms"][0]: b["total_float"] for w in plan["increments"] for b in w["batches"]}["X"] == 2
 
 
-def test_hold_label_keeps_the_label_and_leaves_the_open_wave():
+def test_hold_label_keeps_the_label_and_leaves_the_open_increment():
     c = corpus(atom("A", labels=["hold"]), atom("B"), atom("C", ["A"]))
     plan = ep.build_plan("p", c)
-    assert plan["max_concurrent"] == 1
+    assert plan["wip_limit"] == 1
     assert plan["held"] == ["A"]
     assert c["atoms"][0]["labels"] == ["hold"]
     # a held atom still blocks its dependents
-    assert [w["batches"][0]["atoms"] for w in plan["waves"]][-1] == ["C"]
+    assert [w["batches"][0]["atoms"] for w in plan["increments"]][-1] == ["C"]
 
 
 def test_closed_blockers_do_not_block():
     c = corpus(atom("A", state="closed"), atom("B", ["A"]))
     plan = ep.build_plan("p", c)
-    assert [b["atoms"] for w in plan["waves"] for b in w["batches"]] == [["B"]]
+    assert [b["atoms"] for w in plan["increments"] for b in w["batches"]] == [["B"]]
 
 
 def test_shared_component_forms_one_batch():
     c = corpus(atom("A", paths=["x/a.py"], component="k"), atom("B", paths=["y/b.py"], component="k"),
                atom("C", paths=["z/c.py"]))
     plan = ep.build_plan("p", c)
-    assert sorted(len(b["atoms"]) for b in plan["waves"][0]["batches"]) == [1, 2]
+    assert sorted(len(b["atoms"]) for b in plan["increments"][0]["batches"]) == [1, 2]
 
 
 def test_cycle_in_corpus_refuses():
@@ -141,7 +141,7 @@ def test_sub_issue_order_of_an_atom_parent_is_an_edge():
     c = corpus(atom("P"), atom("S1"), atom("S2"), atom("S3"))
     c["atoms"][0]["sub_issues"] = ["S1", "S2", "S3"]
     plan = ep.build_plan("p", c)
-    order = [b["atoms"] for w in plan["waves"] for b in w["batches"]]
+    order = [b["atoms"] for w in plan["increments"] for b in w["batches"]]
     assert order.index(["S1"]) < order.index(["S2"]) < order.index(["S3"])
 
 
@@ -206,7 +206,7 @@ def test_project_projection_sets_wave_number_and_batch_text(monkeypatch):
     plan = ep.build_plan("p", c)
     ep.project(plan, c)
     creates = [v["name"] for q, v in calls if "createProjectV2Field" in q]
-    assert creates == ["wave", "batch"]          # absent -> created
+    assert creates == ["increment", "batch"]          # absent -> created
     sets = [v for q, v in calls if "updateProjectV2ItemFieldValue" in q]
     assert {s["item"] for s in sets} == {"PI1", "PI2"} and len(sets) == 4
     assert {"number": 1} in [s["value"] for s in sets]
@@ -233,14 +233,14 @@ def test_publish_commits_plan_to_planner_ref_and_is_idempotent(repos):
     plan = ep.build_plan("prog", DIAMOND)
     sha1 = ep.publish_ref(work, "origin", "prog", ep.render(plan))
     assert _git(bare, "rev-parse", "refs/heads/plan/prog") == sha1
-    assert yaml.safe_load(_git(bare, "show", "plan/prog:execution-plan.yaml")) == plan
+    assert yaml.safe_load(_git(bare, "show", "plan/prog:release-plan.yaml")) == plan
     assert ep.publish_ref(work, "origin", "prog", ep.render(plan)) == sha1      # same plan, no new commit
     plan2 = ep.build_plan("prog", corpus(atom("A")))
     sha2 = ep.publish_ref(work, "origin", "prog", ep.render(plan2))
     assert sha2 != sha1 and _git(bare, "rev-parse", f"{sha2}^") == sha1
 
 
-def test_bad_programme_name_refused(repos):
+def test_bad_epic_name_refused(repos):
     work, _ = repos
     with pytest.raises(ep.PlanError):
         ep.publish_ref(work, "origin", "../x", "y: 1\n")
@@ -251,7 +251,7 @@ def cli(*args, cwd=None, root=None):
     env = dict(__import__("os").environ)
     if root:
         env["CLAUDE_PROJECT_DIR"] = str(root)
-    return subprocess.run([sys.executable, str(ROOT / "scripts" / "foundry_execution_plan.py"), *args],
+    return subprocess.run([sys.executable, str(ROOT / "scripts" / "foundry_release_plan.py"), *args],
                           capture_output=True, text=True, timeout=60, cwd=cwd, env=env)
 
 
@@ -276,7 +276,7 @@ def test_cli_publish_dry_run_writes_nothing(repos, tmp_path):
     f = tmp_path / "c.json"
     f.write_text(json.dumps(DIAMOND))
     r = cli("publish", "prog", "--from-json", str(f), "--dry-run", cwd=work, root=tmp_path)
-    assert r.returncode == 0 and "programme: prog" in r.stdout
+    assert r.returncode == 0 and "epic: prog" in r.stdout
     assert subprocess.run(["git", "-C", str(bare), "rev-parse", "--verify", "-q", "refs/heads/plan/prog"],
                           capture_output=True).returncode != 0
 
@@ -287,35 +287,35 @@ def test_schema_is_valid_json_schema():
 
 # ---- fix round: review findings ---------------------------------------------------------------
 def test_hold_propagates_to_dependents_counter_example():
-    # A held alone in wave 1; C blocked_by A in wave 2 -> nothing is startable, C in particular.
+    # A held alone in increment 1; C blocked_by A in increment 2 -> nothing is startable, C in particular.
     plan = ep.build_plan("p", corpus(atom("A", labels=["hold"]), atom("C", ["A"])))
-    assert plan["max_concurrent"] == 0 and plan["open_wave"] is None and plan["held"] == ["A"]
+    assert plan["wip_limit"] == 0 and plan["open_increment"] is None and plan["held"] == ["A"]
 
 
-def test_dependents_of_an_unmerged_batch_are_not_counted_in_max_concurrent():
+def test_dependents_of_an_unmerged_batch_are_not_counted_in_wip_limit():
     plan = ep.build_plan("p", corpus(atom("A"), atom("B", ["A"]), atom("X")))
-    assert plan["max_concurrent"] == 2          # A and X; B waits for A
+    assert plan["wip_limit"] == 2          # A and X; B waits for A
 
 
 def test_overlap_forced_order_is_a_cpm_edge_so_float_is_not_optimistic():
     plan = ep.build_plan("prog", DIAMOND)
-    by_atom = {b["atoms"][0]: b for w in plan["waves"] for b in w["batches"]}
+    by_atom = {b["atoms"][0]: b for w in plan["increments"] for b in w["batches"]}
     assert by_atom["E"]["total_float"] == 5      # E follows A (overlap): ES=1, LS=6; without the edge it read 6
     assert by_atom["F"]["total_float"] == 6
 
 
 def test_batch_id_names_the_sorted_first_member():
     c = corpus(atom("B", paths=["y/b.py"], component="k"), atom("A", paths=["x/a.py"], component="k"))
-    ids = [b["id"] for w in ep.build_plan("p", c)["waves"] for b in w["batches"]]
+    ids = [b["id"] for w in ep.build_plan("p", c)["increments"] for b in w["batches"]]
     assert ids == ["w1-A"]
 
 
 @pytest.mark.parametrize("weird", ["", "/", ".", "*.py", "**", "../x", "a/../../x", "*/foo"])
 def test_a_path_that_reaches_anywhere_overlaps_everything(weird):
     assert wp.paths_overlap(weird, "src/deep/file.py") and wp.paths_overlap("src/deep/file.py", weird)
-    waves = wp.plan_waves([{"id": "A", "blocked_by": [], "paths": [weird]},
+    increments = wp.plan_waves([{"id": "A", "blocked_by": [], "paths": [weird]},
                            {"id": "B", "blocked_by": [], "paths": ["src/x.py"]}])
-    assert waves == [["A"], ["B"]]
+    assert increments == [["A"], ["B"]]
 
 
 def test_ordinary_disjoint_paths_still_do_not_overlap():
@@ -424,9 +424,9 @@ def test_components_cap_refuses():
 def test_wrong_typed_wave_or_batch_field_is_refused_not_used(monkeypatch):
     calls = []
     monkeypatch.setattr(ep, "gh_graphql", _fake_graphql(calls))
-    OVERRIDE["fields"] = [{"id": "F_w", "name": "wave", "dataType": "TEXT"}]
+    OVERRIDE["fields"] = [{"id": "F_w", "name": "increment", "dataType": "TEXT"}]
     c = ep.fetch_corpus("o", 7)
-    with pytest.raises(ep.PlanError, match="wave"):
+    with pytest.raises(ep.PlanError, match="increment"):
         ep.project(ep.build_plan("p", c), c)
     assert not any("updateProjectV2ItemFieldValue" in q for q, _ in calls)
 
@@ -434,7 +434,7 @@ def test_wrong_typed_wave_or_batch_field_is_refused_not_used(monkeypatch):
 def test_publish_clears_stale_wave_and_batch_on_closed_atoms(monkeypatch):
     calls = []
     monkeypatch.setattr(ep, "gh_graphql", _fake_graphql(calls))
-    OVERRIDE["fields"] = [{"id": "F_wave", "name": "wave", "dataType": "NUMBER"},
+    OVERRIDE["fields"] = [{"id": "F_wave", "name": "increment", "dataType": "NUMBER"},
                           {"id": "F_batch", "name": "batch", "dataType": "TEXT"}]
     c = ep.fetch_corpus("o", 7)
     c["atoms"].append({"id": "o/r#9", "node_id": "N9", "item_id": "PI9", "blocked_by": [], "paths": [],
@@ -525,7 +525,7 @@ def test_publish_from_json_never_mutates_a_project_without_project_flag(repos, t
 
 
 def test_a_field_without_a_data_type_is_refused():
-    c = {"project_id": "P", "fields": [{"id": "F", "name": "wave", "dataType": None}],
+    c = {"project_id": "P", "fields": [{"id": "F", "name": "increment", "dataType": None}],
          "atoms": [atom("A")]}
-    with pytest.raises(ep.PlanError, match="wave"):
+    with pytest.raises(ep.PlanError, match="increment"):
         ep.project(ep.build_plan("p", c), c)

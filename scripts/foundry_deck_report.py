@@ -2,9 +2,9 @@
 """foundry_deck_report.py -- the deck's four-block report and its pause flag (gv-13; rules E1, B1, B9).
 
   foundry_deck_report.py [--project-dir DIR] --in <tick.json | ->      render the report
-  foundry_deck_report.py [--project-dir DIR] --in <tick.json | -> --programme-issue <md>   also write the report (with its
+  foundry_deck_report.py [--project-dir DIR] --in <tick.json | -> --epic-issue <md>   also write the report (with its
                                                                           cost line) to the body file that
-                                                                          foundry_programme_issue.py reads (dl-06)
+                                                                          foundry_epic_issue.py reads (dl-06)
   foundry_deck_report.py [--project-dir DIR] state                      print the pause flag as JSON
   foundry_deck_report.py [--project-dir DIR] pause [--until REF] [--reason TEXT]
   foundry_deck_report.py [--project-dir DIR] resume
@@ -483,7 +483,7 @@ def _parser():
     ap.add_argument("--project-dir")
     ap.add_argument("--in", dest="in_path", help="tick JSON file, or - for stdin")
     ap.add_argument("--append-cost", metavar="LOG", help="append the cost line to this cost-reports.log")
-    ap.add_argument("--programme-issue", metavar="MD", help="write the rendered report to this body file for foundry_programme_issue.py (dl-06)")
+    ap.add_argument("--epic-issue", metavar="MD", help="write the rendered report to this body file for foundry_epic_issue.py (dl-06)")
     ap.add_argument("--ci-pending", action="store_true", help="tag the appended line ci-pending (rule 8: it does not count)")
     return ap
 
@@ -526,14 +526,14 @@ def main(argv=None):
                 append_cost(args.append_cost, _cost_from_tick(tick), ci_pending=args.ci_pending)
             except OSError as exc:
                 raise Refused(f"cost-log-unwritable:{type(exc).__name__}")
-        if args.programme_issue:
+        if args.epic_issue:
             try:
-                if os.path.islink(args.programme_issue):
-                    raise Refused("programme-issue-file-is-a-symlink")
-                with open(args.programme_issue, "w", encoding="utf-8") as fh:
+                if os.path.islink(args.epic_issue):
+                    raise Refused("epic-issue-file-is-a-symlink")
+                with open(args.epic_issue, "w", encoding="utf-8") as fh:
                     fh.write(text)
             except OSError as exc:
-                raise Refused(f"programme-issue-unwritable:{type(exc).__name__}")
+                raise Refused(f"epic-issue-unwritable:{type(exc).__name__}")
         sys.stdout.write(text)
         return 0
     except Refused as exc:

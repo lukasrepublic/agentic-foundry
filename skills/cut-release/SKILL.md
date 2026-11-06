@@ -374,11 +374,11 @@ lands in the cut-release playbook specifically — for the plugin's own repo AND
 ## When to cut, and what the notes list
 
 There is no calendar rule. The operator decides what ships through the version tag and publish. A cut
-can follow any previous tag at any age. A cut can combine several programmes and the ad-hoc tickets
+can follow any previous tag at any age. A cut can combine several epics and the ad-hoc tickets
 that merged since the previous tag.
 
-On `READY` the script prints a release-notes block: one line per merged programme and a count of the
-other PRs since the previous tag. If close-out left a draft GitHub Release pinned to `HEAD`, the notes
+On `READY` the script prints a release-notes block: one line per merged epic and a count of the
+other PRs since the previous tag. If epic review left a draft GitHub Release pinned to `HEAD`, the notes
 use that draft as input. Otherwise the notes come from the merged PRs in git history. The playbook
 never tags, pushes, or publishes. The operator does that.
 

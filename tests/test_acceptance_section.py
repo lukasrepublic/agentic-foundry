@@ -326,7 +326,7 @@ def test_below_class_duplicate_id_reaches_the_brief_with_the_clean_bullets(repo,
         rc = ft.cmd_read_issue(["3", "--repo", "o/r", "--json"], _gql_stub(body))
     assert rc == 0, err.getvalue()
     doc = json.loads(out.getvalue())
-    assert doc["design_required"] is False and len(doc["acceptance_criteria"]["errors"]) == 1
+    assert doc["ready_check_required"] is False and len(doc["acceptance_criteria"]["errors"]) == 1
     rc, text, berr = _render(tmp_path, doc)
     assert rc == 0, berr
     lines = text.split("\n")

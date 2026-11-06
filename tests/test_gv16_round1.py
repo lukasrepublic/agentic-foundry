@@ -393,10 +393,10 @@ def test_omitting_the_design_and_scope_cannot_evade_the_class(repo):
         "declarations": {"asvs_level": 1, "data_classification": [], "trust_boundaries": ["src/auth/**"], "surfaces": ["cli"]},
         "facts_sha256": "0" * 64, "intake_at": "2026-01-01", "plugin_version": "2"}))
     by_paper = _classify("## Paper allowed\nhooks/foundry-x.py\n")                  # no Design, no Scope: the Paper-allowed list says it
-    assert by_paper["design_required"] is True and by_paper["design_defects"]
-    assert _classify("no sections at all", ["size:L"])["design_required"] is True   # the size tag
+    assert by_paper["ready_check_required"] is True and by_paper["design_defects"]
+    assert _classify("no sections at all", ["size:L"])["ready_check_required"] is True   # the size tag
     sec = _classify("## Design\n- Components: src/auth/login.py\n- Cites: FG-QA-001\n")
-    assert sec["design_required"] is True and "trust boundary" in " ".join(sec["design_required_reasons"])
+    assert sec["ready_check_required"] is True and "trust boundary" in " ".join(sec["ready_check_reasons"])
     # controls: nothing governed, no size tag
     ctl = _classify("## Paper allowed\nsrc/app.py\n", ["size:M"])
-    assert ctl["design_required"] is False and ctl["design_defects"] == []
+    assert ctl["ready_check_required"] is False and ctl["design_defects"] == []

@@ -162,17 +162,17 @@ _WRITERS = [
     ("foundry_usage.py", "--dataset /d fallback-transcripts --cli-version 1"),
     ("foundry_usage.py", "--dat=/d fallback-transcripts --cli-version 1"),
     ("foundry_usage.py", "--dataset /d ingest /c"), ("foundry_usage.py", "--dat=/d attribute"),
-    ("foundry_execution_plan.py", "plan prog --from-json c.json"),   # dl-04: the whole script asks
-    ("foundry_execution_plan.py", "publish prog --project o/1"),
-    ("foundry_programme_issue.py", "render prog --plan p.yaml"),     # dl-06: the whole script asks
-    ("foundry_programme_issue.py", "publish prog --issue o/r#1 --plan p.yaml"),
-    ("foundry_close_out.py", "run prog --repo o/r --integration b --tag v1.0.0"),   # dl-12: the whole script asks
-    ("foundry_close_out.py", "--help"),
+    ("foundry_release_plan.py", "plan prog --from-json c.json"),   # dl-04: the whole script asks
+    ("foundry_release_plan.py", "publish prog --project o/1"),
+    ("foundry_epic_issue.py", "render prog --plan p.yaml"),     # dl-06: the whole script asks
+    ("foundry_epic_issue.py", "publish prog --issue o/r#1 --plan p.yaml"),
+    ("foundry_epic_review.py", "run prog --repo o/r --integration b --tag v1.0.0"),   # dl-12: the whole script asks
+    ("foundry_epic_review.py", "--help"),
     ("foundry_fleet.py", "claim o/r prog w1-a"),          # dl-11: the whole script asks
     ("foundry_fleet.py", "--help"),
-    ("foundry_deck_report.py", "--in t.json --programme-issue /b.md"), ("foundry_deck_report.py", "--in t.json --programme /b.md"),
-    ("foundry_learned_distill.py", "propose prog --from-json c.json"),   # dl-10: the whole script asks
-    ("foundry_learned_distill.py", "collect prog --project o/1"),
+    ("foundry_deck_report.py", "--in t.json --epic-issue /b.md"), ("foundry_deck_report.py", "--in t.json --epic /b.md"),
+    ("foundry_retrospective.py", "propose prog --from-json c.json"),   # dl-10: the whole script asks
+    ("foundry_retrospective.py", "collect prog --project o/1"),
     ("foundry_research_note.py", "--in s.json --slug x"),   # gv-14: every invocation writes under .foundry/
     ("foundry_deck_report.py", "--in t.json --append-cost /l"), ("foundry_deck_report.py", "--in t.json --append-c /l"),
     ("deck-cost-census.py", "--session-dir /s --append /l"), ("deck-cost-census.py", "--session-dir /s --app /l"),

@@ -344,7 +344,7 @@ allowlist:
     reason: >-
       dl-04 (charter specs/charters/delivery/dl-04-execution-plan.md) re-introduces the wave planner under
       this name as a pure, deterministic library; the module is live, not a retired invocation.
-  - path: scripts/foundry_execution_plan.py
+  - path: scripts/foundry_release_plan.py
     token: 'foundry[_-]wave[_-]plan'
     reason: >-
       dl-04: imports the re-introduced wave planner (scripts/foundry_wave_plan.py), a live module.

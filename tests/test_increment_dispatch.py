@@ -1,4 +1,4 @@
-"""dl-05: wave dispatch. workflows/wave-dispatch.js runs every batch of the open wave in one Workflow.
+"""dl-05: increment dispatch. workflows/increment-dispatch.js runs every batch of the open increment in one Workflow.
 
 The workflow is driven under node with a STUBBED agent runner (no model call). Assertions parse structure:
 event logs, brief lines, JSON results. Never a substring of joined text.
@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-WORKFLOW = ROOT / "workflows" / "wave-dispatch.js"
+WORKFLOW = ROOT / "workflows" / "increment-dispatch.js"
 NODE = shutil.which("node")
 
 DRIVER = r"""
@@ -44,7 +44,7 @@ fn(cfg.args, agent, (s) => logs.push(s)).then((result) => {
 
 
 def run_workflow(tmp_path, args, behaviour=None):
-    assert NODE, "node is required for the wave-dispatch tests"
+    assert NODE, "node is required for the increment-dispatch tests"
     (tmp_path / "driver.js").write_text(DRIVER)
     (tmp_path / "cfg.json").write_text(json.dumps({"args": args, "behaviour": behaviour or {}}))
     r = subprocess.run([NODE, str(tmp_path / "driver.js"), str(WORKFLOW), str(tmp_path / "cfg.json")],
@@ -53,18 +53,18 @@ def run_workflow(tmp_path, args, behaviour=None):
     return json.loads(r.stdout)
 
 
-def make_args(batches, wave=1, max_concurrent=None, later=(), **extra):
-    """batches: {batch_id: [atoms]}; later: {batch_id: [atoms]} placed in wave 2."""
-    waves = [{"n": wave, "batches": [{"id": b, "atoms": a, "paths": [f"p/{b}"], "total_float": 0}
+def make_args(batches, increment=1, wip_limit=None, later=(), **extra):
+    """batches: {batch_id: [atoms]}; later: {batch_id: [atoms]} placed in increment 2."""
+    increments = [{"n": increment, "batches": [{"id": b, "atoms": a, "paths": [f"p/{b}"], "total_float": 0}
                                       for b, a in batches.items()]}]
     if later:
-        waves.append({"n": wave + 1, "batches": [{"id": b, "atoms": a, "paths": [], "total_float": 0}
+        increments.append({"n": increment + 1, "batches": [{"id": b, "atoms": a, "paths": [], "total_float": 0}
                                                   for b, a in dict(later).items()]})
     atoms = [a for v in list(batches.values()) + list(dict(later).values()) for a in v]
     args = {
-        "programme": "p1",
-        "plan": {"waves": waves, "critical_path": [], "open_wave": wave,
-                 "max_concurrent": len(batches) if max_concurrent is None else max_concurrent, "held": []},
+        "epic": "p1",
+        "plan": {"increments": increments, "critical_path": [], "open_increment": increment,
+                 "wip_limit": len(batches) if wip_limit is None else wip_limit, "held": []},
         "briefs": {a: {"done_when": f"{a} passes", "issue": i + 1} for i, a in enumerate(atoms)},
         "job_dir": "/jobs/p1", "worktree_root": "/wt",
     }
@@ -86,7 +86,7 @@ def brief_fields(prompt):
 def test_runs_min_n_m_batches_at_once(tmp_path, n, plan_m, cap, expected_peak):
     batches = {f"b{i}": [f"a{i}"] for i in range(n)}
     extra = {} if cap is None else {"concurrency": cap}
-    out = run_workflow(tmp_path, make_args(batches, max_concurrent=plan_m, **extra))
+    out = run_workflow(tmp_path, make_args(batches, wip_limit=plan_m, **extra))
     assert out["peak"] == expected_peak
     assert sorted(e["atom"] for e in starts(out)) == sorted(f"a{i}" for i in range(n))   # every batch ran
     assert out["result"]["deferred"] == []
@@ -104,7 +104,7 @@ def test_zero_slots_starts_nothing_and_defers_all(tmp_path):
 
 def test_running_batches_hold_a_slot(tmp_path):
     batches = {"b0": ["a0"], "b1": ["a1"], "b2": ["a2"]}
-    out = run_workflow(tmp_path, make_args(batches, max_concurrent=2, running_batches=["b0"]))
+    out = run_workflow(tmp_path, make_args(batches, wip_limit=2, running_batches=["b0"]))
     assert out["peak"] == 1
     assert out["result"]["deferred"] == []                    # the lane drains the queue
     assert {s["id"]: s["reason"] for s in out["result"]["skipped"]} == {"b0": "running"}
@@ -114,7 +114,7 @@ def test_running_batches_hold_a_slot(tmp_path):
 def test_critical_path_first(tmp_path):
     args = make_args({"b0": ["a0"], "b1": ["a1"], "b2": ["a2"]}, concurrency=1)
     floats = {"b0": 4, "b1": 0, "b2": 2}
-    for b in args["plan"]["waves"][0]["batches"]:
+    for b in args["plan"]["increments"][0]["batches"]:
         b["total_float"] = floats[b["id"]]
     out = run_workflow(tmp_path, args)
     assert [e["atom"] for e in starts(out)] == ["a1", "a2", "a0"]
@@ -147,22 +147,22 @@ def test_unsafe_ids_never_reach_a_brief(tmp_path):
     assert {"id": "bad id; rm -rf /", "reason": "unsafe-atom-id"} in out["result"]["skipped"]
 
 
-# --- AC 3: the wave barrier --------------------------------------------------------------------
+# --- AC 3: the increment barrier --------------------------------------------------------------------
 def test_no_batch_of_the_next_wave_starts(tmp_path):
     args = make_args({"b0": ["a0"], "b1": ["a1"]}, later={"c0": ["z0"]})
     out = run_workflow(tmp_path, args)
     assert "z0" not in [e["atom"] for e in starts(out)]
-    assert out["result"]["open_wave"] == 1
+    assert out["result"]["open_increment"] == 1
     assert [b["id"] for b in out["result"]["batches"]] == ["b0", "b1"]
 
 
 def test_unmerged_lower_wave_blocks_everything(tmp_path):
-    args = make_args({"c0": ["z0"]}, wave=2, later=())
-    args["plan"]["waves"].insert(0, {"n": 1, "batches": [{"id": "b0", "atoms": ["a0"], "paths": [], "total_float": 0}]})
+    args = make_args({"c0": ["z0"]}, increment=2, later=())
+    args["plan"]["increments"].insert(0, {"n": 1, "batches": [{"id": "b0", "atoms": ["a0"], "paths": [], "total_float": 0}]})
     out = run_workflow(tmp_path, args)
     assert starts(out) == []
     assert out["result"]["refused"].startswith("barrier:")
-    # once the lower batch is merged the open wave starts
+    # once the lower batch is merged the open increment starts
     args["merged_batches"] = ["b0"]
     out = run_workflow(tmp_path, args)
     assert [e["atom"] for e in starts(out)] == ["z0"]
@@ -176,11 +176,11 @@ def test_held_batch_is_skipped_not_started(tmp_path):
     assert {"id": "b1", "reason": "held"} in out["result"]["skipped"]
 
 
-def test_plan_without_open_wave_starts_nothing(tmp_path):
+def test_plan_without_open_increment_starts_nothing(tmp_path):
     args = make_args({"b0": ["a0"]})
-    args["plan"]["open_wave"] = None
+    args["plan"]["open_increment"] = None
     out = run_workflow(tmp_path, args)
-    assert starts(out) == [] and out["result"]["refused"] == "no-open-wave"
+    assert starts(out) == [] and out["result"]["refused"] == "no-open-increment"
 
 
 # --- AC 4: every brief ---------------------------------------------------------------------------
@@ -282,7 +282,7 @@ def test_unknown_repo_key_fails_the_batch(tmp_path):
 
 
 def test_bad_args_refused(tmp_path):
-    out = run_workflow(tmp_path, {"programme": "p1"})
+    out = run_workflow(tmp_path, {"epic": "p1"})
     assert out["result"]["refused"] == "bad-args" and starts(out) == []
 
 
@@ -318,16 +318,16 @@ def test_deck_skills_and_policy_call_the_workflow(tmp_path):
         "template": (ROOT / "skills/command-deck/tick-prompt.template.md").read_text(),
     }
     for name, text in texts.items():
-        assert "workflows/wave-dispatch.js" in text, name
+        assert "workflows/increment-dispatch.js" in text, name
     b1 = om.render_tick_section(policy, "B1")
-    assert "wave-dispatch" in b1
+    assert "increment-dispatch" in b1
 
 
 # --- fix round: review gate, held propagation, resume, brief contract, collision --------------------
 def _plan_with_hold():
     import sys
     sys.path.insert(0, str(ROOT / "scripts"))
-    import foundry_execution_plan as ep
+    import foundry_release_plan as ep
     corpus = {"project_id": "x", "atoms": [
         {"id": "A", "node_id": "A", "blocked_by": [], "paths": ["p/a"], "labels": ["hold"], "state": "open"},
         {"id": "B", "node_id": "B", "blocked_by": ["A"], "paths": ["p/a"], "labels": [], "state": "open"},
@@ -336,8 +336,8 @@ def _plan_with_hold():
 
 
 def _args_from_plan(plan):
-    atoms = [a for w in plan["waves"] for b in w["batches"] for a in b["atoms"]]
-    return {"programme": "p1", "plan": plan, "briefs": {a: {"done_when": "ok"} for a in atoms},
+    atoms = [a for w in plan["increments"] for b in w["batches"] for a in b["atoms"]]
+    return {"epic": "p1", "plan": plan, "briefs": {a: {"done_when": "ok"} for a in atoms},
             "job_dir": "/jobs/p1", "worktree_root": "/wt"}
 
 
@@ -393,11 +393,11 @@ def test_dependent_of_a_held_batch_does_not_start(tmp_path):
     plan = _plan_with_hold()
     out = run_workflow(tmp_path, _args_from_plan(plan))
     assert [e["atom"] for e in starts(out)] == ["C"]            # B waits behind held A; A itself is held
-    # a plan whose open_wave points past the held batch (stale or cached) must start nothing
+    # a plan whose open_increment points past the held batch (stale or cached) must start nothing
     plan2 = json.loads(json.dumps(plan))
-    plan2["open_wave"] = 2
-    plan2["waves"][0]["batches"] = [b for b in plan2["waves"][0]["batches"] if "A" in b["atoms"]]   # only the held batch is left below
-    assert any("B" in b["atoms"] for b in plan2["waves"][1]["batches"])
+    plan2["open_increment"] = 2
+    plan2["increments"][0]["batches"] = [b for b in plan2["increments"][0]["batches"] if "A" in b["atoms"]]   # only the held batch is left below
+    assert any("B" in b["atoms"] for b in plan2["increments"][1]["batches"])
     out2 = run_workflow(tmp_path, _args_from_plan(plan2))
     assert starts(out2) == [] and out2["result"]["refused"].startswith("barrier:")
 
@@ -442,14 +442,14 @@ def test_brief_has_learned_rule_ticket_pointer_and_engineer_type(tmp_path):
         "foundry:app-engineer", "foundry:framework-engineer", "foundry:infra-engineer"]
 
 
-def test_programme_is_in_worktree_and_branch(tmp_path):
+def test_epic_is_in_worktree_and_branch(tmp_path):
     a1 = make_args({"b0": ["a0"]})
-    a2 = make_args({"b0": ["a0"]}); a2["programme"] = "p2"
+    a2 = make_args({"b0": ["a0"]}); a2["epic"] = "p2"
     f1 = brief_fields(starts(run_workflow(tmp_path, a1))[0]["prompt"])
     f2 = brief_fields(starts(run_workflow(tmp_path, a2))[0]["prompt"])
     assert f1["Work only in the worktree"] == "/wt/workspace/p1/b0" and f2["Work only in the worktree"] == "/wt/workspace/p2/b0"
     assert f1["Branch"].startswith("dl/p1/b0 ") and f2["Branch"].startswith("dl/p2/b0 ")
-    bad = make_args({"b0": ["a0"]}); bad["programme"] = "p/../x"
+    bad = make_args({"b0": ["a0"]}); bad["epic"] = "p/../x"
     assert run_workflow(tmp_path, bad)["result"]["refused"] == "bad-args"
 
 
@@ -464,7 +464,7 @@ def test_b1_text_says_ready_batches():
 def test_deck_texts_state_the_review_gate():
     for rel in ("skills/command-deck/SKILL.md", "skills/command-deck/tick-prompt.template.md"):
         text = (ROOT / rel).read_text()
-        para = next(p for p in text.split("\n\n") if "workflows/wave-dispatch.js" in p and "design_verdict" in p)
+        para = next(p for p in text.split("\n\n") if "workflows/increment-dispatch.js" in p and "design_verdict" in p)
         assert "step 0 (design-reviewer)" in para and "step 0b (ticket-reviewer)" in para and "out of `briefs`" in para
 
 

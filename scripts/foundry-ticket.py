@@ -546,8 +546,6 @@ def design_view(body: str, labels, gv: dict | None = None, root: Path | None = N
             "acceptance_criteria_defects": (acceptance_defects(sec["acceptance"]) if reasons else []) + sec["acceptance"]["errors"],
             "acceptance_criteria_refuses": bool(reasons) and bool(acceptance_defects(sec["acceptance"]) + sec["acceptance"]["errors"]),
             "ready_check_required": bool(reasons), "ready_check_reasons": reasons,
-            # old names, still emitted: governance/kits/delivery/checks/governance-trace.py reads `design_required` (renamed in dl-16)
-            "design_required": bool(reasons), "design_required_reasons": reasons,
             "design_defects": design_defects(sec, gv) if reasons else [],
             "applicable_ids": sorted(app), "surfaces_expected": gv.get("surfaces") or [],
             "checklist": checklist(sec, gv), "governance_error": gv.get("error")}

@@ -360,15 +360,15 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_learned_distill.py:*)",
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_retrospective.py:*)",
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_execution_plan.py:*)",
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_release_plan.py:*)",
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_programme_issue.py:*)",
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_epic_issue.py:*)",
             "origin": "settings.json"
           },
           {
@@ -376,7 +376,7 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_close_out.py:*)",
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_epic_review.py:*)",
             "origin": "settings.json"
           },
           {
@@ -776,15 +776,15 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_learned_distill.py:*)",
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_retrospective.py:*)",
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_execution_plan.py:*)",
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_release_plan.py:*)",
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_programme_issue.py:*)",
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_epic_issue.py:*)",
             "origin": "settings.json"
           },
           {
@@ -792,7 +792,7 @@
             "origin": "settings.json"
           },
           {
-            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_close_out.py:*)",
+            "rule": "Bash(~/.claude/plugins/cache/*/foundry/*/scripts/foundry_epic_review.py:*)",
             "origin": "settings.json"
           },
           {

@@ -837,8 +837,8 @@ def _draft_release_input(tree, version):
     """Close-out's draft GitHub Release for the tag v<version>, as {"programmes": [...], "other_prs": n},
     or None. Matched by `tag_name == v<version>` and `draft: true` (all pages of releases are read).
 
-    Draft BODY GRAMMAR (dl-12's close-out writes this shape; one item per line, any of `-` or `*`):
-        - programme: <programme-id>      (one line per merged programme)
+    Draft BODY GRAMMAR (dl-12's epic review writes this shape; one item per line, any of `-` or `*`):
+        - epic: <epic-id>                (one line per merged epic; the 1.x `programme:` is read too)
         - other: <n>                     (count of other PRs; optional, default 0)
     Read-only and fail-safe: gh missing, offline, no matching draft or bad JSON yields None, and the
     caller falls back to the merged PRs."""
@@ -868,7 +868,7 @@ def _parse_draft_releases(text, version):
             return None
         if isinstance(obj, dict) and obj.get("tag") == f"v{version}":
             body = obj.get("body") or ""
-            progs = re.findall(r"^\s*[-*]\s*programme:\s*(\S.*?)\s*$", body, re.M)
+            progs = re.findall(r"^\s*[-*]\s*(?:epic|programme):\s*(\S.*?)\s*$", body, re.M)
             other = re.search(r"^\s*[-*]\s*other:\s*(\d+)", body, re.M)
             return {"programmes": progs, "other_prs": int(other.group(1)) if other else 0}
     return None

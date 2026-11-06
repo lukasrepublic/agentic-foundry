@@ -38,8 +38,8 @@ puts one mechanical check in front of the submission (design 5.6): **it refuses;
 
 ## The kit-fix ticket (input from the learned distill)
 
-At programme close, `scripts/foundry_learned_distill.py propose <programme> --from-json <comments.json> --out <dir>`
-(dl-10) turns the `## Learned` comments of the programme's atoms into proposals. A lesson that names an `FG-` rule
+At epic close, `scripts/foundry_retrospective.py propose <epic> --from-json <comments.json> --out <dir>`
+(dl-10) turns the `## Learned` comments of the epic's atoms into proposals. A lesson that names an `FG-` rule
 id, or carries `[upstream]`, becomes a kit-fix ticket body, `<dir>/upstream/kit-fix-<n>.md`, with exactly these
 sections: `## Kit` (the category), `## Rule` (the `FG-` id, or `none (new rule proposed)`), `## Lesson`,
 `## Proposed edit`, `## Evidence`. A lesson routes upstream only when its author tagged it `[upstream]`; an `FG-` id
